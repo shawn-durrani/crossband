@@ -209,6 +209,60 @@ def test_trial_seat_speaks_when_mentioned():
     assert [p["slug"] for p in responders] == ["trialbot"]
 
 
+def test_trial_only_roster_speaks_when_mentioned():
+    """A chat whose ENTIRE roster is one trial seat must still answer an
+    explicit mention (#11). Before the fix, the mention equalled the whole
+    roster, fell through to the full-round path, and the trial gate then
+    selected no one - the chat could not be spoken to at all."""
+    roster = [{"slug": "trialbot", "name": "TrialBot", "lifecycle": "trial"}]
+    chat = {"next_first": "trialbot"}
+    responders, next_first = engine.pick_responders("@trialbot hello?", chat, roster)
+    assert [p["slug"] for p in responders] == ["trialbot"]
+    assert next_first == "trialbot"          # manual selection never rotates
+
+
+def test_trial_only_roster_speaks_when_addressed_by_name():
+    """Same guarantee for spoken addressing - voice can't type @."""
+    roster = [{"slug": "trialbot", "name": "TrialBot", "lifecycle": "trial"}]
+    chat = {"next_first": "trialbot"}
+    responders, _ = engine.pick_responders("TrialBot, are you there?", chat, roster)
+    assert [p["slug"] for p in responders] == ["trialbot"]
+
+
+def test_vocative_naming_one_seat_by_both_forms():
+    """One seat answers to two spoken forms (slug and display name), so a
+    vocative can name it twice: "GPT-OSS and GPT, ...". The raw token count
+    then exceeds the roster size; the old count guard rejected that as
+    non-addressing and the trial gate turned it into a silent zero-speaker
+    round (#11's sibling). Duplicates must collapse to the one seat."""
+    roster = [{"slug": "gpt-oss", "name": "GPT", "lifecycle": "trial"}]
+    chat = {"next_first": "gpt-oss"}
+    responders, _ = engine.pick_responders(
+        "GPT-OSS and GPT, are you there?", chat, roster)
+    assert [p["slug"] for p in responders] == ["gpt-oss"]
+
+
+def test_trial_only_roster_unaddressed_still_selects_no_one():
+    """The trial gate itself is untouched: an unaddressed message to a
+    trial-only roster still selects nobody."""
+    roster = [{"slug": "trialbot", "name": "TrialBot", "lifecycle": "trial"}]
+    chat = {"next_first": "trialbot"}
+    responders, _ = engine.pick_responders("hello all", chat, roster)
+    assert responders == []
+
+
+def test_mentioning_whole_onboarded_roster_stays_a_full_round():
+    """Naming every onboarded seat is just a wordy full round: rotation must
+    still advance, exactly as if nobody had been mentioned."""
+    roster = [{"slug": "claude", "name": "Claude", "lifecycle": "onboarded"},
+              {"slug": "gpt", "name": "GPT", "lifecycle": "onboarded"}]
+    chat = {"next_first": "gpt"}
+    responders, next_first = engine.pick_responders(
+        "@claude @gpt weigh in please", chat, roster)
+    assert [p["slug"] for p in responders] == ["gpt", "claude"]
+    assert next_first == "claude"
+
+
 def test_trial_seat_speaks_when_addressed_by_name():
     """Voice can't type @ — addressing a trial seat by name also invokes it."""
     roster = [{"slug": "claude", "name": "Claude", "lifecycle": "onboarded"},

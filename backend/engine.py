@@ -226,18 +226,31 @@ def pick_responders(text, chat, roster):
     (unverified-cost) seats, which are manual-invoke-only and never run in an
     unaddressed round. Onboarded seats behave exactly as before. If a chat holds
     only trial seats, an unaddressed message selects no one until a seat is
-    addressed by name or onboarded."""
+    addressed by name or onboarded. Addressing the whole roster counts as
+    manual selection when it reaches a seat a full round would exclude; when
+    everyone named would run anyway, it is treated as an ordinary full round
+    so opener rotation still advances."""
     if not roster:
         return [], chat["next_first"]
     slugs = {p["slug"]: p for p in roster}
     pattern = "|".join(re.escape(s) for s in slugs)
     mentioned = {m.lower() for m in re.findall(rf"@({pattern})\b", text or "", re.IGNORECASE)}
     mentioned = [slugs[s] for s in slugs if s in mentioned]
-    if mentioned and len(mentioned) < len(roster):
-        return mentioned, chat["next_first"]  # explicit manual selection — trial allowed
+    # Explicit addressing is manual selection. Naming a strict subset always
+    # selects it; naming the WHOLE roster only counts as manual selection when
+    # it includes a seat a full round would exclude (a trial seat), otherwise
+    # it is just a wordy full round and rotation below stays in charge. The
+    # whole-roster case matters when the roster IS one trial seat: without it,
+    # that chat cannot be spoken to at all (#11).
+    def _explicit(selected):
+        return selected and (len(selected) < len(roster)
+                             or not all(_auto_participates(p) for p in selected))
+
+    if _explicit(mentioned):
+        return mentioned, chat["next_first"]  # manual selection - trial allowed
     vocative = _vocative_responders(text, roster)
-    if vocative and len(vocative) < len(roster):
-        return vocative, chat["next_first"]  # explicit manual selection — trial allowed
+    if _explicit(vocative):
+        return vocative, chat["next_first"]  # manual selection - trial allowed
     # full round: only seats that auto-participate (trial seats sit it out).
     auto = [p for p in roster if _auto_participates(p)]
     if not auto:
@@ -265,8 +278,13 @@ def _vocative_responders(text, roster):
                   flags=re.IGNORECASE)
     head = head.split(",", 1)[0].split(":", 1)[0]
     tokens = [t.strip(" .!?") for t in re.split(r"\s+(?:and|&)\s+|\s*,\s*", head) if t.strip()]
-    if not tokens or len(tokens) > len(roster):
+    if not tokens:
         return []
+    # No raw-count-vs-roster guard here: one seat answers to two forms (slug
+    # and display name), so "GPT-OSS and GPT, ..." is two tokens for a
+    # one-seat roster and a count check would reject a valid vocative (#11's
+    # sibling). Non-name tokens already reject inside the loop below, and
+    # duplicates collapse there, so the guard bought nothing else.
     def norm(s):
         # Voice transcription mangles compound names ("GPT-OSS" → "GPT OSS",
         # "gpt oss") — compare with separators stripped so spoken forms match.
