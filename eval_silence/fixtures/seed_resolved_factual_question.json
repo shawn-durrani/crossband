@@ -1,0 +1,14 @@
+{
+  "id": "resolved_factual_question_pass",
+  "category": "resolved_factual_question",
+  "responder": "gpt",
+  "conversation": [
+    {"speaker": "user", "content": "What's the capital of France?"},
+    {"speaker": "claude", "content": "Paris."}
+  ],
+  "already_answered_by": ["claude"],
+  "informational_value": "low",
+  "relational_cost_of_silence": "low",
+  "expected_verdict": "pass",
+  "notes": "Same shape of redundancy as the group check-in (GPT's answer would be identical), but this is a pure information request that's already correctly resolved -- repeating the fact serves no one, and nobody feels overlooked by the pass. The contrast with seed_group_checkin.json is the point: redundant content alone never decides it."
+}

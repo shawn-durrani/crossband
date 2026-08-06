@@ -1,0 +1,737 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens (theme-independent): the type scale, spacing scale, radii,
+   elevation, motion timings, and speaker palette every component draws from.
+   Colours that change with the theme live in the [data-theme] blocks below.
+   --------------------------------------------------------------------------- */
+:root {
+  /* Type scale: px / line-height (11 micro · 12 meta · 13 UI · 15 body · 18 head · 22 title) */
+  --text-micro: 11px; --lh-micro: 16px;
+  --text-meta: 12px;  --lh-meta: 16px;
+  --text-ui: 13px;    --lh-ui: 20px;
+  --text-body: 15px;  --lh-body: 24px;
+  --text-head: 18px;  --lh-head: 28px;
+  --text-title: 22px; --lh-title: 28px;
+
+  /* Spacing scale (4px base) — no off-scale values in new CSS */
+  --space-2: 2px;  --space-4: 4px;   --space-8: 8px;   --space-12: 12px;
+  --space-16: 16px; --space-20: 20px; --space-24: 24px; --space-32: 32px;
+  --space-48: 48px; --space-64: 64px;
+
+  /* Radius */
+  --r-sm: 6px; --r-md: 10px; --r-lg: 16px; --r-full: 999px;
+
+  /* Elevation — borders do the work, shadows whisper (overlays only) */
+  --shadow-pop: 0 4px 16px rgb(0 0 0 / .35), 0 0 0 1px var(--t-edge);
+
+  /* Motion */
+  --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 300ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* Speaker palette — OKLCH equal lightness/chroma so no model looks "more
+     important"; participant data colors remain the runtime source of truth,
+     these are the recommended defaults + fallbacks. */
+  --speaker-1: oklch(0.72 0.12 25);
+  --speaker-2: oklch(0.72 0.12 145);
+  --speaker-3: oklch(0.72 0.12 210);
+  --speaker-4: oklch(0.72 0.12 275);
+  --speaker-5: oklch(0.72 0.12 330);
+}
+
+@theme {
+  /* Inter self-identifies when installed; system stack is the fallback strategy
+     (no CDN fonts — the app must stay offline-capable). */
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Semantic theme tokens — dark is default, [data-theme] flips them. */
+:root {
+  --t-app: #09090b;
+  --t-panel: #18181b;
+  --t-panel2: #27272a;
+  --t-edge: #27272a;
+  --t-edge2: #3f3f46;
+  --t-edge3: #71717a;
+  --t-ink: #f4f4f5;
+  --t-ink-mid: #a1a1aa;
+  --t-ink-dim: #71717a;
+  --t-ink-faint: #52525b;
+  --t-btn: #f4f4f5;
+  --t-btn-ink: #18181b;
+  --t-btn-hover: #ffffff;
+  --t-link: #38bdf8;
+  --t-code-ink: #fde68a;
+  --t-accent: #38bdf8;
+  --t-ok: #34d399;
+  --t-warn: #fbbf24;
+  --t-err: #f87171;
+  --t-info: #38bdf8;
+  --t-selection: rgba(56, 189, 248, 0.28);
+  --t-focus: #38bdf8;
+}
+
+/* Midnight — deep blue-slate, cool ink */
+[data-theme="midnight"] {
+  --t-app: #0a0f1e;
+  --t-panel: #121a2b;
+  --t-panel2: #1c2740;
+  --t-edge: #1f2a44;
+  --t-edge2: #2e3c5c;
+  --t-edge3: #5b6b8f;
+  --t-ink: #e8ecf6;
+  --t-ink-mid: #9aa7c2;
+  --t-ink-dim: #6e7c9c;
+  --t-ink-faint: #4d5a78;
+  --t-btn: #e8ecf6;
+  --t-btn-ink: #0a0f1e;
+  --t-btn-hover: #ffffff;
+  --t-link: #6db1ff;
+  --t-code-ink: #ffd98a;
+  --t-accent: #6db1ff;
+  --t-ok: #4ade80;
+  --t-warn: #fcd34d;
+  --t-err: #fb7185;
+  --t-info: #6db1ff;
+  --t-selection: rgba(109, 177, 255, 0.28);
+  --t-focus: #6db1ff;
+}
+
+/* Espresso — warm graphite and brown-greys */
+[data-theme="espresso"] {
+  --t-app: #131110;
+  --t-panel: #1b1815;
+  --t-panel2: #282218;
+  --t-edge: #2a251f;
+  --t-edge2: #3c352c;
+  --t-edge3: #7a6f5f;
+  --t-ink: #f1ece4;
+  --t-ink-mid: #b3a895;
+  --t-ink-dim: #837868;
+  --t-ink-faint: #5c544a;
+  --t-btn: #f1ece4;
+  --t-btn-ink: #1b1815;
+  --t-btn-hover: #ffffff;
+  --t-link: #f0b37e;
+  --t-code-ink: #ffd28a;
+  --t-accent: #f0b37e;
+  --t-ok: #86d9a8;
+  --t-warn: #fbbf24;
+  --t-err: #f28b82;
+  --t-info: #9ec1f0;
+  --t-selection: rgba(240, 179, 126, 0.28);
+  --t-focus: #f0b37e;
+}
+
+/* OLED — true black, maximum contrast */
+[data-theme="oled"] {
+  --t-app: #000000;
+  --t-panel: #0d0d0f;
+  --t-panel2: #1a1a1d;
+  --t-edge: #1f1f23;
+  --t-edge2: #333338;
+  --t-edge3: #6e6e76;
+  --t-ink: #f5f5f7;
+  --t-ink-mid: #a0a0a8;
+  --t-ink-dim: #707078;
+  --t-ink-faint: #4e4e55;
+  --t-btn: #f5f5f7;
+  --t-btn-ink: #000000;
+  --t-btn-hover: #ffffff;
+  --t-link: #4cc2ff;
+  --t-code-ink: #ffe08a;
+  --t-accent: #4cc2ff;
+  --t-ok: #34d399;
+  --t-warn: #fbbf24;
+  --t-err: #f87171;
+  --t-info: #4cc2ff;
+  --t-selection: rgba(76, 194, 255, 0.28);
+  --t-focus: #4cc2ff;
+}
+
+[data-theme="light"] {
+  --t-app: #e9e9ee;
+  --t-panel: #f6f6f8;
+  --t-panel2: #dcdce2;
+  --t-edge: #c9c9d2;
+  --t-edge2: #b3b3bf;
+  --t-edge3: #82828e;
+  --t-ink: #101012;
+  --t-ink-mid: #3a3a42;
+  --t-ink-dim: #55555e;
+  --t-ink-faint: #7c7c87;
+  --t-btn: #18181b;
+  --t-btn-ink: #fafafa;
+  --t-btn-hover: #000000;
+  --t-link: #045a8c;
+  --t-code-ink: #8a3c08;
+  --t-accent: #0369a1;
+  --t-ok: #047857;
+  --t-warn: #b45309;
+  --t-err: #b91c1c;
+  --t-info: #0369a1;
+  --t-selection: rgba(3, 105, 161, 0.22);
+  --t-focus: #045a8c;
+  /* Speaker palette drops lightness on light surfaces to hold ≥3:1 */
+  --speaker-1: oklch(0.52 0.13 25);
+  --speaker-2: oklch(0.52 0.13 145);
+  --speaker-3: oklch(0.52 0.13 210);
+  --speaker-4: oklch(0.52 0.13 275);
+  --speaker-5: oklch(0.52 0.13 330);
+}
+
+@theme inline {
+  --color-app: var(--t-app);
+  --color-panel: var(--t-panel);
+  --color-panel2: var(--t-panel2);
+  --color-edge: var(--t-edge);
+  --color-edge2: var(--t-edge2);
+  --color-edge3: var(--t-edge3);
+  --color-ink: var(--t-ink);
+  --color-ink-mid: var(--t-ink-mid);
+  --color-ink-dim: var(--t-ink-dim);
+  --color-ink-faint: var(--t-ink-faint);
+  --color-btn: var(--t-btn);
+  --color-btn-ink: var(--t-btn-ink);
+  --color-btn-hover: var(--t-btn-hover);
+  --color-link: var(--t-link);
+  --color-accent: var(--t-accent);
+  --color-ok: var(--t-ok);
+  --color-warn: var(--t-warn);
+  --color-err: var(--t-err);
+  --color-info: var(--t-info);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Horizontal-overflow containment (the safety net). A single long unbroken
+   token (a Tailscale hostname like my-mac.my-tailnet.ts.net, a raw URL, a code
+   token) or the composer's intrinsic min-width can otherwise push a child
+   wider than the device. On iOS Safari that shows up as the page loading
+   "zoomed in" with the right edge clipped and no way to pan it back. The real
+   fixes are below (word-breaking on prose/links, min-w-0 on the composer);
+   this clip is the belt to their suspenders so a stray token can never widen
+   the page again. Safe here because all scrolling lives in inner containers,
+   and fixed overlays (drawer, mobile voice call) aren't clipped by this. */
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+body {
+  @apply bg-app text-ink antialiased;
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+/* Accessibility floors: visible 2px focus everywhere, selection from tokens */
+:focus-visible {
+  outline: 2px solid var(--t-focus);
+  outline-offset: 2px;
+}
+::selection { background: var(--t-selection); }
+
+/* markdown content inside messages — 15px/1.6, ≤68ch reading measure */
+.md-body {
+  font-size: var(--text-body);
+  line-height: 1.6;
+  max-width: 68ch;
+  /* Long unbroken tokens (hostnames, raw URLs, IDs) break onto the next line
+     instead of forcing horizontal overflow. `anywhere` (not just break-word)
+     also feeds the break into min-content sizing, so the message column can
+     actually shrink to the device width in the flex chain. */
+  overflow-wrap: anywhere;
+}
+.md-body p { margin: 0.4rem 0; }
+.md-body p:first-child { margin-top: 0; }
+.md-body p:last-child { margin-bottom: 0; }
+.md-body ul { list-style: disc; padding-left: 1.4rem; margin: 0.4rem 0; }
+.md-body ol { list-style: decimal; padding-left: 1.4rem; margin: 0.4rem 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+  font-weight: 600; margin: 0.8rem 0 0.3rem;
+}
+.md-body h1 { font-size: 1.2rem; letter-spacing: -0.01em; }
+.md-body h2 { font-size: 1.1rem; }
+.md-body h3 { font-size: 1.0rem; }
+.md-body a { @apply text-link underline; overflow-wrap: anywhere; }
+.md-body blockquote { @apply border-l-2 border-edge3 pl-3 text-ink-mid; margin: 0.4rem 0; }
+.md-body table { border-collapse: collapse; margin: 0.5rem 0; }
+.md-body th, .md-body td { @apply border border-edge2 px-2 py-1 text-sm; }
+.md-body code:not(pre code) {
+  @apply bg-panel2 rounded px-1 py-0.5 text-[0.85em];
+  color: var(--t-code-ink);
+}
+.md-body pre {
+  @apply bg-panel border border-edge rounded-lg p-3 my-2 overflow-x-auto text-sm;
+}
+
+/* User turn: compact right-aligned bubble; AI turns are full-width prose */
+.user-bubble {
+  background: var(--t-panel2);
+  border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg);
+  padding: var(--space-8) 14px;
+}
+
+/* ---- Streaming affordances ---------------------------------------------- */
+
+/* (a) waiting: shimmering 3-dot pulse under the speaker header */
+.stream-dots { display: inline-flex; align-items: center; gap: var(--space-4); height: 16px; }
+.stream-dots i {
+  width: 6px; height: 6px; border-radius: var(--r-full);
+  background: var(--t-ink-dim);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+.stream-dots i:nth-child(2) { animation-delay: 0.2s; }
+.stream-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* ---- Running-task indicators -------------------------------------------- */
+
+/* Sidebar dot: a soft pulse on a chat that has a round/agent working — subtle,
+   accent-coloured, and legible against both list states. The global
+   prefers-reduced-motion guard drops the animation to a steady dot; because the
+   dot's colour alone still reads as "busy" (and the active chat shows the
+   worded badge), no information is lost. */
+.running-dot {
+  width: 7px; height: 7px; border-radius: var(--r-full);
+  background: var(--t-accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--t-accent) 55%, transparent);
+  animation: running-pulse 1.6s ease-in-out infinite;
+}
+@keyframes running-pulse {
+  0%, 100% { opacity: 0.55; box-shadow: 0 0 0 0 color-mix(in srgb, var(--t-accent) 55%, transparent); }
+  50% { opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 0%, transparent); }
+}
+
+/* Unread indicator: a message arrived live in this chat (a deploy notice, an
+   external event, a reply) while you were looking at another one. Static (no
+   animation), deliberately calmer than the running-dot's pulse: "something
+   happened" is a lower-urgency signal than "something is happening right now",
+   and the two are mutually exclusive per row (never both dots at once; see
+   Sidebar.jsx). */
+.unread-dot {
+  width: 6px; height: 6px; border-radius: var(--r-full);
+  background: var(--t-accent);
+  opacity: 0.75;
+}
+
+/* Header badge: a small spinner + the stable word "running" beside the chat
+   title. The WORD is the anchor (never displaced); the spinner is decoration. */
+.running-badge {
+  display: inline-flex; align-items: center; gap: var(--space-6, 6px);
+  font-size: 0.7rem; line-height: 1;
+  padding: 3px 8px; border-radius: var(--r-full);
+  color: var(--t-accent);
+  background: color-mix(in srgb, var(--t-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-accent) 35%, transparent);
+}
+.running-spinner {
+  width: 10px; height: 10px; border-radius: var(--r-full);
+  border: 1.5px solid color-mix(in srgb, var(--t-accent) 30%, transparent);
+  border-top-color: var(--t-accent);
+  animation: running-spin 0.8s linear infinite;
+}
+@keyframes running-spin { to { transform: rotate(360deg); } }
+
+/* (b) streaming: per-word opacity fade (no movement — translate reads as jitter)
+   + a 2px blinking caret block at the tail. Words are wrapped in spans only
+   while streaming; completion re-renders without them. */
+.stream-word { animation: word-in var(--dur-base) var(--ease-out); }
+@keyframes word-in { from { opacity: 0; } }
+.md-streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px; height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--t-ink-mid);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+
+/* Tool chips: collapsed-by-default disclosure, never raw JSON in the transcript */
+.tool-chip > summary, .tool-group > summary { list-style: none; }
+.tool-chip > summary::-webkit-details-marker,
+.tool-group > summary::-webkit-details-marker { display: none; }
+.tool-group[open] > summary .tool-chev { transform: rotate(90deg); }
+.tool-chev { transition: transform var(--dur-fast) var(--ease-out); }
+
+/* kbd hints (empty state) */
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  line-height: var(--lh-micro);
+  padding: 1px 5px;
+  border: 1px solid var(--t-edge2);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--t-panel);
+  color: var(--t-ink-mid);
+}
+
+/* Composer drag-over: 2px dashed accent on the whole composer */
+.composer-drag { outline: 2px dashed var(--t-accent); outline-offset: -2px; }
+
+/* ---- Mobile sidebar drawer ---------------------------------------------- */
+/* On mobile the sidebar is an off-canvas overlay that slides in from the left
+   over a dimmed backdrop; on sm: and up it's a static column (see App.jsx). */
+.drawer-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgb(0 0 0 / .5);
+  animation: backdrop-in var(--dur-base) var(--ease-out);
+}
+@keyframes backdrop-in { from { opacity: 0; } }
+.drawer-panel {
+  position: fixed; inset: 0 auto 0 0; z-index: 50;
+  animation: drawer-in var(--dur-slow) var(--ease-out);
+  box-shadow: var(--shadow-pop);
+}
+@keyframes drawer-in { from { transform: translateX(-100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .drawer-backdrop, .drawer-panel { animation: none; }
+}
+
+/* ---- Overflow menu (mobile header ⋯) ------------------------------------ */
+.overflow-menu {
+  background: var(--t-panel);
+  border: 1px solid var(--t-edge2);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  animation: menu-in var(--dur-base) var(--ease-out);
+}
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .overflow-menu { animation: none; } }
+
+/* ---- Voice mode: one morphing orb + one status word ---------------------- */
+.voice-dock {
+  /* Column: session controls (auto/manual + pause) sit on top, aligned to the
+     right; the orb+status row sits below. The orb is the anchor — its row is
+     row-reverse so the status text grows LEFTWARD and the orb never moves. */
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: var(--space-8);
+}
+.voice-dock .voice-controls {
+  display: flex; align-items: center; gap: var(--space-8);
+  /* One row, always: wrapping used to dump the end-session × onto its own
+     line inside the capsule whenever the stop button appeared (speaking
+     state), producing a lopsided two-story pill. The slider gives way first. */
+  flex-wrap: nowrap; justify-content: flex-end;
+  background: var(--t-panel);
+  border: 1px solid var(--t-edge);
+  border-radius: var(--r-full);
+  padding: var(--space-4) 10px;
+  max-width: min(460px, calc(100vw - 40px));
+  box-shadow: var(--shadow-pop);
+}
+.voice-dock .voice-controls input[type=range] { min-width: 44px; flex: 0 1 80px; }
+.voice-dock .voice-controls button, .voice-dock .voice-controls > span > .tabular-nums {
+  flex-shrink: 0;
+}
+.voice-controls-toggle {
+  /* Collapsed form of the controls capsule: one small round button. */
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: var(--r-full);
+  background: var(--t-panel); border: 1px solid var(--t-edge);
+  color: var(--t-ink-dim); box-shadow: var(--shadow-pop);
+}
+.voice-controls-toggle:hover { color: var(--t-ink); }
+.voice-controls-toggle:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
+.voice-dock .voice-orb-row {
+  display: flex; flex-direction: row-reverse; align-items: center;
+  gap: var(--space-3);
+  pointer-events: none;
+}
+.voice-dock .voice-status {
+  /* A proper pill, not bare text hovering over the transcript. */
+  max-width: 300px; text-align: right;
+  background: var(--t-panel); border: 1px solid var(--t-edge);
+  border-radius: var(--r-full); padding: var(--space-4) var(--space-12);
+  box-shadow: var(--shadow-pop);
+}
+.voice-dock .voice-status:empty { display: none; }
+.voice-orb {
+  /* --orb-tint lets a caller (mobile call screen) tint the orb to the current
+     speaker's colour; it defaults to the accent so the desktop dock is unchanged. */
+  --orb-tint: var(--t-accent);
+  width: 52px; height: 52px;
+  border-radius: var(--r-full);
+  position: relative;
+  background: radial-gradient(
+    circle at 32% 28%,
+    color-mix(in oklab, var(--orb-tint) 60%, white) 0%,
+    var(--orb-tint) 55%,
+    color-mix(in oklab, var(--orb-tint) 55%, black) 100%
+  );
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-slow) var(--ease-out);
+}
+/* Listening: the orb reacts to the REAL mic level (voice.js sets --level 0..1
+   ~20Hz) — scale + glow ring grow as you speak, so "Listening" visibly hears
+   you. A soft breathing halo covers the silent-idle case. */
+.voice-orb.listening {
+  transform: scale(calc(1 + var(--level, 0) * 0.25));
+  box-shadow: 0 0 0 calc(var(--level, 0) * 18px)
+    color-mix(in oklab, var(--t-accent) 28%, transparent);
+  transition: transform 60ms linear, box-shadow 60ms linear;
+}
+.voice-orb.listening::before {
+  content: ""; position: absolute; inset: -4px; border-radius: var(--r-full);
+  border: 2px solid color-mix(in oklab, var(--t-accent) 45%, transparent);
+  animation: orb-breathe 1.6s var(--ease-out) infinite;
+}
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); opacity: .5; }
+  50% { transform: scale(1.12); opacity: .15; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb.listening::before { animation: none; opacity: .4; }
+  /* level feedback stays: it's user-driven interaction feedback, not decoration */
+}
+/* Muted → idle: dimmed and desaturated, no breathing. The orb must not claim
+   it can hear you while the mic track is emitting silence. */
+.voice-orb.idle { opacity: 0.45; filter: saturate(0.4); }
+
+/* Transcribing/Thinking: pulse stops; slow internal shimmer, no scale change */
+.voice-orb.transcribing::before {
+  content: ""; position: absolute; inset: 0; border-radius: var(--r-full);
+  background: conic-gradient(from 0deg, transparent 0% 40%, rgb(255 255 255 / .35) 50%, transparent 60% 100%);
+  animation: orb-spin 1.5s linear infinite;
+}
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+/* Speaking: concentric ring ripples outward; static rim ring = mic stays hot
+   (barge-in affordance — the label says "talk to interrupt" so color is never
+   the sole carrier). */
+.voice-orb.speaking { box-shadow: 0 0 0 3px color-mix(in oklab, var(--orb-tint) 40%, transparent); }
+.voice-orb.speaking::after {
+  content: ""; position: absolute; inset: -4px; border-radius: var(--r-full);
+  border: 2px solid var(--orb-tint);
+  animation: orb-ripple 1.2s var(--ease-out) infinite;
+}
+
+/* ---- Mobile call-screen orb: it's the focal point, so make it dramatic. ---- */
+/* Listening: much bigger mic-reactive scale + a wide colored glow that clearly
+   "breathes" with your voice (the small dock reaction reads as dead at this size). */
+.mvc .voice-orb.listening {
+  transform: scale(calc(1 + var(--level, 0) * 0.5));
+  box-shadow: 0 0 0 calc(8px + var(--level, 0) * 46px)
+    color-mix(in oklab, var(--t-accent) 34%, transparent);
+}
+/* Speaking: the whole orb takes the agent's colour (tint already flows via
+   --orb-tint) AND gently pulses so their turn feels alive, with a bold colored
+   halo so "who's talking" reads at a glance. */
+.mvc .voice-orb.speaking {
+  box-shadow: 0 0 0 6px color-mix(in oklab, var(--orb-tint) 55%, transparent);
+  animation: orb-speak-pulse 1.15s var(--ease-out) infinite;
+}
+@keyframes orb-speak-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mvc .voice-orb.speaking { animation: none; }
+}
+@keyframes orb-ripple {
+  from { transform: scale(1); opacity: 0.35; }
+  to { transform: scale(1.55); opacity: 0; }
+}
+.voice-status {
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--t-ink-mid);
+  background: var(--t-panel);
+  border: 1px solid var(--t-edge);
+  border-radius: var(--r-full);
+  padding: var(--space-2) 10px;
+  box-shadow: var(--shadow-pop);
+}
+
+/* ---- Mobile voice "call" — full-screen overlay (see MobileVoiceCall.jsx) ----
+   Ported from the approved mockup; all colours are --t-* tokens so every theme
+   stays coherent. The component is sm:hidden — desktop uses the dock above. */
+.mvc {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; flex-direction: column;
+  background:
+    radial-gradient(120% 80% at 50% -10%, color-mix(in oklab, var(--t-panel) 70%, var(--t-app)) 0%, transparent 55%),
+    var(--t-app);
+  color: var(--t-ink);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* Mobile-only, enforced HERE: the component's Tailwind sm:hidden lives in a
+   cascade @layer, and this unlayered display:flex silently beat it — the
+   call overlay covered the desktop too. Unlayered vs unlayered, this wins. */
+@media (min-width: 640px) { .mvc { display: none; } }
+.mvc-top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-16) var(--space-20) var(--space-4);
+  font-size: var(--text-ui); color: var(--t-ink-dim);
+}
+.mvc-who { display: flex; align-items: center; gap: var(--space-8); min-width: 0; flex-wrap: wrap; }
+
+/* Tappable agent chips: tap = sit the agent out / bring them back.
+   Muted is never signalled by color alone: dimmed + outline-only dot +
+   strikethrough name + a "muted" tag. 44px min height = full touch target. */
+.mvc-agent {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 44px; padding: 0 13px;
+  border-radius: var(--r-full);
+  border: 1px solid color-mix(in srgb, var(--agent-color, #888) 55%, transparent);
+  background: color-mix(in srgb, var(--agent-color, #888) 14%, transparent);
+  color: var(--t-ink); font-size: 13px; line-height: 1;
+}
+.mvc-agent i {
+  width: 9px; height: 9px; border-radius: var(--r-full); display: inline-block;
+  border: 1.5px solid transparent; flex-shrink: 0;
+}
+.mvc-agent.out { border-color: var(--t-edge2); background: transparent; color: var(--t-ink-dim); }
+.mvc-agent.out > span:first-of-type { text-decoration: line-through; }
+.mvc-agent-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--t-ink-dim); border: 1px solid var(--t-edge2);
+  border-radius: var(--r-full); padding: 2px 6px;
+}
+.mvc-agent:disabled { opacity: 0.9; }
+.mvc-agent:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
+.mvc-lock {
+  color: var(--t-ok); font-size: var(--text-micro); flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: var(--space-4);
+}
+
+/* Caption zone — the transient flash-then-fade area. Fills the space above the
+   bottom cluster (both are flow children of .mvc-stage, so nothing overlaps). */
+.mvc-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.mvc-captions {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: var(--space-24) 26px 10px; gap: var(--space-16); overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16%, #000 100%);
+}
+.mvc-cap {
+  opacity: 0; transform: translateY(14px);
+  /* flash in, then drift gently upward across the hold (10s) */
+  animation: mvc-cap-in 0.45s var(--ease-out) forwards,
+             mvc-cap-drift 10s linear 0.45s forwards;
+  will-change: opacity, transform;
+}
+.mvc-cap.out { animation: mvc-cap-out 0.9s var(--ease-in) forwards; }
+.mvc-cap-name {
+  font-size: var(--text-meta); font-weight: 600; margin-bottom: 3px;
+  display: flex; align-items: center; gap: var(--space-4); color: var(--t-ink-mid);
+}
+.mvc-cap-name i { width: 7px; height: 7px; border-radius: var(--r-full); }
+.mvc-cap-text { font-size: 19px; line-height: 1.55; color: var(--t-ink); max-width: 34ch; }
+.mvc-cap.you .mvc-cap-text { color: var(--t-ink-mid); font-size: var(--text-body); }
+/* The in-progress utterance: faint + italic + cursor while the words are still
+   being said; the final "You:" caption replaces it. No entrance animation, as
+   it updates many times a second. */
+.mvc-cap.partial { animation: none; opacity: 1; transform: none; }
+.mvc-cap.partial .mvc-cap-text { color: var(--t-ink-dim); font-style: italic; }
+.mvc-cap.partial .mvc-cap-text::after { content: "▍"; opacity: .6; animation: mvc-caret 1s steps(1) infinite; }
+@keyframes mvc-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mvc-cap.partial .mvc-cap-text::after { animation: none; } }
+@keyframes mvc-cap-in { to { opacity: 1; transform: translateY(0); } }
+@keyframes mvc-cap-drift { to { transform: translateY(-10px); } }
+@keyframes mvc-cap-out { to { opacity: 0; transform: translateY(-22px); } }
+
+/* Bottom cluster — status → orb → hint → controls in a flow column; the orb
+   sits in a size-reserved slot so its scaling/glow never overlaps the text. */
+.mvc-bottom {
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-12);
+  padding: var(--space-8) 0 calc(var(--space-24) + env(safe-area-inset-bottom));
+}
+.mvc-status {
+  font-size: var(--text-ui); color: var(--t-ink-dim); font-weight: 500;
+  min-height: 18px; transition: color var(--dur-slow);
+}
+.mvc-orb-wrap {
+  height: 104px; display: grid; place-items: center; /* reserves room for the 1.5× scale */
+}
+.mvc-orb-wrap .voice-orb { width: 60px; height: 60px; }
+/* "talk any time to interrupt" — shown only while a model speaks and the mic
+   could actually interrupt it (hidden while muted). */
+.mvc-subhint {
+  font-size: var(--text-micro); color: var(--t-ink-faint); text-align: center;
+  margin-top: -6px;
+}
+
+.mvc-hint {
+  text-align: center; font-size: var(--text-micro); color: var(--t-ink-faint);
+  background: none; border: none; padding: 6px; margin: 0 auto; display: block;
+}
+.mvc-hint:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
+
+/* Transcript browsing — faded captions aren't gone: swipe up (or tap the
+   hint) and everything said this session scrolls back into view. */
+.mvc-history {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: var(--space-8) var(--space-20); display: flex; flex-direction: column;
+  gap: var(--space-12);
+}
+.mvc-hline .mvc-hline-text { font-size: 15px; line-height: 1.5; color: var(--t-ink); }
+.mvc-hline.you .mvc-hline-text { color: var(--t-ink-mid); }
+.mvc-history-empty {
+  color: var(--t-ink-faint); font-size: var(--text-ui); text-align: center;
+  margin-top: var(--space-24);
+}
+.mvc-live-pill {
+  align-self: center; display: inline-flex; align-items: center; gap: 5px;
+  min-height: 40px; padding: 0 16px; margin: var(--space-8) 0;
+  border-radius: var(--r-full); border: 1px solid var(--t-edge2);
+  background: var(--t-panel); color: var(--t-ink-mid); font-size: 13px;
+}
+.mvc-live-pill:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
+
+/* Bottom controls: a dominant mute pill (the car control — also "done
+   talking, send it") + a smaller, set-apart red end. Never color-only:
+   the pill carries a text label in both states. */
+.mvc-controls {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin-top: var(--space-4);
+  width: 100%; max-width: 440px; margin-inline: auto;
+  padding: 0 var(--space-4) env(safe-area-inset-bottom, 0);
+}
+.mvc-mute {
+  flex: 1; min-height: 68px; border-radius: var(--r-full);
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  font-size: 17px; font-weight: 600;
+  border: 1px solid var(--t-edge2); background: var(--t-panel2);
+  color: var(--t-ink); cursor: pointer;
+}
+.mvc-mute.muted {
+  background: var(--t-warn); border-color: var(--t-warn);
+  color: color-mix(in oklab, var(--t-warn) 25%, black);
+}
+.mvc-mute:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
+.mvc-cbtn {
+  width: 64px; height: 64px; flex: none; border-radius: var(--r-full);
+  border: 1px solid var(--t-edge2); background: var(--t-panel2);
+  color: var(--t-ink); cursor: pointer; display: grid; place-items: center;
+}
+.mvc-cbtn.end {
+  background: var(--t-err); border-color: var(--t-err);
+  color: color-mix(in oklab, var(--t-err) 30%, black);
+}
+.mvc-cbtn:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--t-edge2); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Global reduced-motion guard — motion is state communication, and states are
+   always paired with text, so killing animation loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

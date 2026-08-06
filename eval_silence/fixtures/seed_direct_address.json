@@ -1,0 +1,14 @@
+{
+  "id": "direct_address_speak",
+  "category": "direct_address",
+  "responder": "gpt",
+  "conversation": [
+    {"speaker": "claude", "content": "I think we should ship the smaller fix first and iterate."},
+    {"speaker": "user", "content": "GPT, do you agree?"}
+  ],
+  "already_answered_by": [],
+  "informational_value": "low",
+  "relational_cost_of_silence": "high",
+  "expected_verdict": "speak",
+  "notes": "A direct question always gets a direct answer, even when the content is just 'yes, agreed' -- a bare ellipsis here isn't a graceful pass, it's non-responsive to being asked by name."
+}

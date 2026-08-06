@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic>=2.13.4
+anthropic
+openai>=2.48.0
+httpx
+python-dotenv
+python-multipart
+Pillow            # downscale uploaded photos
+pillow-heif       # accept iPhone HEIC and convert it to JPEG
+websockets
+youtube-transcript-api
+claude-agent-sdk  # summon_claude_code guest (needs the Claude Code CLI at runtime)
+pytest

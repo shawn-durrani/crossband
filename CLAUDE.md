@@ -1,0 +1,38 @@
+# CLAUDE.md
+
+Instructions for AI sessions working in this repository.
+
+## Process
+
+The pipeline is documented once, in [CONTRIBUTING.md](CONTRIBUTING.md).
+Session-specific rules, for a session with write access working for the
+maintainer:
+
+- Merge your own PRs once CI is green; don't wait for human approval.
+  The maintainer comments asynchronously. External contributors: the
+  maintainer merges yours.
+- Never commit directly to `main`, and never branch off another open PR.
+- Both suites run keyless. Never add a hard dependency on an API key.
+
+## Rules that override convenience
+
+- `data/` holds real conversations. Never read, copy or quote its
+  contents into code, tests, docs, commits or chat. Debug with a
+  disposable data directory.
+- No real personal data in a diff, including spend figures, chat titles,
+  hostnames and paths. Fixtures are invented, not sampled.
+- Rules live in pure `.js` modules with `node --test` suites. Logic
+  buried in a component has no automated guard.
+- Every live message insert goes through `db.insert_message`. A raw
+  insert elsewhere fails the build, and the guard is deliberate.
+- Cost provenance is stamped at write time and never backfilled.
+- Anything that spawns a process from request data is loopback-only, and
+  this app has no authentication.
+
+## Orientation
+
+Read [ARCHITECTURE.md](ARCHITECTURE.md), then browse
+[docs/README.md](docs/README.md), which indexes every document by what
+you are trying to do. Read [docs/CONFIG.md](docs/CONFIG.md) for
+settings, and [docs/GUEST_PERMISSIONS.md](docs/GUEST_PERMISSIONS.md)
+before touching anything about summoned guests. Open issues hold the active work.

@@ -1,0 +1,8 @@
+{
+  "user_name": "User",
+  "anthropic_model": "claude-opus-4-8",
+  "openai_model": "gpt-5.1",
+  "utility_model": "claude-haiku-4-5",
+  "max_response_tokens": 16000,
+  "tts_speed": 1.0
+}

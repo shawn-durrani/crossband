@@ -1,0 +1,17 @@
+Documented SYNTHETIC placeholders — every one of these MUST pass the scanner.
+This is exactly the vocabulary the docs use to show a worked example without
+leaking a real machine/person.
+
+# tailnet hostnames — angle-bracket, my-tailnet, and tailXXXX styles
+angle style:  <mac>.<tailnet>.ts.net
+named style:  my-mac.my-tailnet.ts.net
+tailXXXX:     my-mac.tailXXXX.ts.net
+
+# home paths
+mac home:   /Users/you/projects/sideband
+linux home: /home/you/.config/sideband
+
+# email-shaped values
+placeholder email: you@example.com
+github noreply:    12345+you@users.noreply.github.com
+co-author noreply: noreply@anthropic.com

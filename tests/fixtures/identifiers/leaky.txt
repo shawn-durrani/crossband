@@ -1,0 +1,16 @@
+These are SYNTHETIC but real-SHAPED identifiers. None reference a real machine,
+person, or network — they exist only so the scanner has something to reject.
+Excluded from the --tree self-scan on purpose (see scripts/secret-scan.sh).
+
+# real-looking Tailscale tailnet hostnames (no documented placeholder token)
+tailnet host: acmecorp.ts.net
+device host:  laptop-7f3a2b.ts.net
+real prefix:  pro.tailXXXX.ts.net
+
+# machine-specific absolute home paths
+mac home:   /Users/jsmith/projects/sideband
+linux home: /home/jsmith/.config/sideband
+
+# personal, email-shaped values
+personal email: jane.smith@fastmail.dev
+gmail-shaped:   j.smith.1988@gmail.com

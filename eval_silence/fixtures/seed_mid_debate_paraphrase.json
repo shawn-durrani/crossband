@@ -1,0 +1,15 @@
+{
+  "id": "mid_debate_paraphrase_pass",
+  "category": "mid_debate_paraphrase",
+  "responder": "gpt",
+  "conversation": [
+    {"speaker": "claude", "content": "I think we should ship the smaller fix first and iterate."},
+    {"speaker": "gpt", "content": "Agreed, the smaller fix first makes sense given the deadline."},
+    {"speaker": "claude", "content": "Right, and it de-risks the bigger change too."}
+  ],
+  "already_answered_by": ["gpt"],
+  "informational_value": "low",
+  "relational_cost_of_silence": "low",
+  "expected_verdict": "pass",
+  "notes": "GPT is already on record earlier in this same exchange -- its engagement isn't in question. An unprompted extra 'agreed' here, with no new angle, is genuine piling on: nobody notices GPT's absence because GPT was never being addressed or checked on."
+}

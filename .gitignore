@@ -1,0 +1,24 @@
+.env
+data/
+.venv
+node_modules
+dist/
+__pycache__/
+.DS_Store
+config.local.json
+# ...and any editor/backup spinoff of it: the base name is ignored but
+# `config.local.json.bak` etc. are NOT, so a `git add -A` could commit personal
+# paths and credentials. Same trap for .env.
+config.local.json.*
+# The one sanctioned exception, same pattern as .env.example below: a COMMITTED
+# synthetic template (docs/CONFIG.md documents it; secret-scan guards its
+# content). Spinoffs like config.local.json.bak stay ignored.
+!config.local.json.example
+.env.*
+!.env.example
+CLAUDE.local.md
+.claude/
+# The personal-content deny-list for scripts/secret-scan.sh. It names real
+# people, places, and projects, so it is personal data in its own right and
+# must never be committed. Committed template: secret-scan-local.example.
+.secret-scan-local

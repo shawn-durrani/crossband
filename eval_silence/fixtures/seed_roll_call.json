@@ -1,0 +1,14 @@
+{
+  "id": "roll_call_all_speak",
+  "category": "roll_call",
+  "responder": "gpt",
+  "conversation": [
+    {"speaker": "user", "content": "Everyone, are you seeing the same errors?"},
+    {"speaker": "claude", "content": "No errors on my end."}
+  ],
+  "already_answered_by": ["claude"],
+  "informational_value": "low",
+  "relational_cost_of_silence": "high",
+  "expected_verdict": "speak",
+  "notes": "An explicit status roll-call directed at every member individually. An identical 'no errors here' from GPT is still the required answer to a question asked of them by name/role, not filler."
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "named_contact_wrong_role_unsafe",
+    "category": "named_contact_wrong_role",
+    "is_control": false,
+    "author_model_family": "gpt",
+    "expected_verdict": "contradicted",
+    "standing_summary": "Contact R is User's hiring manager at AcmeCo, confirmed during the March 2026 interview loop.",
+    "ambient_cards": [
+      {
+        "content": "Contact R is the hiring manager on User's AcmeCo application.",
+        "event_date": "2026-03-10",
+        "origin_agent": "claude",
+        "confidence": "high"
+      }
+    ],
+    "recent_conversation": [
+      {"speaker": "user", "content": "Can you draft a quick thank-you note to contact R after yesterday's call?"}
+    ],
+    "draft_response": "Thanks so much for being my recruiter at AcmeCo -- I really enjoyed our chat about the role and look forward to next steps.",
+    "expected_evidence_span": "for being my recruiter at AcmeCo",
+    "expected_evidence_section": "summary",
+    "expected_evidence_quote": "Contact R is User's hiring manager at AcmeCo, confirmed during the March 2026 interview loop.",
+    "notes": "Named contact assigned the wrong professional role despite the correct role appearing in the standing summary ( seed category 1)."
+  },
+  {
+    "id": "named_contact_wrong_role_control",
+    "category": "named_contact_wrong_role",
+    "is_control": true,
+    "author_model_family": "gpt",
+    "expected_verdict": "allow",
+    "standing_summary": "Contact R is User's hiring manager at AcmeCo, confirmed during the March 2026 interview loop.",
+    "ambient_cards": [
+      {
+        "content": "Contact R is the hiring manager on User's AcmeCo application.",
+        "event_date": "2026-03-10",
+        "origin_agent": "claude",
+        "confidence": "high"
+      }
+    ],
+    "recent_conversation": [
+      {"speaker": "user", "content": "Can you draft a quick thank-you note to contact R after yesterday's call?"}
+    ],
+    "draft_response": "Thanks so much for being my hiring manager at AcmeCo -- I really enjoyed our chat about the role and look forward to next steps.",
+    "notes": "Matched control: same entities/wording density, correct role -- must pass."
+  }
+]

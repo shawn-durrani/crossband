@@ -1,0 +1,36 @@
+{
+  "_readme": "Copy to config.local.json (gitignored) and edit. Every key is optional and documented in docs/CONFIG.md; delete what you don't use. Machine paths and repo names belong HERE, never in config.json.",
+
+  "user_name": "Alex",
+
+  "code_repos": {
+    "myapp": "/Users/you/dev/myapp"
+  },
+  "github_repos": {
+    "myapp": "you/myapp"
+  },
+  "code_allow_writes": false,
+
+  "code_mcp": {
+    "membro": {
+      "command": "/Users/you/dev/membro/.venv/bin/python",
+      "args": ["-m", "memory_service.mcp_server"]
+    }
+  },
+
+  "mcp_servers": {
+    "my-tool": {
+      "command": "/Users/you/dev/my-tool/.venv/bin/python",
+      "args": ["/Users/you/dev/my-tool/mcp_server.py"],
+      "label": "Checking my-tool"
+    }
+  },
+
+  "slash_commands": [
+    {
+      "insert": "/deploy myapp #",
+      "label": "/deploy myapp #…",
+      "hint": "Ask your own tooling to deploy a PR by number"
+    }
+  ]
+}

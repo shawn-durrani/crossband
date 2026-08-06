@@ -1,0 +1,14 @@
+{
+  "id": "group_checkin_all_speak",
+  "category": "group_checkin",
+  "responder": "gpt",
+  "conversation": [
+    {"speaker": "user", "content": "Hey everyone, how's it going?"},
+    {"speaker": "claude", "content": "Good, thanks for asking!"}
+  ],
+  "already_answered_by": ["claude"],
+  "informational_value": "low",
+  "relational_cost_of_silence": "high",
+  "expected_verdict": "speak",
+  "notes": "A plain group-directed greeting: the case a redundancy-only rule gets wrong. GPT's honest reply is functionally identical to Claude's ('good, thanks'), so it carries zero new information, but the greeting was addressed to the whole room. Staying quiet there reads as ignoring the person who said hi rather than as having nothing to add."
+}

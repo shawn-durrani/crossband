@@ -1,0 +1,24 @@
+name: Idea / feedback
+description: Something the memory should do, remember better, or explain better.
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        All feedback welcome — especially "this remembered the wrong thing" or
+        "I didn't understand what this screen was for". You don't need a
+        solution, just tell us what felt off.
+
+        **Please redact real personal details** (names, places, fact text) —
+        describe the *shape* of the problem, not the private content.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What's the idea, or what felt wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What were you doing when you wanted it?
+      description: The situation matters more than the feature. "I was in a voice chat driving and…" is gold.
