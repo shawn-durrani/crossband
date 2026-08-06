@@ -73,10 +73,14 @@ work.
 
 A summoned Claude Code session runs with permissions injected by this
 process, not read from the operator's personal settings, and in its own
-git worktree at a fresh checkout. Denied tools override allowed ones, so
-a broad read permission still cannot read credentials. The honest caveat
-ships with it: that list bounds built-in tools only, and any MCP server
-mounted for the guest is available whole.
+git worktree at a fresh checkout. Denied tools override allowed ones,
+which is how implement mode keeps a broad read permission away from
+`.env` and `config.local.json`. That protection is mode-specific and not
+a property of the guest framework: the default investigate mode denies
+whole tools and carries no path rule, so it does not restrict what a
+read-only guest may open. Two further caveats ship with it: the list
+bounds built-in tools only, and any MCP server mounted for the guest is
+available whole.
 
 ## A recorded dollar is not a charged dollar
 

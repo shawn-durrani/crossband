@@ -65,9 +65,12 @@ existing installs keep working. See below.
 ## Remote access
 
 Loopback only by default. To reach it from a phone, put it on your own
-tailnet with `scripts/tailscale-serve.sh`; HTTPS is required because
-browsers will not give a page the microphone otherwise. Never expose the
-port to the internet, and never use Tailscale Funnel. Read
+tailnet: name the tailnet hostname in `MMC_TRUSTED_HOSTS`, then run
+`tailscale serve --bg https / http://127.0.0.1:8902`. There is no helper
+script; [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md) writes the
+procedure out step by step. HTTPS is required because browsers will not
+give a page the microphone otherwise. Never expose the port to the
+internet, and never use Tailscale Funnel. Read
 [SECURITY.md](SECURITY.md) first: this app has no authentication, so who
 can reach the port is the whole security model.
 
@@ -90,12 +93,17 @@ trying to do. The short version:
 
 ## Known rough edges in v0.1.0
 
-The app was called Sideband during development, and some internal
-identifiers still say so: the `MMC_` environment prefix, the
-`dev.sideband.server` launchd label, and the `multi-model-chat` source
-tag it sends to Membro. Renaming them breaks existing installs, so they
-move together in v0.2 with a migration note. Nothing user-facing says
-Sideband.
+The app was called Sideband during development, and some identifiers
+still say so: the `MMC_` environment prefix, the `dev.sideband.server`
+launchd label, the `sideband-diag` MCP server that carries a summoned
+guest's `get_diagnostic` tool, and the source tag it sends to Membro,
+`multi-model-chat`. <!-- secret-scan: allow: the legacy source tag is named here on purpose -->
+
+Not all of those are internal. `sideband-diag` is mounted on every guest
+visit, so `mcp__sideband-diag__get_diagnostic` appears in the tool
+activity under a guest's reply, where you can read it. Renaming any of
+this breaks existing installs, so they move together in v0.2 with a
+migration note.
 
 ## Licence
 

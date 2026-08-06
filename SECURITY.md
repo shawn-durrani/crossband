@@ -16,9 +16,11 @@ the port.
 
 - **Loopback by default.** The server binds `127.0.0.1` and refuses to
   bind anywhere else.
-- **Tailnet only, if you widen it.** `scripts/tailscale-serve.sh` puts
-  the UI on your own tailnet devices; `MMC_TRUSTED_HOSTS` lists which
-  non-loopback hosts may be served at all. Never expose the port to the
+- **Tailnet only, if you widen it.** `tailscale serve` puts the UI on
+  your own tailnet devices, and `MMC_TRUSTED_HOSTS` lists which
+  non-loopback hosts may be served at all. The procedure is manual and
+  written out in [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md); this
+  repository ships no script for it. Never expose the port to the
   internet, and never use Tailscale Funnel.
 - **Cross-site requests to `/api/*` are rejected** when the browser
   stamps them, and websocket routes check `Origin` as well as `Host`,
@@ -35,8 +37,22 @@ Keys live in `.env`, which is chmod 600 on every start and gitignored.
 The database stores the *name* of the environment variable, never a
 value. Status and diagnostic endpoints return booleans. A summoned guest
 starts with inherited provider variables blanked, so a subscription turn
-cannot silently fall back onto your metered key, and cannot read `.env`
-or `config.local.json` even under a broad read permission.
+cannot silently fall back onto your metered key.
+
+**Blocking a guest from reading credential files is implement mode
+only.** That mode's deny list names `Read(.env)`, `Read(**/.env)`,
+`Read(**/.env.*)`, `Read(**/config.local.json)`, `Read(**/*.pem)` and
+`Read(**/id_rsa*)`. Those rules bite only if `disallowed_tools` is
+applied over the broad `Read` allow, which is Claude Code's documented
+behaviour and not something this repository verifies: the guest tests
+mock the SDK boundary, so they pin which rules are sent and never see a
+read refused. **The default investigate mode carries no path rule at
+all**: it denies whole tools (`Bash`, `Write`, `Edit` and the rest) and
+leaves `Read` unrestricted, so nothing in that loadout stands between a
+read-only guest and a credential file it can name. Neither mode
+path-restricts `Grep` or `Glob` either. Treat the file rules as a
+guardrail in one mode, not a guarantee in either. See
+[docs/GUEST_PERMISSIONS.md](docs/GUEST_PERMISSIONS.md).
 
 ## What these controls do not do
 

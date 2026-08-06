@@ -102,14 +102,18 @@ EXCLUDES=(
   ':(exclude)tests/test_secret_scan.py'
   ':(exclude)tests/fixtures/identifiers/*'
   ':(exclude)frontend/package-lock.json'
-  # The never-ship set. These are private working documents that the public
-  # snapshot leaves behind, so the scan enforces cleanliness of the SHIP SET
-  # rather than of private history. Removing an entry here without also
-  # removing the file from the publication drop-list would be a mistake.
+  # The never-ship set: private working documents that this snapshot does NOT
+  # carry, so the scan enforces cleanliness of the SHIP SET rather than of
+  # private history. An entry only belongs here if the file is absent from the
+  # published tree; check `git ls-files` before adding one.
+  #
+  # CHANGELOG.md and CLAUDE.md were listed here under that same rationale and
+  # it was wrong: both are tracked and both ship, so the exclusion quietly
+  # exempted two published files from every matcher above. They are scanned
+  # now, and they pass. Removing any remaining entry here without also removing
+  # the file from the publication drop-list would be a mistake.
   ':(exclude)DECISIONS.md'
   ':(exclude)BACKLOG.md'
-  ':(exclude)CHANGELOG.md'
-  ':(exclude)CLAUDE.md'
   ':(exclude)CLAUDE.local.md'
   ':(exclude)RELEASING.md'
   ':(exclude)docs/COLLABORATOR_SAFETY.md'

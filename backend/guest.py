@@ -16,11 +16,18 @@ Configuration (config.local.json / MMC_ env):
   code_repos: {"crossband": "~/dev/crossband", ...}
       Repositories the guest may be pointed at. Empty (the default) keeps the
       feature dark — the tool is never offered.
-  code_mcp: {"membro": {"command": ".../.venv/bin/python",
-                        "args": ["-m", "memory_service.mcp_server"]}}
+  code_mcp: {"membro": {"command": "<membro>/.venv/bin/python",
+                        "args": ["-m", "memory_service.mcp_server"],
+                        "env": {"PYTHONPATH": "<membro>"}}}
       Optional MCP servers mounted into the guest (e.g. Membro, so the guest
       can recall long-term memory while planning). Read-side only by design:
       Membro quarantines any mcp-origin write anyway ("gate the write").
+      PYTHONPATH is not optional. Membro runs from its checkout and is never
+      pip-installed, so naming its interpreter does not put memory_service on
+      the path: without it the server exits at spawn with ModuleNotFoundError
+      and the guest simply arrives with the tool missing. See
+      docs/GUEST_PERMISSIONS.md and config.local.json.example for the same
+      example written out with real paths.
 """
 
 import asyncio
@@ -176,9 +183,12 @@ IMPLEMENT_DENIED = [
     "Bash(git push --force:*)", "Bash(git push --force-with-lease:*)",
     "Bash(git merge:*)", "Bash(gh pr merge:*)", "Bash(gh repo:*)",
     # No secret access or exfiltration: reading credential/config files, dumping
-    # the environment, or reaching the network outside git/gh are all blocked.
-    # disallowed_tools OVERRIDES allowed_tools, so these bite even though "Read"
-    # is broadly allowed above.
+    # the environment, or reaching the network outside git/gh are all denied.
+    # These rules only bite if Claude Code applies disallowed_tools over
+    # allowed_tools, since "Read" is broadly allowed above. That precedence is
+    # the CLI's documented behaviour and nothing here verifies it: every guest
+    # test mocks the SDK boundary, so the suite pins WHICH rules are sent, never
+    # that a read was actually refused.
     "Read(.env)", "Read(**/.env)", "Read(**/.env.*)",
     "Read(**/config.local.json)", "Read(**/*.pem)", "Read(**/id_rsa*)",
     "Bash(env)", "Bash(printenv:*)", "Bash(curl:*)", "Bash(wget:*)",

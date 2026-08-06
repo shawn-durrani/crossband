@@ -54,18 +54,25 @@ if [ ! -d frontend/dist ] || [ -n "$(find frontend/src frontend/index.html \
 fi
 
 # env + key report
-if [ -f .env ]; then
-  # .env holds live API keys: owner-only, always. Tightened on every start, not
-  # just at creation, so an .env made before this existed (or copied in by hand)
-  # is fixed rather than left world-readable forever.
-  chmod 600 .env 2>/dev/null || true
-  set -a; source .env; set +a
-elif [ ! -f .env ]; then
+#
+# A first run CREATES .env and then keeps going. It used to exit here, which
+# meant a fresh clone paid for a venv creation and a full frontend build and
+# then got nothing, with no server, after the two slowest steps in the script.
+# Nothing about a keyless .env justifies that: the app starts fine without
+# keys (it just has no model seats until you add one, and local models via
+# Ollama or LM Studio need none at all), the setup wizard in the UI is the
+# intended way to add them, and the per-key warnings below already say loudly
+# what is missing. README.md and CONTRIBUTING.md both describe this script as
+# the thing that serves the app, so it serves the app.
+if [ ! -f .env ]; then
   cp .env.example .env
-  chmod 600 .env
-  echo "· created .env from .env.example — add your keys, then rerun ./start.sh"
-  exit 0
+  echo "· created .env from .env.example (no keys yet; add them in the setup wizard the UI opens, or edit .env)"
 fi
+# .env holds live API keys: owner-only, always. Tightened on every start, not
+# just at creation, so an .env made before this existed (or copied in by hand)
+# is fixed rather than left world-readable forever.
+chmod 600 .env 2>/dev/null || true
+set -a; source .env; set +a
 
 warn() { printf '\033[33m! %s\033[0m\n' "$1"; }
 [ -z "${ANTHROPIC_API_KEY:-}" ]  && warn "ANTHROPIC_API_KEY missing — Claude participants disabled"
