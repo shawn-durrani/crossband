@@ -190,11 +190,17 @@ class Settings(BaseModel):
     # memory companion service (Membro)
     memory_url: str = "http://127.0.0.1:8901"
 
-    # summon_claude_code guest (phase 1: read-only investigation/planning).
+    # summon_claude_code guest. Investigate mode (the default) is read-only;
+    # implement mode (code_allow_writes, below) lets it branch, test, push
+    # and open a PR, never merge.
     # code_repos maps a short name to a local path; empty = feature dark.
     # code_mcp mounts MCP servers into the guest (e.g. Membro for recall):
     #   {"membro": {"command": "<membro>/.venv/bin/python",
-    #               "args": ["-m", "memory_service.mcp_server"]}}
+    #               "args": ["-m", "memory_service.mcp_server"],
+    #               "env": {"PYTHONPATH": "<membro>"}}}
+    # env.PYTHONPATH is required for Membro (it runs from its checkout and is
+    # never pip-installed); without it the server dies at spawn and the guest
+    # simply arrives with the tool missing.
     code_repos: dict = Field(default_factory=dict)
     code_mcp: dict = Field(default_factory=dict)
     # GitHub issue tools (read + file), same "code" chat toggle. Name → repo
