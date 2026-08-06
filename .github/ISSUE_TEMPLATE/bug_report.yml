@@ -6,10 +6,10 @@ body:
     attributes:
       value: |
         Thanks! Please **redact anything personal** from transcripts before
-        pasting — replace real names/places with placeholders. Timestamps,
+        pasting: replace real names and places with placeholders. Timestamps,
         error text, and which model was speaking are the useful bits.
 
-        Security problem? Don't open an issue — see [SECURITY.md](../blob/main/SECURITY.md).
+        Security problem? Don't open an issue, see [SECURITY.md](../blob/main/SECURITY.md).
   - type: textarea
     id: what
     attributes:
@@ -35,8 +35,8 @@ body:
       description: |
         What you said (roughly), what the app showed (Listening / Thinking /
         Holding N…), and whether you tapped mute or talked over a model
-        around that moment. Bad/no connectivity at the time is worth noting —
-        that path has special handling.
+        around that moment. Bad or missing connectivity at the time is worth
+        noting, because that path has special handling.
   - type: input
     id: version
     attributes:

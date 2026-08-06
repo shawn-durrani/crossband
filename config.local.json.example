@@ -1,5 +1,5 @@
 {
-  "_readme": "Copy to config.local.json (gitignored) and edit. Every key is optional and documented in docs/CONFIG.md; delete what you don't use. Machine paths and repo names belong HERE, never in config.json.",
+  "_readme": "Copy to config.local.json (gitignored) and edit. Every key is optional and documented in docs/CONFIG.md; delete what you don't use. Machine paths and repo names belong HERE, never in config.json. Note the PYTHONPATH under code_mcp.membro: Membro is not pip-installed, so its module is only importable when its repo root is on PYTHONPATH, which is the form Membro's own README documents.",
 
   "user_name": "Alex",
 
@@ -14,7 +14,8 @@
   "code_mcp": {
     "membro": {
       "command": "/Users/you/dev/membro/.venv/bin/python",
-      "args": ["-m", "memory_service.mcp_server"]
+      "args": ["-m", "memory_service.mcp_server"],
+      "env": { "PYTHONPATH": "/Users/you/dev/membro" }
     }
   },
 

@@ -1,20 +1,38 @@
 name: Idea / feedback
-description: Something the memory should do, remember better, or explain better.
+description: Something the chat should do, or do more clearly.
 labels: ["idea"]
 body:
   - type: markdown
     attributes:
       value: |
-        All feedback welcome — especially "this remembered the wrong thing" or
-        "I didn't understand what this screen was for". You don't need a
-        solution, just tell us what felt off.
+        All feedback welcome, especially "the models talked over each other",
+        "I couldn't tell who said that", or "I didn't understand what this
+        screen was for". You don't need a solution, just tell us what felt off.
 
-        **Please redact real personal details** (names, places, fact text) —
-        describe the *shape* of the problem, not the private content.
+        **Please redact real personal details** (names, places, transcript
+        text, spend figures). Describe the *shape* of the problem, not the
+        private content.
+
+        Security problem? Don't open an issue, see [SECURITY.md](../blob/main/SECURITY.md).
   - type: textarea
     id: idea
     attributes:
       label: What's the idea, or what felt wrong?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part is this about?
+      options:
+        - The group chat itself (turn-taking, who speaks, context)
+        - Voice
+        - Models and seats (adding, pricing, local models)
+        - Summoned Claude Code guest / GitHub
+        - Cost and usage reporting
+        - Memory (with Membro running)
+        - Setup, config, or running it
+        - Something else
     validations:
       required: true
   - type: textarea

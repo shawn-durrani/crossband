@@ -1207,12 +1207,85 @@ def test_denied_command_classes_are_blocked():
         assert not _bash_auto_runs(cmd), f"should be blocked but auto-runs: {cmd}"
 
 
+SECRET_READ_RULES = ("Read(.env)", "Read(**/.env)", "Read(**/.env.*)",
+                     "Read(**/config.local.json)", "Read(**/*.pem)",
+                     "Read(**/id_rsa*)")
+
+
 def test_secret_files_are_read_blocked():
-    """Read is broadly allowed, so credential/secret files must be explicitly
-    denied — disallowed_tools overrides allowed_tools."""
-    for rule in ("Read(.env)", "Read(**/.env)", "Read(**/config.local.json)",
-                 "Read(**/*.pem)", "Read(**/id_rsa*)"):
+    """Read is broadly allowed, so credential/secret files carry explicit deny
+    rules. PRESENCE is the whole of what this asserts. Whether a deny rule then
+    beats the broad allow is Claude Code's own precedence, and the SDK boundary
+    is mocked throughout this file, so no test here ever watches a read being
+    refused. SECURITY.md and docs/GUEST_PERMISSIONS.md say so in those words;
+    don't let either page harden into a guarantee this suite cannot make."""
+    for rule in SECRET_READ_RULES:
         assert rule in guest.IMPLEMENT_DENIED
+
+
+def test_secret_read_rules_are_implement_mode_only(tmp_path, monkeypatch):
+    """Pin the ASYMMETRY, in both directions, from the options the SDK is
+    actually handed — not from the constants alone.
+
+    The credential-file rules live in IMPLEMENT_DENIED and nowhere else.
+    Investigate mode's denied list (DENIED_TOOLS) names whole tools and carries
+    no Read rule at all, so a read-only guest is read-only about the REPO, not
+    about secrets. SECURITY.md, ARCHITECTURE.md and docs/GUEST_PERMISSIONS.md
+    all describe it that way; this test is what keeps them honest. If someone
+    extends the rules to both modes, this test goes red and the docs get
+    corrected in the same change instead of drifting back into a promise the
+    code doesn't keep."""
+    captured = _capturing_sdk(monkeypatch, tmp_path)
+
+    def run(**kw):
+        async def drain():
+            return [ev async for ev in guest.run_guest(
+                "t", "demo", "", {"code_repos": {"demo": str(tmp_path)},
+                                  "code_allow_writes": True}, **kw)]
+        asyncio.run(drain())
+        return captured["options"]
+
+    impl = run(mode="implement")
+    for rule in SECRET_READ_RULES:
+        assert rule in impl.disallowed_tools, (
+            f"implement mode must keep {rule} on its deny list")
+
+    inv = run(mode="investigate")
+    assert "Read" in inv.allowed_tools          # broadly allowed…
+    assert not [r for r in inv.disallowed_tools if r.startswith("Read")], (
+        "investigate mode carries NO Read rule; if that changed, say so in "
+        "SECURITY.md and docs/GUEST_PERMISSIONS.md before changing this test")
+    # …and the searching tools are unrestricted in BOTH modes, which is why the
+    # docs stop short of calling the file rules a guarantee.
+    for opts in (impl, inv):
+        assert not [r for r in opts.disallowed_tools
+                    if r.startswith(("Grep(", "Glob("))]
+
+
+DOCS_LISTING_READ_RULES = ("SECURITY.md", "docs/GUEST_PERMISSIONS.md")
+
+
+def test_credential_deny_rules_are_listed_identically_in_both_docs():
+    """SECURITY.md and docs/GUEST_PERMISSIONS.md both spell out the credential
+    Read rules, and they drifted into different subsets (SECURITY.md was missing
+    Read(**/.env)). Two pages disagreeing is worse than one page being wrong,
+    because the disagreement reads as one of them being the current one. Pin
+    both against IMPLEMENT_DENIED so a rule cannot be added, removed or renamed
+    with only one page updated.
+
+    This proves the two lists AGREE with the code. It does not prove the CLI
+    enforces any of them; nothing in this repository does."""
+    import re
+    from pathlib import Path as _P
+
+    root = _P(__file__).resolve().parents[1]
+    in_code = {r for r in guest.IMPLEMENT_DENIED if r.startswith("Read(")}
+    assert in_code, "IMPLEMENT_DENIED lost its Read rules entirely"
+    for name in DOCS_LISTING_READ_RULES:
+        in_doc = set(re.findall(r"Read\([^)`]*\)", (root / name).read_text()))
+        assert in_doc == in_code, (
+            f"{name} lists {sorted(in_doc)}, IMPLEMENT_DENIED has "
+            f"{sorted(in_code)}; update both pages in the same change")
 
 
 # ---------- worktree isolation ----------

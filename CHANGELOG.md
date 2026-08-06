@@ -4,6 +4,11 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- `./start.sh` now serves the app on a first run. It creates `.env` from
+  the example, warns about whichever keys are missing, and starts the
+  server, instead of exiting and asking you to rerun it after the venv
+  and the frontend build were already done.
+
 ## v0.1.0 (2026-08-06)
 
 First public release, under the name Crossband.

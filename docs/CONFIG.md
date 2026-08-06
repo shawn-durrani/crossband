@@ -1,4 +1,4 @@
-# Configuration — every setting, in one place
+# Configuration: every setting, in one place
 
 Crossband is configured in **four layers**, each overriding the last
 (`backend/config.py::load_settings`):
@@ -7,31 +7,31 @@ Crossband is configured in **four layers**, each overriding the last
 defaults (in code)  ←  config.json (committed)  ←  config.local.json (gitignored)  ←  MMC_* environment
 ```
 
-- **`config.json`** — committed, shared defaults. Only put values here that
+- **`config.json`**: committed, shared defaults. Only put values here that
   make sense for everyone.
-- **`config.local.json`** — yours, next to `config.json` in the repo root,
-  gitignored. Machine paths, repo names, private MCP servers — anything the
+- **`config.local.json`**: yours, next to `config.json` in the repo root,
+  gitignored. Machine paths, repo names, private MCP servers, anything the
   public repo must never learn. Copy
   [`config.local.json.example`](../config.local.json.example) to start.
-- **Environment** — any setting can be overridden as `MMC_<NAME>` (upper-case
+- **Environment**: any setting can be overridden as `MMC_<NAME>` (upper-case
   the key: `MMC_PORT=9000`, `MMC_USER_NAME=Alex`). Dict-valued settings take
   JSON. Unparseable values are ignored rather than crashing startup.
 - **API keys are NOT settings.** They live in `.env` only (`ANTHROPIC_API_KEY`,
   `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `TAVILY_API_KEY`, `BRAVE_API_KEY`,
   `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`) and never reach the browser.
 
-A malformed config file never bricks startup — it reads as empty and the
+A malformed config file never bricks startup. It reads as empty and the
 layer is skipped. Unknown keys are ignored.
 
 Restart the service after changing a file (`./start.sh`, or
 `launchctl kickstart -k gui/$(id -u)/dev.sideband.server` under the
-supervisor — see [OPERATIONS.md](OPERATIONS.md)).
+supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 
 ## Server
 
 | key | default | what it does |
 |---|---|---|
-| `host` | `127.0.0.1` | Bind address. The process **refuses to start** on any non-loopback host — see [SECURITY.md](../SECURITY.md). |
+| `host` | `127.0.0.1` | Bind address. The process **refuses to start** on any non-loopback host; see [SECURITY.md](../SECURITY.md). |
 | `port` | `8902` | The one port everything is served on. |
 | `data_dir` | `""` | Where SQLite + backups + logs live. Empty → `<repo>/data`. |
 | `trusted_hosts` | `""` | Extra Host headers to accept (comma-separated), for Tailscale serve: `my-mac.my-tailnet.ts.net`. Empty = loopback only. [REMOTE_ACCESS.md](REMOTE_ACCESS.md). |
@@ -45,7 +45,7 @@ supervisor — see [OPERATIONS.md](OPERATIONS.md)).
 | `anthropic_model` | `claude-opus-4-8` | Model for the default Claude seat (first-run seed; after that, edit seats in-app on the Models page). |
 | `openai_model` | `gpt-5.1` | Model for the default GPT seat (same seed rule). |
 | `utility_model` | `claude-haiku-4-5` | The cheap model behind rolling summaries, auto-titles and project distillation. `gpt-*` values route to OpenAI. |
-| `pricing` | built-in rate card | Per-model `{input, output}` $/1M-token prices with provenance metadata. Matched **exactly** by model id, then by an entry's explicit `aliases` list, then by a date/build-stamped reissue of the same model — there is no broad family fallback, so a new model the card doesn't know stays *unpriced/unknown* (surfaced, not silently charged as an older family) until you add it. Each entry may carry provider-specific `cache: {read_mult, write_mult}` terms (defaults to Anthropic's). **Prefer the Models page's "Model prices" section** (it writes this block for you, and validates what a hand edit cannot): an estimate needs an http(s) source and a real ISO `as_of` (so it can be re-checked later), rates are bounded (a misplaced decimal is refused as a typo, not stored as a cost basis), `aliases` must be exact ids — no globs, and no collision with another priced model — and only `rate_card_estimate` or `self_hosted_zero_marginal` may be declared, since `provider_reported`/`subscription_equivalent` are recorded per turn from what a provider actually returned and must never be assertable by hand. It also declares a local/self-hosted **$0** for you (no rates needed) and keeps a `.bak` of this file before each write. Editing by hand still works and bypasses all of the above, so it is on you; entries **layer over** the built-in table one model at a time, so pricing your own model leaves every other card intact. (An earlier build let a hand-added block silently REPLACE the whole table, which meant pricing one model unpriced every other one. That is fixed, and it is why the in-app editor exists.) |
+| `pricing` | built-in rate card | Per-model `{input, output}` $/1M-token prices with provenance metadata. Matched **exactly** by model id, then by an entry's explicit `aliases` list, then by a date/build-stamped reissue of the same model. There is no broad family fallback, so a new model the card doesn't know stays *unpriced/unknown* (surfaced, not silently charged as an older family) until you add it. Each entry may carry provider-specific `cache: {read_mult, write_mult}` terms (defaults to Anthropic's). **Prefer the Models page's "Model prices" section** (it writes this block for you, and validates what a hand edit cannot): an estimate needs an http(s) source and a real ISO `as_of` (so it can be re-checked later), rates are bounded (a misplaced decimal is refused as a typo, not stored as a cost basis), `aliases` must be exact ids (no globs, and no collision with another priced model), and only `rate_card_estimate` or `self_hosted_zero_marginal` may be declared, since `provider_reported`/`subscription_equivalent` are recorded per turn from what a provider actually returned and must never be assertable by hand. It also declares a local/self-hosted **$0** for you (no rates needed) and keeps a `.bak` of this file before each write. Editing by hand still works and bypasses all of the above, so it is on you; entries **layer over** the built-in table one model at a time, so pricing your own model leaves every other card intact. (An earlier build let a hand-added block silently REPLACE the whole table, which meant pricing one model unpriced every other one. That is fixed, and it is why the in-app editor exists.) |
 
 ## Identity / display
 
@@ -62,8 +62,8 @@ supervisor — see [OPERATIONS.md](OPERATIONS.md)).
 | `max_response_tokens` | `16000` | Per-reply output cap. |
 | `summary_threshold_chars` | `60000` | Conversation weight that triggers the rolling summary. Counts message text **plus attachments** (images priced at the resolution providers actually tokenise, files by length), expressed in character-equivalents so this number keeps its original meaning. It measured text only until 2026-08-02, so photo-heavy chats never folded. |
 | `keep_recent_messages` | `12` | Messages always kept verbatim below the summary. |
-| `max_attachment_mb` | `20` | Upload size cap, applied to the file as you send it. Photos are downscaled to ~1568px on arrival, so what gets stored — and re-sent to every participant on every turn — is typically a tenth of this. |
-| `attribution_audit` | `true` | After each completed reply, run a privacy-safe diagnostic that notes when a model's "you said…" claim isn't found word-for-word in your raw messages in the current window. It only writes a **content-free** log line (a one-way fingerprint of the claim plus lengths/offsets — never the conversation text) and never blocks or edits a reply. A "no verbatim match" is a signal for review, **not** a verdict that the model made something up — it can also fire because the moment was summarised or paraphrased. Set `false` to turn the diagnostic off. |
+| `max_attachment_mb` | `20` | Upload size cap, applied to the file as you send it. Photos are downscaled to ~1568px on arrival, so what gets stored, and re-sent to every participant on every turn, is typically a tenth of this. |
+| `attribution_audit` | `true` | After each completed reply, run a privacy-safe diagnostic that notes when a model's "you said…" claim isn't found word-for-word in your raw messages in the current window. It only writes a **content-free** log line (a one-way fingerprint of the claim plus lengths/offsets, never the conversation text) and never blocks or edits a reply. A "no verbatim match" is a signal for review, **not** a verdict that the model made something up, because it can also fire when the moment was summarised or paraphrased. Set `false` to turn the diagnostic off. |
 
 ## Voice
 
@@ -82,10 +82,10 @@ supervisor — see [OPERATIONS.md](OPERATIONS.md)).
 
 ## Coding guest + GitHub (the `code` toggle)
 
-The user-facing walkthrough is
-[README § Build from the chat](../README.md#build-from-the-chat-claude-code--github);
-the security bounds are [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md) — change
-the allow/deny lists only together with that document.
+The short user-facing description is
+[README § What it does](../README.md#what-it-does); the security bounds, in
+both modes, are [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md); change the
+allow/deny lists only together with that document.
 
 | key | default | what it does |
 |---|---|---|
@@ -95,7 +95,7 @@ the allow/deny lists only together with that document.
 | `code_use_api_key` | `false` | `false` = guest turns ride the machine's Claude Code login (subscription). `true` = bill `ANTHROPIC_API_KEY` per token. Either way the turn records which one actually paid. |
 | `code_model` | `default` | Guest model tier: `default`/`opus`/`sonnet`/`haiku`. Per-summon override allowed. Changes the rate, not the account that pays. |
 | `code_effort` | `default` | Guest thinking level: `default`/`think`/`think-hard`/`ultrathink`. Per-summon override allowed. |
-| `code_allow_writes` | `false` | Implement mode: the guest may branch, test, push and open a PR — never merge, never push `main`. Off = read-only investigation. |
+| `code_allow_writes` | `false` | Implement mode: the guest may branch, test, push and open a PR, but never merge and never push `main`. Off = read-only investigation. |
 | `code_default_on` | `false` | New chats start with the `code` toggle already on (harmless without `code_repos`). |
 | `code_max_turns` | `50` | SDK turn cap for one read-only visit. |
 | `code_timeout_s` | `600` | Wall-clock cap for one read-only visit. |
@@ -106,9 +106,9 @@ the allow/deny lists only together with that document.
 
 | key | default | what it does |
 |---|---|---|
-| `mcp_servers` | `{}` | MCP servers the resident MODELS may call: name → `{command, args, label?}` (stdio). Private by placement — configure in `config.local.json`. Optional `label` is a trusted, operator-written display string shown in the work-status chip while that server is in flight — e.g. `"Checking job listings"`; omitted servers get a generic "Working on it" fallback, never a guess. |
+| `mcp_servers` | `{}` | MCP servers the resident MODELS may call: name → `{command, args, label?}` (stdio). Private by placement, so configure it in `config.local.json`. Optional `label` is a trusted, operator-written display string shown in the work-status chip while that server is in flight, e.g. `"Checking job listings"`; omitted servers get a generic "Working on it" fallback, never a guess. |
 | `ingest_token` | `""` | Bearer token for `POST /api/ingest`. Empty = loopback-trust only; set one only if a producer posts from beyond loopback. |
-| `slash_commands` | `[]` | Composer suggestion chips for `/` messages: `{insert, label, hint}`. Crossband assigns no meaning to any command — `/` messages go to your tooling, no model replies. |
+| `slash_commands` | `[]` | Composer suggestion chips for `/` messages: `{insert, label, hint}`. Crossband assigns no meaning to any command: `/` messages go to your tooling, and no model replies. |
 
 ## Research tool caps
 
@@ -129,7 +129,7 @@ the allow/deny lists only together with that document.
 |---|---|---|
 | `backup_keep` | `14` | Snapshots retained in `data/backups/`. |
 | `backup_interval_hours` | `6` | Snapshot cadence (plus one at every startup, before anything touches the DB). |
-| `backup_mirror_dir` | `""` | Optional second directory that receives **completed** snapshots only — never the live DB, because sync daemons watching a live WAL cause lock hangs. |
+| `backup_mirror_dir` | `""` | Optional second directory that receives **completed** snapshots only, never the live DB, because sync daemons watching a live WAL cause lock hangs. |
 | `backup_mirror_keep` | `7` | Snapshots retained in the mirror. |
 
 ## Startup behaviour
@@ -142,6 +142,7 @@ the allow/deny lists only together with that document.
 
 *This reference is code-derived: the source of truth is
 `backend/config.py::Settings`, and a test
-(`tests/test_supervisor_plist.py::test_config_doc_covers_every_setting`) fails
-CI if a setting exists that this page doesn't mention — so the table above
-cannot silently fall behind the code.*
+(`tests/test_supervisor_plist.py::test_docs_index_and_config_reference_stay_complete`)
+fails CI if a setting exists that this page doesn't mention, so the table
+above cannot silently fall behind the code. The same test checks that
+`docs/README.md` links every document in `docs/`.*

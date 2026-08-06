@@ -40,9 +40,14 @@ generation; a reconnect replays from a watermark; only a real abort
 marks a message as cut off; two rounds for one chat cannot interleave.
 
 **Guest isolation.** Permissions come from this process rather than the
-operator's own settings, denied tools override allowed ones, each visit
-gets its own worktree, and credential reads are refused even under a
-broad read permission.
+operator's own settings, and each visit gets its own worktree at a
+freshly fetched base. On credential files the suite pins the asymmetry
+rather than a guarantee: implement mode's options carry the `Read(.env)`
+family, investigate mode's options carry no `Read` rule at all, and
+neither mode path-restricts `Grep` or `Glob`. Every guest test mocks the
+SDK boundary, so what is asserted is which rules are handed to Claude
+Code, not that the CLI refuses a read; the allow-versus-deny precedence
+is mirrored by a helper in the test file rather than exercised.
 
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
@@ -100,7 +105,7 @@ week when it was maintained by hand.
 - (`test_delegation.py`) Explicit shared delegation/claim state for specialist actions
 - (`test_diag_mcp.py`) get_diagnostic
 - (`test_diagnostics_tool.py`) get_diagnostic on the NATIVE tool-calling surface
-- (`test_effort.py`) Reasoning-effort gating table — ported semantics from the predecessor
+- (`test_effort.py`) Reasoning-effort gating table, with semantics ported from the predecessor
 - (`test_engine.py`) Round-loop characterization
 - (`test_eval_critic.py`) Tests for the offline critic eval harness itself (fixture loading, prompt isolation, verdict parsing, scoring math) -- no live API calls; the model call is always faked
 - (`test_events.py`) Global live-events bus
@@ -122,7 +127,7 @@ week when it was maintained by hand.
 - (`test_openai_client.py`) Keyless-local edge for the OpenAI-compatible adapter
 - (`test_prewarm.py`) Ambient recall fires at speech-end, the round adopts it only on a match
 - (`test_pricing_api.py`) Operator-editable rate cards
-- (`test_projection.py`) Characterization tests for the transcript projection — the load-bearing invariants
+- (`test_projection.py`) Characterization tests for the transcript projection, covering the load-bearing invariants
 - (`test_prompt_guardrail.py`) High-salience personal-claim guardrail
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
 - (`test_rounds.py`) Detached rounds
