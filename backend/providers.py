@@ -25,7 +25,7 @@ from . import attachments as att_mod
 from . import work_status
 from .tools import run_tool
 
-log = logging.getLogger("mmc.providers")
+log = logging.getLogger("crossband.providers")
 
 _anthropic_clients = {}
 _openai_clients = {}

@@ -37,7 +37,7 @@ import json
 
 from . import diagnostics
 
-SERVER_NAME = "sideband-diag"
+SERVER_NAME = "crossband-diag"
 TOOL_NAME = "get_diagnostic"
 
 # Re-exported from backend/diagnostics.py (the single source of truth for

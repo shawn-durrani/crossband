@@ -39,7 +39,7 @@ diagnostic reading it as a defect is reading it wrong.
 - **Cache health:** the `usage_json` query in
   [COST_TELEMETRY.md](COST_TELEMETRY.md). Healthy looks like a small
   `cache_creation` and a `cache_read` roughly the size of the
-  conversation. Set `MMC_LOG_LEVEL=INFO` for a session to get the richer
+  conversation. Set `CROSSBAND_LOG_LEVEL=INFO` for a session to get the richer
   per-call log line.
 - **Voice stages:** `GET /api/voice/trace/summary` gives p50, p95 and
   max per stage over a 24 hour window, or any participant can read the

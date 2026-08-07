@@ -20,7 +20,7 @@ sessions and needs no extra API key. Two modes:
       gate. docs/GUEST_PERMISSIONS.md spells out the exact bounds of both
       modes.
 
-Configuration (config.local.json / MMC_ env):
+Configuration (config.local.json / CROSSBAND_ env):
   code_repos: {"crossband": "~/dev/crossband", ...}
       Repositories the guest may be pointed at. Empty (the default) keeps the
       feature dark: the tool is never offered.
@@ -48,7 +48,7 @@ from pathlib import Path
 
 from . import diag_mcp, provenance
 
-log = logging.getLogger("mmc.guest")
+log = logging.getLogger("crossband.guest")
 
 # A ${VAR} reference inside a code_mcp server's env value. This is the ONLY
 # interpolation the guest does - deliberately narrow: exact ${NAME} tokens,
@@ -519,7 +519,11 @@ _FETCH_TIMEOUT_S = 20  # best-effort refresh; never let a slow remote wedge star
 # _force_clear_leftover's safety guard is exactly "is this path inside the
 # namespace we hand out" - a scope that must not drift from the paths
 # _worktree_path actually creates.
-_WT_PREFIX = "mmc-guest-"
+_WT_PREFIX = "crossband-guest-"
+# v0.2 rename: worktrees created by v0.1 live under the old prefix. The sweep
+# and the clear guard accept BOTH namespaces for one release so pre-rename
+# leftovers still get reclaimed; v0.3 drops the old one.
+_OLD_WT_PREFIX = "mmc-guest-"
 
 
 def _worktree_path(repo_key, chat_id, session_key=None) -> Path:
@@ -571,7 +575,8 @@ def _force_clear_leftover(dest: Path):
     Scoped to the namespace _worktree_path hands out, and refuses anything
     else - so an upstream bug can never turn this into an arbitrary rmtree."""
     import tempfile
-    if dest.parent != Path(tempfile.gettempdir()) or not dest.name.startswith(_WT_PREFIX):
+    if dest.parent != Path(tempfile.gettempdir()) or not dest.name.startswith(
+            (_WT_PREFIX, _OLD_WT_PREFIX)):
         log.warning("refusing to clear unexpected guest worktree path %s", dest)
         return
     shutil.rmtree(dest, ignore_errors=True)  # a symlink/permission failure
@@ -588,13 +593,17 @@ def _sweep_stale_siblings(repo: Path, repo_key, chat_id):
     to a dead session. Other chats' worktrees carry a different chat id and are
     left untouched, so a session running elsewhere is unaffected."""
     import tempfile
-    prefix = f"{_WT_PREFIX}{repo_key}-chat{chat_id}"
     tmp = Path(tempfile.gettempdir())
-    try:
-        siblings = list(tmp.glob(prefix + "*"))
-    except Exception:
-        siblings = []
-    for p in siblings:
+    siblings = []
+    prefixes = [f"{_WT_PREFIX}{repo_key}-chat{chat_id}",
+                # pre-rename leftovers (v0.1) - swept until v0.3
+                f"{_OLD_WT_PREFIX}{repo_key}-chat{chat_id}"]
+    for prefix in prefixes:
+        try:
+            siblings += [(p, prefix) for p in tmp.glob(prefix + "*")]
+        except Exception:
+            pass
+    for p, prefix in siblings:
         # the exact per-chat home OR a "<home>-<session>" sibling - the '-'
         # separator / exact-name check keeps chat1 from matching chat10.
         if p.name == prefix or p.name.startswith(prefix + "-"):
@@ -633,7 +642,7 @@ def _unique_resolve_ref(session_key) -> str:
     same primary repo never collide and each deletes only its OWN ref."""
     import uuid
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", str(session_key or "anon"))
-    return f"refs/mmc-guest/resolve/{safe}-{uuid.uuid4().hex[:12]}"
+    return f"refs/crossband-guest/resolve/{safe}-{uuid.uuid4().hex[:12]}"
 
 
 def _resolve_ref(repo: Path, ref: str, session_key=None) -> tuple[str, str]:
@@ -645,7 +654,7 @@ def _resolve_ref(repo: Path, ref: str, session_key=None) -> tuple[str, str]:
     main. The fetch uses origin's own credentials; no token flows through here.
 
     Concurrency: the fetch lands the target in a UNIQUE, job-keyed private ref
-    (refs/mmc-guest/resolve/…) and we resolve THAT, never the shared FETCH_HEAD -
+    (refs/crossband-guest/resolve/…) and we resolve THAT, never the shared FETCH_HEAD -
     so two jobs in different chats resolving different refs against the same
     primary repo can't read each other's result (the FETCH_HEAD race). The temp
     ref is deleted in `finally`, and only ever this call's own ref."""

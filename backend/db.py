@@ -21,7 +21,15 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 SCHEMA_VERSION = 12  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
-DATA_DIR = Path(os.environ.get("MMC_DATA_DIR") or (ROOT / "data"))
+# Read DIRECTLY from the environment at import time, outside the Settings
+# machinery, so it needs its own new-name-then-old-name chain: miss the old
+# name here and a custom-data-dir install boots against a fresh empty
+# database, which presents as total data loss. MMC_DATA_DIR support ends in
+# v0.3 with the rest of the deprecated prefix; config.deprecated_env_vars
+# reports it in the startup warning because DATA_DIR is a Settings field name,
+# even though this module reads the variable directly.
+DATA_DIR = Path(os.environ.get("CROSSBAND_DATA_DIR")
+                or os.environ.get("MMC_DATA_DIR") or (ROOT / "data"))
 DB_PATH = DATA_DIR / "chat.db"
 ATTACH_DIR = DATA_DIR / "attachments"
 BACKUP_DIR = DATA_DIR / "backups"

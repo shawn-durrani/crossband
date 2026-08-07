@@ -33,7 +33,7 @@ cache telemetry in this doc concerns Claude-chat participants only.
 ## 2. Cache telemetry: what's logged, and what isn't
 
 Every real request from a Claude-chat participant (Anthropic provider) emits
-one log line per tool-use round, at `INFO` level, from the `mmc.providers`
+one log line per tool-use round, at `INFO` level, from the `crossband.providers`
 logger, tagged `claude_chat_cache`:
 
 ```
@@ -119,12 +119,12 @@ Field reference:
   per reply, so a tool-heavy exchange produces several lines for one visible
   message.
 
-**Where it goes.** These are ordinary Python `logging` calls under the `mmc`
+**Where it goes.** These are ordinary Python `logging` calls under the `crossband`
 logger hierarchy, which lands in `data/service.log` under the launchd
 supervisor (or your terminal under `./start.sh`); see
 [docs/OPERATIONS.md](OPERATIONS.md). By default the app only surfaces
 `WARNING`-and-above from its own code, so **these `INFO` lines are silent
-unless you turn them on**. Set `MMC_LOG_LEVEL=INFO` (any standard level name,
+unless you turn them on**. Set `CROSSBAND_LOG_LEVEL=INFO` (any standard level name,
 case-insensitive) for the duration of a sampling session, then unset it again.
 It only changes what's written to the log, never what gets cached, priced,
 or billed, and it affects nothing else (uvicorn's own request/access logging
@@ -232,9 +232,9 @@ tells you nothing.
    { "log_level": "INFO" }
    ```
    Restart to pick it up (`./start.sh` directly, or
-   `launchctl kickstart -k gui/$(id -u)/dev.sideband.server` if supervised;
+   `launchctl kickstart -k gui/$(id -u)/dev.crossband.server` if supervised;
    see [docs/OPERATIONS.md](OPERATIONS.md)). A one-off run without touching
-   config works too: `MMC_LOG_LEVEL=INFO ./start.sh`.
+   config works too: `CROSSBAND_LOG_LEVEL=INFO ./start.sh`.
 
 2. **Run your comparison conversation**, then pull just the telemetry lines
    for that window:
@@ -277,6 +277,6 @@ tells you nothing.
      window to say something real. A two-sample log comparison is a
      hypothesis check, not a savings measurement.
 
-6. **Turn `MMC_LOG_LEVEL` back off** (remove the `config.local.json` key, or
+6. **Turn `CROSSBAND_LOG_LEVEL` back off** (remove the `config.local.json` key, or
    unset the env var) and restart once you're done sampling, so the service
    returns to its default, quiet logging baseline.

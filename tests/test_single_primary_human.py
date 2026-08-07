@@ -65,7 +65,7 @@ def test_audit_is_not_valid_for_multi_human_attribution(caplog):
     ALSO the tripwire that would make a naive multi-human rollout visibly wrong,
     forcing reconsideration rather than a silent broadening.)"""
     import logging
-    caplog.set_level(logging.INFO, logger="mmc.providers")
+    caplog.set_level(logging.INFO, logger="crossband.providers")
     transcript = [
         make_msg(1, "user", "let's talk about the roadmap"),
         make_msg(2, "user:alice", "I'd rather ship on Friday"),  # a hypothetical 2nd human

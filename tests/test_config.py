@@ -39,8 +39,8 @@ def test_local_config_overrides_config_json(tmp_path):
 def test_env_overrides_everything(tmp_path):
     _write(tmp_path / "config.json", {"user_name": "Json"})
     _write(tmp_path / "config.local.json", {"user_name": "Local", "port": 2222})
-    env = {"MMC_USER_NAME": "Env", "MMC_PORT": "3333", "MMC_TTS_SPEED": "1.1",
-           "MMC_REQUIRE_KEYS": "true"}
+    env = {"CROSSBAND_USER_NAME": "Env", "CROSSBAND_PORT": "3333", "CROSSBAND_TTS_SPEED": "1.1",
+           "CROSSBAND_REQUIRE_KEYS": "true"}
     s = load_settings(root=tmp_path, environ=env)
     assert s.user_name == "Env"
     assert s.port == 3333
@@ -48,10 +48,41 @@ def test_env_overrides_everything(tmp_path):
     assert s.require_keys is True
 
 
+def test_deprecated_mmc_prefix_still_applies(tmp_path):
+    """v0.2 compat: an untouched pre-rename .env (MMC_*) must keep working
+    for one release. v0.3 removes this - when that release deletes the
+    fallback, this test flips to asserting the old prefix is IGNORED."""
+    env = {"MMC_USER_NAME": "OldEnv", "MMC_PORT": "4444"}
+    s = load_settings(root=tmp_path, environ=env)
+    assert s.user_name == "OldEnv"
+    assert s.port == 4444
+
+
+def test_new_prefix_wins_when_both_are_set(tmp_path):
+    """A half-migrated .env sets the same field under both prefixes; the new
+    name must win deterministically, never the stale line."""
+    env = {"CROSSBAND_PORT": "5555", "MMC_PORT": "4444"}
+    s = load_settings(root=tmp_path, environ=env)
+    assert s.port == 5555
+
+
+def test_deprecated_env_vars_lists_every_old_name():
+    """The startup warning is driven by this listing: every MMC_ variable that
+    maps to a Settings field appears with its exact replacement, including
+    ones ALSO set under the new prefix (the operator should delete those)."""
+    from backend.config import deprecated_env_vars
+    env = {"MMC_PORT": "4444", "CROSSBAND_PORT": "5555",
+           "MMC_USER_NAME": "x", "MMC_NOT_A_FIELD": "ignored"}
+    pairs = deprecated_env_vars(environ=env)
+    assert ("MMC_PORT", "CROSSBAND_PORT") in pairs
+    assert ("MMC_USER_NAME", "CROSSBAND_USER_NAME") in pairs
+    assert all(not old.endswith("NOT_A_FIELD") for old, _ in pairs)
+
+
 def test_unknown_and_malformed_values_never_brick_startup(tmp_path):
     _write(tmp_path / "config.json", {"mystery_key": 42, "user_name": "Ok"})
     (tmp_path / "config.local.json").write_text("{not json")
-    s = load_settings(root=tmp_path, environ={"MMC_PORT": "not-a-number"})
+    s = load_settings(root=tmp_path, environ={"CROSSBAND_PORT": "not-a-number"})
     assert s.user_name == "Ok"
     assert s.port == 8902  # bad env value ignored
 

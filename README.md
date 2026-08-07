@@ -45,7 +45,7 @@ cd crossband
 
 The app serves **http://127.0.0.1:8902**. `start.sh` creates the venv,
 installs dependencies when they change, builds the frontend if needed,
-and refuses to start a second instance on the same port. Set `MMC_PORT`
+and refuses to start a second instance on the same port. Set `CROSSBAND_PORT`
 if 8902 is taken.
 
 Add keys through the setup wizard in the UI, or put them in `.env`. Keys
@@ -55,17 +55,17 @@ are validated before they are saved and never echoed back.
 
 `config.json` holds defaults that ship with the repo.
 `config.local.json` holds your machine's settings and is gitignored.
-Environment variables starting `MMC_` override both. Everything is
+Environment variables starting `CROSSBAND_` override both. Everything is
 documented in [docs/CONFIG.md](docs/CONFIG.md), which is generated from
 the code and guarded by a test, so it cannot drift.
 
-Note the `MMC_` prefix: it predates the rename and stays for now, so
-existing installs keep working. See below.
+Pre-v0.2 installs used the `MMC_` prefix; those variables still apply
+until v0.3, and every use logs the exact rename at startup. See below.
 
 ## Remote access
 
 Loopback only by default. To reach it from a phone, put it on your own
-tailnet: name the tailnet hostname in `MMC_TRUSTED_HOSTS`, then run
+tailnet: name the tailnet hostname in `CROSSBAND_TRUSTED_HOSTS`, then run
 `tailscale serve --bg https / http://127.0.0.1:8902`. There is no helper
 script; [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md) writes the
 procedure out step by step. HTTPS is required because browsers will not
@@ -91,19 +91,23 @@ trying to do. The short version:
   cache and cost numbers.
 - [docs/TESTING.md](docs/TESTING.md): what the suites guarantee.
 
-## Known rough edges in v0.1.0
+## Upgrading a pre-v0.2 install
 
-The app was called Sideband during development, and some identifiers
-still say so: the `MMC_` environment prefix, the `dev.sideband.server`
-launchd label, the `sideband-diag` MCP server that carries a summoned
-guest's `get_diagnostic` tool, and the source tag it sends to Membro,
-`multi-model-chat`. <!-- secret-scan: allow: the legacy source tag is named here on purpose -->
+The app was called Sideband during development. v0.2 retired the
+identifiers that still said so: environment variables moved from `MMC_`
+to `CROSSBAND_`, the launchd label from `dev.sideband.server` to
+`dev.crossband.server`, and the guest diagnostics MCP from
+`sideband-diag` to `crossband-diag`. To migrate an existing install:
+rename the `MMC_` lines in your `.env` (the app warns at startup with
+the exact renames until you do; old names stop working in v0.3), and
+rerun `bash ops/install-supervisor.sh` if you use the supervisor - it
+retires the old launchd label itself.
 
-Not all of those are internal. `sideband-diag` is mounted on every guest
-visit, so `mcp__sideband-diag__get_diagnostic` appears in the tool
-activity under a guest's reply, where you can read it. Renaming any of
-this breaks existing installs, so they move together in v0.2 with a
-migration note.
+One historical name is deliberate and permanent: the source tag sent to
+Membro is `multi-model-chat`. <!-- secret-scan: allow: the legacy source tag is named here on purpose -->
+Membro keys conversation identity on it, so renaming it would fork
+every open chat's memory history for zero user-visible gain. It shows
+up only in Membro's admin facts view, like a database table name.
 
 ## Licence
 

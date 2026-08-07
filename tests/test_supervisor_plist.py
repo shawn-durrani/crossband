@@ -17,7 +17,7 @@ import stat
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-TEMPLATE = REPO / "ops" / "dev.sideband.server.plist.template"
+TEMPLATE = REPO / "ops" / "dev.crossband.server.plist.template"
 INSTALLER = REPO / "ops" / "install-supervisor.sh"
 
 PLACEHOLDERS = ("{{REPO_DIR}}", "{{HOME}}", "{{PATH}}")
@@ -56,7 +56,7 @@ def test_rendered_plist_is_valid_and_self_restarting():
     assert "{{" not in rendered, "a placeholder survived substitution"
     doc = plistlib.loads(rendered.encode())
 
-    assert doc["Label"] == "dev.sideband.server"
+    assert doc["Label"] == "dev.crossband.server"
     # the two keys that make it a supervisor: come up on load, stay up
     assert doc["RunAtLoad"] is True
     assert doc["KeepAlive"] is True

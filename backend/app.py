@@ -23,7 +23,8 @@ from . import rounds
 from . import tools as tools_mod
 from . import voice_trace
 from . import voice
-from .config import ROOT, Settings, key_status, load_settings, report_missing_keys
+from .config import (ROOT, Settings, deprecated_env_vars, key_status,
+                     load_settings, report_missing_keys)
 from .memory_client import MemoryClient
 from .routers import attachments as attachments_router
 from .routers import chats as chats_router
@@ -40,7 +41,7 @@ from .routers import settings as settings_router
 from .routers import setup as setup_router
 from .routers import voice as voice_router
 
-log = logging.getLogger("mmc")
+log = logging.getLogger("crossband")
 
 
 LOCK_WAIT_S = 10.0
@@ -129,11 +130,11 @@ def _secure_env_file(path) -> None:
 
 
 def _configure_log_level(level_name: str) -> None:
-    """Opt-in verbosity for the app's own "mmc.*" loggers (empty/default:
+    """Opt-in verbosity for the app's own "crossband.*" loggers (empty/default:
     no-op, so behavior is byte-for-byte unchanged from before this existed).
     uvicorn configures ITS OWN loggers (uvicorn / uvicorn.error / uvicorn.access)
     independently and always has - this only ever touches the root logger, and
-    only when MMC_LOG_LEVEL is explicitly set, so it can't interact with that.
+    only when CROSSBAND_LOG_LEVEL is explicitly set, so it can't interact with that.
     Exists so content-free INFO-level diagnostics already being logged (e.g.
     providers.py's Claude-chat cache-telemetry line) are actually
     reachable in data/service.log for a deliberate sampling session, instead
@@ -142,10 +143,10 @@ def _configure_log_level(level_name: str) -> None:
         return
     level = getattr(logging, level_name.strip().upper(), None)
     if not isinstance(level, int):
-        log.warning("MMC_LOG_LEVEL=%r is not a recognized level name - ignoring", level_name)
+        log.warning("CROSSBAND_LOG_LEVEL=%r is not a recognized level name - ignoring", level_name)
         return
     logging.basicConfig(level=level)
-    logging.getLogger("mmc").setLevel(level)
+    logging.getLogger("crossband").setLevel(level)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -153,6 +154,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     load_dotenv(ROOT / ".env")
     settings = settings or load_settings()
     _configure_log_level(settings.log_level)
+    # v0.2 rename: old-prefix env vars still apply, but each one warns with
+    # the exact rename so the operator fixes .env before v0.3 removes the
+    # fallback. One line per variable, after log config so they are visible.
+    for old_name, new_name in deprecated_env_vars():
+        log.warning("%s is deprecated - rename it to %s; MMC_ support ends "
+                    "in v0.3", old_name, new_name)
     db.configure(settings.resolved_data_dir(), backup_keep=settings.backup_keep,
                  mirror_dir=settings.backup_mirror_dir,
                  mirror_keep=settings.backup_mirror_keep)

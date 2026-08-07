@@ -10,15 +10,19 @@
 # restart lock race, since two competing starts can no longer happen).
 #
 # Usage:  ops/install-supervisor.sh
-# Undo:   launchctl bootout gui/$(id -u)/dev.sideband.server
+# Undo:   launchctl bootout gui/$(id -u)/dev.crossband.server
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_DIR="$(pwd -P)"
-LABEL="dev.sideband.server"
+LABEL="dev.crossband.server"
+# v0.2 rename: v0.1 installs ran under this label. Booting it out (and
+# removing its plist so it cannot re-bootstrap at login) makes this installer
+# the migration tool for an existing install; drop once v0.2 has settled.
+OLD_LABEL="dev.sideband.server"
 TEMPLATE="ops/${LABEL}.plist.template"
 DEST="$HOME/Library/LaunchAgents/${LABEL}.plist"
-PORT="${MMC_PORT:-8902}"
+PORT="${CROSSBAND_PORT:-${MMC_PORT:-8902}}"  # MMC_ fallback ends in v0.3
 DOMAIN="gui/$(id -u)"
 
 [ -f "$TEMPLATE" ] || { echo "✗ template not found: $TEMPLATE" >&2; exit 1; }
@@ -46,6 +50,8 @@ fi
 # Take over as sole owner: drop any prior agent, then stop a hand-started
 # instance still holding the port, before bootstrapping the agent (RunAtLoad
 # starts the one real instance).
+launchctl bootout "$DOMAIN/$OLD_LABEL" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/${OLD_LABEL}.plist"
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 sleep 1
 if PID="$(lsof -tnP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null)"; then

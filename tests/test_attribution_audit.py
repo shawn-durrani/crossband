@@ -30,7 +30,7 @@ PARTICIPANT = {"name": "Claude", "slug": "claude", "model": "claude-opus-4-8"}
 
 
 def _run(caplog, reply_text, transcript, cfg=None):
-    caplog.set_level(logging.INFO, logger="mmc.providers")
+    caplog.set_level(logging.INFO, logger="crossband.providers")
     providers._check_attribution(reply_text, transcript, PARTICIPANT, cfg or {})
     return [r for r in caplog.records if "attribution_audit" in r.getMessage()]
 
@@ -202,6 +202,6 @@ def test_attribution_audit_setting_is_env_overridable():
     """It must actually be configurable through the existing env mechanism, so
     the off-switch documented in config.py works."""
     from backend.config import load_settings
-    s = load_settings(environ={"MMC_ATTRIBUTION_AUDIT": "false"})
+    s = load_settings(environ={"CROSSBAND_ATTRIBUTION_AUDIT": "false"})
     assert s.attribution_audit is False
     assert s.as_cfg()["attribution_audit"] is False

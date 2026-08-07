@@ -15,7 +15,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>dev.sideband.server</string>
+  <string>dev.crossband.server</string>
 
   <key>WorkingDirectory</key>
   <string>{{REPO_DIR}}</string>

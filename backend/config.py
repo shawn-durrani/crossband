@@ -1,8 +1,10 @@
 """Layered configuration: defaults < config.json < config.local.json < environment.
 
 Personal settings (your name, preferred models) belong in config.local.json so
-they never end up in the public repo. Environment overrides use the MMC_ prefix
-(e.g. MMC_PORT=9000, MMC_USER_NAME=Alex); dict-valued fields take JSON.
+they never end up in the public repo. Environment overrides use the CROSSBAND_
+prefix (e.g. CROSSBAND_PORT=9000, CROSSBAND_USER_NAME=Alex); dict-valued fields
+take JSON. The pre-rename MMC_ prefix still applies until v0.3, with a startup
+warning naming the exact rename.
 """
 
 import json
@@ -18,7 +20,12 @@ from . import provenance
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
 LOCAL_CONFIG_PATH = ROOT / "config.local.json"
-ENV_PREFIX = "MMC_"
+ENV_PREFIX = "CROSSBAND_"
+# The app was renamed from Sideband (working name mmc) at v0.1; env vars moved
+# to the new prefix at v0.2. Old-prefix variables still apply for ONE release
+# so an existing .env keeps working, but every use logs a rename warning at
+# startup. v0.3 removes this fallback entirely.
+DEPRECATED_ENV_PREFIX = "MMC_"
 
 DEFAULT_VOICE_PRICING = {"tts_per_1m_chars": 110.0, "stt_per_hour": 0.40}
 
@@ -131,14 +138,14 @@ class Settings(BaseModel):
     # access over Tailscale: `tailscale serve https / http://127.0.0.1:8902`
     # proxies to loopback but forwards Host as the tailnet name, which the
     # DNS-rebinding guard would otherwise 403. Set
-    # MMC_TRUSTED_HOSTS=my-mac.my-tailnet.ts.net. Empty = loopback only (default).
+    # CROSSBAND_TRUSTED_HOSTS=my-mac.my-tailnet.ts.net. Empty = loopback only (default).
     trusted_hosts: str = ""
-    # Verbosity for the app's own "mmc.*" loggers - separate from uvicorn's
+    # Verbosity for the app's own "crossband.*" loggers - separate from uvicorn's
     # request/access logging, which is unaffected either way. Empty (default):
     # unchanged from before this existed - only WARNING+ reaches
     # data/service.log, so the content-free per-request diagnostics logged at
     # INFO (e.g. providers.py's Claude-chat cache-telemetry line) are
-    # silent. Set MMC_LOG_LEVEL=INFO for a deliberate sampling session (see
+    # silent. Set CROSSBAND_LOG_LEVEL=INFO for a deliberate sampling session (see
     # docs/COST_TELEMETRY.md), then unset it again. This only changes what's
     # written to the log - never what gets cached, priced, or billed.
     log_level: str = ""
@@ -177,7 +184,7 @@ class Settings(BaseModel):
     # providers._check_attribution) and NEVER blocks or edits a reply. A "no
     # verbatim match" can be entirely legitimate (the grounding turn was
     # compressed into the rolling summary, or paraphrased) - it is not a
-    # fabrication verdict. Set false (MMC_ATTRIBUTION_AUDIT=false) to turn the
+    # fabrication verdict. Set false (CROSSBAND_ATTRIBUTION_AUDIT=false) to turn the
     # diagnostic off entirely.
     attribution_audit: bool = True
 
@@ -308,9 +315,17 @@ def _env_overrides(environ) -> dict:
     out = {}
     fields = Settings.model_fields
     for name, field in fields.items():
-        raw = environ.get(ENV_PREFIX + name.upper())
+        var = ENV_PREFIX + name.upper()
+        raw = environ.get(var)
         if raw is None:
-            continue
+            # v0.2 fallback: the old MMC_ name still applies, with a rename
+            # warning. If BOTH prefixes set the field, the new one already won
+            # above and the elif never fires; the ignored old value is called
+            # out by _warn_deprecated_env at startup instead.
+            old = environ.get(DEPRECATED_ENV_PREFIX + name.upper())
+            if old is None:
+                continue
+            raw = old
         ann = field.annotation
         try:
             if ann is int:
@@ -326,6 +341,21 @@ def _env_overrides(environ) -> dict:
         except (ValueError, json.JSONDecodeError):
             continue  # ignore unparseable env values rather than crash
     return out
+
+
+def deprecated_env_vars(environ=None) -> list[tuple[str, str]]:
+    """Every MMC_-prefixed variable in the environment that maps to a Settings
+    field, as (old_name, new_name) pairs. Startup logs one warning per entry;
+    v0.3 turns the fallback off, so the warning names the exact rename and the
+    deadline. A variable set under BOTH prefixes is still listed: the new name
+    won, and the operator should delete the stale line rather than trust it."""
+    environ = environ if environ is not None else os.environ
+    pairs = []
+    for name in Settings.model_fields:
+        old = DEPRECATED_ENV_PREFIX + name.upper()
+        if old in environ:
+            pairs.append((old, ENV_PREFIX + name.upper()))
+    return pairs
 
 
 def load_settings(root: Path | None = None, environ=None) -> Settings:
@@ -512,7 +542,7 @@ def report_missing_keys(settings: Settings, log) -> None:
     if settings.require_keys and hard:
         raise RuntimeError(
             f"Required API key(s) not set: {', '.join(hard)} - "
-            f"set them in .env or start with MMC_REQUIRE_KEYS=false"
+            f"set them in .env or start with CROSSBAND_REQUIRE_KEYS=false"
         )
 
 

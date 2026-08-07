@@ -7,7 +7,7 @@ renders the payload as text, badges the source, and assigns no meaning. That
 contract is the firewall that keeps producer logic out of this repo.
 
 Trust model: loopback is the primary boundary, like every /api/* route.
-MMC_INGEST_TOKEN (optional, default off) adds a bearer check for producers
+CROSSBAND_INGEST_TOKEN (optional, default off) adds a bearer check for producers
 arriving via the tailnet proxy - mirroring Membro's MEMORY_AUTH_TOKEN. This
 is the app's first optional auth surface; it guards exactly one route.
 

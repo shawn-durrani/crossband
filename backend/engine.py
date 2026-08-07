@@ -25,7 +25,7 @@ from . import tools as tools_mod
 from . import voice_trace
 from .config import compute_cost, provenance_for
 
-log = logging.getLogger("mmc.engine")
+log = logging.getLogger("crossband.engine")
 
 
 def sse(payload):

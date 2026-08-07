@@ -20,8 +20,8 @@ ops/install-supervisor.sh
 That's it. The script:
 
 1. Fills in your machine's real paths from a placeholder template
-   (`ops/dev.sideband.server.plist.template`) and writes the result to
-   `~/Library/LaunchAgents/dev.sideband.server.plist`. The template itself
+   (`ops/dev.crossband.server.plist.template`) and writes the result to
+   `~/Library/LaunchAgents/dev.crossband.server.plist`. The template itself
    carries no personal path, so nothing machine-specific is ever committed.
 2. Stops any instance you started by hand, then hands the one real instance to
    launchd.
@@ -47,16 +47,16 @@ Run these from the repo folder, since `tail` and the installer are relative to i
 
 ```
 # restart it, after a git pull or to pick up .env changes
-launchctl kickstart -k gui/$(id -u)/dev.sideband.server
+launchctl kickstart -k gui/$(id -u)/dev.crossband.server
 
 # is it running, and as which pid?
-launchctl print gui/$(id -u)/dev.sideband.server | grep -iE 'state|pid|program'
+launchctl print gui/$(id -u)/dev.crossband.server | grep -iE 'state|pid|program'
 
 # follow the log
 tail -f data/service.log
 
 # stop supervising (and stop the service)
-launchctl bootout gui/$(id -u)/dev.sideband.server
+launchctl bootout gui/$(id -u)/dev.crossband.server
 
 # start supervising again
 ops/install-supervisor.sh
@@ -70,7 +70,7 @@ instances would race for the data-directory lock (the failure mode that
 motivated this). So if you script deploys, finish the script with
 
 ```
-launchctl kickstart -k gui/$(id -u)/dev.sideband.server
+launchctl kickstart -k gui/$(id -u)/dev.crossband.server
 ```
 
 when the agent is loaded, and fall back to `./start.sh` when it isn't
@@ -83,7 +83,7 @@ to start a second copy, so the worst case is a deploy step that fails loudly.
 A stop is now bounded: SIGTERM ends the live-events streams immediately, gives
 anything genuinely in flight (a chat round mid-generation, a live voice call)
 up to **15 seconds** to finish, then exits regardless. Change the ceiling with
-`MMC_SHUTDOWN_TIMEOUT_S` (or `"shutdown_timeout_s"` in `config.local.json`):
+`CROSSBAND_SHUTDOWN_TIMEOUT_S` (or `"shutdown_timeout_s"` in `config.local.json`):
 raise it if you would rather a long round always complete, lower it for a deploy
 loop that values a fast, predictable stop.
 
@@ -108,7 +108,7 @@ restart.
 
 By default only `WARNING`-and-above from the app's own code reaches
 `data/service.log`, and that includes the content-free Claude-chat cache
-telemetry. Set `MMC_LOG_LEVEL=INFO` (env var, or `"log_level": "INFO"`
+telemetry. Set `CROSSBAND_LOG_LEVEL=INFO` (env var, or `"log_level": "INFO"`
 in `config.local.json`) for a deliberate sampling session, then unset it
 again; it only changes what's written to the log, never what gets cached,
 priced, or billed. See [docs/COST_TELEMETRY.md](COST_TELEMETRY.md) for the

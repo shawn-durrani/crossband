@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PORT="${MMC_PORT:-8902}"
+PORT="${CROSSBAND_PORT:-${MMC_PORT:-8902}}"  # MMC_ fallback ends in v0.3
 
 # One clean instance at a time — but wait a little first. A restart normally
 # follows a stop by a second or two, and an instance that was told to stop still

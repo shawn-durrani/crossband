@@ -17,7 +17,7 @@ the port.
 - **Loopback by default.** The server binds `127.0.0.1` and refuses to
   bind anywhere else.
 - **Tailnet only, if you widen it.** `tailscale serve` puts the UI on
-  your own tailnet devices, and `MMC_TRUSTED_HOSTS` lists which
+  your own tailnet devices, and `CROSSBAND_TRUSTED_HOSTS` lists which
   non-loopback hosts may be served at all. The procedure is manual and
   written out in [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md); this
   repository ships no script for it. Never expose the port to the

@@ -54,7 +54,7 @@ import logging
 
 from . import db
 
-log = logging.getLogger("mmc.events")
+log = logging.getLogger("crossband.events")
 
 HEARTBEAT_SECS = 25
 
