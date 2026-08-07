@@ -5,8 +5,8 @@
 // The trap: `activeChat` (the fully-loaded chat object the header reads its
 // title from) is fetched asynchronously after a switch, while `activeChatId`
 // (what the sidebar highlight and running badge key off) flips synchronously.
-// In the gap — or when two rapid switches let getChat responses land out of
-// order — `activeChat` can lag behind `activeChatId`, so the header title
+// In the gap - or when two rapid switches let getChat responses land out of
+// order - `activeChat` can lag behind `activeChatId`, so the header title
 // describes a different chat than the selection/badge/body. That's the mobile
 // title/header desync.
 //
@@ -30,9 +30,9 @@ export function resolveHeaderChat(activeChat, activeChatId, chats) {
   return fromList || null
 }
 
-// The title to render in the header — always the one belonging to activeChatId,
+// The title to render in the header - always the one belonging to activeChatId,
 // never a stale chat's. Empty string while the active chat is still loading and
-// not yet in the sidebar list (a brief, neutral state — better than a wrong
+// not yet in the sidebar list (a brief, neutral state - better than a wrong
 // title).
 export function resolveHeaderTitle(activeChat, activeChatId, chats) {
   return resolveHeaderChat(activeChat, activeChatId, chats)?.title ?? ''

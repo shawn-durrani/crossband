@@ -2,7 +2,7 @@
 // Run: node --test frontend/src/streamGuard.test.js
 //
 // Proves the core invariant: an event carrying chat A's origin is DROPPED once
-// chat B is the active chat. This is the seatbelt for detached rounds — chat A's
+// chat B is the active chat. This is the seatbelt for detached rounds - chat A's
 // round keeps running server-side and its reader can dispatch late events, but
 // none of them may touch chat B's message state.
 import { test } from 'node:test'

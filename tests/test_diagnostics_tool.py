@@ -9,14 +9,14 @@ escalation to a guest just to get answered.
 Guardrails pinned here mirror tests/test_diag_mcp.py's, one layer up (the
 surface normal participants actually use):
   - backend/tools.py's tool definition publishes the SAME closed enum/schema/
-    description as the guest tool — sourced from backend/diagnostics.py, not
+    description as the guest tool - sourced from backend/diagnostics.py, not
     a second copy;
   - run_tool's native dispatch resolves through the exact SAME dispatch table
-    object as the guest's `diag_mcp._DISPATCH` — one map, not two that can
+    object as the guest's `diag_mcp._DISPATCH` - one map, not two that can
     drift;
   - unknown/sensitive/path-like names are refused, never partially handled;
   - extra caller-supplied args (path/url/host) never influence what's reached;
-  - the round loop offers the tool unconditionally — no per-chat toggle,
+  - the round loop offers the tool unconditionally - no per-chat toggle,
     matching the guest mount's "no safety reason to gate it" precedent;
   - an end-to-end chat-turn test drives a fake provider that actually issues
     the native tool call through the real engine + real run_tool dispatch.
@@ -71,7 +71,7 @@ def test_run_tool_voice_latency_returns_bounded_shape(cfg):
 
 def test_voice_latency_excludes_prior_epoch_samples_and_says_so(cfg, app):
     """Rows measured under older stage semantics are excluded, counted,
-    and explained — never silently blended into current percentiles (the
+    and explained - never silently blended into current percentiles (the
     live failure: seats read a mixed window and reported latency 'got
     worse' the day the fixes landed)."""
     from backend import db, diagnostics, voice_trace
@@ -102,7 +102,7 @@ def test_voice_latency_excludes_prior_epoch_samples_and_says_so(cfg, app):
 def test_run_tool_conversation_spend_is_metered_only(app):
     """The in-call cost query returns THIS conversation's running metered
     total (never blending the subscription-equivalent estimate in), then a
-    dynamic party/producer/provider split — reachable through the real native
+    dynamic party/producer/provider split - reachable through the real native
     run_tool dispatch, scoped by cfg['chat_id']."""
     from backend import db
     con = db.connect()
@@ -184,7 +184,7 @@ def sse_events(body):
 
 
 def test_get_diagnostic_is_offered_even_with_every_other_toggle_off(app, monkeypatch):
-    """web_enabled/code_enabled/memory_enabled all off — get_diagnostic is
+    """web_enabled/code_enabled/memory_enabled all off - get_diagnostic is
     still offered: the same "no toggle, no safety reason to gate it"
     reasoning DECISIONS.md records for the guest's own always-on MCP mount
     applies here too."""
@@ -211,7 +211,7 @@ def test_get_diagnostic_is_offered_even_with_every_other_toggle_off(app, monkeyp
 
 def test_e2e_chat_turn_fake_provider_calls_get_diagnostic(app, monkeypatch):
     """Drives a full round through the real engine + the real run_tool
-    dispatch (not a mock of run_tool itself) — a fake `stream_reply` stands
+    dispatch (not a mock of run_tool itself) - a fake `stream_reply` stands
     in for the provider round-trip (the existing harness's mocking seam, same
     as tests/test_delegation.py and tests/test_mcp_client.py) and issues the
     native get_diagnostic tool call exactly the way backend/providers.py's
@@ -247,7 +247,7 @@ def test_e2e_chat_turn_fake_provider_calls_get_diagnostic(app, monkeypatch):
 def test_model_facing_latency_excludes_queue_wait_but_dev_endpoint_keeps_it(cfg, app):
     """After two live over-index incidents (the second WITH the framing
     note in the payload), playback_queue_wait is not handed to models at all
-    — while the development summary still reports everything, and the model
+    - while the development summary still reports everything, and the model
     payload names its exclusion instead of hiding it."""
     from backend import db, diagnostics
     con = db.connect()

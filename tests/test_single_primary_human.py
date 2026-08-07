@@ -8,7 +8,7 @@ human-typed message is stored with speaker == "user"; AI participants use their
 slug; external producers are namespaced `ext:<source>`.
 
 The attribution audit grounds "the User said X" against those turns and
-those turns only. That is correct while there is one human — and would silently
+those turns only. That is correct while there is one human - and would silently
 mean something else the moment a second human existed. These tests pin the
 assumption so that any future move toward multi-human identity (a `user:<id>`
 speaker, a set of human speakers, a projection that labels more than one speaker

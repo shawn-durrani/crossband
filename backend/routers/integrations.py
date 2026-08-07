@@ -1,6 +1,6 @@
 """Unified, read-only integration status.
 
-GET /api/integrations — one aggregated view of every capability the app can use
+GET /api/integrations - one aggregated view of every capability the app can use
 (LLM providers, audio, web search/research, MCP servers, memory), each reported
 with a stable id, kind, configured/valid/enabled/available state, a normalized
 health word + plain-English detail, related model seats for LLMs, and each
@@ -11,7 +11,7 @@ wizard's session validity, participants rows, the memory /health probe, the MCP
 manager's connect-time status) and changes nothing about how chats run. It never
 writes credentials and never touches the participant schema.
 
-  ?probe=true — additionally run each configured capability's OWN live check
+  ?probe=true - additionally run each configured capability's OWN live check
                 (the same ones the setup wizard uses) and force a fresh memory
                 probe. Off by default so a dashboard load is cheap and makes no
                 external calls. A failed probe shows unhealthy, never a crash.

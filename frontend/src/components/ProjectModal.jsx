@@ -28,7 +28,7 @@ export default function ProjectModal({ project, onSave, onClose }) {
         </label>
         <label className="block">
           <span className="text-sm text-ink-mid">
-            Project instructions — injected into both models in every chat in this project
+            Project instructions - injected into both models in every chat in this project
           </span>
           <textarea
             className="mt-1 w-full bg-app border border-edge2 rounded-lg px-3 py-2 text-sm h-28 focus:outline-none focus:border-edge3"
@@ -40,7 +40,7 @@ export default function ProjectModal({ project, onSave, onClose }) {
         {!isNew && (
           <label className="block">
             <span className="text-sm text-ink-mid">
-              Project memory — auto-distilled from chats; edit or prune freely
+              Project memory - auto-distilled from chats; edit or prune freely
             </span>
             <textarea
               className="mt-1 w-full bg-app border border-edge2 rounded-lg px-3 py-2 text-sm h-40 font-mono focus:outline-none focus:border-edge3"

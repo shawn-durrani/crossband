@@ -2,8 +2,8 @@
 
 Generalizes the hard-coded setup service definitions (backend/routers/setup.py
 `SERVICES`) into ONE capability registry spanning every kind of integration the
-app has — LLM providers, audio, web search/research, MCP servers and the memory
-companion — and aggregates their status behind a single additive, read-only
+app has - LLM providers, audio, web search/research, MCP servers and the memory
+companion - and aggregates their status behind a single additive, read-only
 view (GET /api/integrations, see routers/integrations.py).
 
 This module is purely observational: nothing here changes how a model is
@@ -13,18 +13,18 @@ Deleting the endpoint + this module is a clean rollback.
 Health is normalized to a small, stable vocabulary so any UI can render every
 capability uniformly regardless of kind:
 
-  unconfigured — no credentials present yet (the setup wizard's job to fix); for
+  unconfigured - no credentials present yet (the setup wizard's job to fix); for
                  optional capabilities (memory) this just means "not detected".
-  unknown      — configured, but not verified this session (or a fact we don't
+  unknown      - configured, but not verified this session (or a fact we don't
                  have yet, e.g. cost provenance).
-  healthy      — configured and a capability-specific check passed.
-  unhealthy    — configured, but a live check FAILED. A bad key, a network
-                 blip or a downed server surfaces HERE, honestly — it never
+  healthy      - configured and a capability-specific check passed.
+  unhealthy    - configured, but a live check FAILED. A bad key, a network
+                 blip or a downed server surfaces HERE, honestly - it never
                  crashes the endpoint and never flips `configured` to false
                  (a failed probe is not proof a key is absent).
-  disabled     — present and usable, but switched off.
+  disabled     - present and usable, but switched off.
 
-Validation stays capability-specific — we reuse the exact live checks the setup
+Validation stays capability-specific - we reuse the exact live checks the setup
 wizard already uses (LLM: GET /models, audio: ElevenLabs /user, search: a probe
 query), the memory client's own /health probe, and the MCP manager's
 connect-time handshake/tool-list. There is no faked generic check.
@@ -33,7 +33,7 @@ Cost-provenance and onboarding lifecycle are real, derived values rather than
 placeholders: each LLM seat carries the provenance of its cost (from the price
 table / a self-hosted declaration), its stored lifecycle (trial vs onboarded)
 and whether it is eligible for future auto-selection. This module stays purely
-observational — it derives and reports, changing nothing.
+observational - it derives and reports, changing nothing.
 """
 
 import os
@@ -52,7 +52,7 @@ DISABLED = "disabled"
 
 # Capability metadata layered onto setup.SERVICES. setup.SERVICES stays the
 # single source of truth for env vars, the plain-English "what this is" copy and
-# the live validator — this table only adds the kind + display name that the
+# the live validator - this table only adds the kind + display name that the
 # unified view needs. Order here is the order capabilities are reported in.
 SETUP_CAPABILITIES = {
     sid: (c["kind"], c["name"]) for sid, c in CAPABILITIES.items()
@@ -64,7 +64,7 @@ SETUP_CAPABILITIES = {
 COST_PROVENANCE_NONE = prov.record(prov.UNKNOWN)
 LIFECYCLE_NONE = UNKNOWN
 
-# The capability contract: two additive, descriptive fields on every entry —
+# The capability contract: two additive, descriptive fields on every entry -
 # nothing existing is renamed and no `available`/`health` value changes.
 #
 #   chat_toggle  the per-chat flag this capability powers, so the reader can
@@ -73,10 +73,10 @@ LIFECYCLE_NONE = UNKNOWN
 #                the capability has no single chat toggle (LLM providers, MCP).
 #   requires[]   what the capability needs to work, expressed as dependencies.
 #                Credentials live HERE (env var NAMES only, never values), never
-#                as peer rows — this is what lets Web research collapse to two
+#                as peer rows - this is what lets Web research collapse to two
 #                rows instead of one row per key.
 #
-# Requirements can belong to an ANY-OF group: `web_search` is one such group —
+# Requirements can belong to an ANY-OF group: `web_search` is one such group -
 # any ONE of Tavily/Brave turns on shared web search. Reddit is a SEPARATE
 # optional enhancement, NOT a member of that OR: backend/tools.py reads only
 # TAVILY_API_KEY / BRAVE_API_KEY and emits web_search only if one is present,
@@ -93,7 +93,7 @@ CAPABILITY_WIRING = {
 def _requirement(*, env, label, satisfied, optional, setup_service,
                  any_of=None, type="credential"):
     """One dependency a capability needs to work. `env` carries the credential's
-    var NAMES only — never a value (a secret must never reach this view)."""
+    var NAMES only - never a value (a secret must never reach this view)."""
     return {
         "type": type,
         "label": label,
@@ -126,7 +126,7 @@ def requirements_met(requires) -> bool:
 
 def requirements_for_toggle(entries, toggle):
     """Every requirement of every entry that powers a given chat toggle, flattened
-    — so the any-of rule can be applied across capabilities that share a toggle
+    - so the any-of rule can be applied across capabilities that share a toggle
     (the {Tavily, Brave} search group spans two entries)."""
     return [r for e in entries if e.get("chat_toggle") == toggle
             for r in e.get("requires", [])]
@@ -136,7 +136,7 @@ def _health(configured: bool, valid, enabled: bool) -> str:
     """Normalize (configured, credential-validity, enabled) into one health word.
 
     A failed probe (valid is False) is `unhealthy`, never a claim that the
-    capability is unconfigured — the credential is still present."""
+    capability is unconfigured - the credential is still present."""
     if not configured:
         return UNCONFIGURED
     if not enabled:
@@ -188,7 +188,7 @@ def _seats_for(provider, participants, pricing):
     """Model seats wired to a provider, so an LLM capability shows which
     roster seats depend on its credential. Read-only projection of the
     participants rows, enriched with each seat's cost provenance and onboarding
-    lifecycle — no schema touched."""
+    lifecycle - no schema touched."""
     out = []
     for p in participants:
         if p.get("provider") != provider:
@@ -198,7 +198,7 @@ def _seats_for(provider, participants, pricing):
                                          base_url=p.get("base_url"),
                                          api_key_env=p.get("api_key_env"))
         # Lifecycle defaults to 'trial' for any row without an explicit value
-        # (older rows, or seats never onboarded) — never a silent upgrade.
+        # (older rows, or seats never onboarded) - never a silent upgrade.
         lifecycle = p.get("lifecycle") or prov.TRIAL
         out.append({
             "slug": p.get("slug"),
@@ -295,7 +295,7 @@ async def _setup_entry(sid, participants, *, probe, environ, session_valid,
 
 
 async def _memory_entry(memory, *, probe):
-    """The memory companion is optional — absence is by-design, not an error.
+    """The memory companion is optional - absence is by-design, not an error.
     It has no credential; `available` is whether the service answers /health."""
     try:
         available = await memory.probe(force=probe)
@@ -303,11 +303,11 @@ async def _memory_entry(memory, *, probe):
         available = False
     st = memory.status() if hasattr(memory, "status") else {}
     if available:
-        detail = ("Shared memory service is running — every chat starts with "
+        detail = ("Shared memory service is running - every chat starts with "
                   "your cheat-sheet, and models can recall/save facts.")
         health_valid = True
     else:
-        detail = ("Not detected — chats work fine, but the models start every "
+        detail = ("Not detected - chats work fine, but the models start every "
                   "conversation knowing nothing about you.")
         health_valid = None
     entry = _entry(
@@ -315,7 +315,7 @@ async def _memory_entry(memory, *, probe):
         description="Durable cross-chat memory: summary injection + recall/save/search.",
         configured=available, valid=health_valid, enabled=available,
         available=available, detail=detail,
-        # A companion service, not a credential — no `requires` to satisfy; its
+        # A companion service, not a credential - no `requires` to satisfy; its
         # availability is the /health probe above, not the any-of rule.
         chat_toggle="memory_enabled", requires=[],
     )
@@ -330,13 +330,13 @@ async def _memory_entry(memory, *, probe):
 def _mcp_entries(mcp, cfg=None):
     """One entry per configured MCP server. Read-only: reflects the manager's
     connect-time handshake/tool-list state (config.local.json is the only way to
-    add a server — no management surface here)."""
+    add a server - no management surface here)."""
     entries = []
     try:
         status = mcp.status() if mcp is not None else {}
     except Exception:
         status = {}
-    # Who a server's tools are FOR — a real distinction that was completely
+    # Who a server's tools are FOR - a real distinction that was completely
     # invisible. `mcp_servers` are offered to every model in the round;
     # `code_mcp` are mounted into a Claude Code guest's own session and no model
     # in the chat can call them. Same wire protocol, different blast radius.
@@ -347,7 +347,7 @@ def _mcp_entries(mcp, cfg=None):
         error = s.get("error")
         tools = s.get("tools") or []
         if connected:
-            valid, detail = True, f"Connected — {len(tools)} tool(s) available."
+            valid, detail = True, f"Connected - {len(tools)} tool(s) available."
         elif error:
             valid, detail = False, f"Not connected: {error}"
         else:
@@ -377,15 +377,15 @@ def _room_and_ability_entries(cfg, environ):
     """The three shipped capabilities that appeared in NO registry section.
 
     The coding guest, the GitHub tools and event ingestion are all real, live,
-    user-visible things this room can do — and all three existed only inside the
+    user-visible things this room can do - and all three existed only inside the
     `/api/state` config blob, so the console could not show their health and
     there was no single place listing what a room can actually do.
 
     Kinds are chosen to say what each thing IS, not where it came from:
-      code    — the guest TAKES A TURN, like a participant. It belongs with the
+      code    - the guest TAKES A TURN, like a participant. It belongs with the
                 room, not with the credential-shaped rows.
-      toolset — abilities the models can call (GitHub).
-      channel — ways things get INTO a chat without a model asking (ingest).
+      toolset - abilities the models can call (GitHub).
+      channel - ways things get INTO a chat without a model asking (ingest).
 
     Observational, like the rest of this module: `/api/state` keeps its existing
     `code`/`github` keys untouched, so nothing downstream changes.
@@ -400,19 +400,19 @@ def _room_and_ability_entries(cfg, environ):
     # them apart matters: `guest.status()` zeroes `repos` and `writes` on any
     # machine where the SDK or CLI is missing, so reading configuration out of it
     # would report a fully-configured room as "not set up" when the real problem
-    # is a missing CLI — the exact unconfigured-vs-unhealthy confusion this entry
+    # is a missing CLI - the exact unconfigured-vs-unhealthy confusion this entry
     # exists to prevent. (Caught by CI, which has no Claude Code installed.)
     repos = sorted(cfg.get("code_repos") or {})
     st = guest_mod.status(cfg)
     available = bool(st.get("available"))
     reason = (st.get("reason") or "").strip()
     if available:
-        detail = (f"Ready — can be summoned into a chat with the code toggle on "
+        detail = (f"Ready - can be summoned into a chat with the code toggle on "
                   f"({len(repos)} repo(s): {', '.join(repos)}).")
     elif repos:
         detail = f"Configured ({len(repos)} repo(s)), but not usable here: {reason}."
     else:
-        detail = "Not set up — add `code_repos` to config.local.json."
+        detail = "Not set up - add `code_repos` to config.local.json."
     entry = _entry(
         id="code:claude_code", display_name="Claude Code guest", kind="code",
         description=("A coding agent that joins a chat for one turn to read your "
@@ -445,15 +445,15 @@ def _room_and_ability_entries(cfg, environ):
     entries.append(_entry(
         id="toolset:github", display_name="GitHub tools", kind="toolset",
         description=("Lets the models read your issues and pull requests, and file, "
-                     "comment on and edit them — every write signed with which AI did it."),
+                     "comment on and edit them - every write signed with which AI did it."),
         configured=bool(gh_repos),
         valid=(True if gh_ok else (False if gh_repos else None)),
         enabled=True, available=gh_ok,
-        detail=(f"Ready — {len(gh_repos)} repo(s): {', '.join(gh_repos)}."
+        detail=(f"Ready - {len(gh_repos)} repo(s): {', '.join(gh_repos)}."
                 if gh_ok else
-                ("Configured, but no GitHub token could be resolved — log in with "
+                ("Configured, but no GitHub token could be resolved - log in with "
                  "`gh auth login` or set GH_TOKEN." if gh_repos else
-                 "Not set up — add `github_repos` to config.local.json.")),
+                 "Not set up - add `github_repos` to config.local.json.")),
         chat_toggle="code_enabled",
         requires=[_requirement(
             env=["GH_TOKEN", "GITHUB_TOKEN"], label="A GitHub token (or a logged-in `gh` CLI)",
@@ -466,11 +466,11 @@ def _room_and_ability_entries(cfg, environ):
     tokened = bool((cfg.get("ingest_token") or "").strip())
     entries.append(_entry(
         id="channel:ingest", display_name="Incoming events", kind="channel",
-        description=("An endpoint your own tools can post into a chat — a job watcher, "
+        description=("An endpoint your own tools can post into a chat - a job watcher, "
                      "a build system, a calendar. Crossband renders what arrives and "
                      "assigns it no meaning."),
         configured=True, valid=True, enabled=True, available=True,
-        detail=("Listening on POST /api/ingest — "
+        detail=("Listening on POST /api/ingest - "
                 + ("requests must carry the configured bearer token."
                    if tokened else
                    "no token set, so it accepts any local caller (loopback-only by default).")),
@@ -486,7 +486,7 @@ async def collect(*, participants, memory, mcp, probe=False,
                   cfg=None):
     """Aggregate every capability into the unified, read-only status list.
 
-    probe=False (default): report KNOWN state cheaply — session validity for
+    probe=False (default): report KNOWN state cheaply - session validity for
       setup services, the memory client's cached /health, and the MCP manager's
       already-established connection state. No new external LLM/search calls.
     probe=True: additionally run each configured setup capability's OWN live

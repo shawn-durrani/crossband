@@ -1,13 +1,13 @@
 """Stopping the app must actually stop it.
 
 The bug: SIGTERM closed the listening socket within a second and then the
-process sat there indefinitely. Cause — uvicorn's graceful shutdown waits for
+process sat there indefinitely. Cause - uvicorn's graceful shutdown waits for
 open connections to finish, and `/api/events/stream` is a connection that never
 finishes by design (every open browser tab holds one), with uvicorn's
 `timeout_graceful_shutdown` defaulting to None: wait forever. Because the
 lifespan's `finally` only runs after that drain, the data lock was never
 released either, so the next start failed with "another instance is already
-running" — naming a pid the operator had just killed. Reproduced with one curl
+running" - naming a pid the operator had just killed. Reproduced with one curl
 client on the stream (never exited, lock still held after 20s) and again with no
 client attached (exited in ~2s), which is what isolated the cause.
 
@@ -21,7 +21,7 @@ other two are the reasons the failure was so hard to read:
 
 What is deliberately NOT tested here: the real signal path (a test that sends
 itself SIGTERM under uvicorn is a flaky way to assert something the two halves
-below already pin — `handle_exit` calling begin_shutdown, and begin_shutdown
+below already pin - `handle_exit` calling begin_shutdown, and begin_shutdown
 ending the stream). Proved end to end: with this change,
 SIGTERM with a stream client attached exits promptly instead of never.
 """
@@ -42,7 +42,7 @@ from backend.config import Settings
 @pytest.fixture
 def db_app(tmp_path):
     """Configure the database the way create_app does, without running the HTTP
-    lifespan — these tests bind the loop themselves (see tests/test_events.py)."""
+    lifespan - these tests bind the loop themselves (see tests/test_events.py)."""
     return create_app(Settings(data_dir=str(tmp_path / "data"),
                                memory_url="http://127.0.0.1:1"))
 
@@ -61,7 +61,7 @@ def _new_chat_id():
 
 def test_stream_ends_when_shutdown_begins(db_app):
     """The heart of the fix. A stream that is WAITING, no new messages, nothing to
-    yield — must finish when begin_shutdown() fires, without the client
+    yield - must finish when begin_shutdown() fires, without the client
     disconnecting first. The heartbeat is set far longer than the timeout, so
     passing proves the shutdown wake-up ended it rather than a keepalive tick."""
     async def go():
@@ -98,7 +98,7 @@ def test_stream_does_not_start_once_shutdown_has_begun(db_app):
 def test_bind_loop_clears_the_flag_so_the_next_process_streams(db_app):
     """The flag is module state in a process that hosts many apps in the test
     suite (and one app per real process). A stop left set would make every
-    later stream end instantly — a far worse bug than the one being fixed."""
+    later stream end instantly - a far worse bug than the one being fixed."""
     async def go():
         events.begin_shutdown()
         assert events.shutting_down()
@@ -117,7 +117,7 @@ def test_bind_loop_clears_the_flag_so_the_next_process_streams(db_app):
 
 
 def test_begin_shutdown_is_safe_with_no_loop_bound():
-    """It runs in a signal handler, so it must never raise — including before
+    """It runs in a signal handler, so it must never raise - including before
     any lifespan has bound a loop, and when called twice."""
     events.unbind_loop()
     events.begin_shutdown()
@@ -184,7 +184,7 @@ def test_lock_waits_for_a_predecessor_that_is_still_shutting_down(tmp_path):
 
 def test_lock_message_names_the_live_holder_and_what_to_do(tmp_path):
     """When something really IS still running, say so with its pid and the two
-    commands that end it — this text is read mid-deploy, when a wrong or vague
+    commands that end it - this text is read mid-deploy, when a wrong or vague
     message costs the most."""
     lock_path = str(tmp_path / ".lock")
     held = acquire_lock(lock_path)
@@ -203,7 +203,7 @@ def test_lock_message_names_the_live_holder_and_what_to_do(tmp_path):
 def test_lock_message_does_not_claim_a_running_instance_when_the_pid_is_dead(tmp_path):
     """The failure that sent the operator hunting for a second instance that did
     not exist. If the recorded pid isn't alive, the message must NOT say another
-    instance is running — it must point at whoever really holds the file."""
+    instance is running - it must point at whoever really holds the file."""
     lock_path = str(tmp_path / ".lock")
     held = acquire_lock(lock_path)
     try:

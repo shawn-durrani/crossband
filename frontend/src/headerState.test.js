@@ -16,7 +16,7 @@ test('uses the freshly loaded activeChat when it matches the active id', () => {
   assert.equal(resolveHeaderTitle(activeChat, 2, chats), 'Weekend hiking plans')
 })
 
-test('lagging activeChat never leaks a stale title — sidebar copy wins by id', () => {
+test('lagging activeChat never leaks a stale title - sidebar copy wins by id', () => {
   // The reported bug: user switched to chat 1, but activeChat is still chat 2
   // (its async getChat has not landed yet). The header must show chat 1.
   const staleActiveChat = { id: 2, title: 'Weekend hiking plans' }
@@ -41,7 +41,7 @@ test('brief loading gap (id set, not yet in the sidebar list) is neutral', () =>
   assert.equal(resolveHeaderTitle(null, 99, chats), '')
 })
 
-test('membership is strict — no numeric/string coercion', () => {
+test('membership is strict - no numeric/string coercion', () => {
   const activeChat = { id: 2, title: 'Weekend hiking plans' }
   // string "2" must not match numeric id 2
   assert.equal(resolveHeaderChat(activeChat, '2', chats), null)

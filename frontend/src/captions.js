@@ -3,7 +3,7 @@
 // Each finished reply (or the user's transcribed utterance) becomes a caption
 // that flashes up, drifts gently upward over the HOLD, then fades out and is
 // removed. Only the last KEEP are ever on screen. This is UI-only decoration
-// layered on top of the real voice pipeline — it never touches voice.js or the
+// layered on top of the real voice pipeline - it never touches voice.js or the
 // SSE stream; App feeds it from the same events it already handles.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -12,7 +12,7 @@ export const CAPTION_HOLD_MS = 10000 // how long a caption lives before fading (
 export const CAPTION_KEEP = 2        // how many captions stay on screen (mockup: last 2)
 export const HISTORY_KEEP = 200      // faded captions stay recallable (swipe up on the call screen)
 
-// Pure helper: given the current captions and a new one, return the next list —
+// Pure helper: given the current captions and a new one, return the next list -
 // trimmed to `keep` (oldest dropped). Extracted so the trimming rule is unit
 // testable without React or timers.
 export function pushCaption(captions, caption, keep = CAPTION_KEEP) {

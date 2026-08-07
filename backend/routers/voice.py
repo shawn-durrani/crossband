@@ -54,7 +54,7 @@ def voice_status(request: Request):
     try:
         out["quota"] = voice.subscription()
     except Exception:
-        out["quota"] = None  # key may lack User:Read — fine
+        out["quota"] = None  # key may lack User:Read - fine
     return out
 
 
@@ -120,7 +120,7 @@ def voice_trace_ingest(payload: dict = Body(...)):
 
     The browser is the only place that sees a voice turn end to end, so it
     measures the stage durations and POSTs them here (best-effort, fire-and-
-    forget from the client's side). We persist ONLY content-free stage timings —
+    forget from the client's side). We persist ONLY content-free stage timings -
     voice_trace.sanitize enforces that floor, dropping anything that isn't an
     allowlisted stage + a numeric duration + bounded provider/model labels. No
     transcript or reply text can enter this table.
@@ -149,9 +149,9 @@ def voice_trace_ingest(payload: dict = Body(...)):
 def voice_trace_summary(window_hours: float = 24.0):
     """Development diagnostics: stage-level p50/p95 latency over the last
     `window_hours`, segmented by model and TTS provider. Backs a dev dashboard
-    and answers the core question — which stage dominates the wait.
+    and answers the core question - which stage dominates the wait.
 
-    Delegates to diagnostics.voice_latency_summary — shared with the
+    Delegates to diagnostics.voice_latency_summary - shared with the
     get_diagnostic MCP tool's "voice_latency" diagnostic."""
     return diagnostics.voice_latency_summary(window_hours)
 
@@ -215,12 +215,12 @@ async def tts_relay(ws: WebSocket):
                             await ws.send_json(out)
                         if data.get("isFinal") or data.get("error"):
                             return
-                    # ElevenLabs closed without isFinal — still tell the client we're done
+                    # ElevenLabs closed without isFinal - still tell the client we're done
                     await ws.send_json({"final": True})
                 except (WebSocketDisconnect, RuntimeError):
                     # client closed the socket mid-stream (barge-in / turn end / a new
                     # turn tearing down this one). Sending after the ASGI close raises
-                    # RuntimeError — stop the pump cleanly instead of dying unhandled.
+                    # RuntimeError - stop the pump cleanly instead of dying unhandled.
                     return
 
             up = asyncio.create_task(pump_up())
@@ -260,7 +260,7 @@ async def stt_stream_relay(ws: WebSocket):
     """Browser <-> backend <-> ElevenLabs Scribe v2 Realtime STT relay. The client
     streams base64 PCM-16 mono chunks; a frame with commit=true ends an utterance
     and the committed transcript streams back. Opt-in, parallel alternative to the
-    batch /stt POST — the key stays server-side (xi-api-key header). One session
+    batch /stt POST - the key stays server-side (xi-api-key header). One session
     handles many utterances, so it stays open until the client closes."""
     if not _ws_local(ws):
         await ws.close(code=4403)
@@ -278,7 +278,7 @@ async def stt_stream_relay(ws: WebSocket):
     chat_id = init.get("chat_id")
     seconds = 0.0
     up = down = None
-    last_partial = ""  # freshest partial transcript — the prewarm query
+    last_partial = ""  # freshest partial transcript - the prewarm query
     try:
         async with websockets.connect(
             voice.STT_WS_URL,
@@ -310,13 +310,13 @@ async def stt_stream_relay(ws: WebSocket):
                         payload["previous_text"] = msg["previous_text"]
                     first = False
                     if payload["commit"] and chat_id:
-                        # Speech just ended — start the ambient recall
+                        # Speech just ended - start the ambient recall
                         # NOW, overlapped with ElevenLabs finalizing the
                         # transcript, keyed on the freshest partial. The round
                         # only adopts it if it matches the final text.
                         # Best-effort BY CONSTRUCTION: a prewarm is an
                         # optimization, and no failure in it may ever break
-                        # live transcription (it did once — a missing import
+                        # live transcription (it did once - a missing import
                         # killed the relay on the first commit frame).
                         # Content-free INFO line: proves the hook fired and
                         # whether there was any partial text to prewarm from.
@@ -361,7 +361,7 @@ async def stt_stream_relay(ws: WebSocket):
     except (WebSocketDisconnect, websockets.ConnectionClosed):
         pass
     except Exception as e:
-        # The client hears about this ("realtime transcription error") — the
+        # The client hears about this ("realtime transcription error") - the
         # server must too, or relay deaths are undiagnosable (they were).
         log.warning("stt relay died for chat %s: %s", chat_id, e, exc_info=True)
         try:

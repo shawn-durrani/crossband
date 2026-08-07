@@ -4,7 +4,7 @@ import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './vo
 import { VoiceTrace } from './voiceTrace.js'
 
 // Hands-free voice session: open mic with VAD auto-send (no push-to-talk),
-// streamed TTS playback per participant voice, and barge-in — speak over the
+// streamed TTS playback per participant voice, and barge-in - speak over the
 // models to cut them off. Voice detection requires sustained low-frequency
 // (speech-shaped) energy, so keyboard clicks and other transients are ignored.
 
@@ -14,7 +14,7 @@ const LEVEL = 0.013             // RMS floor while listening
 const INTERRUPT_LEVEL = 0.03    // stricter floor while AI audio is playing
 // Auto-calibration ceilings. The legacy app used the fixed floors above and
 // never mis-heard; calibration may only harden them a LITTLE against a noisy
-// room — an unbounded floor (the old 0.08 cap ≈ 6× base) read soft speech as
+// room - an unbounded floor (the old 0.08 cap ≈ 6× base) read soft speech as
 // silence: turns cut off mid-sentence and quiet speakers never opened one.
 const LEVEL_CEIL = 0.035
 const INTERRUPT_CEIL = 0.06
@@ -38,7 +38,7 @@ function wsBase() {
 class StreamPlayer {
   // `sink` is a single shared, pre-unlocked <audio> element. iOS Safari unlocks
   // autoplay PER ELEMENT, so every reply must reuse the one element that was
-  // unlocked during the start-button gesture — a fresh Audio() per reply would
+  // unlocked during the start-button gesture - a fresh Audio() per reply would
   // be locked again and silently blocked.
   constructor(sink) {
     this.audio = sink || new Audio()
@@ -48,7 +48,7 @@ class StreamPlayer {
     if (this.useMse) this.mediaSource = new MediaSource()
     // DO NOT touch this.audio here. The sink is shared by every reply in the
     // round, and players are constructed while the previous reply is still
-    // playing — assigning audio.src now would hijack the element mid-speech
+    // playing - assigning audio.src now would hijack the element mid-speech
     // (speaker 2 goes silent, its play() never resolves, the chain jams and
     // interrupt dies with it). The sink becomes ours only inside play().
   }
@@ -83,7 +83,7 @@ class StreamPlayer {
 
   async play(onPlayFailed, onStart) {
     // Deterministic teardown of the previous reply's state on the shared
-    // element BEFORE claiming it — stale ended/error events from the last
+    // element BEFORE claiming it - stale ended/error events from the last
     // src must not leak into our turn and resolve it unplayed (the residual
     // race the legacy per-reply-element design was immune to).
     this.audio.onended = null
@@ -114,7 +114,7 @@ class StreamPlayer {
         }
       }
       this.audio.onended = finish
-      // Only a REAL error on OUR source ends the turn — a stray event from
+      // Only a REAL error on OUR source ends the turn - a stray event from
       // the src swap must not silently skip this speaker.
       this.audio.onerror = () => {
         if (this.audio.src === ourSrc && this.audio.error) finish()
@@ -139,7 +139,7 @@ class StreamPlayer {
   }
 }
 
-// ~60ms of silence — played within a user gesture to unlock <audio> autoplay
+// ~60ms of silence - played within a user gesture to unlock <audio> autoplay
 // for the session (browsers block audio until the user interacts with the page).
 const SILENT_WAV = 'data:audio/wav;base64,UklGRuQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YcADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
@@ -156,7 +156,7 @@ export default class VoiceController {
     this.onPartial = onPartial            // live preview of the in-progress transcript (optional)
     this.onSttFallback = onSttFallback     // realtime gave up → UI should reflect batch mode
     // One shared audio sink, unlocked once in the start gesture and reused by
-    // every reply — required for iOS Safari's per-element autoplay policy.
+    // every reply - required for iOS Safari's per-element autoplay policy.
     this.sink = new Audio()
     this.sink.setAttribute('playsinline', '')
     this.playbackRate = 1  // session speech speed (dock slider); pitch preserved
@@ -171,7 +171,7 @@ export default class VoiceController {
     this.silenceMs = DEFAULT_SILENCE_MS // auto mode: how long a pause before the turn ends
     this.voicedHistory = [] // {t, voiced}
     // Auto-calibrated VAD floors: seeded from the constants, then raised above
-    // the room's ambient noise (EMA of non-voiced frames) — a TV in the
+    // the room's ambient noise (EMA of non-voiced frames) - a TV in the
     // background no longer trips turn detection. No user knob.
     this.levelFloor = LEVEL
     this.interruptFloor = INTERRUPT_LEVEL
@@ -186,14 +186,14 @@ export default class VoiceController {
     this._dropCommit = false  // drop the next committed transcript (utterance too short)
     this.muted = false        // hard mute: mic track disabled, nothing detected/sent
     // Hold-and-retry: utterances whose /stt POST failed on NETWORK (a dead
-    // zone) wait here as audio blobs and retry until the tunnel returns —
+    // zone) wait here as audio blobs and retry until the tunnel returns -
     // nothing you said is ever silently dropped.
     this.onHeld = onHeld
     this.heldUtterances = []
     this._heldTimer = null
     // Per-turn latency trace: records content-free stage timings across
     // this turn's timeline and POSTs them for durable diagnostics. Best-effort
-    // and fully isolated — it can never disturb capture, barge-in, or playback.
+    // and fully isolated - it can never disturb capture, barge-in, or playback.
     this._trace = new VoiceTrace({
       now: () => (typeof performance !== 'undefined' && performance.now
         ? performance.now() : Date.now()),
@@ -227,13 +227,13 @@ export default class VoiceController {
     if (this.muted) {
       if (this.speechStart) {
         // Muting right after speaking is phone-call muscle memory for "my
-        // turn is done" — finalize and SEND the captured words before the
+        // turn is done" - finalize and SEND the captured words before the
         // mic goes dark. (Road-tested the hard way: tapping mute inside the
         // 2s silence window silently killed the utterance. Words spoken are
         // never discarded; _finalizeUtterance still drops sub-500ms blips.)
         this.finalizeNow()
       } else {
-        // nothing captured — just clear pre-onset state so unmute starts clean
+        // nothing captured - just clear pre-onset state so unmute starts clean
         this.voicedHistory = []
         this._dropCommit = true
       }
@@ -278,7 +278,7 @@ export default class VoiceController {
         const text = (msg.final || '').trim()
         if (!this._dropCommit && text) {
           // Transcript is final; sendText → POST /send fires synchronously next,
-          // so this is also the dispatch instant (no separate dispatch mark —
+          // so this is also the dispatch instant (no separate dispatch mark -
           // see voiceTrace.build's final_to_first_token note). The turn_id
           // travels with the POST so the server can attribute its own
           // context-assembly/provider-TTFT split to this SAME turn.
@@ -295,18 +295,18 @@ export default class VoiceController {
     ws.onerror = () => this._fallbackToBatch()
     ws.onclose = () => {
       this.sttWs = null
-      // A socket we did NOT close is a dropped connection — a backgrounded tab
+      // A socket we did NOT close is a dropped connection - a backgrounded tab
       // is the common cause. Left alone, the ScriptProcessor keeps running and
       // feeding a socket that no longer exists: the mic works, the context
       // runs, and transcripts simply never arrive. Errors are not
-      // handled here — those fall back to the batch recorder, which is the
+      // handled here - those fall back to the batch recorder, which is the
       // right answer for a failing service rather than a sleeping tab.
       if (shouldReopenAfterClose({
         active: this.active, sttRealtime: this.sttRealtime,
         sttClosing: this._sttClosing,
       })) {
         if (this.sttProc) { try { this.sttProc.disconnect() } catch { /* */ } this.sttProc = null }
-        // Only reopen while visible — a hidden tab would just lose it again,
+        // Only reopen while visible - a hidden tab would just lose it again,
         // and _recover() reopens on return anyway.
         if (typeof document === 'undefined' || !document.hidden) {
           clearTimeout(this._sttReopenTimer)
@@ -366,7 +366,7 @@ export default class VoiceController {
     }
   }
 
-  // A realtime failure must never break a live session — drop to the batch recorder.
+  // A realtime failure must never break a live session - drop to the batch recorder.
   _fallbackToBatch() {
     if (!this.sttRealtime) return
     this.sttRealtime = false
@@ -382,7 +382,7 @@ export default class VoiceController {
     }
   }
 
-  // Begin streaming this utterance — flush the short pre-onset buffer first so the
+  // Begin streaming this utterance - flush the short pre-onset buffer first so the
   // ~280ms the VAD took to confirm speech isn't clipped.
   _sttStartStreaming() {
     // A fresh utterance starts its frame count at zero even when streaming
@@ -428,7 +428,7 @@ export default class VoiceController {
 
   async start() {
     // Unlock audio while we still hold the start-button gesture, and on any
-    // later click — so a session that auto-resumes on reload (no gesture) isn't
+    // later click - so a session that auto-resumes on reload (no gesture) isn't
     // left permanently muted with no way to recover. Makes the "click anywhere"
     // banner actually do something.
     this._primeAudio()
@@ -439,7 +439,7 @@ export default class VoiceController {
     })
     this.audioCtx = new AudioContext()
     // Resume the context we just built. _primeAudio ran BEFORE it existed (it
-    // has to — the sink unlock needs the start gesture), so without this the
+    // has to - the sink unlock needs the start gesture), so without this the
     // new context keeps whatever state it was born in. On mobile that is
     // 'suspended', and a suspended context means no VAD, no STT capture and no
     // playback for the whole session.
@@ -474,7 +474,7 @@ export default class VoiceController {
           window.removeEventListener('pointerdown', this._unlockHandler)
           this._unlockHandler = null
         }
-      }).catch(() => { /* not granted yet — a later real click retries */ })
+      }).catch(() => { /* not granted yet - a later real click retries */ })
     } catch { /* */ }
   }
 
@@ -527,7 +527,7 @@ export default class VoiceController {
     clearTimeout(this._heldTimer)
     this._heldTimer = null
     if (this.heldUtterances.length) {
-      this.onError?.(`${this.heldUtterances.length} held message(s) discarded — the call ended before the connection returned.`)
+      this.onError?.(`${this.heldUtterances.length} held message(s) discarded - the call ended before the connection returned.`)
     }
     this.heldUtterances = []
     this.onHeld?.(0)
@@ -561,7 +561,7 @@ export default class VoiceController {
     if (!this.stream) return
     // Stop the previous recorder first. Otherwise a rotation during silence
     // leaves the old recorder running, and its late dataavailable chunks land
-    // in the new recChunks array — interleaving two streams into one webm with
+    // in the new recChunks array - interleaving two streams into one webm with
     // a misplaced/missing header. ElevenLabs then rejects it as invalid_audio
     // (surfaced as a 502 on /stt) and the utterance is silently lost.
     if (this.recorder && this.recorder.state !== 'inactive') {
@@ -591,7 +591,7 @@ export default class VoiceController {
     this.lastRms = rms // live level for the UI's mic-reactive indicator
     let floor = this.playing > 0 ? this.interruptFloor : this.levelFloor
     // Hysteresis: OPENING a turn needs the full floor, but a turn already in
-    // progress holds at 70% — trailing-off sentence ends must not read as the
+    // progress holds at 70% - trailing-off sentence ends must not read as the
     // 2s silence that cuts the speaker off mid-thought.
     if (this.speechStart && this.playing === 0) floor *= 0.7
     if (rms < floor) return false
@@ -639,7 +639,7 @@ export default class VoiceController {
       // stops tripping turn detection while a quiet room keeps full sensitivity.
       // ONLY while the room is actually quiet: during playback the "ambient"
       // the mic hears is the models' own audio bleeding past echo cancellation
-      // — learning from it ratchets interruptFloor up until human speech can't
+      // - learning from it ratchets interruptFloor up until human speech can't
       // cross it and barge-in dies (the legacy app's fixed floor never drifted).
       if (!voiced && this.playing === 0 && !this.roundActive) {
         const r = this.lastRms || 0
@@ -657,7 +657,7 @@ export default class VoiceController {
       }
 
       if (this.playing > 0 || this.roundActive) {
-        // models are talking/generating — listen only for a barge-in
+        // models are talking/generating - listen only for a barge-in
         if (this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)) {
           this.speechStart = now - INTERRUPT_CONFIRM_MS
           this.lastVoice = now
@@ -710,7 +710,7 @@ export default class VoiceController {
         // changes). Committing would transcribe nothing and lose the
         // question: salvage from the parallel batch recorder, and rebuild
         // the mic graph so the NEXT turn streams again.
-        console.warn(`voice: 0 frames sent for a ${Math.round(speechMs)}ms utterance — salvaging via batch recorder, rebuilding capture`)
+        console.warn(`voice: 0 frames sent for a ${Math.round(speechMs)}ms utterance - salvaging via batch recorder, rebuilding capture`)
         this._rebuildSttProcessor()
         this._state('transcribing')
         await this._salvageUtterance(speechMs)
@@ -724,7 +724,7 @@ export default class VoiceController {
         this._sttCommitTimer = setTimeout(() => {
           if (this.active && this.state === 'transcribing') {
             // Realtime never answered (socket died in a dead zone). The batch
-            // recorder ran the whole time — salvage its copy of the utterance
+            // recorder ran the whole time - salvage its copy of the utterance
             // instead of silently losing what was said.
             this._dropCommit = true // a late realtime final must not double-send
             this._salvageUtterance(speechMs)
@@ -745,7 +745,7 @@ export default class VoiceController {
   }
 
   // POST one utterance to /stt; on a NETWORK failure hold the audio and retry
-  // until the tunnel returns. HTTP errors (bad audio) surface and drop —
+  // until the tunnel returns. HTTP errors (bad audio) surface and drop -
   // retrying identical bytes can't fix those.
   async _transcribeOrHold(blob, speechMs) {
     try {
@@ -798,7 +798,7 @@ export default class VoiceController {
         else if (!res.ok) this.onError?.(`Held message failed to transcribe (${data.detail || res.status})`)
         this._heldTimer = setTimeout(tick, this.heldUtterances.length ? 500 : 0)
       } catch {
-        this._heldTimer = setTimeout(tick, 4000) // still offline — keep holding
+        this._heldTimer = setTimeout(tick, 4000) // still offline - keep holding
       }
     }
     this._heldTimer = setTimeout(tick, 3000)
@@ -829,7 +829,7 @@ export default class VoiceController {
     } else if (ev.type === 'speaker_end' || ev.type === 'error') {
       const p = this._pendingSpeaker
       if (p && p.slug === ev.speaker && !p.started) {
-        this._pendingSpeaker = null // ellipsis/empty reply — never opened, nothing to flush
+        this._pendingSpeaker = null // ellipsis/empty reply - never opened, nothing to flush
       } else {
         this.sockets.get(ev.speaker)?.send({ flush: true, done: true })
       }
@@ -837,7 +837,7 @@ export default class VoiceController {
     // 'work_status' deliberately has NO playback branch here: it's a
     // structured liveness signal for the text/UI chip only. Speaking it
     // (a deterministic phrase, or an optional model-supplied voice_handoff
-    // racing it) is a separate product decision, not yet made — see
+    // racing it) is a separate product decision, not yet made - see
     // docs/DECISIONS.md. gateEvent() above still advances the pure state
     // machine for it (a harmless no-op, same as tool_activity/guest_job).
   }
@@ -846,7 +846,7 @@ export default class VoiceController {
     const p = this._pendingSpeaker
     if (p && p.slug === slug && !p.started) {
       p.text += text
-      if (/[^.…\s]/.test(p.text)) { // real (non-ellipsis) content arrived — start speaking now
+      if (/[^.…\s]/.test(p.text)) { // real (non-ellipsis) content arrived - start speaking now
         p.started = true
         this._pendingSpeaker = null
         this._beginSpeaker(slug)
@@ -861,7 +861,7 @@ export default class VoiceController {
     const gate = gateRoundDone()
     this.roundActive = gate.roundActive
     this.dropQueue = gate.dropQueue
-    // The TEXT/round stream has ended — but TTS and the sequential per-speaker
+    // The TEXT/round stream has ended - but TTS and the sequential per-speaker
     // playChain keep running AFTER this, so the later speakers' play_invoked/
     // playback/queue-wait marks haven't happened yet. Flushing here
     // would POST the trace before they exist and lose them for every 2+ speaker
@@ -877,7 +877,7 @@ export default class VoiceController {
                         () => this._trace.flush(turn))
     // Force the resume rather than going through _maybeResume: a round where
     // nobody speaks aloud (e.g. a benched model's unvoiced "…" reply) never
-    // passes through 'speaking', so the state is still 'transcribing' here —
+    // passes through 'speaking', so the state is still 'transcribing' here -
     // and _maybeResume refuses to leave that state. The round is over by
     // definition now; anything still buffered plays via the playChain check.
     if (this.active && this.playing === 0) this._state('listening')
@@ -889,7 +889,7 @@ export default class VoiceController {
     const player = new StreamPlayer(this.sink)
     this.players.set(slug, player)
     const ws = new WebSocket(`${wsBase()}/api/voice/tts`)
-    // Deltas start arriving before the websocket handshake completes — buffer
+    // Deltas start arriving before the websocket handshake completes - buffer
     // everything until open, or the start of every reply gets silently dropped.
     const pending = []
     let open = false
@@ -902,7 +902,7 @@ export default class VoiceController {
       else if (!open) pending.push(s)
       lastSend = Date.now()
     }
-    // ElevenLabs drops the stream after 20s without input — keep it alive while
+    // ElevenLabs drops the stream after 20s without input - keep it alive while
     // the model thinks or runs tools mid-reply.
     const keepalive = setInterval(() => {
       if (!finished && open && ws.readyState === WebSocket.OPEN && Date.now() - lastSend > 12000) {
@@ -939,12 +939,12 @@ export default class VoiceController {
     this.playChain = this.playChain
       .then(() => {
         if (this.dropQueue) return undefined
-        // The shared sink is now handed to this speaker — its queued audio can
+        // The shared sink is now handed to this speaker - its queued audio can
         // begin. This is play INVOKED, not yet audible: the gap between its
         // first_audio (ready) and here is time it spent queued behind the prior
         // speaker (the trace's playback_queue_wait stage).
         this._trace.speakerMark(slug, 'play_invoked', this._traceMeta(slug))
-        // This participant's audio is now the one actually playing — tint the orb
+        // This participant's audio is now the one actually playing - tint the orb
         // to them for the FULL duration of their speech (not just their text).
         this.onSpeaker?.(slug)
         // Per-agent volume (voice_gain 0.2–1.0 normalizes loud voices) and the
@@ -955,7 +955,7 @@ export default class VoiceController {
         this.sink.playbackRate = this.playbackRate || 1
         return player.play(
           (err) => this.onError?.(playbackFailureMessage(err)),
-          // AUDIBLE start (the element's 'playing' event) — the true end of the
+          // AUDIBLE start (the element's 'playing' event) - the true end of the
           // end-to-end latency, not the earlier play() invocation above.
           () => this._trace.speakerMark(slug, 'playback', this._traceMeta(slug)),
         )

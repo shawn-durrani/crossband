@@ -1,7 +1,7 @@
 """Manage MCP servers from the Connections page.
 
-Until now the two MCP slots — `mcp_servers` (resident models) and `code_mcp`
-(summoned guests) — were hand-edited in config.local.json and applied only at
+Until now the two MCP slots - `mcp_servers` (resident models) and `code_mcp`
+(summoned guests) - were hand-edited in config.local.json and applied only at
 startup; the difference between "configured" and "working" was invisible until
 a chat quietly lacked a tool. This router gives the Connections page the full
 loop: list both slots with live status, add/edit/remove entries (written
@@ -23,7 +23,7 @@ non-loopback caller sees env var NAMES only, never their values.
 
 Restarts: connected sessions are owned by the startup McpManager, so changes
 apply on the next service restart. GET reports `restart_required` honestly by
-comparing the file against what's actually running — the UI shows it loudly
+comparing the file against what's actually running - the UI shows it loudly
 rather than letting a stale process masquerade as the new config.
 """
 
@@ -168,6 +168,6 @@ async def test_server(spec: ServerSpec, request: Request):
     _require_loopback(request)
     try:
         return await asyncio.wait_for(_probe(spec), timeout=PROBE_TIMEOUT_S * 2)
-    except Exception as e:  # noqa: BLE001 — every failure is an honest answer here
+    except Exception as e:  # noqa: BLE001 - every failure is an honest answer here
         detail = str(e).strip() or e.__class__.__name__
         return {"ok": False, "error": detail[:400]}

@@ -68,7 +68,7 @@ def is_convertible(mime: str, filename: str = "") -> bool:
 def _target_format(img: Image.Image, mime: str) -> tuple[str, str]:
     """(PIL format, mime) for the output.
 
-    PNGs with transparency stay PNG — flattening alpha onto a background would
+    PNGs with transparency stay PNG - flattening alpha onto a background would
     visibly change a screenshot or a logo. Everything else becomes JPEG, which
     is what phone photographs already are.
     """
@@ -107,7 +107,7 @@ def capture_date(img: Image.Image) -> str | None:
 def downscale(data: bytes, mime: str, filename: str = "") -> dict | None:
     """Return {data, mime, filename, width, height, capture_date} or None.
 
-    ``None`` means "store the original unchanged" — not an image we convert, or
+    ``None`` means "store the original unchanged" - not an image we convert, or
     anything went wrong. Failure must never cost the user their upload.
     """
     if not is_convertible(mime, filename):
@@ -116,7 +116,7 @@ def downscale(data: bytes, mime: str, filename: str = "") -> dict | None:
         img = Image.open(io.BytesIO(data))
         img.load()
     except Exception as exc:
-        log.warning("image open failed (%s) — storing original: %s", filename, exc)
+        log.warning("image open failed (%s) - storing original: %s", filename, exc)
         return None
 
     was_heic = (mime or "").lower() in ("image/heic", "image/heif") or \
@@ -124,7 +124,7 @@ def downscale(data: bytes, mime: str, filename: str = "") -> dict | None:
 
     # Only touch an image when it actually buys something. Token cost scales
     # with DIMENSIONS, not bytes, so re-encoding a picture already within the
-    # model's resolution saves no tokens and only costs quality — which matters
+    # model's resolution saves no tokens and only costs quality - which matters
     # most for the screenshots of text people paste. Convert when the image is
     # too big to be sent whole, or when the format is unusable (HEIC).
     try:
@@ -154,11 +154,11 @@ def downscale(data: bytes, mime: str, filename: str = "") -> dict | None:
             img.save(buf, "PNG", optimize=True)
         out = buf.getvalue()
     except Exception as exc:
-        log.warning("image downscale failed (%s) — storing original: %s", filename, exc)
+        log.warning("image downscale failed (%s) - storing original: %s", filename, exc)
         return None
 
     # Never make a file bigger. A detailed PNG can re-encode larger; in that
-    # case the original is the better thing to store — unless it is HEIC, which
+    # case the original is the better thing to store - unless it is HEIC, which
     # no provider accepts and must be converted regardless.
     if len(out) >= len(data) and not was_heic:
         return None

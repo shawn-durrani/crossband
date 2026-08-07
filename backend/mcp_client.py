@@ -3,14 +3,14 @@
 Config (config.local.json, private) lists stdio servers; Crossband connects at
 startup, discovers their tools, and offers them to every participant
 namespaced as `mcp__<server>__<tool>`. Calls dispatch through the existing
-run_tool pipeline and render as ordinary tool chips — no new UI (a
+run_tool pipeline and render as ordinary tool chips - no new UI (a
 plugins-style UX remains a separate, open question). The public repo never
 knows what any server means: names, tools, and descriptions all come from the
 servers at runtime.
 
 Design notes:
 - MCP at the edge, native at the core: the built-in tool families
-  (web/memory/github/code) stay native — this layer is only for EXTERNAL
+  (web/memory/github/code) stay native - this layer is only for EXTERNAL
   capabilities, mirroring Membro's own choice (MCP adapter for outsiders,
   native interface for itself).
 - Lifecycle lives in ONE owning task per app (connect → serve → close in the
@@ -112,11 +112,11 @@ class McpManager:
 
     def activity_label(self, server_name: str) -> str | None:
         """Trusted, operator-configured display label for this server's work
-        (config.local.json's mcp_servers[name]["label"]) — the work-status
+        (config.local.json's mcp_servers[name]["label"]) - the work-status
         event shows this INSTEAD OF a generic fallback whenever a server has
         one, because Crossband deliberately never learns what a third-party
         MCP server actually does (module docstring above); only the person
-        who configured it can honestly describe it. None when unset —
+        who configured it can honestly describe it. None when unset -
         backend/work_status.py falls back to its own generic label."""
         spec = self.servers.get(server_name) or {}
         label = (spec.get("label") or "").strip()

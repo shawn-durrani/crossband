@@ -1,21 +1,21 @@
 """get_diagnostic: the always-mounted, read-only MCP tool that
 gives a summoned Claude Code guest a SCOPED window onto Crossband's own local
-diagnostics — never a general shell/curl, never a URL/path/query parameter,
+diagnostics - never a general shell/curl, never a URL/path/query parameter,
 and never transcripts, message content, credentials, or arbitrary logs.
 
 Guardrails pinned here:
   - allowlist enforcement is STRUCTURAL (the enum in the tool's own input
     schema), not just a validation promise, and refuses anything outside it;
-  - the dispatch table can never reach a write-capable function — it's
+  - the dispatch table can never reach a write-capable function - it's
     exactly the three read diagnostics, nothing else;
-  - the schema exposes no url/path/host/query — `name` is the only input,
+  - the schema exposes no url/path/host/query - `name` is the only input,
     and anything else a caller adds is silently ignored, never forwarded;
-  - voice_latency's output stays within its known, content-free key set —
+  - voice_latency's output stays within its known, content-free key set -
     a regression guard on top of voice_trace.py's own ingest-time allowlist;
   - an END-TO-END test drives the REAL MCP protocol (the `mcp` package's
     in-memory client/server session) against the exact server object
     backend/guest.py mounts into a live (fake-SDK) guest run, proving the
-    tool is reachable through the mounted MCP surface with a real payload —
+    tool is reachable through the mounted MCP surface with a real payload -
     not just a unit test around the dispatch map in isolation.
 """
 
@@ -89,14 +89,14 @@ def test_dispatch_table_is_exactly_the_read_diagnostics():
     for name, fn in diag_mcp._DISPATCH.items():
         assert asyncio.iscoroutinefunction(fn)
         # structural, not just by convention: nothing dispatched here can be
-        # named like a mutator — adding a write means adding it to this dict,
+        # named like a mutator - adding a write means adding it to this dict,
         # which this assertion would catch by name alone.
         assert not any(w in fn.__name__ for w in
                        ("save", "set", "write", "delete", "update", "insert", "mutate"))
 
 
 def test_extra_args_beyond_name_are_ignored_not_forwarded(app):
-    """`name` is the ONLY thing that ever drives dispatch — a caller can't
+    """`name` is the ONLY thing that ever drives dispatch - a caller can't
     smuggle a path/url/host through an extra key; nothing else is read."""
     t = diag_mcp.build_tool(_cfg(app.state.settings))
     result = asyncio.run(t.handler({
@@ -172,7 +172,7 @@ def test_conversation_spend_is_metered_only_with_dynamic_party_breakdown(app):
                                          _cfg(app.state.settings, chat_id=cid)))
     assert "refused" not in out
     assert out["active_conversation"] is True and out["chat_id"] == cid
-    # metered = 0.10 + 0.20 + 3.0 (api_key guest) + 0.55 voice — NOT the $9 sub
+    # metered = 0.10 + 0.20 + 3.0 (api_key guest) + 0.55 voice - NOT the $9 sub
     assert out["metered_total"] == pytest.approx(3.85)
     assert out["informational"]["subscription_equiv"] == pytest.approx(9.0)
     assert out["informational"]["unknown"] == 0.0
@@ -199,7 +199,7 @@ def test_conversation_spend_without_active_chat_says_so(app):
 
 
 def test_conversation_spend_is_content_free(app):
-    """Only dollars, tokens, slugs and labels — never message text."""
+    """Only dollars, tokens, slugs and labels - never message text."""
     import json as _json
     con = db.connect()
     con.execute("INSERT INTO chats(title, created_at, updated_at) VALUES('t',0,0)")
@@ -234,10 +234,10 @@ def _git_repo(path):
 def test_e2e_guest_can_call_get_diagnostic_through_the_mounted_mcp_surface(
         app, tmp_path, monkeypatch):
     """Mounts get_diagnostic exactly the way a real summoned guest gets it
-    (via backend.guest.run_guest, fake-SDK options capture — same pattern as
+    (via backend.guest.run_guest, fake-SDK options capture - same pattern as
     tests/test_guest.py's read-only wall test), then drives the CAPTURED
-    server object through the `mcp` package's real client/server session —
-    the same protocol layer Claude Code itself speaks — to prove a guest can
+    server object through the `mcp` package's real client/server session -
+    the same protocol layer Claude Code itself speaks - to prove a guest can
     actually call the tool and get a real, content-free payload back."""
     import claude_agent_sdk as sdk
 
@@ -295,12 +295,12 @@ def test_e2e_guest_can_call_get_diagnostic_through_the_mounted_mcp_surface(
             assert {p["slug"] for p in payload["participants"]} >= {"claude", "gpt"}
 
             # An out-of-enum value is refused by the MCP protocol layer itself
-            # — the `mcp` package validates the call against the tool's own
+            # - the `mcp` package validates the call against the tool's own
             # declared inputSchema BEFORE our handler ever runs, so the
             # structural allowlist holds even one layer earlier than our code
             # (backend/diag_mcp.py's own _dispatch refusal, exercised directly
             # in the unit tests above, is the defense-in-depth layer under
-            # THAT — for a caller that bypasses schema validation entirely).
+            # THAT - for a caller that bypasses schema validation entirely).
             refused = await session.call_tool("get_diagnostic", {"name": "shell"})
             assert refused.isError is True
             refusal_text = refused.content[0].text
@@ -314,12 +314,12 @@ def test_e2e_guest_can_call_get_diagnostic_through_the_mounted_mcp_surface(
 def test_e2e_guest_conversation_spend_is_scoped_to_the_summoning_chat(
         app, tmp_path, monkeypatch):
     """Regression: a summoned guest's OWN operator cfg never carries a
-    chat_id (only engine.py's per-round round_cfg does — backend/engine.py's
+    chat_id (only engine.py's per-round round_cfg does - backend/engine.py's
     `_launch_guest_job` is handed the original `cfg`, not `round_cfg`), so
     before the fix `get_diagnostic("conversation_spend")` always reported
     active_conversation: false for a guest, no matter which chat summoned it.
-    Proves the fix by driving the tool through the REAL mounted MCP server —
-    the exact object backend/guest.py builds — with two chats seeded with
+    Proves the fix by driving the tool through the REAL mounted MCP server -
+    the exact object backend/guest.py builds - with two chats seeded with
     different spend, summoning against ONE of them via run_guest's own
     `chat_id=` argument (never present in cfg itself), and asserting the
     payload reflects that chat and NOT the other one's numbers."""
@@ -368,7 +368,7 @@ def test_e2e_guest_conversation_spend_is_scoped_to_the_summoning_chat(
 
     monkeypatch.setattr(guest, "_sdk", lambda: FakeSdk)
     _git_repo(tmp_path)
-    # The operator cfg a real summon hands to run_guest — deliberately WITHOUT
+    # The operator cfg a real summon hands to run_guest - deliberately WITHOUT
     # a chat_id key, matching backend/engine.py's `_launch_guest_job(chat_id,
     # summons, cfg, ...)` call, which passes the plain cfg, not round_cfg.
     cfg = app.state.settings.as_cfg()

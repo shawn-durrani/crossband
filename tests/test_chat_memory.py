@@ -4,7 +4,7 @@ The 8-message TITLE_REFRESH_DELTA re-title used to fire ONLY when the leave/
 reflection pass ran (summary fold on chat-switch/idle sweep). A chat that stays
 continuously active never triggered that pass, so it outran its title forever.
 The fix runs maybe_title_chat after EVERY round via post_round_reflect_job,
-decoupled from the fold — while keeping the cheap utility-model path and the
+decoupled from the fold - while keeping the cheap utility-model path and the
 "never overwrite a user-renamed chat" (title_upto == -1) rule intact."""
 
 import asyncio
@@ -31,7 +31,7 @@ def _mk_chat(con, title_upto, n_messages, title="Old Title"):
         "VALUES(?, ?, 0, ?, ?)", (title, title_upto, now, now)).lastrowid
     for i in range(n_messages):
         # Short bodies: total chars stay well under summary_threshold_chars, so
-        # maybe_summarize never folds — isolating the title trigger.
+        # maybe_summarize never folds - isolating the title trigger.
         con.execute("INSERT INTO messages(chat_id, speaker, content, created_at) "
                     "VALUES(?, ?, ?, ?)",
                     (cid, "user" if i % 2 == 0 else "claude", f"msg {i}", now + i))
@@ -72,7 +72,7 @@ def test_active_chat_retitles_per_round_without_fold(app, monkeypatch):
     con.close()
     assert row["title"] == "Titles Refreshed"
     assert row["title_upto"] == last_id
-    # Only the title call hit the utility model — the fold no-opped (proves the
+    # Only the title call hit the utility model - the fold no-opped (proves the
     # retitle is decoupled from the summary fold, not riding on it).
     assert len(calls) == 1
     assert calls[0]["max_tokens"] == 16
@@ -113,7 +113,7 @@ def test_summary_fold_leave_pass_still_retitles(app, monkeypatch):
 
 
 def test_user_renamed_chat_never_retitled(app, monkeypatch):
-    """(3) title_upto == -1 (user-renamed) is locked — never touched by either
+    """(3) title_upto == -1 (user-renamed) is locked - never touched by either
     the per-round trigger or the leave pass, and the model is never called."""
     cfg = app.state.settings.as_cfg()
     calls = _patch_utility(monkeypatch)

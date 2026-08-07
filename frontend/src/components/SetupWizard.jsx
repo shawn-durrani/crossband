@@ -3,7 +3,7 @@ import { api } from '../api'
 import { X, Check, Eye, EyeOff, ExternalLink, Copy, RefreshCw, Loader2 } from 'lucide-react'
 
 // First-run setup: one card per capability, plain English throughout.
-// A key is pasted, validated live server-side, and written to .env — the
+// A key is pasted, validated live server-side, and written to .env - the
 // person never opens a terminal (beyond ./start.sh) or edits a file.
 
 const CLONE_CMD =
@@ -37,7 +37,7 @@ function KeyField({ service, done, placeholder, onValidated, secretPlaceholder }
       <p className="flex items-start gap-1.5 text-sm text-ok">
         <Check size={16} className="mt-0.5 shrink-0" />
         <span>
-          {result?.unlocked || 'Already set up — this one works.'}
+          {result?.unlocked || 'Already set up - this one works.'}
         </span>
       </p>
     )
@@ -51,7 +51,7 @@ function KeyField({ service, done, placeholder, onValidated, secretPlaceholder }
       setResult(r)
       if (r.valid) onValidated?.()
     } catch (e) {
-      setResult({ valid: false, error: `Something went wrong on this computer (${e.message}) — the key was not saved.` })
+      setResult({ valid: false, error: `Something went wrong on this computer (${e.message}) - the key was not saved.` })
     } finally {
       setBusy(false)
     }
@@ -141,7 +141,7 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
     try {
       setStatus(await api.setupStatus())
     } catch {
-      /* backend briefly unavailable — cards fall back to "not configured" */
+      /* backend briefly unavailable - cards fall back to "not configured" */
     }
   }
   useEffect(() => { refresh() }, [])
@@ -185,17 +185,17 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
           <div className="flex-1">
             <h2 className="text-lg font-semibold">Set up your chat room</h2>
             <p className="text-sm text-ink-mid mt-0.5">
-              Paste a key, press Validate, watch it turn green — no files to edit, no restart needed.
+              Paste a key, press Validate, watch it turn green - no files to edit, no restart needed.
             </p>
             <p className={`text-sm mt-1.5 ${modelKeyIn ? 'text-ok' : 'text-ink-dim'}`}>
               {modelKeyIn
-                ? '✓ You’re ready to chat. Everything below is optional — add it whenever.'
+                ? '✓ You’re ready to chat. Everything below is optional - add it whenever.'
                 : 'You can start chatting once one model key is green.'}
             </p>
           </div>
           <button
             className="text-ink-dim hover:text-ink p-1 shrink-0"
-            title="Close — you can come back any time from the sidebar"
+            title="Close - you can come back any time from the sidebar"
             aria-label="Close setup"
             onClick={onClose}
           >
@@ -205,7 +205,7 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
 
         <div className="p-6 space-y-4">
           <Card
-            title="Anthropic — Claude"
+            title="Anthropic - Claude"
             done={svc('anthropic').configured || svc('anthropic').valid}
             link={<GetKeyLink href="https://console.anthropic.com" />}
             cost="Pay-as-you-go: what you spend depends heavily on how much you use it and which models are seated. The Spend page tracks it as you go."
@@ -223,14 +223,14 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
           </Card>
 
           <Card
-            title="OpenAI — GPT"
+            title="OpenAI - GPT"
             done={svc('openai').configured || svc('openai').valid}
             link={<GetKeyLink href="https://platform.openai.com/api-keys" />}
             cost="Pay-as-you-go: what you spend depends heavily on how much you use it and which models are seated. The Spend page tracks it as you go."
           >
             <p className="text-sm text-ink-mid">
               Puts GPT in the room. With two models present they can compare notes, argue,
-              and catch each other&apos;s mistakes — the whole point of this app.
+              and catch each other&apos;s mistakes - the whole point of this app.
             </p>
             <KeyField
               service="openai"
@@ -241,14 +241,14 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
           </Card>
 
           <Card
-            title="ElevenLabs — voice"
+            title="ElevenLabs - voice"
             done={svc('elevenlabs').configured || svc('elevenlabs').valid}
             link={<GetKeyLink href="https://elevenlabs.io" />}
             cost="Free tier covers light use; beyond that it's a monthly plan."
           >
             <p className="text-sm text-ink-mid">
               The key you want: every model speaks in its own voice, and you can talk over
-              them to interrupt — a real spoken conversation, hands free.
+              them to interrupt - a real spoken conversation, hands free.
             </p>
             <KeyField
               service="elevenlabs"
@@ -259,7 +259,7 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
           </Card>
 
           <Card
-            title="Web search — Tavily & Brave"
+            title="Web search - Tavily & Brave"
             done={svc('tavily').configured || svc('brave').configured}
             link={
               <span className="flex items-center gap-3">
@@ -270,7 +270,7 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
             cost="Both have free tiers that cover casual use."
           >
             <p className="text-sm text-ink-mid">
-              Lets the models look things up — news, prices, docs — instead of guessing from
+              Lets the models look things up - news, prices, docs - instead of guessing from
               memory. One key is enough; with both, anything found by both engines gets
               flagged as extra trustworthy.
             </p>
@@ -315,7 +315,7 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
           >
             <p className="text-sm text-ink-mid">
               You&apos;re not limited to Claude and GPT. Run open models on your own
-              machine — private and free, no key — with{' '}
+              machine - private and free, no key - with{' '}
               <a href="https://ollama.com" target="_blank" rel="noreferrer" className="text-link hover:underline">Ollama</a>{' '}
               or{' '}
               <a href="https://lmstudio.ai" target="_blank" rel="noreferrer" className="text-link hover:underline">LM Studio</a>,
@@ -347,12 +347,12 @@ export default function SetupWizard({ onClose, onOpenParticipants }) {
             {memoryUp ? (
               <p className="flex items-start gap-1.5 text-sm text-ok">
                 <Check size={16} className="mt-0.5 shrink-0" />
-                <span>Memory service detected — every chat starts with your cheat-sheet, and you can review every fact it keeps.</span>
+                <span>Memory service detected - every chat starts with your cheat-sheet, and you can review every fact it keeps.</span>
               </p>
             ) : (
               <>
                 <p className="text-sm text-ink-mid">
-                  A small companion app that keeps a ledger of facts about you — like a
+                  A small companion app that keeps a ledger of facts about you - like a
                   cheat-sheet the models read before every conversation, where every card
                   is yours to review, correct, or erase. No key needed; it just has to be
                   running. Paste this into the Terminal app to install and start it:

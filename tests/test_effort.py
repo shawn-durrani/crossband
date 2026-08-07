@@ -1,4 +1,4 @@
-"""Reasoning-effort gating table — ported semantics from the predecessor:
+"""Reasoning-effort gating table - ported semantics from the predecessor:
 low/medium/high/max normalized per participant, translated per provider,
 gated by model so unsupported combinations are omitted rather than 400ing.
 
@@ -54,12 +54,12 @@ def test_anthropic_effort_gating(effort, model, expected):
     ("low", "gpt-5.1", "low"),
     ("medium", "o3-mini", "medium"),
     ("high", "gpt-5.5", "high"),
-    # OpenAI scale caps at high — "max" translates down
+    # OpenAI scale caps at high - "max" translates down
     ("max", "gpt-5.5", "high"),
     # non-reasoning models: omit entirely
     ("high", "gpt-4o", None),
     ("low", "llama-3-70b", None),
-    # "adaptive" isn't an OpenAI concept at all — never applies here
+    # "adaptive" isn't an OpenAI concept at all - never applies here
     ("adaptive", "gpt-5.1", None),
 ])
 def test_openai_effort_gating(effort, model, expected):
@@ -80,7 +80,7 @@ def test_openai_effort_gating(effort, model, expected):
 ])
 def test_thinking_omitted_for_default_and_fixed_levels(effort, model):
     """The fix: NEITHER Default NOR any fixed low/medium/high/max level
-    ever sends `thinking` — reasoning depth on those is controlled solely by
+    ever sends `thinking` - reasoning depth on those is controlled solely by
     output_config.effort. Previously `thinking={"type": "adaptive"}` was sent
     unconditionally here, which is exactly what made a "medium" participant's
     voice replies pay for open-ended, variable-duration deliberation."""
@@ -90,7 +90,7 @@ def test_thinking_omitted_for_default_and_fixed_levels(effort, model):
 @pytest.mark.parametrize("model,expected", [
     ("claude-opus-4-8", {"type": "adaptive"}),
     ("claude-sonnet-4-6", {"type": "adaptive"}),
-    # unsupported families degrade to no override rather than a 400 — same
+    # unsupported families degrade to no override rather than a 400 - same
     # gating list as _anthropic_effort's
     ("claude-haiku-4-5", None),
     ("claude-3-5-sonnet-20241022", None),
@@ -102,7 +102,7 @@ def test_thinking_only_for_explicit_adaptive_choice(model, expected):
 
 def test_adaptive_never_also_sets_output_config_effort():
     """"adaptive" is a thinking-mode choice, not an output_config.effort
-    value — _anthropic_effort must return None for it so the two are never
+    value - _anthropic_effort must return None for it so the two are never
     stacked in the same request (see backend/providers.py's _stream_anthropic:
     thinking and output_config.effort are sent as ALTERNATIVES)."""
     part = p("adaptive", "claude-opus-4-8")

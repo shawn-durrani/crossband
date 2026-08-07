@@ -80,7 +80,7 @@ export default function ChatHeader({
     <span
       className="running-badge shrink-0"
       role="status"
-      title="A task is running in this chat — a model or Claude Code is working. It keeps going if you switch away."
+      title="A task is running in this chat - a model or Claude Code is working. It keeps going if you switch away."
     >
       <span className="running-spinner" aria-hidden="true" />
       running
@@ -93,7 +93,7 @@ export default function ChatHeader({
       return (
         <button
           key={p.id}
-          title={`${p.name} (${p.model}) — click to ${inChat ? 'remove from' : 'add to'} this chat`}
+          title={`${p.name} (${p.model}) - click to ${inChat ? 'remove from' : 'add to'} this chat`}
           className={`text-xs rounded-full px-2.5 py-1 border transition-opacity ${
             inChat ? '' : 'opacity-35 border-edge2 text-ink-mid'
           }`}
@@ -114,8 +114,8 @@ export default function ChatHeader({
       on={activeChat.voice_mode}
       tone="bg-sky-950/60 border-sky-700 text-sky-300"
       title={activeChat.voice_mode
-        ? 'Voice mode ON — replies are short and spoken-style'
-        : 'Voice mode OFF — click for short, spoken-style replies'}
+        ? 'Voice mode ON - replies are short and spoken-style'
+        : 'Voice mode OFF - click for short, spoken-style replies'}
       onClick={onToggleVoice}
     >
       <Mic size={13} /> voice
@@ -127,8 +127,8 @@ export default function ChatHeader({
       on={activeChat.memory_enabled}
       tone="bg-purple-950/60 border-purple-700 text-purple-300"
       title={activeChat.memory_enabled
-        ? 'Memory ON — your shared memory summary is included for all participants (browse it via the 🧠 chip)'
-        : 'Memory OFF — participants know nothing about you in this chat'}
+        ? 'Memory ON - your shared memory summary is included for all participants (browse it via the 🧠 chip)'
+        : 'Memory OFF - participants know nothing about you in this chat'}
       onClick={onToggleMemory}
     >
       <Brain size={13} /> memory
@@ -140,15 +140,15 @@ export default function ChatHeader({
       on={activeChat.web_enabled}
       tone="bg-indigo-950/60 border-indigo-700 text-indigo-300"
       title={activeChat.web_enabled
-        ? `Web research ON — search: ${cfg?.search?.tavily || cfg?.search?.brave ? [cfg.search.tavily && 'Tavily', cfg.search.brave && 'Brave'].filter(Boolean).join(' + ') : 'no search key (page/Reddit fetch only)'}`
-        : 'Web research OFF — click to let models search and fetch pages'}
+        ? `Web research ON - search: ${cfg?.search?.tavily || cfg?.search?.brave ? [cfg.search.tavily && 'Tavily', cfg.search.brave && 'Brave'].filter(Boolean).join(' + ') : 'no search key (page/Reddit fetch only)'}`
+        : 'Web research OFF - click to let models search and fetch pages'}
       onClick={onToggleWeb}
     >
       <Globe size={13} /> web
     </Chip>
   )
 
-  // Dev-mode chip (Claude Code guest + GitHub issue tools) — shown when the
+  // Dev-mode chip (Claude Code guest + GitHub issue tools) - shown when the
   // server says either capability is usable on this machine.
   const codeButton = () => (cfg?.code?.available || cfg?.github?.available) && (
     <>
@@ -156,8 +156,8 @@ export default function ChatHeader({
         on={activeChat.code_enabled}
         tone="bg-orange-950/60 border-orange-700 text-orange-300"
         title={activeChat.code_enabled
-          ? `Code ON — the AIs can ${[cfg.code?.available && (cfg.code?.writes ? 'summon Claude Code (investigate, or implement + open PRs — never merge)' : 'summon Claude Code (read-only)'), cfg.github?.available && 'read & file GitHub issues'].filter(Boolean).join(' and ')}. Repos: ${[...new Set([...(cfg.code?.repos || []), ...(cfg.github?.repos || [])])].join(', ')}`
-          : 'Code OFF — click to let the AIs work with your repos: summon Claude Code and read/file GitHub issues'}
+          ? `Code ON - the AIs can ${[cfg.code?.available && (cfg.code?.writes ? 'summon Claude Code (investigate, or implement + open PRs - never merge)' : 'summon Claude Code (read-only)'), cfg.github?.available && 'read & file GitHub issues'].filter(Boolean).join(' and ')}. Repos: ${[...new Set([...(cfg.code?.repos || []), ...(cfg.github?.repos || [])])].join(', ')}`
+          : 'Code OFF - click to let the AIs work with your repos: summon Claude Code and read/file GitHub issues'}
         onClick={onToggleCode}
       >
         <SquareTerminal size={13} /> code
@@ -176,21 +176,21 @@ export default function ChatHeader({
     </>
   )
 
-  // 🧠 status chip: memory lives in a companion service — link out when it's
+  // 🧠 status chip: memory lives in a companion service - link out when it's
   // up, hint at how to enable it when it isn't.
   const memoryChip = memory?.available && memory.url ? (
     <a
       href={memory.url}
       target="_blank"
       rel="noreferrer"
-      title="Shared memory is on — open the memory service UI"
+      title="Shared memory is on - open the memory service UI"
       className="text-xs inline-flex items-center rounded-full px-2 py-1 border bg-purple-950/40 border-purple-800 text-purple-300 hover:border-purple-600"
     >
       🧠
     </a>
   ) : (
     <span
-      title="Memory service not detected — run Membro to enable shared memory"
+      title="Memory service not detected - run Membro to enable shared memory"
       className="text-xs inline-flex items-center rounded-full px-2 py-1 border border-edge2 text-ink-faint opacity-60 cursor-help"
     >
       🧠
@@ -246,7 +246,7 @@ export default function ChatHeader({
         className="text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border border-edge2 text-ink-dim hover:text-ink-mid"
         aria-haspopup="menu"
         aria-expanded={toolsOpen}
-        title="What this chat's models can do — voice style, memory, web research, code. Click to view or change."
+        title="What this chat's models can do - voice style, memory, web research, code. Click to view or change."
         onClick={() => { setToolsOpen((v) => !v); setUsageOpen(false) }}
       >
         <Wrench size={13} /> Tools
@@ -281,7 +281,7 @@ export default function ChatHeader({
           <div className="flex items-center gap-2 border-t border-edge mt-1 pt-1.5 px-2.5 pb-1 text-[11px] text-ink-dim">
             {memory?.available && memory.url ? (
               <a href={memory.url} target="_blank" rel="noreferrer" className="hover:text-ink-mid" title="Open the memory service UI">
-                🧠 Shared memory service connected — open
+                🧠 Shared memory service connected - open
               </a>
             ) : (
               <span className="cursor-help" title="Run Membro to enable shared memory">🧠 Memory service not detected</span>
@@ -298,7 +298,7 @@ export default function ChatHeader({
         className="inline-flex"
         aria-haspopup="dialog"
         aria-expanded={usageOpen}
-        title="Context and cost for this chat — click for the numbers"
+        title="Context and cost for this chat - click for the numbers"
         onClick={() => { setUsageOpen((v) => !v); setToolsOpen(false) }}
       >
         {contextRing}
@@ -331,7 +331,7 @@ export default function ChatHeader({
       {/* ---- Mobile header (<sm): hamburger · title · talk · ⋯ ---- */}
       <header className="sm:hidden border-b border-edge px-3 py-2 flex items-center gap-2">
         <button
-          title="Menu — chats & projects"
+          title="Menu - chats & projects"
           aria-label="Open chats & projects"
           className="text-ink-dim hover:text-ink p-2 -ml-1 shrink-0"
           onClick={onOpenDrawer}

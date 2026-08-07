@@ -9,9 +9,9 @@ The single source of truth behind FIVE read-only surfaces:
   - Claude/GPT's own native get_diagnostic tool in normal chat (backend/tools.py)
 
 Every function here takes only the plain values/objects it actually needs (a
-memory-probe object, a pricing dict, model seeds, a time window) — never a
+memory-probe object, a pricing dict, model seeds, a time window) - never a
 FastAPI `Request` or `app.state`. That is what lets get_diagnostic call the
-SAME logic directly, in-process, with no HTTP hop and no request plumbing —
+SAME logic directly, in-process, with no HTTP hop and no request plumbing -
 whether the caller is a summoned Claude Code guest (backend/diag_mcp.py) or a
 narrating participant's own tool call in a normal chat round
 (backend/tools.py). The route handlers in backend/routers/ call these exact
@@ -21,12 +21,12 @@ can drift. The name -> function dispatch for get_diagnostic itself
 both tool surfaces, rather than each keeping its own dispatch map.
 
 Privacy floor: nothing here ever returns a transcript, a message body, a
-credential, or an arbitrary log line — only booleans, labels, model ids,
+credential, or an arbitrary log line - only booleans, labels, model ids,
 counts and numeric latency percentiles. `voice_latency_summary` in
 particular is content-free at the point of INGEST, not just here:
 backend/voice_trace.py's `sanitize_stage` accepts only an allowlisted stage
 name, a numeric duration, and bounded provider/model/tts/speaker
-identifiers — there is no transcript column in the table for this function
+identifiers - there is no transcript column in the table for this function
 (or anything else) to leak.
 """
 
@@ -46,20 +46,20 @@ SERVICES = {
     for sid, c in CAPABILITIES.items()
 }
 
-# Live-validated OK this session (never persisted; resets on restart — a
+# Live-validated OK this session (never persisted; resets on restart - a
 # restart re-reads .env, and `configured` carries the state on its own).
 # Mutated by POST /api/setup/key (backend/routers/setup.py); read here.
 session_valid: dict[str, bool] = {}
 
 
 async def health_status(memory) -> dict:
-    """Per-service {configured, valid, detail} — booleans and labels only,
-    key material NEVER included — plus companion memory-service reachability.
+    """Per-service {configured, valid, detail} - booleans and labels only,
+    key material NEVER included - plus companion memory-service reachability.
 
     `memory` is anything exposing `async probe(force: bool) -> bool` (a
     `MemoryClient`). Callers supply their own: the route hands in the app's
     live, cached client (`request.app.state.memory`); the diagnostics MCP
-    tool hands in a throwaway one built from the guest's own cfg — either
+    tool hands in a throwaway one built from the guest's own cfg - either
     way this function itself never touches FastAPI's Request/app.state."""
     services = {}
     for svc, spec in SERVICES.items():
@@ -74,9 +74,9 @@ async def health_status(memory) -> dict:
     services["memory_service"] = {
         "configured": available,
         "valid": available,
-        "detail": ("Shared memory service is running — every chat starts with your cheat-sheet."
+        "detail": ("Shared memory service is running - every chat starts with your cheat-sheet."
                    if available else
-                   "Not detected — chats work fine, but the models start every conversation knowing nothing about you."),
+                   "Not detected - chats work fine, but the models start every conversation knowing nothing about you."),
     }
     return {
         "services": services,
@@ -98,7 +98,7 @@ def participants_status(pricing: dict, seeds: dict | None = None) -> list[dict]:
 
     `seeds` maps the two default seats' config.json first-run model
     ('claude'/'gpt' -> model id or None); omit it (or pass {}) from a
-    context with no such config — seed/seed_drift simply come back
+    context with no such config - seed/seed_drift simply come back
     None/False for every participant."""
     seeds = seeds or {}
     con = db.connect()
@@ -158,14 +158,14 @@ def participants_status(pricing: dict, seeds: dict | None = None) -> list[dict]:
 # DIAGNOSTIC_NAMES/dispatch_diagnostic/diagnostic_input_schema/
 # DIAGNOSTIC_DESCRIPTION from HERE rather than each declaring its own copy,
 # so there is exactly one place that decides what a name resolves to and one
-# place the enum/description live — nothing for the two surfaces to drift on.
+# place the enum/description live - nothing for the two surfaces to drift on.
 #
 # The allowlist is structural, not just a validation promise: `name` is
 # published as a JSON-Schema `enum` (diagnostic_input_schema, below) in BOTH
 # tools' own input schema, so an SDK/provider that enforces its declared
 # schema refuses an out-of-enum value before dispatch_diagnostic ever runs.
 # dispatch_diagnostic refuses again anyway (belt and braces, and what makes
-# the allowlist unit-testable without a live SDK/provider in the loop) —
+# the allowlist unit-testable without a live SDK/provider in the loop) -
 # there is no url/path/host/query parameter anywhere for a caller to smuggle
 # a target through; `name` is the only input either schema accepts.
 
@@ -175,18 +175,18 @@ DIAGNOSTIC_NAMES = ("health", "models", "voice_latency", "conversation_spend",
 DIAGNOSTIC_DESCRIPTION = (
     "Read one of Crossband's own local diagnostics. Loopback-only, read-only, "
     "GET-equivalent, and content-free by construction: it can NEVER return a "
-    "transcript, message text, credentials, or arbitrary logs — there is no "
+    "transcript, message text, credentials, or arbitrary logs - there is no "
     "way to pass a URL, path, or query, only a fixed diagnostic name. "
     "name must be exactly one of: \"health\" (which provider keys are "
     "configured/validated, and whether the companion memory service is "
-    "reachable — booleans and labels only, never key material), \"models\" "
+    "reachable - booleans and labels only, never key material), \"models\" "
     "(what model each chat participant is actually configured/last used to "
-    "run — model ids and onboarding metadata, never message content), "
+    "run - model ids and onboarding metadata, never message content), "
     "\"voice_latency\" (recent-turn count plus p50/p95/max latency per voice "
-    "pipeline stage — durations and counts only, never what was said), or "
+    "pipeline stage - durations and counts only, never what was said), or "
     "\"conversation_spend\" (THIS conversation's running metered API/voice "
     "cash total so far, then a dynamic breakdown by party/producer and by "
-    "provider — dollars and token counts only; subscription-equivalent and "
+    "provider - dollars and token counts only; subscription-equivalent and "
     "unknown usage are shown apart and never summed into the metered total). "
     "Use this instead of guessing, asking the user to check, or summoning "
     "Claude Code just to read the app's own live state."
@@ -194,7 +194,7 @@ DIAGNOSTIC_DESCRIPTION = (
 
 
 def diagnostic_input_schema() -> dict:
-    """The `name` enum IS the allowlist (see module note above) — returns a
+    """The `name` enum IS the allowlist (see module note above) - returns a
     fresh dict each call so neither caller can mutate the other's copy."""
     return {
         "type": "object",
@@ -224,7 +224,7 @@ def diagnostic_input_schema() -> dict:
 async def _diag_health(cfg: dict) -> dict:
     """Service key configured/validated + memory-service reachability,
     reusing `health_status` above with a throwaway MemoryClient built from
-    the caller's own cfg (guest visit or chat round) — this module still
+    the caller's own cfg (guest visit or chat round) - this module still
     never touches FastAPI's Request/app.state."""
     from .memory_client import MemoryClient
     memory = MemoryClient(cfg.get("memory_url") or "http://127.0.0.1:8901")
@@ -252,16 +252,16 @@ MODEL_EXCLUDED_STAGES = ("playback_queue_wait",)
 
 async def _diag_voice_latency(cfg: dict) -> dict:
     """Recent voice-turn count plus p50/p95/max latency per pipeline stage,
-    reusing `voice_latency_summary` above — minus the stages models have
+    reusing `voice_latency_summary` above - minus the stages models have
     repeatedly misread as defects."""
     summary = voice_latency_summary()
     for s in MODEL_EXCLUDED_STAGES:
         summary["stages"].pop(s, None)
         summary["stage_notes"].pop(s, None)
     summary["excluded_stages_note"] = (
-        "playback_queue_wait — a later speaker's finished audio waiting for "
+        "playback_queue_wait - a later speaker's finished audio waiting for "
         "the current speaker to stop, i.e. multi-voice serialization by "
-        "design — is excluded from this view and reported only on the "
+        "design - is excluded from this view and reported only on the "
         "development endpoint; do not raise it as a latency concern")
     return summary
 
@@ -269,13 +269,13 @@ async def _diag_voice_latency(cfg: dict) -> dict:
 def _spend_group(g: dict) -> dict:
     """One breakdown row, trimmed to the metered-cash view this diagnostic
     reports. Keeps the metered figure (the only incremental cash) up front and
-    carries subscription-equivalent / unknown alongside — separately labelled,
-    never folded in — so a party that ran entirely on a subscription is still
+    carries subscription-equivalent / unknown alongside - separately labelled,
+    never folded in - so a party that ran entirely on a subscription is still
     visible without inflating the metered total."""
     return {
         "key": g["key"],
         "label": g["label"],
-        # Keys are accounting.CATEGORIES — the literal cash-axis names the
+        # Keys are accounting.CATEGORIES - the literal cash-axis names the
         # summarize() groups carry; kept as literals here so this row-shaper
         # needs no import of the accounting module.
         "metered": round(g.get("metered", 0.0), 6),
@@ -288,7 +288,7 @@ def _spend_group(g: dict) -> dict:
 
 async def _diag_conversation_spend(cfg: dict) -> dict:
     """THIS conversation's running metered API/voice cash total, then a
-    dynamic breakdown — by conversation party / usage producer, and by
+    dynamic breakdown - by conversation party / usage producer, and by
     provider/service.
 
     Incremental METERED cash is the headline and the only figure summed:
@@ -297,18 +297,18 @@ async def _diag_conversation_spend(cfg: dict) -> dict:
     subscription is a sunk cost, not spend Crossband is incurring). Every
     breakdown is keyed on the cost event's own speaker/source/provider, so any
     number of current-or-future participants, guests and integrations flow in
-    with no change here — nothing is hardcoded to a two-model roster.
+    with no change here - nothing is hardcoded to a two-model roster.
 
     Scoped to the active chat via ``cfg['chat_id']`` (the same chat id the
     engine already threads through every round, backend/engine.py). Content-free:
-    dollars, token counts, slugs and labels only — never message text. When
+    dollars, token counts, slugs and labels only - never message text. When
     there is no active conversation (e.g. a context with no chat id) it says so
     rather than reporting another chat's numbers."""
     chat_id = cfg.get("chat_id")
     if not chat_id:  # None, 0, or missing → no conversation to attribute to
         return {
             "active_conversation": False,
-            "note": ("No active conversation to price — this surface reports "
+            "note": ("No active conversation to price - this surface reports "
                      "the running metered total of the chat it is called from."),
         }
     from . import accounting
@@ -337,7 +337,7 @@ async def _diag_conversation_spend(cfg: dict) -> dict:
             "unknown": round(totals[accounting.CAT_UNKNOWN], 6),
             "note": ("Subscription-equivalent is an API-list-price estimate a "
                      "subscription already covers; unknown had no recorded "
-                     "billing mode. Neither is incremental cash — reported "
+                     "billing mode. Neither is incremental cash - reported "
                      "separately, never added to metered_total."),
         },
         # Producers that emitted an event but recorded no cost (a gap, not $0).
@@ -345,12 +345,12 @@ async def _diag_conversation_spend(cfg: dict) -> dict:
     }
 
 
-# The ENTIRE dispatch surface — no write-capable function is ever reachable
+# The ENTIRE dispatch surface - no write-capable function is ever reachable
 # through it. Adding a mutation here would mean adding it to this literal
 # dict, which every reviewer of this file can see at a glance.
 
 async def _diag_conversation_performance(cfg: dict) -> dict:
-    """Why THIS conversation is fast or slow — both modalities, one answer.
+    """Why THIS conversation is fast or slow - both modalities, one answer.
 
     Exists because a chat can become unusable with no surface able to say why:
     the header gauge counted text only and read "green", the auto-fold never
@@ -359,7 +359,7 @@ async def _diag_conversation_performance(cfg: dict) -> dict:
     rather than requiring someone to read the SQLite file by hand.
 
     Content-free by construction: component sizes, byte counts, message counts
-    and durations only — never message text, filenames, or attachment content.
+    and durations only - never message text, filenames, or attachment content.
     """
     from . import context_weight, db
     chat_id = cfg.get("chat_id")
@@ -399,7 +399,7 @@ async def _diag_conversation_performance(cfg: dict) -> dict:
     if ctx["attachments"] > ctx["history"] * 2 and ctx["attachments"] > 5000:
         findings.append(
             f"attachments are {ctx['attachments']:,} of {ctx['total']:,} context "
-            "tokens — far more than the conversation's own words")
+            "tokens - far more than the conversation's own words")
     if upload_mb >= 5:
         findings.append(
             f"~{upload_mb} MB of attachments is re-sent to EACH of the "
@@ -407,7 +407,7 @@ async def _diag_conversation_performance(cfg: dict) -> dict:
             "that grows with the conversation and is usually the real cause of "
             "a slow-feeling chat")
     if ctx["total"] > 60000:
-        findings.append("context is large enough to dilute attention — a fresh "
+        findings.append("context is large enough to dilute attention - a fresh "
                         "chat stays sharper, and memory carries over")
 
     out = {
@@ -418,9 +418,9 @@ async def _diag_conversation_performance(cfg: dict) -> dict:
                             "memory", "overhead", "total")},
         "per_turn_upload_mb": upload_mb,
         "images_in_context": ctx["image_count"],
-        "findings": findings or ["nothing notable — this conversation is light"],
+        "findings": findings or ["nothing notable - this conversation is light"],
         "note": ("Context is what every participant re-reads per reply. Upload is "
-                 "what physically goes over the wire each turn, per participant — "
+                 "what physically goes over the wire each turn, per participant - "
                  "the figure no other surface reports."),
     }
 
@@ -448,15 +448,15 @@ assert set(_DIAGNOSTIC_DISPATCH) == set(DIAGNOSTIC_NAMES)  # the two allowlists 
 
 async def dispatch_diagnostic(name, cfg: dict) -> dict:
     """The refusal gate shared by both surfaces: anything not in
-    `_DIAGNOSTIC_DISPATCH` — including a name that LOOKS like a path, a
+    `_DIAGNOSTIC_DISPATCH` - including a name that LOOKS like a path, a
     query, or a sensitive surface (transcripts, message content,
-    credentials, arbitrary logs, any mutation endpoint) — is refused here,
+    credentials, arbitrary logs, any mutation endpoint) - is refused here,
     never looked up, never partially handled."""
     fn = _DIAGNOSTIC_DISPATCH.get(name)
     if fn is None:
         return {
             "refused": True,
-            "error": (f"{name!r} is not a recognized diagnostic — choose one "
+            "error": (f"{name!r} is not a recognized diagnostic - choose one "
                       f"of: {', '.join(DIAGNOSTIC_NAMES)}"),
         }
     return await fn(cfg)
@@ -464,12 +464,12 @@ async def dispatch_diagnostic(name, cfg: dict) -> dict:
 
 def voice_latency_summary(window_hours: float = 24.0) -> dict:
     """Stage-level p50/p95/max voice latency over the last `window_hours`,
-    segmented by model and TTS provider — recent-turn count and numeric
+    segmented by model and TTS provider - recent-turn count and numeric
     percentiles only. Content-free by construction, not just by convention:
     `voice_trace.aggregate` only ever sees rows written through
     `voice_trace.sanitize_stage`'s closed allowlist (an allowlisted stage
     name, a numeric duration, and bounded provider/model/tts/speaker
-    identifiers) — there is no transcript column in the table for this
+    identifiers) - there is no transcript column in the table for this
     function to leak.
 
     Epoch-aware: rows measured under OLDER stage semantics (the earlier clocks
@@ -501,7 +501,7 @@ def voice_latency_summary(window_hours: float = 24.0) -> dict:
     summary["epoch_note"] = (
         "rows older than measurement_epoch were measured with different "
         "stage clocks (e.g. speech_end is now backdated by the end-of-turn "
-        "pause) and are excluded — their numbers are not comparable; "
+        "pause) and are excluded - their numbers are not comparable; "
         "samples_excluded_prior_epoch counts them")
     summary["stage_notes"] = {s: voice_trace.STAGE_NOTES[s]
                               for s in summary.get("stages", {})

@@ -1,5 +1,5 @@
 """GET /api/models/status: read-only readout of what model each
-participant is ACTUALLY running — the live participants-row model, the model
+participant is ACTUALLY running - the live participants-row model, the model
 stamped on their last completed message, and drift from the config seed.
 
 Synthetic data only (public repo): fake slugs/model IDs, no real keys."""
@@ -113,7 +113,7 @@ def test_status_flags_unsourced_trial_seat_as_not_onboardable(client):
 
 
 def test_status_flags_priced_trial_seat_as_onboardable(client):
-    # An existing/priced seat left on trial IS onboardable — the recovery path:
+    # An existing/priced seat left on trial IS onboardable - the recovery path:
     # the UI can offer promotion, and the backend will accept it.
     pid = client.post("/api/participants", json={
         "name": "Priced Trial", "provider": "anthropic",

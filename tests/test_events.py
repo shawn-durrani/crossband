@@ -1,23 +1,23 @@
 """Global live-events bus: out-of-band system/deploy notices (and
 every normal message) must reach an already-connected client without a page
 refresh, survive reconnects/sleep, and lose nothing across a full process
-restart because the DB — not the in-memory wake-up bell — is the actual
+restart because the DB - not the in-memory wake-up bell - is the actual
 catch-up buffer. See backend/events.py's module docstring for the full design
 and THE LOST-WAKEUP INVARIANT this file's core regression test exercises.
 
-Testing note: GET /api/events/stream is a genuinely PERSISTENT connection —
+Testing note: GET /api/events/stream is a genuinely PERSISTENT connection -
 it never ends on its own. FastAPI's test transport (httpx's ASGITransport,
 used by both TestClient and an async httpx.AsyncClient here) fully drains an
 ASGI response body before handing anything back to the caller, so pointing it
 at a truly infinite generator hangs forever (verified directly; not a guess).
-That's a test-harness limitation, not a production one — a real browser/proxy
+That's a test-harness limitation, not a production one - a real browser/proxy
 socket streams incrementally just fine. So: exactly ONE test below exercises
 the real HTTP route (with events.stream monkeypatched to a FINITE generator,
-just to prove the wiring — param parsing, media type, 404s); every
+just to prove the wiring - param parsing, media type, 404s); every
 correctness test (catch-up, ordering, dedup, reconnect, the lost-wakeup race,
 the restart scenario) drives backend/events.py's `stream()` and
 db.insert_message()/db.get_messages_after() directly, which is also exactly
-what a real request handler does under the hood — same code path, just
+what a real request handler does under the hood - same code path, just
 without a literal socket in the way."""
 
 import asyncio
@@ -41,7 +41,7 @@ def make_app(tmp_path, name="data"):
 
 def test_stream_endpoint_wiring(tmp_path, monkeypatch):
     """`since` is parsed and passed through, the media type is SSE, and the
-    events actually reach the HTTP response body — with events.stream()
+    events actually reach the HTTP response body - with events.stream()
     swapped for a finite fake so the test transport's full-buffering doesn't
     hang (see module docstring)."""
     captured = {}
@@ -78,7 +78,7 @@ def test_stream_endpoint_defaults_since_to_zero(tmp_path, monkeypatch):
 
 def test_messages_after_endpoint_shape_and_scope(tmp_path):
     """The per-chat incremental fetch the frontend uses to hydrate content
-    after a `new_message` event — full row shape (attachments/tool_events),
+    after a `new_message` event - full row shape (attachments/tool_events),
     scoped to one chat, never earlier ids."""
     with TestClient(make_app(tmp_path), base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
@@ -101,7 +101,7 @@ def test_messages_after_endpoint_shape_and_scope(tmp_path):
 
 # ---------- events.stream() driven directly: the real correctness tests ----------
 #
-# Full control over concurrency, no HTTP transport in the way — the same
+# Full control over concurrency, no HTTP transport in the way - the same
 # function GET /api/events/stream calls, exercised with heartbeats far longer
 # than any test timeout, so passing proves the LIVE/DB-catch-up paths did the
 # work, not a heartbeat fallback quietly bailing the test out.
@@ -109,7 +109,7 @@ def test_messages_after_endpoint_shape_and_scope(tmp_path):
 @pytest.fixture
 def db_app(tmp_path):
     """Configure the database (create_app's side effect) without starting the
-    real HTTP lifespan — these tests bind the loop themselves, on the loop
+    real HTTP lifespan - these tests bind the loop themselves, on the loop
     they actually run under (asyncio.run's own), which is what a real
     lifespan would do too."""
     return create_app(Settings(data_dir=str(tmp_path / "data"),
@@ -147,7 +147,7 @@ def test_initial_catchup_replays_existing_rows(db_app):
 
 def test_reconnect_from_watermark_skips_already_seen(db_app):
     """A stream opened with since=<last id already seen> never re-yields
-    that row — the exact shape of a reconnect after a drop/sleep."""
+    that row - the exact shape of a reconnect after a drop/sleep."""
     async def go():
         events.bind_loop(asyncio.get_running_loop())
         chat_id = _new_chat_id()
@@ -184,7 +184,7 @@ def test_global_channel_never_carries_content(db_app):
 
 def test_ordered_dedup_across_chats(db_app):
     """Messages from different chats interleaved are delivered exactly once
-    each, strictly in global id order — the id IS the order, and the
+    each, strictly in global id order - the id IS the order, and the
     generation-check fast path never double-delivers a row it already
     yielded."""
     async def go():
@@ -213,16 +213,16 @@ def test_no_lost_wakeup_between_query_and_wait(db_app, monkeypatch):
     """THE regression test for the invariant in events.py's module docstring.
     Simulates the exact race: a message is committed (and notifies) in the
     gap between the stream's DB query returning and it checking the
-    generation counter — by inserting AS A SIDE EFFECT of the first (empty)
+    generation counter - by inserting AS A SIDE EFFECT of the first (empty)
     query call. Uses a deliberately huge heartbeat (25s, the real default):
     if the generation check did NOT catch this, the only way the message
-    could ever arrive is the heartbeat timing out — which a 1s test timeout
+    could ever arrive is the heartbeat timing out - which a 1s test timeout
     will never survive. Passing proves the fast path, not the fallback,
     delivered it."""
     async def go():
         events.bind_loop(asyncio.get_running_loop())
         chat_id = _new_chat_id()
-        target_chat_id = chat_id  # captured under a different name — racing_query's
+        target_chat_id = chat_id  # captured under a different name - racing_query's
                                    # own `chat_id` kwarg (matching get_messages_after's
                                    # signature) would otherwise shadow this
 
@@ -251,7 +251,7 @@ def test_no_lost_wakeup_between_query_and_wait(db_app, monkeypatch):
 
 def test_live_wakeup_faster_than_heartbeat(db_app):
     """Without any artificial race: insert shortly after the stream starts,
-    with a long heartbeat — delivery must come from the live notify, not the
+    with a long heartbeat - delivery must come from the live notify, not the
     heartbeat timeout (proven by the tight 1s wait_for against a 25s
     heartbeat)."""
     async def go():
@@ -276,7 +276,7 @@ def test_live_wakeup_faster_than_heartbeat(db_app):
 
 def test_heartbeat_timeout_path_is_real(db_app):
     """The other half of the invariant: absent any notify at all, a waiter
-    still returns (heartbeat), it just takes ~`heartbeat_secs` — proving the
+    still returns (heartbeat), it just takes ~`heartbeat_secs` - proving the
     fallback path itself is reachable and not silently broken."""
     async def go():
         events.bind_loop(asyncio.get_running_loop())
@@ -291,7 +291,7 @@ def test_deploy_restart_scenario(tmp_path):
     PROCESS RESTARTS (killing every connection, tearing down the events bus's
     bound loop via lifespan shutdown), and a second notice lands while
     nothing is connected at all. A client reconnecting afterward with its old
-    watermark must receive exactly the messages it missed — proving catch-up
+    watermark must receive exactly the messages it missed - proving catch-up
     is DB-backed, not dependent on any in-memory buffer a restart would wipe."""
     settings = Settings(data_dir=str(tmp_path / "data"), memory_url="http://127.0.0.1:1")
 
@@ -301,17 +301,17 @@ def test_deploy_restart_scenario(tmp_path):
         restarting = c1.post(f"/api/chats/{chat['id']}/notice",
                              json={"text": "⏳ deploy request received"}).json()
     # app1's lifespan has now torn down (process "restarted"): events.unbind_loop()
-    # ran, no server, no open connection — nothing in memory survives this point.
+    # ran, no server, no open connection - nothing in memory survives this point.
 
     # A brand new process (app2) comes up against the SAME data directory and
-    # the deploy tooling's final notice lands on it — a real webhook call
+    # the deploy tooling's final notice lands on it - a real webhook call
     # arriving after the restart, on the new process, same as production.
     app2 = create_app(settings)
     with TestClient(app2, base_url="http://127.0.0.1") as c2:
         deployed = c2.post(f"/api/chats/{chat['id']}/notice",
                            json={"text": "🚀 deployed"}).json()
 
-        # The client reconnects with the watermark it had BEFORE the restart —
+        # The client reconnects with the watermark it had BEFORE the restart -
         # driving the same events.stream() the endpoint calls, under app2's
         # now-current loop binding.
         async def reconnect():

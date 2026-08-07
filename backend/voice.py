@@ -12,7 +12,7 @@ TTS_WS_URL = (
     "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
     "?model_id={model_id}&output_format=mp3_44100_128"
 )
-# Scribe v2 Realtime streaming STT — opt-in, parallel to the batch transcribe()
+# Scribe v2 Realtime streaming STT - opt-in, parallel to the batch transcribe()
 # POST. Auth is the xi-api-key header, set on the websocket in routers/voice.py.
 STT_WS_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
 TIMEOUT = 30
@@ -59,7 +59,7 @@ def subscription():
 
 def transcribe(audio_bytes, mime, cfg):
     """Speech-to-text via Scribe v2. (No scribe_v1 fallback: ElevenLabs removes
-    it on 2026-07-09 — a fallback to a dead model is just a slower error.)"""
+    it on 2026-07-09 - a fallback to a dead model is just a slower error.)"""
     model_id = cfg.get("stt_model") or "scribe_v2"
     r = httpx.post(
         f"{ELEVEN_BASE}/v1/speech-to-text",

@@ -2,9 +2,9 @@
 //
 // Two facts, one plain-English readout per seat, so an owner can SEE where a
 // seat sits and act on it without reading the backend:
-//   • lifecycle  — 'trial' (added for manual evaluation; sits out unaddressed
-//     rounds — reachable only by @mention/name) or 'onboarded' (a normal seat).
-//   • provenance — how the seat's cost is known; a seat can only be onboarded
+//   • lifecycle  - 'trial' (added for manual evaluation; sits out unaddressed
+//     rounds - reachable only by @mention/name) or 'onboarded' (a normal seat).
+//   • provenance - how the seat's cost is known; a seat can only be onboarded
 //     once that is known (the PATCH …/lifecycle gate). A trial seat with unknown
 //     provenance therefore shows WHY promotion is blocked instead of failing.
 //
@@ -28,7 +28,7 @@ export function lifecycleBadge(status, fallbackLifecycle) {
     }
   }
   // Anything not explicitly onboarded is treated as a trial (conservative
-  // default) — and trial is a REAL behavioural gate, so say what it means.
+  // default) - and trial is a REAL behavioural gate, so say what it means.
   return {
     lifecycle: 'trial',
     label: 'Trial',
@@ -42,7 +42,7 @@ export function lifecycleBadge(status, fallbackLifecycle) {
 // Should the "Promote to Onboarded" control show, and can it be used right now?
 // A promote button appears only for trial seats. It is enabled when the seat
 // has a known cost provenance (status.onboardable); otherwise it is shown
-// disabled with the reason — the recovery path for an existing priced seat that
+// disabled with the reason - the recovery path for an existing priced seat that
 // was left on trial, and an honest block for an unsourced one.
 export function promoteState(status, fallbackLifecycle) {
   const lifecycle = status?.lifecycle || fallbackLifecycle
@@ -56,7 +56,7 @@ export function promoteState(status, fallbackLifecycle) {
       enabled: true,
       label: 'Promote to Onboarded',
       reason: status?.cost_provenance_label
-        ? `Cost is known (${status.cost_provenance_label}) — safe to onboard.`
+        ? `Cost is known (${status.cost_provenance_label}) - safe to onboard.`
         : 'Promote this seat to a normal, always-on participant.',
     }
   }
@@ -64,13 +64,13 @@ export function promoteState(status, fallbackLifecycle) {
     show: true,
     enabled: false,
     label: 'Promote to Onboarded',
-    reason: 'No cost provenance yet — add a priced rate-card entry or an '
+    reason: 'No cost provenance yet - add a priced rate-card entry or an '
       + 'explicit self-hosted declaration for this model first. Until then it '
       + 'stays a manual trial.',
   }
 }
 
-// Hosts that mean "this machine" — mirrors _LOOPBACK_HOSTS in backend/config.py.
+// Hosts that mean "this machine" - mirrors _LOOPBACK_HOSTS in backend/config.py.
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'])
 
 // Is this draft seat served from this machine, keylessly? Mirrors
@@ -94,11 +94,11 @@ export function isLocalEndpoint(draft) {
 // The trial gate is real behaviour, not a label: a new seat sits out every
 // unaddressed round until it is promoted. Leaving a user to discover that from
 // a badge after the fact is how the documented zero-key path came to dead-end
-// silently — so the add form says it up front, and says which of the two
+// silently - so the add form says it up front, and says which of the two
 // promotion stories this particular seat is in.
 //
 // Returns null when editing an existing seat (the row's own badge already
-// covers it) — the notice is only for a seat that doesn't exist yet.
+// covers it) - the notice is only for a seat that doesn't exist yet.
 export function addSeatNotice(draft) {
   if (!draft || draft.id) return null
   const local = isLocalEndpoint(draft)
@@ -106,13 +106,13 @@ export function addSeatNotice(draft) {
     local,
     title: 'This will be added as a Trial seat',
     body: 'It answers when you @mention it or address it by name, and sits out '
-      + 'rounds where you haven\'t. Promote it to Onboarded — on its row in this '
-      + 'list — to have it join every round.',
+      + 'rounds where you haven\'t. Promote it to Onboarded - on its row in this '
+      + 'list - to have it join every round.',
     // The second sentence is the half that used to be missing: whether promotion
     // is available at all, answered before the user commits to adding.
     promotion: local
-      ? 'Served from this machine with no API key, so its cost is known — a '
-        + 'declared $0 with nothing metered — and you can promote it straight away.'
+      ? 'Served from this machine with no API key, so its cost is known - a '
+        + 'declared $0 with nothing metered - and you can promote it straight away.'
       : 'Promotion needs a known cost for this model, so the app never reports a '
         + 'cost it can\'t source. Built-in models already have one; for anything '
         + 'else, add a rate-card entry (or run it locally, which needs none).',

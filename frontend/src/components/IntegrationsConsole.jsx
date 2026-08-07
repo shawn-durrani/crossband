@@ -56,7 +56,7 @@ function LifecycleBadge({ badge }) {
 }
 
 // One LLM model seat: which model it runs, its lifecycle badge, its cost
-// provenance in plain English, and — for a trial seat — the promotion/recovery
+// provenance in plain English, and - for a trial seat - the promotion/recovery
 // path with its gate reason. No "make default" control exists here: a trial seat
 // can never be made routine from this console (only promoted once cost is known).
 function Seat({ seat, onPromote, onEdit, promoting }) {
@@ -85,7 +85,7 @@ function Seat({ seat, onPromote, onEdit, promoting }) {
       </div>
       {badge.tone === 'trial' && (
         <div className="text-xs text-amber-600/90 dark:text-amber-500 leading-relaxed">
-          Manual-invoke only — won&apos;t join a normal round on its own; @mention
+          Manual-invoke only - won&apos;t join a normal round on its own; @mention
           or address it by name to include it.
           {promo.show && (
             <div className="mt-1 flex items-start gap-2">
@@ -136,7 +136,7 @@ function CredentialForm({ prompt, onSaved }) {
       <button
         className="shrink-0 inline-flex items-center gap-1.5 border border-edge2 rounded-lg px-2.5 py-1.5 text-xs text-ink-mid hover:text-ink hover:border-edge3"
         onClick={() => setOpen(true)}
-        title="Paste the key here — it is validated live, saved to your .env on this machine, and never shown back to you."
+        title="Paste the key here - it is validated live, saved to your .env on this machine, and never shown back to you."
       >
         <KeyRound size={13} /> {prompt.label}
       </button>
@@ -250,7 +250,7 @@ function IntegrationCard({ entry, onFixKey, onAddModel, onPromoteSeat, onEditSea
               ))}
             </div>
           )}
-          <p>Read-only here — add or change MCP servers in <span className="font-mono">config.local.json</span>.</p>
+          <p>Read-only here - add or change MCP servers in <span className="font-mono">config.local.json</span>.</p>
         </div>
       )}
 
@@ -334,12 +334,12 @@ export default function IntegrationsConsole({
 
   async function promoteSeat(seat) {
     const id = slugToId[seat.slug]
-    if (!id) { setError('Could not find that seat to promote — try refreshing.'); return }
+    if (!id) { setError('Could not find that seat to promote - try refreshing.'); return }
     setError(null)
     setPromotingSlug(seat.slug)
     try {
       // The backend re-checks the cost-provenance gate and 409s with a plain
-      // reason if the seat isn't actually onboardable — surfaced verbatim.
+      // reason if the seat isn't actually onboardable - surfaced verbatim.
       await api.updateParticipant(id, { lifecycle: 'onboarded' })
       await load(false)
       onChanged?.()
@@ -370,7 +370,7 @@ export default function IntegrationsConsole({
               <Plug size={18} className="text-ink-dim" /> Connections
             </h1>
             <p className="text-sm text-ink-mid mt-0.5">
-              Everything your room can use — what&apos;s connected, healthy, and safe to
+              Everything your room can use - what&apos;s connected, healthy, and safe to
               rely on. Fixing a key opens the secure setup flow; keys are never shown here.
             </p>
           </div>

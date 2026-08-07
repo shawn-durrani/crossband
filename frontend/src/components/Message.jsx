@@ -7,7 +7,7 @@ import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
 
 // Same-speaker messages closer than this group into one visual run
-// (header suppressed, tight 4px rhythm — Discord cozy mode).
+// (header suppressed, tight 4px rhythm - Discord cozy mode).
 const GROUP_WINDOW_S = 300
 
 function CopyButton({ text, className = '' }) {
@@ -151,11 +151,11 @@ function Stamp({ ts, className = '' }) {
   )
 }
 
-// Wrap plain-text words in fading spans — only used while streaming; the
+// Wrap plain-text words in fading spans - only used while streaming; the
 // completed message re-renders without them (FlowToken pattern, opacity only).
 // `cursor`/`seen`: every delta re-parses the markdown, and a completing inline
 // element (**bold**, a link) restructures the tree and REMOUNTS spans for text
-// already on screen — replaying their fade reads as flashing. So each word
+// already on screen - replaying their fade reads as flashing. So each word
 // tracks its running character offset, and only offsets beyond what the
 // previous render already showed get the animation; old words render plain.
 function fadeWords(children, cursor, seen) {
@@ -203,7 +203,7 @@ function UsageFooter({ usageJson, speaker }) {
 function Message({ msg, prev, participants }) {
   const info = participantInfo(msg.speaker, participants)
   const isUser = info.isUser
-  // How many characters of this message the PREVIOUS render already showed —
+  // How many characters of this message the PREVIOUS render already showed -
   // fadeWords animates only beyond this, so re-parses can't re-flash old text.
   const seenChars = useRef(0)
   useEffect(() => {
@@ -248,7 +248,7 @@ function Message({ msg, prev, participants }) {
 
   /* ---- Sat-out turn: a bare "…" is the passing convention (the system
      prompt tells models to reply with only an ellipsis when they're sitting
-     out or have nothing new) — render it as a quiet marker, not a bubble. */
+     out or have nothing new) - render it as a quiet marker, not a bubble. */
   if (!isUser && !msg.streaming && (msg.content || '').trim() === '…') {
     return (
       <div className={`flex items-center gap-2 text-xs text-ink-dim ${gapClass}`}
@@ -365,7 +365,7 @@ function Message({ msg, prev, participants }) {
 // each state update (a streaming delta, a tool_activity append, the round-end
 // pass at App.jsx that stamps `streaming:false` onto all messages). Without
 // memoization each such update re-runs ReactMarkdown/remarkGfm over every old
-// message — the dominant cost on big chats. React.memo lets unchanged messages
+// message - the dominant cost on big chats. React.memo lets unchanged messages
 // skip that work. The comparator compares by VALUE (not object identity, since
 // App.jsx builds fresh arrays/objects every update) across exactly the fields
 // this component reads: skip the re-render only when all of them are unchanged.

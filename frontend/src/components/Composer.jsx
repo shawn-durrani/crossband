@@ -49,7 +49,7 @@ export default function Composer({ onSend, disabled, streaming, queuedCount = 0,
 
   const ytUrl = (text.match(YT_RE) || [])[0]
 
-  // Pull the FULL transcript of a YouTube link and attach it as a document — bypasses the
+  // Pull the FULL transcript of a YouTube link and attach it as a document - bypasses the
   // model tool's length cap and the tool-output replay-trim, so the whole thing reaches the models.
   async function grabYoutube(url) {
     setUploadError(null)
@@ -167,7 +167,7 @@ export default function Composer({ onSend, disabled, streaming, queuedCount = 0,
           ))}
           {totalBytes > 1024 * 1024 && (
             <span className="text-xs text-amber-400/80 self-center">
-              Large attachments are sent to both models each turn — token costs add up.
+              Large attachments are sent to both models each turn - token costs add up.
             </span>
           )}
         </div>
@@ -223,7 +223,7 @@ export default function Composer({ onSend, disabled, streaming, queuedCount = 0,
         {/* 16px on mobile: iOS Safari auto-zooms into any focused input under
             16px, which shoved the composer + Send button off the right edge on
             focus. sm+ keeps the 15px design body size. Do NOT "fix" this
-            via maximum-scale — that would kill pinch-zoom (a11y floor). */}
+            via maximum-scale - that would kill pinch-zoom (a11y floor). */}
         <textarea
           ref={textarea}
           value={text}
@@ -262,7 +262,7 @@ export default function Composer({ onSend, disabled, streaming, queuedCount = 0,
           <div className="flex items-end gap-2 shrink-0">
             <button
               className="bg-btn text-btn-ink font-semibold rounded-xl px-4 py-2.5 text-sm disabled:opacity-40 hover:bg-btn-hover"
-              title="Queue this message — it combines with any others and sends as one turn when the round finishes"
+              title="Queue this message - it combines with any others and sends as one turn when the round finishes"
               disabled={disabled || uploading || (!text.trim() && attachments.length === 0)}
               onClick={submit}
             >
@@ -270,7 +270,7 @@ export default function Composer({ onSend, disabled, streaming, queuedCount = 0,
             </button>
             <button
               className="inline-flex items-center gap-1.5 border border-rose-700 text-rose-400 hover:text-rose-300 hover:border-rose-500 font-semibold rounded-xl px-4 py-2.5 text-sm"
-              title="Stop them mid-reply — the partial stays in the transcript, marked as cut off"
+              title="Stop them mid-reply - the partial stays in the transcript, marked as cut off"
               onClick={onStop}
             >
               <Square size={13} /> Stop

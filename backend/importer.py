@@ -3,7 +3,7 @@ then seed Membro so long-term recall works from day one.
 
 Parsing/normalization is ported from the predecessor app. Memory seeding is
 NOT: the predecessor wrote its ledger directly; here every byte reaches Membro
-through the versioned HTTP contract — /ingest for the verbatim record, /distill
+through the versioned HTTP contract - /ingest for the verbatim record, /distill
 per conversation for fact mining (summary rebuild deferred to one final call),
 /facts for the export's own memory entries (origin user, trusted).
 
@@ -12,8 +12,8 @@ ChatGPT:   Settings → Data controls → Export data (conversations.json with
            a node "mapping" per conversation).
 
 Deliberate exemption from db.insert_message(): the inserts below
-are historical bulk backfill — hundreds of rows per import, backdated
-timestamps, run inside one transaction — not live activity a connected
+are historical bulk backfill - hundreds of rows per import, backdated
+timestamps, run inside one transaction - not live activity a connected
 client should be pinged about (a single import would otherwise fire hundreds
 of individual wake-ups for messages the user is about to see via a normal
 page load anyway, immediately after the import call returns). This is the
@@ -46,7 +46,7 @@ def _epoch(value):
 # ---------- Claude format ----------
 
 _EXPORT_PLACEHOLDER = "This block is not supported on your current device yet."
-_PLACEHOLDER_NOTE = ("[content not included in Claude's export — likely an artifact "
+_PLACEHOLDER_NOTE = ("[content not included in Claude's export - likely an artifact "
                      "or tool output created in the original conversation]")
 
 
@@ -77,7 +77,7 @@ def _claude_message_text(m):
             parts.append(block["text"])
         elif block.get("type") == "tool_use":
             parts.append(_tool_use_text(block))
-        # tool_result blocks are environment echo — skipped
+        # tool_result blocks are environment echo - skipped
     text = "\n\n".join(p.strip() for p in parts if p.strip()).strip()
     if not text:
         text = (m.get("text") or "").strip()
@@ -240,7 +240,7 @@ async def import_stream(data, filename, memory, mine=True):
 async def _import(con, data, filename, memory, mine):
     parsed = parse_upload(data, filename)
     if not parsed["format"]:
-        yield {"type": "error", "message": "Unrecognized export format — expected a "
+        yield {"type": "error", "message": "Unrecognized export format - expected a "
                "Claude or ChatGPT data export (zip or conversations.json)"}
         return
     counts = {"format": parsed["format"], "projects": 0, "chats": 0, "updated_chats": 0,
@@ -358,7 +358,7 @@ async def _import(con, data, filename, memory, mine):
                 "ORDER BY id", (chat_id, chat_id))]
             if not msgs:
                 continue
-            # Membro's /ingest caps 5000 messages per call — chunk the rare giants
+            # Membro's /ingest caps 5000 messages per call - chunk the rare giants
             for j in range(0, len(msgs), 4000):
                 if await memory.ingest(str(chat_id), msgs[j:j + 4000]):
                     counts["ingested"] += len(msgs[j:j + 4000])
@@ -371,13 +371,13 @@ async def _import(con, data, filename, memory, mine):
                 yield {"type": "progress", "phase": "Mining facts (the note-taker reads each chat)",
                        "done": i, "total": total}
                 # sequential + summary deferred: one utility call per chat, one
-                # summary rebuild at the end — not one per conversation
+                # summary rebuild at the end - not one per conversation
                 await memory.distill_and_wait(str(chat_id), regenerate=False)
                 counts["mined_chats"] += 1
             yield {"type": "progress", "phase": "Building your profile", "done": 0, "total": 0}
             await memory.regenerate_summary_and_wait()
     else:
-        yield {"type": "note", "message": "Membro not reachable — chats imported "
+        yield {"type": "note", "message": "Membro not reachable - chats imported "
                "locally; memory seeding will happen as you revisit chats."}
 
     yield {"type": "done", **counts}

@@ -40,7 +40,7 @@ def slow_stream(text_chunks, delay=0.05):
 
 def _wait_round_done(c, chat_id, want, timeout=5.0):
     """Poll the persisted chat until `want` messages exist (round finishing
-    in the background) — the whole point under test."""
+    in the background) - the whole point under test."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         msgs = c.get(f"/api/chats/{chat_id}").json()["messages"]
@@ -77,7 +77,7 @@ def _async_client(app):
 
 def test_abort_is_the_deliberate_stop(app, monkeypatch):
     """POST /round/abort mid-reply: generation stops NOW and the partial
-    persists with the cut-off marker — barge-in semantics, made explicit.
+    persists with the cut-off marker - barge-in semantics, made explicit.
     (Async client: abort must share the event loop the round task lives on.)"""
     monkeypatch.setattr(engine.providers, "stream_reply",
                         slow_stream(["partial answer", " never seen"], delay=0.4))
@@ -146,7 +146,7 @@ def test_reattach_catches_up_from_where_it_left(app, monkeypatch):
 
 def test_active_chat_ids_tracks_running_then_clears(app, monkeypatch):
     """Running-task indicator source: a chat with a live round appears in
-    active_chat_ids while it generates and drops out once it finishes — the
+    active_chat_ids while it generates and drops out once it finishes - the
     signal that lets the sidebar mark a background chat busy and clear it."""
     monkeypatch.setattr(engine.providers, "stream_reply",
                         slow_stream(["working..."], delay=0.4))
@@ -169,7 +169,7 @@ def test_abort_force_clears_an_uncooperative_round(monkeypatch):
     """A round whose task refuses to die (a wedged Claude Code subprocess
     that swallows cancellation) must not latch the running lock forever. Abort
     force-finishes it after the bounded wait, so `active()` clears and the chat
-    unblocks — and abort itself returns instead of hanging."""
+    unblocks - and abort itself returns instead of hanging."""
     monkeypatch.setattr(rounds, "ABORT_SETTLE_S", 0.3)
 
     async def go():
@@ -187,7 +187,7 @@ def test_abort_force_clears_an_uncooperative_round(monkeypatch):
                         raise
                     continue  # pathological: ignore the abort's cancellation
             return
-            yield  # pragma: no cover — makes this an async generator
+            yield  # pragma: no cover - makes this an async generator
 
         r = rounds.start(chat_id, wedged())
         await asyncio.wait_for(started.wait(), 2)
@@ -197,7 +197,7 @@ def test_abort_force_clears_an_uncooperative_round(monkeypatch):
         aborted = await rounds.abort(chat_id)
         elapsed = time.monotonic() - t0
         assert aborted is True
-        assert elapsed < 3.0            # bounded — did NOT hang on the wedged task
+        assert elapsed < 3.0            # bounded - did NOT hang on the wedged task
         assert rounds.active(chat_id) is None   # force-cleared → lock released
         assert chat_id not in rounds.active_chat_ids()
 
@@ -217,7 +217,7 @@ def test_guest_teardown_is_bounded(tmp_path, monkeypatch):
     """The root cause: the guest's finally teardown (SDK iterator close +
     worktree removal) must not be able to wedge the round. Even when the SDK
     iterator's aclose() never returns, run_guest still finishes within the
-    teardown budget and yields its turn — so the round completes and the
+    teardown budget and yields its turn - so the round completes and the
     running lock clears."""
     import claude_agent_sdk as sdk
     from backend import guest
@@ -239,7 +239,7 @@ def test_guest_teardown_is_bounded(tmp_path, monkeypatch):
                 raise StopAsyncIteration
 
         async def aclose(self):
-            await asyncio.Event().wait()  # never returns — the wedge under test
+            await asyncio.Event().wait()  # never returns - the wedge under test
 
     def fake_query(*, prompt, options=None, transport=None):
         return HangingCloseIterator([sdk.ResultMessage(
@@ -269,7 +269,7 @@ def test_guest_teardown_is_bounded(tmp_path, monkeypatch):
         return time.monotonic() - t0, events
 
     elapsed, events = asyncio.run(go())
-    assert elapsed < 4.0                         # bounded — aclose didn't wedge it
+    assert elapsed < 4.0                         # bounded - aclose didn't wedge it
     assert any(k == "usage" for k, _ in events)  # the turn still produced its result
 
 

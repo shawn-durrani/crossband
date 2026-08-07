@@ -42,7 +42,7 @@ test('band boundaries are inclusive at the lower edge', () => {
 })
 
 test('the gauge never reads past full', () => {
-  // Overrunning the budget is allowed — nothing refuses to send — but a ring
+  // Overrunning the budget is allowed - nothing refuses to send - but a ring
   // drawn at 210% is not a ring.
   const g = contextGauge(ctx(3 * CONTEXT_BUDGET))
   assert.equal(g.pct, 100)
@@ -116,7 +116,7 @@ test('capabilityRows: state from the chat, availability from the machine', () =>
   const rows = capabilityRows(chat, cfg)
   assert.deepEqual(rows.map((r) => [r.key, r.on]),
     [['voice', true], ['memory', false], ['web', true], ['code', true]])
-  // every row keeps a plain-English explainer — collapsing chrome must not
+  // every row keeps a plain-English explainer - collapsing chrome must not
   // lose the explanations
   assert.ok(rows.every((r) => r.hint.length > 10))
   assert.match(rows[2].hint, /Tavily/)
@@ -142,7 +142,7 @@ test('gauge surfaces attachment weight and the per-turn upload', () => {
   assert.ok(g.title.includes('6 images'), 'and say how many')
   assert.equal(g.uploadMb, 24)
   assert.ok(/re-uploaded EVERY turn/i.test(g.title),
-    'the megabytes are what actually hurt — they must be stated, not implied')
+    'the megabytes are what actually hurt - they must be stated, not implied')
 })
 
 test('gauge stays quiet about upload when there is nothing to report', () => {

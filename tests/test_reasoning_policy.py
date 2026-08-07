@@ -2,7 +2,7 @@
 request-kwargs level, not just in the translation helpers (tests/test_effort.py
 covers those in isolation). This file drives providers.stream_reply end to end
 against a fake Anthropic client and inspects the literal kwargs that would hit
-the API — proving `thinking={"type": "adaptive"}` is no longer sent
+the API - proving `thinking={"type": "adaptive"}` is no longer sent
 unconditionally, and that a fixed effort level and "adaptive" are never sent
 together in the same request."""
 
@@ -78,7 +78,7 @@ def _drive(monkeypatch, cfg, participant):
 @pytest.mark.parametrize("reasoning_effort", ["", "low", "medium", "high", "max"])
 def test_default_and_fixed_levels_never_send_thinking(cfg, monkeypatch, reasoning_effort):
     """The core regression guard: a participant saved as Default OR any
-    fixed level must never trigger the model's own unbounded deliberation —
+    fixed level must never trigger the model's own unbounded deliberation -
     `thinking` must be entirely absent from the request kwargs."""
     part = dict(PARTICIPANT, reasoning_effort=reasoning_effort)
     kwargs = _drive(monkeypatch, dict(cfg), part)
@@ -104,7 +104,7 @@ def test_default_sends_no_effort_or_thinking_override_at_all(cfg, monkeypatch):
 
 
 def test_adaptive_sends_thinking_and_never_output_config_effort(cfg, monkeypatch):
-    """"adaptive" is the ONLY route to {"type": "adaptive"} — and it's an
+    """"adaptive" is the ONLY route to {"type": "adaptive"} - and it's an
     alternative to output_config.effort, never stacked with it (verified
     against anthropic==0.116.0: `thinking` is fully optional/independent)."""
     part = dict(PARTICIPANT, reasoning_effort="adaptive")
@@ -115,7 +115,7 @@ def test_adaptive_sends_thinking_and_never_output_config_effort(cfg, monkeypatch
 
 def test_voice_mode_does_not_change_the_reasoning_policy(cfg, monkeypatch):
     """Voice must obey the saved participant policy, never silently downgrade
-    (or upgrade) it just because the chat is a live voice session — same
+    (or upgrade) it just because the chat is a live voice session - same
     kwargs whether voice_mode is True or False."""
     part = dict(PARTICIPANT, reasoning_effort="medium")
 

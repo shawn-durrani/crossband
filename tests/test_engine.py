@@ -1,6 +1,6 @@
 """Round-loop characterization: SSE event shape, per-speaker persistence with
 usage/cost, and the persist-on-disconnect ("[cut off by User]") semantics that
-replaced the old threadpool relay. Providers are mocked — no network."""
+replaced the old threadpool relay. Providers are mocked - no network."""
 
 import asyncio
 import json
@@ -98,7 +98,7 @@ def test_provider_error_is_reported_and_round_continues(app, monkeypatch):
 
 def test_disconnect_persists_partial_with_cutoff_marker(app, monkeypatch):
     """Closing the stream mid-reply (voice barge-in / page close) must persist
-    the partial content with the cut-off marker — the native-async port of the
+    the partial content with the cut-off marker - the native-async port of the
     predecessor's stream_with_disconnect guarantee."""
     async def hanging(participant, roster, transcript, names, cfg, project,
                       chat_summary, voice_mode, tools=None, memory=None):
@@ -149,7 +149,7 @@ def test_pick_responders_mention_does_not_rotate():
 
 
 def test_pick_responders_spoken_vocative():
-    """Voice can't type @ — a leading 'Claude and GPT, …' addresses them."""
+    """Voice can't type @ - a leading 'Claude and GPT, …' addresses them."""
     roster = [{"slug": "claude", "name": "Claude"}, {"slug": "gpt", "name": "GPT"},
               {"slug": "gpt-oss", "name": "GPT-OSS"}]
     chat = {"next_first": "claude"}
@@ -173,7 +173,7 @@ def test_pick_responders_vocative_conservative():
 
 
 def test_pick_responders_vocative_spoken_compound_name():
-    """Transcription splits compound names ('GPT-OSS' → 'GPT OSS') — still matches."""
+    """Transcription splits compound names ('GPT-OSS' → 'GPT OSS') - still matches."""
     roster = [{"slug": "claude", "name": "Claude"}, {"slug": "gpt", "name": "GPT"},
               {"slug": "gpt-oss", "name": "GPT-OSS"}]
     chat = {"next_first": "claude"}
@@ -187,7 +187,7 @@ def test_pick_responders_vocative_spoken_compound_name():
 
 def test_trial_seat_excluded_from_unaddressed_round():
     """The real lifecycle gate: a `trial` seat is manual-invoke-only and must NOT
-    auto-speak in a normal, unaddressed round — while onboarded seats behave
+    auto-speak in a normal, unaddressed round - while onboarded seats behave
     exactly as before."""
     roster = [{"slug": "claude", "name": "Claude", "lifecycle": "onboarded"},
               {"slug": "gpt", "name": "GPT", "lifecycle": "onboarded"},
@@ -264,7 +264,7 @@ def test_mentioning_whole_onboarded_roster_stays_a_full_round():
 
 
 def test_trial_seat_speaks_when_addressed_by_name():
-    """Voice can't type @ — addressing a trial seat by name also invokes it."""
+    """Voice can't type @ - addressing a trial seat by name also invokes it."""
     roster = [{"slug": "claude", "name": "Claude", "lifecycle": "onboarded"},
               {"slug": "trialbot", "name": "TrialBot", "lifecycle": "trial"}]
     chat = {"next_first": "claude"}
@@ -274,7 +274,7 @@ def test_trial_seat_speaks_when_addressed_by_name():
 
 def test_all_trial_roster_selects_nobody_when_unaddressed():
     """A chat of only trial seats has no auto-responders until one is addressed
-    or onboarded — the gate is real, not cosmetic."""
+    or onboarded - the gate is real, not cosmetic."""
     roster = [{"slug": "a", "name": "A", "lifecycle": "trial"},
               {"slug": "b", "name": "B", "lifecycle": "trial"}]
     chat = {"next_first": "a"}
@@ -287,7 +287,7 @@ def test_all_trial_roster_selects_nobody_when_unaddressed():
 
 
 def test_missing_lifecycle_participates_no_regression():
-    """A roster row with no lifecycle key at all (older callers) participates —
+    """A roster row with no lifecycle key at all (older callers) participates -
     only an EXPLICIT trial is gated, so nothing pre-existing regresses."""
     roster = [{"slug": "claude"}, {"slug": "gpt"}]
     chat = {"next_first": "claude"}
@@ -314,11 +314,11 @@ def test_sweep_candidates_watermarks(app):
         return cid
 
     untitled = mk(0, 10**9, 3)               # placeholder title, enough messages
-    fresh = mk(0, 10**9, 3, age_s=10)        # same but still active — skipped
+    fresh = mk(0, 10**9, 3, age_s=10)        # same but still active - skipped
     locked_ingested = mk(-1, 10**9, 3)       # user-titled, nothing to ingest
     uningested = mk(-1, 0, 3)                # user-titled but memory behind
-    memoff_behind = mk(-1, 0, 3, memory_enabled=0)  # memory off — ingest doesn't count
-    tiny = mk(0, 10**9, 1)                   # one message — too small to title
+    memoff_behind = mk(-1, 0, 3, memory_enabled=0)  # memory off - ingest doesn't count
+    tiny = mk(0, 10**9, 1)                   # one message - too small to title
 
     ids = set(engine.sweep_candidates(con, idle_s=120))
     con.close()
@@ -331,7 +331,7 @@ def test_sweep_candidates_watermarks(app):
 
 
 def test_pick_responders_vocative_after_greeting():
-    """'Hey, GPT, …' — the comma after the greeting must not hide the name
+    """'Hey, GPT, …' - the comma after the greeting must not hide the name
     (live failure: Ozzy kept answering questions addressed to GPT)."""
     roster = [{"slug": "claude", "name": "Claude"}, {"slug": "gpt", "name": "GPT"},
               {"slug": "gpt-oss", "name": "Ozzy"}]
@@ -377,7 +377,7 @@ def _capture_cfg(captured):
 
 def test_ambient_recall_prepares_round_context(app, monkeypatch):
     """Memory prepares for the conversation unprompted: one origin=auto recall
-    per round, keyed on the latest user message, injected for EVERY speaker —
+    per round, keyed on the latest user message, injected for EVERY speaker -
     models shouldn't have to remember to look things up."""
     captured = []
     monkeypatch.setattr(engine.providers, "stream_reply", _capture_cfg(captured))
@@ -428,7 +428,7 @@ def test_ambient_recall_skipped_without_user_message(app, monkeypatch):
             pass
 
     asyncio.run(go())
-    assert mem.recall_calls == []  # nothing to key on — no ambient noise
+    assert mem.recall_calls == []  # nothing to key on - no ambient noise
     assert captured[0]["memory_ambient"] == ""
 
 
@@ -475,7 +475,7 @@ def test_handoff_ships_attachment_bytes(app, monkeypatch):
 def test_turn_id_records_server_context_and_ttft_stages(app, monkeypatch):
     """A /send carrying turn_id (the live-voice path) gets the round's first
     responder's context-assembly and provider-TTFT split recorded, correlated
-    by that same turn_id — the server-side half of final_to_first_token."""
+    by that same turn_id - the server-side half of final_to_first_token."""
     monkeypatch.setattr(engine.providers, "stream_reply", fake_stream(["hi"]))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
@@ -489,13 +489,13 @@ def test_turn_id_records_server_context_and_ttft_stages(app, monkeypatch):
     stages = {r["stage"] for r in rows if r["turn_id"] == "turn-abc"}
     assert "server_context_assembly" in stages
     assert "server_provider_first_token" in stages
-    # only the FIRST responder's split is recorded — a full round replies
+    # only the FIRST responder's split is recorded - a full round replies
     # with both seats, but only one context-assembly/TTFT pair is written
     assert sum(1 for r in rows if r["stage"] == "server_context_assembly") == 1
 
 
 def test_no_turn_id_records_no_server_stages(app, monkeypatch):
-    """A normal text send (no turn_id — not a voice turn) writes nothing to
+    """A normal text send (no turn_id - not a voice turn) writes nothing to
     the trace table: there's no client-side stopwatch to correlate against."""
     monkeypatch.setattr(engine.providers, "stream_reply", fake_stream(["hi"]))
     with TestClient(app, base_url="http://127.0.0.1") as c:
@@ -535,7 +535,7 @@ def test_trace_recording_failure_never_breaks_the_round(app, monkeypatch, caplog
 
 def test_timed_ms_reports_each_tasks_own_duration():
     """Two concurrent reads awaited in sequence must each report their
-    OWN runtime — the old outside-the-await clocking charged the second task
+    OWN runtime - the old outside-the-await clocking charged the second task
     only for the tail that outlived the first, reading ~0 when it was in
     fact the slower call's equal-length twin."""
     async def go():
@@ -558,7 +558,7 @@ def test_timed_ms_reports_each_tasks_own_duration():
 
 def test_round_reads_transcript_once_then_deltas_nothing_missed(app, monkeypatch):
     """ONE full get_chat_messages per round; each later speaker fetches
-    only the delta — and still sees both the previous speaker's reply and a
+    only the delta - and still sees both the previous speaker's reply and a
     mid-round external insert, exactly as the old full re-read did."""
     counts = {"full": 0, "delta": 0}
     real_full, real_after = db.get_chat_messages, db.get_messages_after
@@ -576,7 +576,7 @@ def test_round_reads_transcript_once_then_deltas_nothing_missed(app, monkeypatch
 
     async def no_reflect(chat_id, cfg):
         return None  # the post-round title/summary job does its own full
-                     # read — silence it so the count below is the ROUND's
+                     # read - silence it so the count below is the ROUND's
 
     monkeypatch.setattr(engine, "post_round_reflect_job", no_reflect)
 

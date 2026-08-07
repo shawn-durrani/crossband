@@ -40,7 +40,7 @@ export class VoiceTrace {
   // `speechEndAgoMs` backdates the speech_end mark: a VAD only learns the
   // utterance ended after its silence window has already elapsed, so "now" is
   // ~silenceMs after the user actually stopped talking. It is an ELAPSED
-  // amount, not a timestamp — the VAD's clock and this trace's clock may
+  // amount, not a timestamp - the VAD's clock and this trace's clock may
   // differ (Date.now vs performance.now), and deltas are safe across both.
   begin(turnId, speechEndAgoMs = 0) {
     this.turn = {
@@ -63,7 +63,7 @@ export class VoiceTrace {
 
   // The turn currently being recorded (or null). Callers capture this handle so
   // a DEFERRED flush targets exactly this turn even if a new turn begins in the
-  // gap between round-done and playback draining — see flush(turn).
+  // gap between round-done and playback draining - see flush(turn).
   current() { return this.turn }
 
   // Turn-level timestamp. First write wins for a given name (we care about the
@@ -131,7 +131,7 @@ export class VoiceTrace {
       push('first_audio_to_playback', s.first_audio, s.playback, tags)
       // Serialisation cost: this speaker's audio was READY at first_audio, but
       // the shared sink wasn't handed to it (play_invoked) until the prior
-      // speaker finished. Only the 2nd+ reply can queue — the lead has nobody
+      // speaker finished. Only the 2nd+ reply can queue - the lead has nobody
       // ahead of it. A follower whose audio arrived AFTER its turn came up (it
       // was itself the laggard) yields a negative delta and is skipped, which
       // correctly reads as "no queue wait".
@@ -146,12 +146,12 @@ export class VoiceTrace {
     }
 
     // stable, human-friendly order for logs/tests (ties keep insertion order,
-    // which is speaker order — Array.prototype.sort is stable)
+    // which is speaker order - Array.prototype.sort is stable)
     stages.sort((x, y) => STAGE_ORDER.indexOf(x.stage) - STAGE_ORDER.indexOf(y.stage))
     return { turn_id: t.turnId, chat_id: t.chatId, stages }
   }
 
-  // Ship a turn's trace (best-effort) and close it. Never throws — a diagnostics
+  // Ship a turn's trace (best-effort) and close it. Never throws - a diagnostics
   // POST must never be able to disturb a live voice session.
   //
   // `turn` defaults to the current turn, but the controller passes a CAPTURED

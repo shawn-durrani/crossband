@@ -7,8 +7,8 @@ import { Hand, Timer, Square, X, CornerDownLeft, SlidersHorizontal, ChevronDown 
 // header. The header owns "start talking"; this owns everything after that.
 //
 // GEOMETRY RULE, and the reason the markup is shaped this way: **the orb is the
-// anchor.** An earlier column layout let the status text move the orb —
-// sideways when the label changed, upward when it wrapped — so the one element
+// anchor.** An earlier column layout let the status text move the orb -
+// sideways when the label changed, upward when it wrapped - so the one element
 // your eye tracks during a call was the least stable thing on screen. The
 // row-reverse + flex-end arrangement in `.voice-dock` pins the orb bottom-right
 // and lets text grow leftward and wrap upward instead. Anything added here must
@@ -22,7 +22,7 @@ export default function VoiceDock({
   if (voiceState === 'off') return null
   return (
     <div className="absolute bottom-3 right-3 sm:right-5 voice-dock">
-      {/* Collapsible — the capsule tucks into a small sliders button, because
+      {/* Collapsible - the capsule tucks into a small sliders button, because
           during a call the orb and its status matter and the knobs mostly
           don't. */}
       {!dockOpen && (
@@ -40,7 +40,7 @@ export default function VoiceDock({
         <div className="voice-controls">
           <button
             title={pttMode
-              ? "Manual mode: pauses won't send — press ⏎ Send to end your turn"
+              ? "Manual mode: pauses won't send - press ⏎ Send to end your turn"
               : 'Auto mode: a pause ends your turn. Click to switch to manual (push-to-talk)'}
             className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
               pttMode
@@ -54,7 +54,7 @@ export default function VoiceDock({
           {!pttMode && (
             <span
               className="inline-flex items-center gap-1.5 text-xs text-ink-dim"
-              title="How long a pause ends your turn in auto mode — raise it if the models cut in while you're still thinking."
+              title="How long a pause ends your turn in auto mode - raise it if the models cut in while you're still thinking."
             >
               <span className="text-ink-faint">pause</span>
               <input
@@ -67,7 +67,7 @@ export default function VoiceDock({
           )}
           <span
             className="inline-flex items-center gap-1.5 text-xs text-ink-dim"
-            title="How fast the models speak — playback speed, pitch preserved. Applies mid-speech."
+            title="How fast the models speak - playback speed, pitch preserved. Applies mid-speech."
           >
             <span className="text-ink-faint">speed</span>
             <input
@@ -120,9 +120,9 @@ export default function VoiceDock({
       <div className="voice-orb-row" role="status">
         <div className={`voice-orb ${voiceState}`} aria-hidden="true" />
         <span className="voice-status">
-          {voiceState === 'listening' && (pttMode ? 'Your turn — press Send' : 'Listening')}
+          {voiceState === 'listening' && (pttMode ? 'Your turn - press Send' : 'Listening')}
           {voiceState === 'transcribing' && 'Thinking…'}
-          {voiceState === 'speaking' && 'Speaking — talk to interrupt'}
+          {voiceState === 'speaking' && 'Speaking - talk to interrupt'}
         </span>
       </div>
     </div>

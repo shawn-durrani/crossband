@@ -1,5 +1,5 @@
 """MCP client layer: Crossband consumes external stdio MCP
-servers — discovery, namespacing, dispatch through run_tool, graceful
+servers - discovery, namespacing, dispatch through run_tool, graceful
 degrade. Exercised against a real FastMCP server (tests/fake_mcp.py), no
 network, keyless."""
 

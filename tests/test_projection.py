@@ -1,4 +1,4 @@
-"""Characterization tests for the transcript projection — the load-bearing
+"""Characterization tests for the transcript projection - the load-bearing
 invariants: own messages become assistant turns, everyone else becomes
 labelled user turns with real timestamps, tool activity replays as a research
 log, and a conversation never starts or ends on an assistant turn."""
@@ -83,7 +83,7 @@ def test_anthropic_youtube_transcript_exempt_from_replay_trim(names, cfg):
 def test_openai_roles(transcript, names, cfg):
     items = build_openai_input("gpt", transcript, names, cfg)
     roles = [m["role"] for m in items]
-    # user, user(claude), assistant(gpt), user(claude) — ends on user already
+    # user, user(claude), assistant(gpt), user(claude) - ends on user already
     assert roles == ["user", "user", "assistant", "user"]
 
 
@@ -126,7 +126,7 @@ def test_empty_attachment_message_gets_placeholder(names, cfg, monkeypatch):
 # ---------- system-only context never leaks into transcript turns ----------
 #
 # Persona, project instructions, chat/project summaries, and memory text must
-# only ever reach a model through the system/instructions channel — never as
+# only ever reach a model through the system/instructions channel - never as
 # a transcript turn, which is the one place attribution to "the user" (a
 # labelled `[User · ts]:` turn) is actually meaningful. These tests pin that
 # boundary structurally, independent of any prompt wording, so a future
@@ -178,7 +178,7 @@ def test_system_only_fields_absent_from_openai_transcript_items(transcript, name
 def test_transcript_builders_have_no_project_or_summary_parameters():
     """Belt-and-suspenders: project instructions/memory and chat_summary can't
     reach the transcript builders even by accident, because the functions
-    don't accept them as arguments at all — only split_system_prompt does."""
+    don't accept them as arguments at all - only split_system_prompt does."""
     for fn in (build_anthropic_messages, build_openai_input):
         params = set(inspect.signature(fn).parameters)
         assert "project" not in params

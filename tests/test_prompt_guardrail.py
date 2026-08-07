@@ -50,7 +50,7 @@ def test_error_attribution_rule_present_in_stable_rules(cfg):
 
 def test_peer_action_rule_present_in_stable_rules(cfg):
     """A same-day recurrence of that incident WITH the rule live: a seat
-    announced another seat's save_memory as its own ("Got it — saved") and
+    announced another seat's save_memory as its own ("Got it - saved") and
     echoed the other's climbdown. The addendum names actions explicitly."""
     from backend.providers import split_system_prompt
     stable, volatile = split_system_prompt(PARTICIPANT, ROSTER, dict(cfg), None, "", False)

@@ -94,7 +94,7 @@ async def get_chat(chat_id: int, request: Request):
 async def get_chat_messages_after(chat_id: int, after: int = 0):
     """Incremental catch-up for ONE chat: returns only rows with
     id > `after`, same attachments/tool_events shape as GET /api/chats/{id}'s
-    `messages` — what the frontend fetches when the global events stream
+    `messages` - what the frontend fetches when the global events stream
     (GET /api/events/stream) reports a new message for the chat currently
     open, instead of refetching the whole transcript on every live notice."""
     con = db.connect()
@@ -108,7 +108,7 @@ async def get_chat_messages_after(chat_id: int, after: int = 0):
 
 @router.get("/api/chats/{chat_id}/guest_jobs")
 async def get_chat_guest_jobs(chat_id: int):
-    """Snapshot of this chat's Claude Code guest jobs — the status the
+    """Snapshot of this chat's Claude Code guest jobs - the status the
     chip seeds from on open (running / completed / failed / cancelled + which
     completion path). Live changes then arrive over GET /api/events/stream, the
     same channel messages use. Newest first; durable across reconnects."""
@@ -132,7 +132,7 @@ def update_chat(chat_id: int, body: ChatIn):
         updates["project_id"] = body.project_id  # explicit, incl. null → move to standalone
     if body.title is not None:
         updates["title"] = body.title
-        updates["title_upto"] = -1  # user named it — stop auto-titling this chat
+        updates["title_upto"] = -1  # user named it - stop auto-titling this chat
     if body.voice_mode is not None:
         updates["voice_mode"] = int(body.voice_mode)
     if body.web_enabled is not None:
@@ -175,7 +175,7 @@ class NoticeIn(BaseModel):
 
 @router.post("/api/chats/{chat_id}/notice")
 async def post_notice(chat_id: int, body: NoticeIn):
-    """Tooling notices — the mirror image of slash commands: machine-side
+    """Tooling notices - the mirror image of slash commands: machine-side
     tooling on this computer (deploy watchers, schedulers, anything local)
     reports a status line INTO a chat. Persists as speaker='system', never
     runs a round, and the models see it next round (it's ground truth).
@@ -187,7 +187,7 @@ async def post_notice(chat_id: int, body: NoticeIn):
     round's messages.
 
     async def, not def (this matters): db.insert_message()'s notify() call
-    must run ON the event loop — a plain `def` route runs in FastAPI's
+    must run ON the event loop - a plain `def` route runs in FastAPI's
     threadpool instead, where touching the events bus's asyncio primitives
     from a different thread would be unsafe. See backend/events.py."""
     text = body.text.strip()
@@ -208,10 +208,10 @@ class SendIn(BaseModel):
     text: str = ""
     attachment_ids: list[int] = []
     # The client's own voice-trace correlation id (frontend/src/
-    # voiceTrace.js), present only for a live voice turn — lets the server
+    # voiceTrace.js), present only for a live voice turn - lets the server
     # attribute its own context-assembly/provider-TTFT split to the SAME turn
     # the browser is timing. None for a normal text send: no server-side
-    # split is recorded then. Bounded/opaque — never rendered, never
+    # split is recorded then. Bounded/opaque - never rendered, never
     # interpreted as anything but a correlation key.
     turn_id: str | None = None
 
@@ -219,7 +219,7 @@ class SendIn(BaseModel):
 @router.post("/api/chats/{chat_id}/send")
 async def send_message(chat_id: int, body: SendIn, request: Request):
     # The user-message persist (INSERT + fsync + placeholder-title
-    # update) runs on a worker thread — this route shares the event loop
+    # update) runs on a worker thread - this route shares the event loop
     # with live voice websocket relays, and a blocked fsync here is heard
     # as a stutter there. Same logic, same errors, off the loop.
     def _persist_user_message():
@@ -243,7 +243,7 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
     chat, user_msg, roster = await asyncio.to_thread(_persist_user_message)
 
     # Slash command: a message starting with "/" is addressed to tooling, not
-    # to the participants — persisted (the record stays complete), but no
+    # to the participants - persisted (the record stays complete), but no
     # round runs and no model replies. Deliberately allowed while a round is
     # streaming (it's a side-channel note, not a barge-in), so no Round is
     # registered and the active round's re-attach buffer is untouched.
@@ -257,9 +257,9 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
     settings = request.app.state.settings
     memory = request.app.state.memory
     if rounds.active(chat_id):
-        raise HTTPException(409, "a round is already running — abort it first")
+        raise HTTPException(409, "a round is already running - abort it first")
     # Bound/clean the client-supplied correlation id the same way the
-    # voice-trace ingest path does (backend/voice_trace._clean_str) — it's
+    # voice-trace ingest path does (backend/voice_trace._clean_str) - it's
     # only ever used as an opaque DB key, never rendered or interpreted.
     turn_id = (body.turn_id or "").strip()[:64] or None
 
@@ -275,7 +275,7 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
             yield chunk
 
     # Detached: the round runs to completion whether or not this response
-    # survives (a dead zone must not kill the reply) — we merely tail it.
+    # survives (a dead zone must not kill the reply) - we merely tail it.
     return StreamingResponse(_tail_new_round(chat_id, gen()),
                              media_type="text/event-stream")
 
@@ -296,7 +296,7 @@ def _tail_new_round(chat_id, gen):
 async def round_stream(chat_id: int, round_id: int, after: int = 0):
     """Re-attach to a round after a connection drop: replay buffered events
     from index `after`, then keep streaming live. 404 when that round is gone
-    (the client falls back to refetching the chat — replies persisted anyway)."""
+    (the client falls back to refetching the chat - replies persisted anyway)."""
     r = rounds.get(chat_id, round_id)
     if not r:
         raise HTTPException(404, "no such round")
@@ -310,12 +310,12 @@ async def round_stream(chat_id: int, round_id: int, after: int = 0):
 
 @router.get("/api/chats/{chat_id}/active_round")
 async def active_round(chat_id: int):
-    """The chat's currently-generating detached round, if any — its id plus how
+    """The chat's currently-generating detached round, if any - its id plus how
     many SSE events have buffered so far. A VOICE-active client that didn't start
     the round (a Claude Code hand-back narration, or a round that began while the
     tab was backgrounded) reads this to attach and TAIL that round, so its
     narrator is actually spoken. Without it those rounds reach the client
-    only as persisted messages over the global events stream — which never
+    only as persisted messages over the global events stream - which never
     touches the voice pipeline, so text arrives and audio never does. Returns
     {"round_id": null} when the chat is idle."""
     r = rounds.active(chat_id)
@@ -350,7 +350,7 @@ async def continue_round(chat_id: int, request: Request, body: ContinueIn = Cont
     settings = request.app.state.settings
     memory = request.app.state.memory
     if rounds.active(chat_id):
-        raise HTTPException(409, "a round is already running — abort it first")
+        raise HTTPException(409, "a round is already running - abort it first")
 
     async def gen():
         for n in range(1, n_rounds + 1):
@@ -430,8 +430,8 @@ def chats_usage():
 @router.get("/api/usage/summary")
 def usage_summary(request: Request, window: str = "all"):
     """Cumulative spend across ALL chats over time. Headline totals for
-    today / last 7 days / all time, a 30-day daily trend, and — for the
-    selected `window` — breakdowns by source, provider, model and chat.
+    today / last 7 days / all time, a 30-day daily trend, and - for the
+    selected `window` - breakdowns by source, provider, model and chat.
 
     Provenance is kept honest: metered spend, subscription-equivalent usage and
     unknown/unverified are reported separately and never collapsed. Shares
@@ -443,7 +443,7 @@ def usage_summary(request: Request, window: str = "all"):
     midnight = datetime_module.datetime.now().replace(
         hour=0, minute=0, second=0, microsecond=0).timestamp()
     # Selectable spans, in DAYS. The trend, the breakdown and the
-    # previous-period comparison all follow the chosen one — asking "how am I
+    # previous-period comparison all follow the chosen one - asking "how am I
     # doing over 90 days" and being shown a 30-day chart is the confusion this
     # replaces.
     SPANS = {"today": 1, "7d": 7, "30d": 30, "90d": 90, "all": None}

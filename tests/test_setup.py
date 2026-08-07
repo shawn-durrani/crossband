@@ -1,5 +1,5 @@
 """Setup router: status shape, .env write round-trip, and the security
-invariants — keys are never echoed back and never appear in GET status.
+invariants - keys are never echoed back and never appear in GET status.
 All validation is mocked; no live provider calls in CI."""
 
 import asyncio
@@ -31,7 +31,7 @@ def app(tmp_path, monkeypatch):
 
 @pytest.fixture
 def clean_env():
-    """The endpoint mutates os.environ on success — restore it afterwards."""
+    """The endpoint mutates os.environ on success - restore it afterwards."""
     saved = {k: os.environ.get(k)
              for spec in setup_mod.SERVICES.values() for k in spec["env"]}
     yield
@@ -213,13 +213,13 @@ def test_one_entry_is_enough_to_add_an_integration(monkeypatch):
 
 
 def test_env_file_is_tightened_to_owner_only_on_startup(tmp_path, monkeypatch):
-    """`.env` holds live API keys, so it must be owner-only — and must be
+    """`.env` holds live API keys, so it must be owner-only - and must be
     REPAIRED, not just created correctly.
 
     Both repos shipped 644 .env files full of real keys: start.sh created them
     with `cp` and never chmodded, and the app's own write path only tightened a
     file once a key was saved through the UI. The service also normally starts
-    under launchd, which never runs start.sh — so the repair belongs here."""
+    under launchd, which never runs start.sh - so the repair belongs here."""
     from backend import app as app_mod
     env = tmp_path / ".env"
     env.write_text("ANTHROPIC_API_KEY=x\n")

@@ -55,7 +55,7 @@ test('chip label is a single quiet line, no reasoning', () => {
   assert.equal(chipLabel({ status: 'running', mode: 'implement', step_count: 3 }),
     'Claude Code building… · 3 steps')
   assert.equal(chipLabel({ status: 'completed', kind: 'result' }),
-    'Claude Code finished — handing back')
+    'Claude Code finished - handing back')
   assert.equal(chipLabel({ status: 'completed', kind: 'blocker' }),
     'Claude Code needs input')
   assert.equal(chipLabel({ status: 'failed' }), 'Claude Code hit an error')
@@ -85,7 +85,7 @@ test('hasVisibleJob: running shows, fresh finish lingers, old finish clears', ()
   assert.equal(hasVisibleJob([{ id: 1, status: 'running', updated_at: now - 9999 }], now), true)
   // A finished job lingers briefly (its result arrives as a message)…
   assert.equal(hasVisibleJob([{ id: 1, status: 'completed', updated_at: now - 10 }], now), true)
-  // …then clears, so the layout wrapper must not reserve space for it —
+  // …then clears, so the layout wrapper must not reserve space for it -
   // the phantom-spacer bug this rule exists to prevent.
   assert.equal(hasVisibleJob([{ id: 1, status: 'completed', updated_at: now - LINGER_SECS - 1 }], now), false)
   assert.equal(hasVisibleJob([], now), false)

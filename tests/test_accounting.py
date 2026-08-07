@@ -129,7 +129,7 @@ def test_breakdowns_group_by_chat_and_source(con):
 
 def test_code_source_label_is_coding_agent(con):
     # The Spend page's by_source row for Claude Code reads "Coding
-    # agent", not "guest" — a category label, not a mechanism name. The key
+    # agent", not "guest" - a category label, not a mechanism name. The key
     # (SOURCE_CODE) is unchanged; only the display label moved.
     _msg(con, "claude-code", _base_usage(1.0, auth="api_key"), NOW)
     s = accounting.summarize(list(accounting.iter_cost_events(con)))
@@ -139,7 +139,7 @@ def test_code_source_label_is_coding_agent(con):
 
 def test_by_party_groups_dynamically_on_speaker(con):
     """The per-party split is keyed on the event's own speaker, so any
-    number of participants/guests/producers flow in with no hardcoded roster —
+    number of participants/guests/producers flow in with no hardcoded roster -
     and subscription-equivalent stays on its own axis, never in metered."""
     _msg(con, "claude", _base_usage(0.10, model="claude-opus-4-8"), NOW)
     _msg(con, "gpt", _base_usage(0.20, model="gpt-5.1"), NOW)
@@ -161,7 +161,7 @@ def test_by_party_groups_dynamically_on_speaker(con):
 def test_same_model_from_chat_and_guest_stays_separate(con):
     """The load-bearing regression. The Claude chat seat and a summoned
     Claude Code guest can run the SAME concrete model (claude-sonnet-5). The
-    landing breakdown must NOT merge them into one bar — that merge is what made
+    landing breakdown must NOT merge them into one bar - that merge is what made
     "Sonnet costs way more than GPT" a lie (guest tool-loop spend masquerading
     as chat spend). by_model still merges (it groups on model alone); the
     producer-aware axis keeps them apart."""
@@ -170,7 +170,7 @@ def test_same_model_from_chat_and_guest_stays_separate(con):
          _base_usage(5.0, auth="api_key", verified_model="claude-sonnet-5"), NOW)
     s = accounting.summarize(list(accounting.iter_cost_events(con)))
 
-    # by_model (drilldown) still exists and merges on model id — one bucket.
+    # by_model (drilldown) still exists and merges on model id - one bucket.
     by_model = {g["key"]: g for g in s["by_model"]}
     assert by_model["claude-sonnet-5"][accounting.CAT_METERED] == pytest.approx(5.30)
 
@@ -188,7 +188,7 @@ def test_same_model_from_chat_and_guest_stays_separate(con):
 
 def test_producer_axes_reconcile_to_totals_without_double_count(con):
     """Every producer-aware grouping is the SAME events grouped differently, so
-    each must sum back to the metered total — no bar invents or drops a dollar."""
+    each must sum back to the metered total - no bar invents or drops a dollar."""
     _msg(con, "claude", _base_usage(0.30, model="claude-sonnet-5"), NOW)
     _msg(con, "gpt", _base_usage(0.20, model="gpt-5.1"), NOW)
     _msg(con, "claude-code",
@@ -213,7 +213,7 @@ def test_new_unpriced_model_fails_closed_in_accounting(con):
 
     Used `gpt-5.6-terra` until it was given a verified card; its separately
     published sibling `gpt-5.6-terra-pro` now stands in, and is the stronger
-    case — one suffix from a priced entry, and still must not inherit it."""
+    case - one suffix from a priced entry, and still must not inherit it."""
     # No 'cost' recorded and no matching card → has_cost False, provenance unknown.
     _msg(con, "gpt", {"input": 100, "output": 200, "model": "gpt-5.6-terra-pro"}, NOW)
     events = list(accounting.iter_cost_events(con))
@@ -242,7 +242,7 @@ def test_auth_provenance_reflects_config():
 
 def test_resident_turn_provenance_is_rate_card_estimate(con):
     # A dollar computed from the local price table is an ESTIMATE, never
-    # billed spend — even though it stays in the metered cash bucket.
+    # billed spend - even though it stays in the metered cash bucket.
     _msg(con, "claude", _base_usage(0.05, model="claude-opus-4-8"), NOW)
     e = list(accounting.iter_cost_events(con))[0]
     assert e.provenance == "rate_card_estimate"
@@ -341,7 +341,7 @@ def test_chats_usage_endpoint_keeps_buckets_apart(tmp_path):
 
         row = client.get("/api/usage/chats").json()[str(chat["id"])]
 
-    # There is deliberately no single `cost` — a consumer cannot accidentally
+    # There is deliberately no single `cost` - a consumer cannot accidentally
     # re-sum what this endpoint exists to keep apart.
     assert "cost" not in row
     assert row["metered"] == pytest.approx(2.0)
@@ -485,7 +485,7 @@ def test_selected_span_drives_window_previous_and_series(tmp_path):
 #
 # A cache regression can sit in plain sight for days: the tokens are already in
 # usage_json, but nothing aggregates them. A cache WRITE bills at 1.25x input and a
-# READ at 0.1x, so a write is 12.5x a read — and neither the dollar total nor
+# READ at 0.1x, so a write is 12.5x a read - and neither the dollar total nor
 # the token total moves much when a prefix starts being re-written instead of
 # re-read. The ratio is the signal.
 

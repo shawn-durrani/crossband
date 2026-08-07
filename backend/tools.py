@@ -53,7 +53,7 @@ def tool_definitions(cfg):
             "name": "web_search",
             "description": (
                 f"Search the web via {engines}. Results are labelled per engine; URLs "
-                "surfaced by more than one engine are marked [both] — a strong quality "
+                "surfaced by more than one engine are marked [both] - a strong quality "
                 "signal. Use whenever current or external information would improve your "
                 "answer; do not answer from memory about prices, salaries, news, or "
                 "anything time-sensitive. For roles/careers/salary research prefer "
@@ -90,7 +90,7 @@ def tool_definitions(cfg):
         "name": "fetch_page",
         "description": (
             "Fetch a public web page and return its readable text. Use after web_search "
-            "when a result looks promising and you need more than the snippet — salary "
+            "when a result looks promising and you need more than the snippet - salary "
             "pages, articles, documentation. Public http(s) URLs only."
         ),
         "input_schema": {
@@ -104,7 +104,7 @@ def tool_definitions(cfg):
         "description": (
             "Pull the full transcript of a YouTube video (with timestamps). When "
             "web_search surfaces a YouTube link relevant to the question, call this "
-            "to read what was actually said instead of relying on the snippet — "
+            "to read what was actually said instead of relying on the snippet - "
             "talks, interviews, podcasts published on YouTube, reviews."
         ),
         "input_schema": {
@@ -120,7 +120,7 @@ def tool_definitions(cfg):
             "description": (
                 "Download a public audio file (e.g. a podcast episode's direct MP3 "
                 "URL from its RSS feed) and transcribe it with speech-to-text. Use "
-                "for podcasts without published transcripts — find the episode's "
+                "for podcasts without published transcripts - find the episode's "
                 "enclosure/audio URL first (web_search or fetch_page on the RSS "
                 "feed). Costs real money per audio hour, so confirm it's the right "
                 f"episode before calling. {cfg.get('max_audio_mb', 60)}MB cap "
@@ -136,7 +136,7 @@ def tool_definitions(cfg):
         "name": "fetch_reddit_thread",
         "description": (
             "Fetch a Reddit post with its full comment tree (scores and authors "
-            "included). Much richer than search snippets — use for any reddit.com URL, "
+            "included). Much richer than search snippets - use for any reddit.com URL, "
             "especially first-hand accounts of roles, companies, salaries, interviews."
         ),
         "input_schema": {
@@ -152,7 +152,7 @@ def diagnostics_tool_definitions():
     """get_diagnostic, the native half of the guest-facing MCP tool: the exact
     same scoped, read-only, content-free diagnostic a summoned Claude Code
     guest already gets on its MCP surface (backend/diag_mcp.py), now offered
-    directly to Claude/GPT's own native tool-calling — so "what's voice
+    directly to Claude/GPT's own native tool-calling - so "what's voice
     latency right now?" gets answered in-round instead of needing an
     unnecessary escalation to a specialist guest. Always offered, unlike the
     web/code/memory tool groups above: it carries no secret and reaches no
@@ -162,7 +162,7 @@ def diagnostics_tool_definitions():
     toggle would only remove a harmless capability, not add safety.
 
     The schema, description and dispatch all come from backend/diagnostics.py
-    — the ONE place that decides what `name` resolves to for both this tool
+    - the ONE place that decides what `name` resolves to for both this tool
     and the guest's, so they can't drift apart."""
     return [{
         "name": "get_diagnostic",
@@ -172,13 +172,13 @@ def diagnostics_tool_definitions():
 
 
 def memory_tool_definitions(user_name):
-    """Model-facing memory tools — registered only when the memory service is
+    """Model-facing memory tools - registered only when the memory service is
     reachable AND the chat has memory enabled."""
     return [
         {
             "name": "recall_memory",
             "description": (
-                f"Search the COMPLETE memory ledger about {user_name} — the durable, "
+                f"Search the COMPLETE memory ledger about {user_name} - the durable, "
                 "never-summarized record of everything known about them. The summary in "
                 "your system prompt is only a fast index; use this tool whenever you need "
                 "detail, history, or anything the summary doesn't cover."
@@ -195,7 +195,7 @@ def memory_tool_definitions(user_name):
         {
             "name": "search_history",
             "description": (
-                "Verbatim full-text search across EVERY message in ALL past chats — the "
+                "Verbatim full-text search across EVERY message in ALL past chats - the "
                 "complete, unsummarized conversational record. Use for 'what did we say "
                 "about X', exact quotes, or details that never made it into the fact "
                 "ledger. Returns matching messages with speaker and date."
@@ -214,7 +214,7 @@ def memory_tool_definitions(user_name):
                 f"Append a durable fact about {user_name} to their permanent memory "
                 "ledger (e.g. a stated preference, decision, or life fact worth "
                 "remembering across all future chats). One clear sentence per call. "
-                "Use sparingly — only genuinely durable facts."
+                "Use sparingly - only genuinely durable facts."
             ),
             "input_schema": {
                 "type": "object",
@@ -225,7 +225,7 @@ def memory_tool_definitions(user_name):
                         "description": (
                             "Optional. The date the fact is actually ABOUT, as YYYY-MM-DD "
                             "(e.g. when an event happened or a state began), when that differs "
-                            "from today. Omit for facts simply true as of now — they default "
+                            "from today. Omit for facts simply true as of now - they default "
                             "to today."
                         ),
                     },
@@ -237,27 +237,27 @@ def memory_tool_definitions(user_name):
 
 
 def code_tool_definitions(cfg):
-    """The summon_claude_code tool — offered only when the chat has code
+    """The summon_claude_code tool - offered only when the chat has code
     enabled AND the guest harness is available (see backend/guest.py)."""
     from . import guest
     repos = sorted((cfg.get("code_repos") or {}))
     return [{
         "name": "summon_claude_code",
         "description": (
-            "Summon Claude Code — the coding agent installed on this machine — "
+            "Summon Claude Code - the coding agent installed on this machine - "
             "into the chat for one turn, working in the configured "
             "repositories. Claude Code joins at the END of the current round and "
             "its reply is visible to everyone. Two modes: \"investigate\" "
-            "(default) is read-only — it answers questions about the actual "
-            "code and produces implementation plans. \"implement\" — use ONLY "
-            "when the user explicitly asked for the change to be made — lets "
+            "(default) is read-only - it answers questions about the actual "
+            "code and produces implementation plans. \"implement\" - use ONLY "
+            "when the user explicitly asked for the change to be made - lets "
             "it create a branch, implement, run the tests, and open a pull "
             "request for the user to review; it can never merge or push to "
             "main. Set continue_last=true to resume Claude Code's previous "
             "visit in this chat (e.g. \"now implement the plan you just "
             "made\"). Sessions are bound to ONE repo: continue_last only "
             "carries the working context when repo matches the previous "
-            "visit — on a mismatch a FRESH session starts in the repo you "
+            "visit - on a mismatch a FRESH session starts in the repo you "
             "asked for. To point a review at a specific branch or pull request, "
             "set ref to a branch/ref name (e.g. \"cc/155-worktree-isolation\"), "
             "a PR number (e.g. \"154\"), or a PR URL. Crossband checks the "
@@ -267,17 +267,17 @@ def code_tool_definitions(cfg):
             "anything itself. Omit ref to start from the latest main. ref can't "
             "be combined with continue_last (that resumes the previous visit's "
             "own checkout). Give it a self-contained task. Claude Code may reply "
-            "with clarifying questions instead of building — get the user's "
+            "with clarifying questions instead of building - get the user's "
             "answers, then summon again with continue_last=true to relay "
             "them. Optionally set model to pick the tier (opus/sonnet/haiku) "
             "and effort for the thinking level (think/think-hard/ultrathink); "
             "omit or use \"default\" for Claude Code's own defaults. Each reply "
             "shows what ran: the MODEL is verified from Claude Code's own "
             "session metadata (so a tier like \"default\" is reported as the "
-            "concrete model that ran — ground truth, not your request), while "
+            "concrete model that ran - ground truth, not your request), while "
             "the effort is shown as requested/applied (Claude Code doesn't "
             "report thinking usage back, so it isn't independently confirmed). "
-            "Model choice is SEPARATE from billing — "
+            "Model choice is SEPARATE from billing - "
             "a cheaper model is still billed by whichever login authenticated "
             "the turn, so it is not a way to switch onto or off the subscription."
         ),
@@ -295,11 +295,11 @@ def code_tool_definitions(cfg):
                           "description": "Model tier for this summon: default (Claude Code's own default), opus, sonnet, or haiku. Separate from auth/billing."},
                 "effort": {"type": "string",
                            "enum": list(guest.EFFORT_ALIASES),
-                           "description": "Thinking/effort level: default (Claude Code's own), think, think-hard, or ultrathink (progressively larger thinking budgets). Shown on the reply as requested/applied — unlike the model (verified from the session), the effort is not read back, so it isn't independently confirmed."},
+                           "description": "Thinking/effort level: default (Claude Code's own), think, think-hard, or ultrathink (progressively larger thinking budgets). Shown on the reply as requested/applied - unlike the model (verified from the session), the effort is not read back, so it isn't independently confirmed."},
                 "continue_last": {"type": "boolean",
                                   "description": "Resume Claude Code's previous visit in this chat, keeping its working context (only when repo matches that visit; otherwise a fresh session starts in the requested repo)"},
                 "ref": {"type": "string",
-                        "description": "Optional explicit target to check the worktree out at BEFORE the guest starts: a branch/ref name, a PR number, or a PR URL (e.g. \"cc/155-worktree-isolation\", \"154\", or \"https://github.com/owner/repo/pull/154\"). Lets a review see a specific branch/PR — including unmerged code — without the agent fetching it. Omit for the latest main. Cannot be combined with continue_last."},
+                        "description": "Optional explicit target to check the worktree out at BEFORE the guest starts: a branch/ref name, a PR number, or a PR URL (e.g. \"cc/155-worktree-isolation\", \"154\", or \"https://github.com/owner/repo/pull/154\"). Lets a review see a specific branch/PR - including unmerged code - without the agent fetching it. Omit for the latest main. Cannot be combined with continue_last."},
             },
             "required": ["task"],
         },
@@ -309,7 +309,7 @@ def code_tool_definitions(cfg):
 # ---------- GitHub issues (dev tools; gated on the chat's code toggle) ----------
 
 # Auth resolution, cheapest first: GITHUB_TOKEN env, else the machine's
-# authenticated gh CLI (`gh auth token`) — the common local case needs zero
+# authenticated gh CLI (`gh auth token`) - the common local case needs zero
 # new keys. Cached for the process lifetime.
 _gh_token_cache = {"value": None, "checked": False}
 
@@ -340,7 +340,7 @@ def github_tool_definitions(cfg):
         {
             "name": "read_github_issues",
             "description": (
-                "Read a repository's GitHub issues — the project's actual "
+                "Read a repository's GitHub issues - the project's actual "
                 "backlog and bug tracker. Without a number: list issues "
                 "(newest first). With a number: the full issue including its "
                 "comment thread. Use before filing anything (avoid "
@@ -364,10 +364,10 @@ def github_tool_definitions(cfg):
             "name": "read_github_file",
             "description": (
                 "Read one file, or list one directory, from a repository as "
-                "it exists ON GITHUB (the pushed state — for uncommitted "
+                "it exists ON GITHUB (the pushed state - for uncommitted "
                 "local work, summon Claude Code instead). Without a path: "
-                "the repository root. Use for quick code lookups — checking "
-                "how something is implemented, reading a config or doc — "
+                "the repository root. Use for quick code lookups - checking "
+                "how something is implemented, reading a config or doc - "
                 "when a full Claude Code investigation would be overkill."
             ),
             "input_schema": {
@@ -389,13 +389,13 @@ def github_tool_definitions(cfg):
                 "Read pull requests' GROUND TRUTH. Without a number: list "
                 "the repository's PRs (what's waiting for review). With a "
                 "number: that PR's open/merged/closed state, merge commit "
-                "and time, CI check results, and its comment thread — the "
+                "and time, CI check results, and its comment thread - the "
                 "machine's deploy tooling posts its results there "
                 "(🚀 deployed / ⚠️ refused, with reasons). ALWAYS call this "
                 "before answering whether a PR is merged, deployed, or "
-                "CI-green — never assert PR or deploy state from memory or "
+                "CI-green - never assert PR or deploy state from memory or "
                 "from what the chat says. If there is no deploy comment "
-                "yet, say the tooling hasn't reported — don't guess."
+                "yet, say the tooling hasn't reported - don't guess."
             ),
             "input_schema": {
                 "type": "object",
@@ -413,13 +413,13 @@ def github_tool_definitions(cfg):
         {
             "name": "reopen_github_issue",
             "description": (
-                "Reopen a CLOSED GitHub issue — the feedback loop: when "
+                "Reopen a CLOSED GitHub issue - the feedback loop: when "
                 "shipped work turns out to have a problem, the record goes "
                 "back on the ORIGINAL issue, not a duplicate. A reason is "
                 "required and is posted as a comment before reopening, so a "
                 "reopen is never unexplained. No real personal data in the "
-                "reason — placeholders only (the repositories publish). (There is deliberately no "
-                "close tool — issues close via merged PRs or the user.)"
+                "reason - placeholders only (the repositories publish). (There is deliberately no "
+                "close tool - issues close via merged PRs or the user.)"
             ),
             "input_schema": {
                 "type": "object",
@@ -429,7 +429,7 @@ def github_tool_definitions(cfg):
                     "number": {"type": "integer",
                                "description": "The closed issue to reopen"},
                     "reason": {"type": "string",
-                               "description": "Why it's being reopened — self-contained, posted as a comment"},
+                               "description": "Why it's being reopened - self-contained, posted as a comment"},
                 },
                 "required": ["repo", "number", "reason"],
             },
@@ -441,11 +441,11 @@ def github_tool_definitions(cfg):
                 "repositories. Check read_github_issues first so you don't "
                 "file a duplicate. Write the title as an imperative action "
                 "and make the body self-contained (someone will act on it "
-                "without this chat). NEVER include real personal data — no real "
+                "without this chat). NEVER include real personal data - no real "
                 "names of people or companies from the user's life, no "
                 "locations, employers, health, money or travel details; use "
                 "role placeholders (recruiter R, AcmeCo). NEVER include real "
-                "infrastructure identifiers either — no real *.ts.net tailnet "
+                "infrastructure identifiers either - no real *.ts.net tailnet "
                 "hostnames, machine home paths, or personal emails; use "
                 "placeholders (my-mac.my-tailnet.ts.net, /Users/you). The repositories "
                 "publish publicly. The issue is filed under the user's "
@@ -469,14 +469,14 @@ def github_tool_definitions(cfg):
             "name": "comment_github_issue",
             "description": (
                 "Add a comment to an EXISTING GitHub issue on one of the "
-                "project's repositories — for following up on, correcting, or "
+                "project's repositories - for following up on, correcting, or "
                 "adding detail to an issue that's already filed (use "
                 "file_github_issue for a brand-new one). Read the issue first "
                 "if you need its context, but no duplicate check is required. "
                 "Write a self-contained comment (someone will read it without "
                 "this chat). The same privacy rule as filing applies: no real "
                 "personal data AND no real infrastructure identifiers (*.ts.net "
-                "hostnames, machine paths, personal emails) — placeholders only, "
+                "hostnames, machine paths, personal emails) - placeholders only, "
                 "the repositories publish "
                 "publicly. The comment is posted under the user's GitHub "
                 "identity with a footer naming you as the author."
@@ -497,13 +497,13 @@ def github_tool_definitions(cfg):
         {
             "name": "edit_github_issue",
             "description": (
-                "Edit an EXISTING GitHub issue's content — its title, body, "
-                "and/or labels — to correct or refine a misframing, NOT to "
+                "Edit an EXISTING GitHub issue's content - its title, body, "
+                "and/or labels - to correct or refine a misframing, NOT to "
                 "close it or change its state (that stays with merged PRs and "
-                "the user). No real personal data in the new content — "
+                "the user). No real personal data in the new content - "
                 "placeholders only (the repositories publish; note prior "
                 "revisions stay visible in edit history, so tell the user if "
-                "you are editing PII OUT — deletion is theirs). Use when an early framing turns out wrong or "
+                "you are editing PII OUT - deletion is theirs). Use when an early framing turns out wrong or "
                 "incomplete and the fix belongs in the issue itself, not just "
                 "a comment (e.g. the title reads the wrong root cause). Read "
                 "the issue first. Pass only the fields you're changing. A "
@@ -520,13 +520,13 @@ def github_tool_definitions(cfg):
                     "number": {"type": "integer",
                                "description": "The issue number to edit"},
                     "title": {"type": "string",
-                              "description": "New title (imperative, under 70 chars) — omit to leave unchanged"},
+                              "description": "New title (imperative, under 70 chars) - omit to leave unchanged"},
                     "body": {"type": "string",
-                             "description": "New self-contained markdown body — omit to leave unchanged"},
+                             "description": "New self-contained markdown body - omit to leave unchanged"},
                     "labels": {"type": "array", "items": {"type": "string"},
-                               "description": "Replacement label set, existing labels only — omit to leave unchanged"},
+                               "description": "Replacement label set, existing labels only - omit to leave unchanged"},
                     "reason": {"type": "string",
-                               "description": "Why the edit is being made — self-contained, posted as an audit comment"},
+                               "description": "Why the edit is being made - self-contained, posted as an audit comment"},
                 },
                 "required": ["repo", "number", "reason"],
             },
@@ -551,7 +551,7 @@ def _gh_slug(args, cfg):
     repos = cfg.get("github_repos") or {}
     slug = repos.get((args.get("repo") or "").strip())
     if not slug:
-        raise ValueError(f"unknown repo — available: {', '.join(sorted(repos)) or '(none)'}")
+        raise ValueError(f"unknown repo - available: {', '.join(sorted(repos)) or '(none)'}")
     return slug
 
 
@@ -607,11 +607,11 @@ def read_github_file(args, cfg, origin_agent=None):
                            params=params)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            return (f"Error: {slug}/{path or '(root)'}{at} not found — check "
+            return (f"Error: {slug}/{path or '(root)'}{at} not found - check "
                     "the path with a directory listing first")
         raise
     if isinstance(data, list):  # directory
-        lines = [f"{slug}/{path or '(root)'}{at} — {len(data)} entries:"]
+        lines = [f"{slug}/{path or '(root)'}{at} - {len(data)} entries:"]
         for e in sorted(data, key=lambda x: (x["type"] != "dir", x["name"])):
             mark = "dir " if e["type"] == "dir" else "file"
             size = f" ({e['size']:,} B)" if e["type"] == "file" else ""
@@ -620,7 +620,7 @@ def read_github_file(args, cfg, origin_agent=None):
     if data.get("type") != "file":
         return f"Error: {path} is a {data.get('type')}, not a file or directory"
     if data.get("size", 0) > GITHUB_FILE_MAX_BYTES:
-        return (f"Error: {path} is {data['size']:,} bytes — too large for "
+        return (f"Error: {path} is {data['size']:,} bytes - too large for "
                 "chat; ask Claude Code to investigate it instead")
     try:
         content = base64.b64decode(data.get("content") or "").decode(
@@ -631,7 +631,7 @@ def read_github_file(args, cfg, origin_agent=None):
     out = f"{slug}/{path}{at}:\n\n{content}"
     if len(out) > cfg["max_tool_output"]:
         out = out[:cfg["max_tool_output"]] + (
-            f"\n…[truncated — file is {total:,} chars]")
+            f"\n…[truncated - file is {total:,} chars]")
     return out
 
 
@@ -664,7 +664,7 @@ def read_github_pr(args, cfg, origin_agent=None):
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
             return (f"Error: {slug}#{n} is not a pull request (or doesn't "
-                    "exist) — for issues use read_github_issues")
+                    "exist) - for issues use read_github_issues")
         raise
     state = "MERGED" if pr.get("merged") else pr.get("state", "?").upper()
     head = (pr.get("head") or {})
@@ -690,7 +690,7 @@ def read_github_pr(args, cfg, origin_agent=None):
     comments = _gh_request("GET", f"/repos/{slug}/issues/{n}/comments", cfg,
                            params={"per_page": 30})
     if not comments:
-        lines += ["", "(no comments — the deploy tooling has not reported "
+        lines += ["", "(no comments - the deploy tooling has not reported "
                       "on this PR)"]
     for c in comments[-10:]:
         lines += ["", f"--- comment by {c['user']['login']} · {c['created_at'][:10]} ---",
@@ -710,7 +710,7 @@ def reopen_github_issue(args, cfg, origin_agent=None):
     if "pull_request" in issue:
         return f"Error: {slug}#{n} is a pull request, not an issue"
     if issue.get("state") == "open":
-        return f"{slug}#{n} is already open — comment_github_issue instead"
+        return f"{slug}#{n} is already open - comment_github_issue instead"
     # reason first, then reopen: a reopen must never appear unexplained
     reason += f"\n\n---\n_Reopened from Crossband by {origin_agent or 'an AI participant'}._"
     _gh_request("POST", f"/repos/{slug}/issues/{n}/comments", cfg,
@@ -735,10 +735,10 @@ def file_github_issue(args, cfg, origin_agent=None):
         issue = _gh_request("POST", f"/repos/{slug}/issues", cfg, json=payload)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 422 and "labels" in payload:
-            # unknown label — file the issue anyway rather than losing it
+            # unknown label - file the issue anyway rather than losing it
             del payload["labels"]
             issue = _gh_request("POST", f"/repos/{slug}/issues", cfg, json=payload)
-            return (f"Filed {slug}#{issue['number']} (labels dropped — they "
+            return (f"Filed {slug}#{issue['number']} (labels dropped - they "
                     f"don't exist on this repo): {issue['html_url']}")
         raise
     return f"Filed {slug}#{issue['number']}: {issue['html_url']}"
@@ -759,7 +759,7 @@ def comment_github_issue(args, cfg, origin_agent=None):
 
 
 def edit_github_issue(args, cfg, origin_agent=None):
-    """Edit an existing issue's title/body/labels — content only, never state.
+    """Edit an existing issue's title/body/labels - content only, never state.
     Applies the change, then posts an audit comment naming what changed, who
     changed it, and why, so a backlog edit is never silent."""
     slug = _gh_slug(args, cfg)
@@ -802,7 +802,7 @@ def edit_github_issue(args, cfg, origin_agent=None):
                            f"→ [{', '.join(new_labels) or 'none'}]")
 
     if not payload:
-        return (f"No changes to apply to {slug}#{n} — the given values already "
+        return (f"No changes to apply to {slug}#{n} - the given values already "
                 f"match. (This tool edits title/body/labels only, never state.)")
 
     labels_dropped = False
@@ -810,7 +810,7 @@ def edit_github_issue(args, cfg, origin_agent=None):
         issue = _gh_request("PATCH", f"/repos/{slug}/issues/{n}", cfg, json=payload)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 422 and "labels" in payload:
-            # unknown label — apply the rest of the edit rather than losing it
+            # unknown label - apply the rest of the edit rather than losing it
             labels_dropped = True
             changes = [c for c in changes if not c.startswith("Labels:")]
             retry = {k: v for k, v in payload.items() if k != "labels"}
@@ -830,7 +830,7 @@ def edit_github_issue(args, cfg, origin_agent=None):
 
     summary = f"Edited {slug}#{n} ({'; '.join(changes)}): {issue['html_url']}"
     if labels_dropped:
-        summary += " — labels left unchanged (they don't exist on this repo)"
+        summary += " - labels left unchanged (they don't exist on this repo)"
     return summary
 
 
@@ -910,7 +910,7 @@ def web_search(args, cfg):
             urls_by_engine[name] = {x["url"] for x in results if x["url"]}
             lines = [f"[{name}]"]
             for i, x in enumerate(results, 1):
-                lines.append(f"{i}. {x['title']} — {x['url']}")
+                lines.append(f"{i}. {x['title']} - {x['url']}")
                 if x["content"]:
                     lines.append(f"   {x['content']}")
             if len(lines) == 1:
@@ -979,7 +979,7 @@ def fetch_page(args, cfg):
     r.raise_for_status()
     ctype = r.headers.get("content-type", "")
     if not any(t in ctype for t in ("html", "text", "json", "xml")):
-        return f"Error: unsupported content type {ctype} — fetch_page reads text/HTML pages only"
+        return f"Error: unsupported content type {ctype} - fetch_page reads text/HTML pages only"
     text = r.text
     if "html" in ctype:
         text = _html_to_text(text)
@@ -1007,7 +1007,7 @@ def youtube_transcript_text(url):
             data = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
             snippets = [(d["start"], d["text"]) for d in data]
     except Exception as e:
-        raise ValueError(f"{e} — the video may have no captions")
+        raise ValueError(f"{e} - the video may have no captions")
     parts = []
     last_mark = -120
     for start, text in snippets:
@@ -1028,7 +1028,7 @@ def fetch_youtube_transcript(args, cfg):
     total = len(out)
     if total > cap:
         out = out[:cap] + (
-            f"\n…[truncated — full transcript is {total:,} chars; the user can attach the "
+            f"\n…[truncated - full transcript is {total:,} chars; the user can attach the "
             "complete transcript as a document via the composer's YouTube-transcript button]")
     return f"Transcript of youtube.com/watch?v={video_id}:\n{out}"
 
@@ -1038,7 +1038,7 @@ def fetch_youtube_transcript(args, cfg):
 def transcribe_audio_url(args, cfg):
     from . import db, voice
     if not voice.enabled():
-        return "Error: ELEVENLABS_API_KEY not set — cannot transcribe audio"
+        return "Error: ELEVENLABS_API_KEY not set - cannot transcribe audio"
     max_bytes = cfg["max_audio_mb"] * 1024 * 1024
     url = _assert_public_url((args.get("url") or "").strip())
     buf = b""
@@ -1069,7 +1069,7 @@ def transcribe_audio_url(args, cfg):
     con.close()
     total = len(text)
     if total > cfg["max_tool_output"]:
-        text = text[:cfg["max_tool_output"]] + f"\n…[truncated — full transcript is {total:,} chars]"
+        text = text[:cfg["max_tool_output"]] + f"\n…[truncated - full transcript is {total:,} chars]"
     return f"Transcript of {url}:\n{text}"
 
 
@@ -1079,7 +1079,7 @@ _reddit_token = {"value": None, "expires": 0.0}
 
 
 def _reddit_get(path, cfg):
-    """GET a Reddit JSON path — via the free OAuth API when credentials are set
+    """GET a Reddit JSON path - via the free OAuth API when credentials are set
     (reddit.com/prefs/apps, 'script' type), else the public endpoint (which Reddit
     blocks on many networks)."""
     cid = os.environ.get("REDDIT_CLIENT_ID")
@@ -1119,9 +1119,9 @@ def fetch_reddit_thread(args, cfg):
             return (
                 "Error: Reddit blocked unauthenticated access from this network. "
                 "Tell the user: adding free Reddit API credentials to .env "
-                "(REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET — create a 'script' app at "
+                "(REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET - create a 'script' app at "
                 "reddit.com/prefs/apps) makes this tool work reliably. Meanwhile, use "
-                "web_search with include_domains=[\"reddit.com\"] — search engines "
+                "web_search with include_domains=[\"reddit.com\"] - search engines "
                 "index Reddit content."
             )
         raise
@@ -1163,8 +1163,8 @@ def _day(ts):
 
 def _format_facts(facts, cap):
     """Render recalled facts with the provenance the ledger carries: the event
-    date, the authoring agent (origin_agent), and — when the Membro contract
-    supplies it — the stored confidence. Confidence is optional in the contract,
+    date, the authoring agent (origin_agent), and - when the Membro contract
+    supplies it - the stored confidence. Confidence is optional in the contract,
     so a fact without it simply omits the tag (older services and untagged facts
     degrade cleanly). This provenance lets a model weigh a high-salience personal
     claim instead of treating every recalled line as equally certain."""
@@ -1220,7 +1220,7 @@ async def save_memory(args, cfg, memory, origin_agent=None):
     if len(content) < 8:
         return "Error: nothing meaningful to save"
     # event_date = the date the fact is ABOUT (defaults to today service-side);
-    # origin_agent records WHO authored the fact — the service's trust gate
+    # origin_agent records WHO authored the fact - the service's trust gate
     # decides whether that origin lands quarantined.
     result = await memory.save_fact(
         content,
@@ -1228,7 +1228,7 @@ async def save_memory(args, cfg, memory, origin_agent=None):
         event_date=_clean_event_date(args.get("event_date")),
     )
     if result is None:
-        return "Error: memory service unavailable — fact NOT saved"
+        return "Error: memory service unavailable - fact NOT saved"
     if result.get("quarantined"):
         return f"Saved (held for the user's review before entering recall): {content}"
     return f"Saved to memory ledger: {content}"
@@ -1277,7 +1277,7 @@ async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
                                  requested_by=origin_agent)
         if name == "get_diagnostic":
             # Same refusal gate + dispatch the guest's MCP tool uses
-            # (backend/diagnostics.py) — `name` is the only input read;
+            # (backend/diagnostics.py) - `name` is the only input read;
             # anything else in `args` is ignored, never forwarded.
             payload = await diagnostics.dispatch_diagnostic(args.get("name"), cfg)
             return json.dumps(payload)

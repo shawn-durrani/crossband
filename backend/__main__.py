@@ -14,7 +14,7 @@ class _Server(uvicorn.Server):
     connections are endless on purpose.
 
     `handle_exit` is uvicorn's signal handler. It runs the instant SIGTERM or
-    SIGINT arrives — before the connection drain — which is exactly when the
+    SIGINT arrives - before the connection drain - which is exactly when the
     live-events watcher streams need to be told to finish, or the drain waits on
     them forever. Delegating to super() afterwards keeps uvicorn's own
     semantics intact, including "a second Ctrl-C forces an immediate exit"."""
@@ -30,12 +30,12 @@ def main():
     if settings.host not in ("127.0.0.1", "localhost", "::1"):
         raise SystemExit(
             f"refusing to bind {settings.host}: this app has no authentication and "
-            "holds your chats and API-key-backed tools — it is localhost-only by design")
+            "holds your chats and API-key-backed tools - it is localhost-only by design")
     # timeout_graceful_shutdown is the backstop under _Server above: cooperating
     # streams end at once, and anything still open after this many seconds (a
     # chat round mid-generation, a live voice call) is cancelled so the process
-    # always stops in bounded time. uvicorn's own default is None — wait forever
-    # — which is what made a stop indistinguishable from a hang.
+    # always stops in bounded time. uvicorn's own default is None - wait forever
+    # - which is what made a stop indistinguishable from a hang.
     config = uvicorn.Config(app, host=settings.host, port=settings.port,
                             timeout_graceful_shutdown=settings.shutdown_timeout_s)
     _Server(config).run()

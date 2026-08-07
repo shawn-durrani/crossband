@@ -2,8 +2,8 @@
 
 Coordinate delegation of the summon_claude_code specialist tool BEFORE
 narrating it: the first participant that commits to it claims and invokes
-immediately (already enforced by guest._pending / guestjobs.active_for_chat —
-see test_guest.py / test_guestjobs.py); this file covers the NEW half —
+immediately (already enforced by guest._pending / guestjobs.active_for_chat -
+see test_guest.py / test_guestjobs.py); this file covers the NEW half -
 `guest.claimed()`/`guest.delegation_note()` giving the round loop and the
 system prompt ONE shared answer to "is this already spoken for?" so:
 
@@ -15,11 +15,11 @@ system prompt ONE shared answer to "is this already spoken for?" so:
   - a finished guest job's result is relayed by exactly ONE synthesizing
     narrator on hand-back, not the whole roster restating the same report.
 
-No SDK, no network — providers.stream_reply and guest.run_guest are mocked.
+No SDK, no network - providers.stream_reply and guest.run_guest are mocked.
 guest.available() is mocked too in every test that exercises the round loop's
 tool gate: it probes the host for a real Claude Code CLI, so leaving it live
 makes these pass on a dev machine and behave differently on a keyless CI
-runner with no CLI — failing outright where the tool must be OFFERED, and
+runner with no CLI - failing outright where the tool must be OFFERED, and
 passing vacuously where it must be ABSENT.
 """
 
@@ -122,7 +122,7 @@ def test_claimed_reports_a_running_background_job(tmp_path, monkeypatch):
 
 def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(app, monkeypatch):
     """The scenario that motivated this: within ONE round, one
-    participant decides to summon Claude Code (queues it) — the very next
+    participant decides to summon Claude Code (queues it) - the very next
     participant to speak must not be offered summon_claude_code at all, and
     must see an explicit claim note instead of guessing from the transcript."""
     seen = []
@@ -135,7 +135,7 @@ def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(ap
             "delegation_note": cfg.get("delegation_note", ""),
         })
         if participant["slug"] == "claude":
-            # claude claims it — exactly what request() does when a model
+            # claude claims it - exactly what request() does when a model
             # actually invokes the tool mid-turn.
             guest.request(cfg["chat_id"],
                           {"task": "check the live latency endpoint"},
@@ -157,10 +157,10 @@ def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(ap
     # This is the one test in the file where guest.request() actually runs
     # end to end, so the round's real end-of-round code (engine.py's
     # guest.take()/_launch_guest_job) really does start a background guest
-    # job (backend/guestjobs.py) — unlike every other test here, which only
+    # job (backend/guestjobs.py) - unlike every other test here, which only
     # exercises guest.request()'s queuing side or seeds an already-"running"
     # job directly. Without this mock, that background job calls the REAL
-    # guest.run_guest — a live Claude Agent SDK/CLI invocation — on any
+    # guest.run_guest - a live Claude Agent SDK/CLI invocation - on any
     # machine that happens to have the SDK and CLI installed (true of a dev
     # box, false of CI), turning this test into a non-deterministic, non-
     # keyless flake instead of the fast, hermetic check it's meant to be.
@@ -187,11 +187,11 @@ def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(ap
 
 def test_new_round_while_job_running_neither_offers_nor_narrates(app, monkeypatch, tmp_path):
     """A guest job started in an EARLIER round is still running when a fresh
-    round begins (e.g. the next voice turn) — every participant in the new
+    round begins (e.g. the next voice turn) - every participant in the new
     round must see the claim too, not just participants in the summoning
     round. This is the cross-round gap (redundant
     coordination chatter over several separate turns). The job is seeded
-    directly as a live 'running' registry entry — no real background task —
+    directly as a live 'running' registry entry - no real background task -
     so this doesn't depend on which event loop TestClient happens to drive."""
     seen = []
 
@@ -235,7 +235,7 @@ def test_new_round_while_job_running_neither_offers_nor_narrates(app, monkeypatc
 
 def test_delegation_note_reaches_voice_mode_system_prompt(cfg):
     """The note is just another system-prompt section, so it must survive
-    into voice mode alongside the brevity/VOICE-MODE override — voice is
+    into voice mode alongside the brevity/VOICE-MODE override - voice is
     where dead air and redundant turns are the most expensive."""
     note = guest.delegation_note({"state": "running", "task": "check the trace endpoint",
                                   "repo": "sideband", "mode": "investigate"})
@@ -287,7 +287,7 @@ def test_handback_relays_through_exactly_one_narrator(app, monkeypatch):
                     if m["speaker"] not in ("user", "claude-code")
                     and m["created_at"] >= next(
                         mm["created_at"] for mm in messages if mm["speaker"] == "claude-code")]
-        # exactly one seat relays the finished job — not the whole roster
+        # exactly one seat relays the finished job - not the whole roster
         assert len(narrators) == 1
 
 

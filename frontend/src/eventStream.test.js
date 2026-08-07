@@ -16,7 +16,7 @@ test('merge appends fresh rows in id order', () => {
 
 test('merge de-duplicates an id that arrives twice', () => {
   // Same message delivered via both the round's own SSE stream AND the
-  // global events stream's hydration fetch — must never double-append.
+  // global events stream's hydration fetch - must never double-append.
   const current = [{ id: 1, content: 'a' }]
   const fresh = [{ id: 1, content: 'a' }, { id: 2, content: 'b' }]
   const merged = mergeMessagesById(current, fresh)
@@ -70,7 +70,7 @@ test('hydrateCursor falls back to highestId without a numeric event id', () => {
 test('highestId ignores string placeholder ids', () => {
   // The post-abort shape: real persisted rows plus the streaming placeholder
   // whose speaker_end never came, so its synthetic `live-…` id is still in the
-  // list. One string id used to NaN the whole cursor — every later fetch
+  // list. One string id used to NaN the whole cursor - every later fetch
   // became `?after=NaN`, a silent 422, and the open chat froze out of live
   // updates until reopened. The cursor must come from numeric ids alone.
   const afterAbort = [
@@ -104,7 +104,7 @@ test('active-chat hydration only when the event matches AND no round is streamin
 test('voice-attach fires only for the open chat, in voice, while idle', () => {
   // A hand-back round we didn't start → attach and speak it.
   assert.equal(shouldVoiceAttach(5, 5, { streaming: false, voiceActive: true }), true)
-  // Text mode: no audio pipeline to feed — normal hydration handles it.
+  // Text mode: no audio pipeline to feed - normal hydration handles it.
   assert.equal(shouldVoiceAttach(5, 5, { streaming: false, voiceActive: false }), false)
   // Already tailing a round: it already feeds voice; don't double-attach.
   assert.equal(shouldVoiceAttach(5, 5, { streaming: true, voiceActive: true }), false)
@@ -130,7 +130,7 @@ test('an event for the open chat while streaming must be deferred, not acted on 
 })
 
 test('the defer condition is the exact complement of active-chat hydration', () => {
-  // If we deferred it, hydration would have been suppressed — and vice versa.
+  // If we deferred it, hydration would have been suppressed - and vice versa.
   // This is the invariant that guarantees a deferred event is never also acted
   // on now (no double-render) and a hydrated one is never also queued (no loss).
   for (const streaming of [true, false]) {
@@ -168,7 +168,7 @@ test('drain returns queued events once, in id order, and empties the queue', () 
   ]
   const { events, queue } = drainPendingQueue(q)
   assert.deepEqual(events.map((e) => e.id), [301, 302, 303])
-  assert.deepEqual(queue, []) // drained once — a second drain yields nothing
+  assert.deepEqual(queue, []) // drained once - a second drain yields nothing
   assert.deepEqual(drainPendingQueue(queue).events, [])
 })
 

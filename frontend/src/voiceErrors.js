@@ -4,11 +4,11 @@
 export function playbackFailureMessage(err) {
   const name = err?.name || ''
   if (name === 'NotAllowedError') {
-    return 'The browser blocked audio playback — tap the screen once, then try again.'
+    return 'The browser blocked audio playback - tap the screen once, then try again.'
   }
   if (name === 'NotSupportedError') {
-    return "This browser couldn't decode the reply audio — reload the app and try again."
+    return "This browser couldn't decode the reply audio - reload the app and try again."
   }
-  return `Voice playback failed${name ? ` (${name})` : ''} — check the silent ` +
+  return `Voice playback failed${name ? ` (${name})` : ''} - check the silent ` +
          'switch, volume, and Bluetooth routing, then try again.'
 }

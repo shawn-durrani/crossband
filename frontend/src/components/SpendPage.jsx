@@ -13,7 +13,7 @@ import {
 const CAT = {
   metered: {
     label: 'Metered spend',
-    hint: 'Pay-as-you-go API billing — real cash. Model turns are always here; Claude Code guest turns only when the turn ran on the API key.',
+    hint: 'Pay-as-you-go API billing - real cash. Model turns are always here; Claude Code guest turns only when the turn ran on the API key.',
     cls: 'text-ink',
   },
   subscription_equiv: {
@@ -23,7 +23,7 @@ const CAT = {
   },
   unknown: {
     label: 'Unknown / unverified',
-    hint: "Guest turns with no recorded auth mode (logged before provenance capture). Can't prove billed or not — shown apart, never added to metered.",
+    hint: "Guest turns with no recorded auth mode (logged before provenance capture). Can't prove billed or not - shown apart, never added to metered.",
     cls: 'text-ink-dim',
   },
 }
@@ -32,7 +32,7 @@ const BAR = { metered: 'bg-link', subscription_equiv: 'bg-amber-500', unknown: '
 
 const money = (n) => (!n ? '$0.00' : `$${n.toFixed(n < 0.1 ? 4 : 2)}`)
 const tok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`)
-// The sum across all three cash kinds — used ONLY as an "is there any activity
+// The sum across all three cash kinds - used ONLY as an "is there any activity
 // at all here?" test (a subscription-only chat has recorded something, just
 // nothing metered). It is never rendered as a spend figure: the headline and
 // every breakdown draw metered alone, so subscription-equivalent is never
@@ -124,7 +124,7 @@ function BreakdownTable({ title, rows }) {
 
 // The trendline: cumulative spend for the selected period, with the previous
 // period behind it on the same scale. Cumulative because the question is "how
-// are we tracking" — on a running total the SLOPE is the burn rate, so
+// are we tracking" - on a running total the SLOPE is the burn rate, so
 // flattening reads as easing off and steepening as accelerating, at a glance.
 // Daily bars make you integrate by eye.
 function TrendLine({ series, previousSeries, spanLabel }) {
@@ -212,7 +212,7 @@ export default function SpendPage({ onClose, onOpenMenu }) {
             </h1>
             <p className="text-sm text-ink-mid mt-0.5">
               What you&apos;ve spent across every chat. Billed spend is kept apart from
-              usage a subscription already covers — they are never added together.
+              usage a subscription already covers - they are never added together.
             </p>
           </div>
         </header>
@@ -239,7 +239,7 @@ export default function SpendPage({ onClose, onOpenMenu }) {
                 {dir && <span className={`text-sm ${TREND_TONE[dir.trend]}`}>{dir.label}</span>}
               </div>
               <div className={`text-xs mt-2 ${ACC_TONE[acc.level]}`}>
-                {acc.label} — <span className="text-ink-mid">{acc.detail}</span>
+                {acc.label} - <span className="text-ink-mid">{acc.detail}</span>
               </div>
               {(h.covered > 0 || h.unknown > 0) && (
                 <div className="flex gap-4 mt-3 pt-3 border-t border-edge text-xs text-ink-mid">

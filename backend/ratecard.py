@@ -18,10 +18,10 @@ request.
 Safety invariants proven HERE, not in the prompt or the form:
 
   · Only two provenance types are operator-declarable: `rate_card_estimate`
-    (a dated, sourced published list price — always an ESTIMATE) and
+    (a dated, sourced published list price - always an ESTIMATE) and
     `self_hosted_zero_marginal` (a declared local $0). `provider_reported` and
     `subscription_equivalent` are DERIVED from what a provider/subscription
-    actually returned per turn — they can never be hand-asserted as a static
+    actually returned per turn - they can never be hand-asserted as a static
     card, or a user could relabel an estimate as "billed".
   · Numbers are finite, non-negative, and bounded (a fat-fingered $1e9 rate is
     a mistake, not a price). Dates are real ISO dates. Sources for an estimate
@@ -30,7 +30,7 @@ Safety invariants proven HERE, not in the prompt or the form:
     characters and whitespace are rejected, so an alias attaches this card to
     one named model and nothing else. price_for already matches aliases
     exactly (never by prefix); this makes an unsafe one impossible to even save.
-  · No field here is or carries a secret — a rate card is public list-price
+  · No field here is or carries a secret - a rate card is public list-price
     metadata. Nothing in this module reads credentials or the environment.
 """
 
@@ -55,7 +55,7 @@ _GLOB = re.compile(r"[*?\[\]{}]")
 _URL = re.compile(r"^https?://\S+$", re.I)
 
 # A per-1M rate above this, or a cache multiplier above this, is a typo not a
-# price — refuse it rather than silently record an absurd cost basis.
+# price - refuse it rather than silently record an absurd cost basis.
 _MAX_RATE = 100_000.0
 _MAX_MULT = 1_000.0
 
@@ -82,11 +82,11 @@ def _num(value, field, *, maximum):
 
 def validate_model_id(raw) -> str:
     if not isinstance(raw, str) or not raw.strip():
-        raise RateCardError("Model ID is required — the exact id the provider uses.")
+        raise RateCardError("Model ID is required - the exact id the provider uses.")
     mid = raw.strip()
     if _GLOB.search(mid):
         raise RateCardError(
-            "Model ID must be an exact id, not a pattern — remove any * ? [ ] { } "
+            "Model ID must be an exact id, not a pattern - remove any * ? [ ] { } "
             "characters."
         )
     if not _MODEL_ID.match(mid):
@@ -126,7 +126,7 @@ def validate_aliases(raw, model_id, existing_ids=()):
         alias = validate_model_id(item)  # same exactness rules as a model id
         if alias == model_id:
             raise RateCardError(
-                f"Alias '{alias}' is the same as the model id — drop it."
+                f"Alias '{alias}' is the same as the model id - drop it."
             )
         if alias in seen:
             continue
@@ -154,7 +154,7 @@ def validate_and_build(payload, existing_ids=()):
             "Provenance must be either 'rate_card_estimate' (a dated, sourced "
             "published price) or 'self_hosted_zero_marginal' (a declared local "
             "$0). Provider-reported and subscription costs are recorded per turn "
-            "from what the provider actually returned — they can't be entered as "
+            "from what the provider actually returned - they can't be entered as "
             "a fixed card."
         )
 

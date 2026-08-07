@@ -1,4 +1,4 @@
-"""What a reply actually re-reads — text AND attachments.
+"""What a reply actually re-reads - text AND attachments.
 
 Three separate surfaces independently decided a conversation's weight by
 counting `len(message["content"])`, and all three were therefore blind to
@@ -20,8 +20,8 @@ that needs to know how heavy a conversation is has somewhere correct to ask.
 Two units, because they answer different questions and the second is the one
 that actually hurt:
 
-* **tokens** — what dilutes the model's attention and costs money.
-* **upload bytes** — what goes over the wire on *every* turn, to *every*
+* **tokens** - what dilutes the model's attention and costs money.
+* **upload bytes** - what goes over the wire on *every* turn, to *every*
   provider. Invisible everywhere until upload downscaling landed, and the
   likeliest cause of the slowness that started this.
 """
@@ -29,7 +29,7 @@ that actually hurt:
 # Providers downscale images to ~1568px on the long edge before tokenising, so
 # a photo's token cost saturates: a 12 MP original and a 1568px copy cost the
 # same. Anthropic's published rule is ~(w*h)/750 tokens, which at the cap is
-# ~1568*1176/750. We don't store dimensions, so use the capped figure — right
+# ~1568*1176/750. We don't store dimensions, so use the capped figure - right
 # for any photo at or above the cap (i.e. every phone photo) and a modest
 # over-estimate for genuinely small images.
 IMAGE_TOKENS = 2400
@@ -111,7 +111,7 @@ def estimate(chat: dict, messages, cfg: dict, memory_summary_len: int = 0) -> di
         "memory": memory,
         "overhead": OVERHEAD_TOKENS,
         "total": total,
-        # Per turn, per participant — the figure no surface used to show.
+        # Per turn, per participant - the figure no surface used to show.
         "upload_bytes": w["upload_bytes"],
         "image_count": w["image_count"],
     }

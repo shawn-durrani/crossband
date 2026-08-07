@@ -141,7 +141,7 @@ def _round_with_prewarm(app, monkeypatch, send_text, prewarm_text, *, age=0.0):
                 "at": time.monotonic() - age,
             }
         # TestClient runs the app loop per-request; plant via a route call
-        # context — simplest: plant synchronously with a pre-resolved task
+        # context - simplest: plant synchronously with a pre-resolved task
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(plant_and_send())

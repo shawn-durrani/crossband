@@ -30,37 +30,37 @@ import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
 const EXAMPLE_PROMPTS = [
   'Pitch me three weekend project ideas, then critique each other’s picks.',
   'Debate: is this a good plan? One of you argue for, one against.',
-  'Explain the same concept two ways — one for a child, one for an expert.',
+  'Explain the same concept two ways - one for a child, one for an expert.',
 ]
 
 export default function App() {
   const [state, setState] = useState({ projects: [], chats: [], participants: [], config: null })
   const [activeChatId, setActiveChatId] = useState(null)
-  // Live mirror for async closures (notice polling) — same idea as streamingRef
+  // Live mirror for async closures (notice polling) - same idea as streamingRef
   const activeChatIdRef = useRef(null)
   useEffect(() => { activeChatIdRef.current = activeChatId }, [activeChatId])
   const [activeChat, setActiveChat] = useState(null)
   // Claude Code guest jobs for the OPEN chat: the collapsed status chip's
-  // state, seeded on open and merged live off the global events stream — the
+  // state, seeded on open and merged live off the global events stream - the
   // same channel messages ride, so voice and text/mobile stay in sync.
   const [guestJobs, setGuestJobs] = useState([])
   const [copiedChat, setCopiedChat] = useState(false)
   // Per-chat running-task state: which chats have a round/agent
-  // generating right now — including DETACHED rounds in chats you're not looking
+  // generating right now - including DETACHED rounds in chats you're not looking
   // at. Source of truth is the backend's running_chat_ids; `optimisticRunning`
   // holds ids for rounds we just kicked off so the indicator lights up before
   // the next poll confirms it.
   const [runningChats, setRunningChats] = useState(() => new Set())
   const optimisticRunning = useRef(new Set())
-  // Global live-events bus — one persistent connection per tab,
+  // Global live-events bus - one persistent connection per tab,
   // not per chat (see backend/events.py + frontend/src/eventStream.js).
-  // Chats with a message that arrived live while some OTHER chat was open —
+  // Chats with a message that arrived live while some OTHER chat was open -
   // sidebar-only signal, cleared the moment that chat is opened.
   const [unreadChats, setUnreadChats] = useState(() => new Set())
   const [projectModal, setProjectModal] = useState(null)
   const [showParticipants, setShowParticipants] = useState(false)
   // Why the Models page was opened: {action:'add'} | {action:'edit',
-  // slug}, plus from:'connections' when the console sent you — so the page
+  // slug}, plus from:'connections' when the console sent you - so the page
   // can land where the click promised and its back button can return you to
   // where you actually came from instead of dumping you in the chat.
   const [modelsIntent, setModelsIntent] = useState(null)
@@ -77,12 +77,12 @@ export default function App() {
   const [banner, setBanner] = useState(null)
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
   const [voiceState, setVoiceState] = useState('off')
-  // Live partial transcript of what the user is SAYING right now —
+  // Live partial transcript of what the user is SAYING right now -
   // realtime STT only; batch fallback never emits one. Cleared the moment the
   // final transcript dispatches (sendText below) and on session end.
   const [voicePartial, setVoicePartial] = useState(null)
   const [speakingSlug, setSpeakingSlug] = useState(null) // who the orb is tinted to while speaking
-  // Transient captions for the mobile voice-call overlay — fed from the SSE
+  // Transient captions for the mobile voice-call overlay - fed from the SSE
   // event flow below, active only during a live session (UI-only; see captions.js).
   const { captions, history: captionHistory, add: addCaption } =
     useCaptions({ enabled: voiceState !== 'off' })
@@ -94,7 +94,7 @@ export default function App() {
   const [contRounds, setContRounds] = useState(1)
   const [atBottom, setAtBottom] = useState(true)
   const [newCount, setNewCount] = useState(0) // messages arrived while scrolled up
-  const [draft, setDraft] = useState(null) // {text} — prefill the composer (empty-state chips)
+  const [draft, setDraft] = useState(null) // {text} - prefill the composer (empty-state chips)
   const atBottomRef = useRef(true)
   const prevLenRef = useRef(0)
   const voiceRef = useRef(null)
@@ -112,7 +112,7 @@ export default function App() {
     setState(s)
     applyRunning(s.running_chat_ids)
     if (s.memory_writes?.failed?.length) {
-      setBanner(`A memory save didn't complete for ${s.memory_writes.failed.length} chat(s) — re-open the chat to retry.`)
+      setBanner(`A memory save didn't complete for ${s.memory_writes.failed.length} chat(s) - re-open the chat to retry.`)
     }
     return s
   }
@@ -125,7 +125,7 @@ export default function App() {
   }
 
   // While anything is running, poll so a background chat's indicator clears the
-  // moment its detached round finishes — then stop polling once all idle.
+  // moment its detached round finishes - then stop polling once all idle.
   useEffect(() => {
     if (!shouldPollRunning(runningChats)) return
     const t = setInterval(() => { refreshState().catch(() => {}) }, 3000)
@@ -133,7 +133,7 @@ export default function App() {
   }, [runningChats])
 
   // The round loop's client side ( step 4): the hook OWNS the transcript,
-  // streaming flag, round progress, the batch and the offline send queue —
+  // streaming flag, round progress, the batch and the offline send queue -
   // App reads them from its return. The two hooks reference each other
   // (voiceAttachRound <-> the deferred-event drain), so the drain is
   // late-bound through a ref set right after useEventStream returns.
@@ -218,7 +218,7 @@ export default function App() {
   }, [sidebarOpen])
 
   // Mobile drawer: Esc closes it; its backdrop handles outside taps. The
-  // header's ⋯ menu dismisses itself the same way, inside ChatHeader — its ref,
+  // header's ⋯ menu dismisses itself the same way, inside ChatHeader - its ref,
   // its open state and its dismissal are one thing and live together.
   useEffect(() => {
     if (!drawerOpen) return
@@ -235,7 +235,7 @@ export default function App() {
     try {
       const r = await api.voiceAssign() // make sure everyone has a distinct voice
       setState((s) => ({ ...s, participants: r.participants }))
-      // models should know they're being heard aloud — and keep replies short
+      // models should know they're being heard aloud - and keep replies short
       if (activeChat && !activeChat.voice_mode) {
         const chat = await api.updateChat(activeChat.id, { voice_mode: true })
         setActiveChat(chat)
@@ -260,9 +260,9 @@ export default function App() {
           onHeld: (n) => setHeldVoice(n),
           // Barge-in is the deliberate stop: abort server-side (detached
           // rounds ignore mere disconnects), then drop our stream. Safe to
-          // capture once here — stopRound reads only live refs ( step 4).
+          // capture once here - stopRound reads only live refs ( step 4).
           onInterruptRound: stopRound,
-          onSttFallback: () => setBanner('Realtime transcription unavailable — using standard transcription this session.'),
+          onSttFallback: () => setBanner('Realtime transcription unavailable - using standard transcription this session.'),
           // orb tint follows the AUDIO: whoever's reply is currently playing
           onSpeaker: (slug) => setSpeakingSlug(slug),
         })
@@ -322,7 +322,7 @@ export default function App() {
   }
 
 
-  // Leave every full-page surface (Models / Connections / Spend) — the chat
+  // Leave every full-page surface (Models / Connections / Spend) - the chat
   // pane renders only when ALL page flags are down. Every route back to a chat
   // goes through here, so adding a page means adding ONE line (selectChat
   // cleared one flag of three, and clicking a sidebar chat while Spend was open
@@ -339,7 +339,7 @@ export default function App() {
     leavePages()
     maybeDistill(activeChatId)
     setActiveChatId(id)
-    // Opening a chat is what "reading" it means — clear its unread flag
+    // Opening a chat is what "reading" it means - clear its unread flag
     // (issue 's live-events dirty-mark for chats you weren't looking at).
     setUnreadChats((s) => {
       if (!s.has(id)) return s
@@ -352,7 +352,7 @@ export default function App() {
     restoreBatchFor(id)
     const data = await api.getChat(id)
     // The user may have switched again while this fetch was in flight; a late or
-    // out-of-order response must not repaint a chat that's no longer active —
+    // out-of-order response must not repaint a chat that's no longer active -
     // that would leave the header title/body describing a different chat_id than
     // the selection/running badge. Same write-guard the live/poll/reattach
     // paths already apply.
@@ -360,7 +360,7 @@ export default function App() {
     setActiveChat(data.chat)
     setMessages(data.messages)
     // Seed the guest status chip from the durable snapshot; live changes
-    // then arrive over the global events stream. Best-effort — a failure just
+    // then arrive over the global events stream. Best-effort - a failure just
     // means the chip catches up on the next status push.
     setGuestJobs([])
     api.guestJobs(id).then((d) => {
@@ -393,7 +393,7 @@ export default function App() {
     refreshState()
   }
 
-  // Archive = hide from the sidebar for demos/tidiness. Nothing is deleted —
+  // Archive = hide from the sidebar for demos/tidiness. Nothing is deleted -
   // the chat, its transcript, and anything memory learned all stay.
   async function archiveChat(id, archived) {
     if (archived && id === activeChatId) teardownLiveView()
@@ -418,7 +418,7 @@ export default function App() {
     refreshState()
   }
 
-  // PATCH responses don't carry the context estimate — keep the one we have
+  // PATCH responses don't carry the context estimate - keep the one we have
   const mergeChat = (chat) =>
     setActiveChat((prev) => ({ ...chat, context: chat.context ?? prev?.context }))
 
@@ -458,7 +458,7 @@ export default function App() {
 
 
   const cfg = state.config
-  const memory = state.memory // { available, url } — companion memory service status
+  const memory = state.memory // { available, url } - companion memory service status
   const keysMissing = cfg && (!cfg.keys.anthropic || !cfg.keys.openai)
   const activeProject = activeChat?.project_id
     ? state.projects.find((p) => p.id === activeChat.project_id)
@@ -485,7 +485,7 @@ export default function App() {
 
   // Running chat total from per-message usage. Billed spend, subscription-
   // covered usage and unprovable cost are counted apart and never summed
-  // — same rule the Spend page has always applied, same vocabulary. ChatHeader
+  // - same rule the Spend page has always applied, same vocabulary. ChatHeader
   // does the naming; this just supplies the numbers.
   const chatTotal = chatCostTotals(messages)
   // The bar above the composer; the header ring reads the same gauge.
@@ -564,7 +564,7 @@ export default function App() {
             {!cfg.keys.anthropic && ' ANTHROPIC_API_KEY'}
             {!cfg.keys.anthropic && !cfg.keys.openai && ' and'}
             {!cfg.keys.openai && ' OPENAI_API_KEY'}
-            {' '}—{' '}
+            {' '}-{' '}
             <button className="underline hover:text-amber-100" onClick={() => setShowSetup(true)}>
               set it up here
             </button>
@@ -598,7 +598,7 @@ export default function App() {
             backLabel={modelsIntent?.from === 'connections' ? 'Back to Connections' : 'Back to chat'}
             onClose={() => {
               // Return to where you came from: the console sent you
-              // here to add/edit a seat — closing goes back to it, not to
+              // here to add/edit a seat - closing goes back to it, not to
               // the chat you weren't looking at.
               const toConnections = modelsIntent?.from === 'connections'
               setModelsIntent(null)
@@ -663,7 +663,7 @@ export default function App() {
               />
             </ThreadView>
             {/* Global context indicator: thin bar atop the composer. Same
-                gauge as the header ring (headerView.contextGauge) — the two used
+                gauge as the header ring (headerView.contextGauge) - the two used
                 to compute the same percentage and then disagree about when it
                 turned red, at 90% here and 85% there. */}
             {composerGauge && (
@@ -680,7 +680,7 @@ export default function App() {
             )}
             {/* Transient status strips (variant A): the Claude Code
                 guest and the queued batch sit BETWEEN thread and composer with
-                real air — aligned to the thread column, never touching the
+                real air - aligned to the thread column, never touching the
                 composer. A floating version was tried first and rejected live:
                 it sat on top of the "Let them continue" controls. */}
             {(hasVisibleJob(guestJobs, Date.now() / 1000) || pendingCount(activeBatch) > 0) && (
@@ -691,12 +691,12 @@ export default function App() {
                     <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" aria-hidden="true" />
                     <span className="text-ink-mid flex-1 min-w-0">
                       {pendingCount(activeBatch) === 1
-                        ? '1 message queued — it sends as one turn when this round finishes.'
-                        : `${pendingCount(activeBatch)} messages queued — they combine into one turn when this round finishes.`}
+                        ? '1 message queued - it sends as one turn when this round finishes.'
+                        : `${pendingCount(activeBatch)} messages queued - they combine into one turn when this round finishes.`}
                     </span>
                     <button
                       className="inline-flex items-center gap-1 text-ink-dim hover:text-err shrink-0"
-                      title="Cancel the queued messages — nothing has been sent yet"
+                      title="Cancel the queued messages - nothing has been sent yet"
                       aria-label="Cancel queued messages"
                       onClick={cancelActiveBatch}
                     >
@@ -720,7 +720,7 @@ export default function App() {
         ) : (
           <div className="relative flex-1 flex items-center justify-center text-ink-faint">
             {/* Mobile: the sidebar lives in a drawer, and with no chat open there's
-                no header to reach it from — so surface the menu here too. */}
+                no header to reach it from - so surface the menu here too. */}
             <button
               className="sm:hidden absolute top-3 left-3 p-2 text-ink-mid hover:text-ink"
               aria-label="Open chats & settings"
@@ -731,7 +731,7 @@ export default function App() {
             <div className="text-center space-y-3">
               <div className="text-4xl">🗣️</div>
               <p className="text-lg text-ink-mid">Crossband</p>
-              <p className="text-sm">You and your AI roster — one conversation.</p>
+              <p className="text-sm">You and your AI roster - one conversation.</p>
               <button
                 className="bg-btn text-btn-ink rounded-lg px-5 py-2 text-sm font-semibold hover:bg-btn-hover"
                 onClick={() => newChat(null)}

@@ -1,4 +1,4 @@
-"""A real (tiny) MCP server for the client-layer tests — stdio, keyless."""
+"""A real (tiny) MCP server for the client-layer tests - stdio, keyless."""
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("fake")

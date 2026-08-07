@@ -2,7 +2,7 @@
 
 Local OpenAI-compatible servers (Ollama, LM Studio) need no auth, but the SDK
 refuses to construct without a non-empty api_key. `_openai_client` supplies a
-harmless placeholder when a base_url is set and no key is configured — while the
+harmless placeholder when a base_url is set and no key is configured - while the
 default OpenAI endpoint (no base_url) must still demand a real key. No network:
 AsyncOpenAI construction is captured, never called out.
 """

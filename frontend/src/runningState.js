@@ -3,7 +3,7 @@
 // A chat is "running" when it has a round/agent generating in the background:
 // model inference, tool calls, or a Claude Code turn. Crossband is multi-chat and
 // rounds are DETACHED (they keep going after you navigate away), so this can't be
-// a single active-view flag — a background chat must be able to advertise that
+// a single active-view flag - a background chat must be able to advertise that
 // it's busy while you're looking at another one.
 //
 // Two sources feed the running set, merged here:
@@ -29,7 +29,7 @@ export function isChatRunning(runningChats, chatId) {
   return chatId != null && !!runningChats && runningChats.has(chatId)
 }
 
-// Should we keep polling /api/state? Only while something is still running —
+// Should we keep polling /api/state? Only while something is still running -
 // this is what lets a background chat's indicator clear without the user
 // touching it, and stops the polling entirely once everything is idle.
 export function shouldPollRunning(runningChats) {

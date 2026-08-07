@@ -21,12 +21,12 @@ function ChatRow({ chat, active, running, unread, onSelect, onDelete, onArchive 
           className="running-dot shrink-0 mr-1.5"
           role="status"
           aria-label="Task running in this chat"
-          title="A task is running in this chat — a model or Claude Code is working."
+          title="A task is running in this chat - a model or Claude Code is working."
         />
       )}
       {/* Unread indicator: a message arrived live (a deploy notice, an
           external event, a model reply) while you were looking at another
-          chat. Static, not pulsing — running is "something is happening now",
+          chat. Static, not pulsing - running is "something is happening now",
           this is just "something happened, you haven't looked yet". Cleared
           the moment you open the chat. Suppressed when `running` already
           shows a dot, so a chat never shows two at once. */}
@@ -42,7 +42,7 @@ function ChatRow({ chat, active, running, unread, onSelect, onDelete, onArchive 
       {onArchive && (
         <button
           className="opacity-0 group-hover:opacity-100 text-ink-faint hover:text-ink ml-1"
-          title={archived ? 'Restore to sidebar' : 'Archive — hide from the sidebar (nothing is deleted)'}
+          title={archived ? 'Restore to sidebar' : 'Archive - hide from the sidebar (nothing is deleted)'}
           aria-label={`${archived ? 'Restore' : 'Archive'} chat ${chat.title}`}
           onClick={(e) => { e.stopPropagation(); onArchive(chat.id, !archived) }}
         >
@@ -202,7 +202,7 @@ export default function Sidebar({
             ))}
             {!standalone.length && !projects.length && (
               <div className="text-xs text-ink-faint px-2.5 py-2">
-                No chats yet — start one above.
+                No chats yet - start one above.
               </div>
             )}
           </div>
@@ -240,21 +240,21 @@ export default function Sidebar({
       <div className="border-t border-edge p-2 space-y-1.5">
         <button
           className="w-full inline-flex items-center gap-2 text-left text-sm text-ink-mid hover:text-ink rounded-lg px-2.5 py-1.5 hover:bg-panel"
-          title="The models in your room — names, personas, voices, and which model each seat runs"
+          title="The models in your room - names, personas, voices, and which model each seat runs"
           onClick={onManageModels}
         >
           <Users size={15} className="text-ink-dim" /> Models
         </button>
         <button
           className="w-full inline-flex items-center gap-2 text-left text-sm text-ink-mid hover:text-ink rounded-lg px-2.5 py-1.5 hover:bg-panel"
-          title="Everything your models can reach — keys, voice, web search, memory, MCP servers — and whether it's working"
+          title="Everything your models can reach - keys, voice, web search, memory, MCP servers - and whether it's working"
           onClick={onOpenIntegrations}
         >
           <Plug size={15} className="text-ink-dim" /> Connections
         </button>
         <button
           className="w-full inline-flex items-center gap-2 text-left text-sm text-ink-mid hover:text-ink rounded-lg px-2.5 py-1.5 hover:bg-panel"
-          title="What you've spent, across every chat — metered API billing kept separate from subscription-covered estimates"
+          title="What you've spent, across every chat - metered API billing kept separate from subscription-covered estimates"
           onClick={onOpenCost}
         >
           <BarChart3 size={15} className="text-ink-dim" /> Spend

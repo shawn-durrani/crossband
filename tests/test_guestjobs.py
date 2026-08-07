@@ -1,10 +1,10 @@
 """Async guest execution as a decoupled background job.
 
-The guest no longer speaks as the round's final turn — it runs as a detached
+The guest no longer speaks as the round's final turn - it runs as a detached
 GuestJob whose status lives in the durable guest_jobs table, independent of the
 voice/turn lifecycle. These tests drive the lifecycle directly (running →
 completed/failed/cancelled), the two completion paths (blocker vs result), the
-one-job-per-chat block, and the hand-back timing — no SDK, no network."""
+one-job-per-chat block, and the hand-back timing - no SDK, no network."""
 
 import asyncio
 import json

@@ -18,12 +18,12 @@
 export const SECTIONS = [
   { kind: 'llm', title: 'AI models', blurb: 'The providers that host the models in your room, and the model seats using each one.' },
   { kind: 'code', title: 'Coding guest', blurb: 'A coding agent that can be called into a chat to work on your code. It takes a turn like a participant.' },
-  { kind: 'audio', title: 'Voice', blurb: 'Spoken conversations — each model talks in its own voice, and you can talk back.' },
+  { kind: 'audio', title: 'Voice', blurb: 'Spoken conversations - each model talks in its own voice, and you can talk back.' },
   { kind: 'search', title: 'Web research', blurb: 'Lets the models look things up instead of guessing from memory.' },
-  { kind: 'toolset', title: 'Repository tools', blurb: 'What the models may do with your GitHub repositories — read issues and pull requests, and write back with their name attached.' },
+  { kind: 'toolset', title: 'Repository tools', blurb: 'What the models may do with your GitHub repositories - read issues and pull requests, and write back with their name attached.' },
   { kind: 'memory', title: 'Shared memory', blurb: 'A companion service that gives every chat a cheat-sheet about you. Optional.' },
-  { kind: 'mcp', title: 'MCP servers', blurb: 'External tool servers. Status only — add or change them in config.local.json.' },
-  { kind: 'channel', title: 'Incoming events', blurb: 'Ways things reach a chat without anyone asking — your own tools posting in.' },
+  { kind: 'mcp', title: 'MCP servers', blurb: 'External tool servers. Status only - add or change them in config.local.json.' },
+  { kind: 'channel', title: 'Incoming events', blurb: 'Ways things reach a chat without anyone asking - your own tools posting in.' },
 ]
 
 // Apply the any-of rule to a flat requirement list: satisfied when every
@@ -54,7 +54,7 @@ function collapseWebSearch(searchEntries) {
 
   const requires = group.flatMap((e) => e.requires || [])
   const configured = requirementsMet(requires)
-  // Any-of health: the BEST state across the engines wins — one healthy engine
+  // Any-of health: the BEST state across the engines wins - one healthy engine
   // means search works, regardless of a second unconfigured one.
   const rank = { healthy: 3, unknown: 2, unhealthy: 1, unconfigured: 0 }
   const best = group.reduce((a, e) => (rank[e.health] > rank[a.health] ? e : a))
@@ -71,7 +71,7 @@ function collapseWebSearch(searchEntries) {
     available: configured,
     health: configured ? best.health : 'unconfigured',
     detail: configured
-      ? `Shared web search is on — any one key is enough (${engines}). Models look things up instead of guessing.`
+      ? `Shared web search is on - any one key is enough (${engines}). Models look things up instead of guessing.`
       : `Add a ${engines} key to turn on shared web search. Even without one, models can still fetch specific pages, YouTube transcripts and Reddit threads.`,
   }
   return [merged, ...rest]
@@ -120,7 +120,7 @@ export function healthPresentation(entry) {
   }
 }
 
-// Whether an entry's issue can be fixed by entering/validating a credential —
+// Whether an entry's issue can be fixed by entering/validating a credential -
 // i.e. whether to offer the "Set up / fix key" shortcut into the secure setup
 // flow. LLM/audio/search creds live in the wizard; memory has no key and MCP is
 // read-only here, so neither offers a credential fix.
@@ -133,13 +133,13 @@ export function offersCredentialFix(entry) {
 
 // Human-readable label for a cost-provenance source (mirrors backend
 // provenance.PROVENANCE_LABELS so the console explains, in plain English, HOW a
-// seat's cost is known — the thing that gates onboarding).
+// seat's cost is known - the thing that gates onboarding).
 const PROVENANCE_LABELS = {
   provider_reported: 'Provider-reported (billed)',
   rate_card_estimate: 'Rate-card estimate',
-  self_hosted_zero_marginal: 'Self-hosted — no metered marginal cost',
+  self_hosted_zero_marginal: 'Self-hosted - no metered marginal cost',
   subscription_equivalent: 'Subscription-equivalent (informational)',
-  unknown: 'Unknown — no provenance recorded',
+  unknown: 'Unknown - no provenance recorded',
 }
 
 export function provenanceLabel(source) {
@@ -196,14 +196,14 @@ export function seatPromoteState(seat) {
       show: true,
       enabled: true,
       label: 'Promote to Onboarded',
-      reason: `Cost is known (${provenanceLabel(seat.cost_provenance.source)}) — safe to onboard.`,
+      reason: `Cost is known (${provenanceLabel(seat.cost_provenance.source)}) - safe to onboard.`,
     }
   }
   return {
     show: true,
     enabled: false,
     label: 'Promote to Onboarded',
-    reason: 'No cost provenance yet — add a priced rate-card entry or an explicit '
+    reason: 'No cost provenance yet - add a priced rate-card entry or an explicit '
       + 'self-hosted declaration for this model first. Until then it stays a '
       + 'manual trial (still reachable by @mention or by name).',
   }
@@ -214,7 +214,7 @@ export function seatPromoteState(seat) {
 // own requirements, so a capability added to the backend table gets an
 // onboarding form with no change here.
 //
-// Returns null when there is nothing to ask for — a satisfied capability, or one
+// Returns null when there is nothing to ask for - a satisfied capability, or one
 // whose readiness isn't a credential at all (memory is a service you run; MCP is
 // a file you edit).
 export function credentialPrompt(entry) {
@@ -248,7 +248,7 @@ const CONFIG_HOW_TO = {
   code: {
     title: 'How to set up (or add another repo)',
     intro: 'Create or edit config.local.json next to config.json in the repo '
-      + 'root (it is gitignored — your paths never leave this machine), then '
+      + 'root (it is gitignored - your paths never leave this machine), then '
       + 'restart Crossband:',
     snippet: `{
   "code_repos": {
@@ -260,7 +260,7 @@ const CONFIG_HOW_TO = {
   },
   mcp: {
     title: 'How to add an MCP server',
-    intro: 'MCP servers live in config.local.json (gitignored — the public '
+    intro: 'MCP servers live in config.local.json (gitignored - the public '
       + 'repo never learns what your servers are). Add one and restart:',
     snippet: `{
   "mcp_servers": {
@@ -274,7 +274,7 @@ const CONFIG_HOW_TO = {
   },
   channel: {
     title: 'How your own tools post in',
-    intro: 'Anything on this machine can POST to /api/ingest — no key needed '
+    intro: 'Anything on this machine can POST to /api/ingest - no key needed '
       + 'from localhost. From beyond loopback, set a token in '
       + 'config.local.json and send it as a Bearer header:',
     snippet: `{

@@ -14,7 +14,7 @@ def run(coro):
 
 
 def make_client(url="http://127.0.0.1:1"):
-    # port 1 on loopback: connection refused immediately — no real service
+    # port 1 on loopback: connection refused immediately - no real service
     return MemoryClient(url, timeout=0.3)
 
 

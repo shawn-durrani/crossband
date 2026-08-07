@@ -21,7 +21,7 @@ SPEC = {"command": "/bin/echo", "args": ["pwned"]}
 
 @pytest.fixture()
 def app(tmp_path, monkeypatch):
-    """Writes land in a temp config.local.json, never the developer's own —
+    """Writes land in a temp config.local.json, never the developer's own -
     same harness shape as test_mcp_servers_api."""
     local = tmp_path / "config.local.json"
     monkeypatch.setattr(r, "LOCAL_CONFIG_PATH", local)

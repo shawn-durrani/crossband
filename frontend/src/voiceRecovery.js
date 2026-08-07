@@ -1,17 +1,17 @@
 // What a voice session must repair when it comes back to the foreground.
 //
 // THE BUG this closes: everything the microphone side depends on hangs off ONE
-// AudioContext — the analyser the VAD reads, the ScriptProcessor that streams
+// AudioContext - the analyser the VAD reads, the ScriptProcessor that streams
 // PCM to realtime STT, and playback. Browsers suspend that context when the tab
 // is backgrounded (mobile Safari especially, and a locked screen counts), and
 // nothing in the app ever resumed it. A suspended context produces silence
 // forever: the analyser reads flat, `onaudioprocess` stops firing, so no speech
-// is detected, captured, or transcribed — while the UI still looks perfectly
+// is detected, captured, or transcribed - while the UI still looks perfectly
 // alive. Only a reload built a new context, which is exactly what users hit.
 //
 // The same root cause fired WITHOUT backgrounding: `_audioUnlocked` latched true
 // on the first session and was never reset, so a second `start()` skipped
-// priming and left its fresh context suspended — which is why toggling voice
+// priming and left its fresh context suspended - which is why toggling voice
 // off and on again didn't recover dictation either.
 //
 // A backgrounded tab also loses its websockets. A realtime STT socket that
@@ -21,7 +21,7 @@
 // the decision is unit-tested rather than reasoned about through a browser.
 
 // `ctxState` is AudioContext.state: 'running' | 'suspended' | 'closed'.
-// A CLOSED context is unrecoverable by design — stop() closes it, and resume()
+// A CLOSED context is unrecoverable by design - stop() closes it, and resume()
 // on a closed context rejects. Recovering that is a restart, not a resume, so we
 // never claim it here.
 export function recoveryPlan({
@@ -29,13 +29,13 @@ export function recoveryPlan({
 } = {}) {
   const idle = { resumeContext: false, reopenStt: false }
   // Not in a call, or not on screen yet: nothing to repair. Repairing while
-  // hidden is worse than waiting — a resume the browser immediately re-suspends
+  // hidden is worse than waiting - a resume the browser immediately re-suspends
   // burns the one gesture-free chance some browsers grant.
   if (!active || !visible) return idle
   return {
     resumeContext: ctxState === 'suspended',
     // Deliberate teardown (stop, a mode switch, the batch fallback) sets
-    // sttClosing — reopening there would fight the user's own instruction.
+    // sttClosing - reopening there would fight the user's own instruction.
     reopenStt: !!sttRealtime && !sttOpen && !sttClosing,
   }
 }

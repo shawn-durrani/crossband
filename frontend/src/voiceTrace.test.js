@@ -148,7 +148,7 @@ test('end_to_end uses the AUDIBLE playback mark, not play invocation', () => {
   tr.speakerMark('gpt', 'first_delta', META)
   clk.set(1200); tr.speakerMark('gpt', 'first_audio')
   clk.set(1210); tr.speakerMark('gpt', 'play_invoked')  // NOT the headline endpoint
-  clk.set(1600); tr.speakerMark('gpt', 'playback')      // audible — this one counts
+  clk.set(1600); tr.speakerMark('gpt', 'playback')      // audible - this one counts
   const e2e = tr.build().stages.find((s) => s.stage === 'end_to_end_first_audio')
   assert.equal(e2e.ms, 1600)  // uses playback (1600), not play_invoked (1210)
 })
@@ -158,7 +158,7 @@ test('a partial turn only emits the stages it has', () => {
   const tr = new VoiceTrace({ now: clk.now })
   tr.begin('t')
   clk.set(300); tr.mark('transcript_final')
-  // no first_token/audio — round never produced audible speech
+  // no first_token/audio - round never produced audible speech
   const stages = tr.build().stages.map((s) => s.stage)
   assert.deepEqual(stages, ['end_of_speech_to_final'])
 })
@@ -191,7 +191,7 @@ test('payload never carries transcript/text fields', () => {
   for (const k of keys) assert.ok(!['text', 'transcript', 'content'].includes(k))
 })
 
-test('flush is idempotent — ships at most once', () => {
+test('flush is idempotent - ships at most once', () => {
   const clk = fakeClock()
   let calls = 0
   const tr = new VoiceTrace({ now: clk.now, post: () => { calls++ } })
@@ -231,11 +231,11 @@ test('marks recorded AFTER round-done but before flush ARE captured (2 speakers)
   clk.set(1250); tr.speakerMark('gpt', 'playback')
 
   // ROUND-DONE fires here (text stream ended). Controller captures the turn but
-  // does NOT flush yet — gpt is still talking and claude hasn't played.
+  // does NOT flush yet - gpt is still talking and claude hasn't played.
   const captured = tr.current()
 
   // claude's first token/audio arrived during the round; its play_invoked/
-  // playback/queue-wait only happen now, as the playChain reaches it — AFTER
+  // playback/queue-wait only happen now, as the playChain reaches it - AFTER
   // round-done. Under the old code (flush in onRoundDone) these were lost.
   tr.speakerMark('claude', 'first_delta', { provider: 'anthropic', model: 'claude-opus-4-8', tts_provider: 'elevenlabs' })
   clk.set(1500); tr.speakerMark('claude', 'first_audio')
@@ -271,7 +271,7 @@ test('a new turn beginning before the deferred flush cannot hijack it', () => {
   tr.begin('turn-B')
   clk.set(2000); tr.mark('transcript_final')
 
-  // now A's deferred flush finally runs — it must flush A, not B
+  // now A's deferred flush finally runs - it must flush A, not B
   const payload = tr.flush(capturedA)
   assert.equal(payload.turn_id, 'turn-A')
   assert.equal(posts.length, 1)

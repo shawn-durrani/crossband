@@ -1,5 +1,5 @@
 """Slash commands: a user message starting with "/" is a note
-to tooling — persisted like any message, but no round runs, no model replies,
+to tooling - persisted like any message, but no round runs, no model replies,
 and it never enters the transcript the models read."""
 
 import json
@@ -72,7 +72,7 @@ def test_leading_whitespace_still_counts_as_slash(app):
 
 
 def test_slash_suggestions_are_config_driven(tmp_path):
-    """The composer's predictive chips come from config; default is none —
+    """The composer's predictive chips come from config; default is none -
     core assigns no meaning to any command."""
     settings = Settings(data_dir=str(tmp_path / "data2"),
                         memory_url="http://127.0.0.1:1",
@@ -89,7 +89,7 @@ def test_slash_suggestions_are_config_driven(tmp_path):
 
 def test_tooling_notice_persists_without_round(app):
     """POST /notice: machine-side tooling reports status into a chat as a
-    'system' message — no round, models see it next time, UI renders muted."""
+    'system' message - no round, models see it next time, UI renders muted."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
         msg = c.post(f"/api/chats/{chat['id']}/notice",

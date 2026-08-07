@@ -4,7 +4,7 @@ The gap this closes: pricing fails closed and a seat's promotion is gated on
 known provenance, so the app could tell you a model was unpriced, block its
 seat on that, and offer no remedy but hand-editing a JSON file on the
 server. `docs/CONFIG.md` said "edit `pricing` to price a model the card doesn't
-know" — which, before the merge fix below, was actively destructive advice.
+know" - which, before the merge fix below, was actively destructive advice.
 """
 
 import json
@@ -25,7 +25,7 @@ ASOF = "2026-07-31"
 
 def test_local_pricing_layers_over_defaults_instead_of_replacing(tmp_path):
     """THE regression guard. `pricing` is a dict field with a default_factory,
-    and pydantic only runs that factory when the key is ABSENT — so a
+    and pydantic only runs that factory when the key is ABSENT - so a
     config.local.json carrying one model used to become the ENTIRE table,
     silently unpricing every other model, dropping every seat to `trial`, and
     recording cost=None across the roster."""
@@ -143,7 +143,7 @@ def test_a_rate_without_a_source_is_refused(api):
 
 def test_saved_cards_are_always_rate_card_estimate(api):
     """An operator transcribing a list price makes the same claim the built-in
-    table makes — no stronger. (A declared self-hosted $0 is the ONE other
+    table makes - no stronger. (A declared self-hosted $0 is the ONE other
     provenance that may be attested; see the validation block below.)"""
     from backend import provenance
     client, _ = api
@@ -154,7 +154,7 @@ def test_saved_cards_are_always_rate_card_estimate(api):
 
 def test_cache_terms_are_optional_and_default_like_a_builtin(api):
     """Omitted cache terms inherit Anthropic's, exactly as config._rate_card
-    does for a built-in entry — one rule, not two."""
+    does for a built-in entry - one rule, not two."""
     client, _ = api
     r = client.put("/api/pricing/some-model", json={
         "input": 10.0, "output": 20.0, "as_of": ASOF, "source": SRC}).json()
@@ -178,7 +178,7 @@ def test_deleting_a_card_that_was_never_overridden_is_a_404(api):
 
 def test_write_preserves_unrelated_local_config(api):
     """config.local.json holds the operator's real settings. A torn or careless
-    write here would silently drop them — worse than crashing."""
+    write here would silently drop them - worse than crashing."""
     client, local = api
     local.write_text(json.dumps({"user_name": "Alex", "log_level": "INFO"}))
     client.put("/api/pricing/some-model", json={
@@ -214,7 +214,7 @@ def test_only_the_two_operator_declarable_provenances_are_accepted(api):
 
 def test_a_self_hosted_zero_can_now_be_declared_from_the_ui(api):
     """New capability from the port: a local model's $0 is a DECLARED fact with
-    its own provenance, distinct from 'no data' — and it needs no rates, which
+    its own provenance, distinct from 'no data' - and it needs no rates, which
     is why the wire model can't require input/output."""
     from backend import provenance
     client, _ = api
@@ -250,7 +250,7 @@ def test_an_as_of_must_be_a_real_date_and_a_source_a_checkable_url(api):
 
 
 def test_a_broad_alias_cannot_even_be_saved(api):
-    """price_for already matches aliases exactly, never by prefix — this makes
+    """price_for already matches aliases exactly, never by prefix - this makes
     an unsafe one impossible to STORE, not just impossible to match."""
     client, _ = api
     r = client.put("/api/pricing/some-model", json={

@@ -81,7 +81,7 @@ test('keyless loopback endpoints read as local', () => {
 test('hosted, LAN, keyed and empty endpoints do NOT read as local', () => {
   assert.equal(isLocalEndpoint({ base_url: 'https://api.groq.com/openai/v1' }), false)
   assert.equal(isLocalEndpoint({ base_url: 'http://192.168.1.1:11434/v1' }), false)
-  // a key means something is being authenticated to — possibly a tunnel
+  // a key means something is being authenticated to - possibly a tunnel
   assert.equal(isLocalEndpoint({ base_url: 'http://localhost:11434/v1', api_key_env: 'K' }), false)
   assert.equal(isLocalEndpoint({ base_url: '' }), false)
   assert.equal(isLocalEndpoint({}), false)

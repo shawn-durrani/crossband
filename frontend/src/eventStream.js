@@ -6,7 +6,7 @@
 
 // Merge freshly-fetched rows into the current message list: de-duplicated by
 // id, ordered by id ascending. Used both for the live-events hydration path
-// (messagesAfter) and the visibility-gated fallback poll — the exact same
+// (messagesAfter) and the visibility-gated fallback poll - the exact same
 // merge either way, so a message can never be appended twice regardless of
 // which path delivered it first.
 export function mergeMessagesById(current, fresh) {
@@ -16,12 +16,12 @@ export function mergeMessagesById(current, fresh) {
   return [...byId.values()].sort((a, b) => a.id - b.id)
 }
 
-// The highest message id across a list — the local per-chat watermark used
+// The highest message id across a list - the local per-chat watermark used
 // as the `after` cursor for the next incremental fetch. 0 for an empty chat
 // (matches the backend's `after=0` meaning "everything").
 //
 // NUMERIC ids only. A streaming placeholder carries a synthetic string
-// id (`live-<speaker>-…`) until speaker_end swaps in the persisted row — and
+// id (`live-<speaker>-…`) until speaker_end swaps in the persisted row - and
 // an ABORTED round means that swap never happens, so the string id stays in
 // the list. `Math.max(n, 'live-…')` is NaN, and one NaN here poisoned every
 // later fetch into `?after=NaN`: a silent 422, swallowed by both callers, that
@@ -55,7 +55,7 @@ export function hydrateCursor(eventId, messages) {
     : high
 }
 
-// Escalating reconnect backoff — the same shape as reattachRound's (App.jsx):
+// Escalating reconnect backoff - the same shape as reattachRound's (App.jsx):
 // start at 2s, +1.5s per attempt, capped at 8s. A pure function so the
 // escalation/cap logic is testable without faking timers around a real
 // network call.
@@ -89,16 +89,16 @@ export function shouldVoiceAttach(eventChatId, activeChatId, { streaming, voiceA
 // --- Deferred hydration queue ---------------------------------------------
 // A live `new_message` for the OPEN chat that arrives WHILE a round is
 // streaming is suppressed by shouldHydrateActiveChat AND shouldVoiceAttach
-// (both carry `!streaming`) — the round's own SSE stream is the authoritative
+// (both carry `!streaming`) - the round's own SSE stream is the authoritative
 // live path while it runs. The trap: the global watermark has ALREADY advanced
 // past that id, so no SSE reconnect (`?since=<watermark>`) will ever replay it.
 // Dropping it makes an out-of-band notice (e.g. deploy narration) permanently
 // invisible until a full reload. We deliberately do NOT hold the watermark back
-// (a single transient fetch failure would then replay every message after it —
+// (a single transient fetch failure would then replay every message after it -
 // a broad replay storm). Instead we stash the suppressed events here and drain
 // them the instant `streaming` goes false, hydrating them then.
 
-// Is this the exact case both hydrate/voice paths suppress — the open chat
+// Is this the exact case both hydrate/voice paths suppress - the open chat
 // while a round streams? Then it must be deferred, not dropped. Other-chat
 // events (which just flag unread) and idle-time events are unaffected.
 export function shouldDeferEvent(eventChatId, activeChatId, streaming) {
@@ -114,7 +114,7 @@ export function queuePendingEvent(queue, event) {
 }
 
 // Drain the queue: return the stashed events to replay (ascending by id, so
-// they hydrate in the order they were emitted) and the emptied queue. Pure —
+// they hydrate in the order they were emitted) and the emptied queue. Pure -
 // the caller re-runs each event through the normal hydrate/voice logic, which
 // is now unsuppressed because streaming has gone false.
 export function drainPendingQueue(queue) {

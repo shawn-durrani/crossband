@@ -33,7 +33,7 @@ async def upload_attachment(request: Request, file: UploadFile = File(...)):
     filename = os.path.basename(file.filename or "file")
     mime = file.content_type or "application/octet-stream"
     # Downscale photos BEFORE the type gate: this is also what makes HEIC
-    # (iPhone's default, and not a format any provider accepts) usable — it
+    # (iPhone's default, and not a format any provider accepts) usable - it
     # comes out the other side as JPEG. Every turn re-sends every image,
     # so the size we store here is paid again on every future message.
     shrunk = images.downscale(data, mime, filename)
@@ -72,7 +72,7 @@ class YoutubeTranscriptIn(BaseModel):
 def youtube_transcript_attachment(body: YoutubeTranscriptIn):
     """Fetch a FULL YouTube transcript and store it as a text attachment
     (document), so the whole thing reaches the models untouched by the
-    tool-output trim — up to the attachment text limit. Returns the attachment
+    tool-output trim - up to the attachment text limit. Returns the attachment
     row; the composer attaches it to your message."""
     try:
         video_id, text = tools_mod.youtube_transcript_text(body.url)
@@ -82,7 +82,7 @@ def youtube_transcript_attachment(body: YoutubeTranscriptIn):
         raise HTTPException(422, "No transcript text found for that video")
     filename = f"youtube-{video_id}-transcript.txt"
     stored = f"{uuid.uuid4().hex}_{filename}"
-    data = f"YouTube transcript — https://www.youtube.com/watch?v={video_id}\n\n{text}".encode("utf-8")
+    data = f"YouTube transcript - https://www.youtube.com/watch?v={video_id}\n\n{text}".encode("utf-8")
     os.makedirs(db.ATTACH_DIR, exist_ok=True)
     with open(os.path.join(db.ATTACH_DIR, stored), "wb") as f:
         f.write(data)

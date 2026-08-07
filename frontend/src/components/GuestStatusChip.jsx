@@ -14,7 +14,7 @@ import { currentJob, chipLabel, chipTone, hasVisibleJob } from '../guestJobs'
 // live: anchored bottom-center it sat exactly on the "Let them continue"
 // controls.
 //
-// A finished job lingers briefly then clears — its result arrives as a
+// A finished job lingers briefly then clears - its result arrives as a
 // message, so the pill doesn't need to hold state. Old jobs from a previous
 // session (seeded from the snapshot on chat open) never show.
 const TONE = {
@@ -75,7 +75,7 @@ export default function GuestStatusChip({ jobs }) {
             {job.step_count ? <span><span className="text-ink-mid">Steps:</span> {job.step_count}</span> : null}
           </div>
           <div className="text-ink-dim/80">
-            Claude Code runs in the background — it won’t interrupt the chat. Its
+            Claude Code runs in the background - it won’t interrupt the chat. Its
             result comes back as a message from Claude or GPT when there’s a natural pause.
           </div>
         </div>

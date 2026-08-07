@@ -1,6 +1,6 @@
 """Provider-export importer: Claude + ChatGPT exports become chats, idempotent
 by import_uuid with incremental merge, and Membro is seeded through the
-contract — ingest everything, mine per chat with the summary rebuild deferred
+contract - ingest everything, mine per chat with the summary rebuild deferred
 to ONE final call. Long-term recall works from day one."""
 
 import asyncio
