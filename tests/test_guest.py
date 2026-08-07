@@ -1,8 +1,10 @@
-"""summon_claude_code (phase 1): the guest is opt-in per chat,
+"""summon_claude_code: the guest is opt-in per chat,
 queued by a tool call, speaks ONCE after the responder loop through the same
 SSE vocabulary, persists as speaker='claude-code' with tool events and its
-real cost, and the SDK options enforce read-only — no key or CLI needed here
-(the SDK boundary is mocked; option construction is asserted directly)."""
+real cost, and the SDK options enforce each mode's loadout (read-only for
+investigate; the constrained branch/test/push/PR loadout for implement).
+No key or CLI needed here (the SDK boundary is mocked; option construction
+is asserted directly)."""
 
 import asyncio
 import json

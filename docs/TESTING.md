@@ -110,7 +110,7 @@ week when it was maintained by hand.
 - (`test_eval_critic.py`) Tests for the offline critic eval harness itself (fixture loading, prompt isolation, verdict parsing, scoring math) -- no live API calls; the model call is always faked
 - (`test_events.py`) Global live-events bus
 - (`test_github_tools.py`) GitHub issue tools
-- (`test_guest.py`) summon_claude_code (phase 1)
+- (`test_guest.py`) summon_claude_code, in both investigate and implement modes
 - (`test_guestjobs.py`) Async guest execution as a decoupled background job
 - (`test_images.py`) Image downscaling on upload
 - (`test_importer.py`) Provider-export importer

@@ -90,7 +90,7 @@ allow/deny lists only together with that document.
 | key | default | what it does |
 |---|---|---|
 | `code_repos` | `{}` | Short name → local path a guest may open. **Empty = the whole feature is dark.** |
-| `code_mcp` | `{}` | MCP servers mounted into the guest (e.g. Membro for recall): name → `{command, args}`. Mounted in BOTH modes, allowed whole. |
+| `code_mcp` | `{}` | MCP servers mounted into the guest (e.g. Membro for recall): name → `{command, args, env}`. For Membro, `env` must carry `{"PYTHONPATH": "<membro checkout>"}` because it runs from its checkout and is never pip-installed; without it the server dies at spawn and the guest arrives with the tool missing. `${VAR}` tokens in `env` values resolve from Crossband's own environment at guest launch. Mounted in BOTH modes, allowed whole (every tool the server exposes). Full worked example: [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md). |
 | `github_repos` | `{}` | Name → `owner/repo` the AIs may read and file issues against. Auth: `GITHUB_TOKEN` env, else the machine's logged-in `gh` CLI. |
 | `code_use_api_key` | `false` | `false` = guest turns ride the machine's Claude Code login (subscription). `true` = bill `ANTHROPIC_API_KEY` per token. Either way the turn records which one actually paid. |
 | `code_model` | `default` | Guest model tier: `default`/`opus`/`sonnet`/`haiku`. Per-summon override allowed. Changes the rate, not the account that pays. |

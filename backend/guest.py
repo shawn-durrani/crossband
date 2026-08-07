@@ -1,4 +1,4 @@
-"""Claude Code as a temporary in-chat guest specialist (phase 1: plan-only).
+"""Claude Code as a temporary in-chat guest specialist.
 
 Any participant (or the user, via a model) can summon Claude Code into the
 conversation with the `summon_claude_code` tool. The summons is queued and the
@@ -6,22 +6,30 @@ guest takes ONE turn after the normal responder loop finishes, so the regular
 speakers keep their rhythm and the guest replies with everyone's round in view.
 
 The guest runs through the Claude Agent SDK, which drives the locally installed
-Claude Code CLI — so it authenticates exactly like the user's own Claude Code
-sessions and needs no extra API key. Phase 1 is deliberately read-only: the SDK
-options restrict it to Read/Grep/Glob (enforced by the harness, not the
-prompt), scoped to one configured repository. It investigates and answers, or
-produces a plan for a future session to execute — it changes nothing.
+Claude Code CLI, so it authenticates exactly like the user's own Claude Code
+sessions and needs no extra API key. Two modes:
+
+  investigate (the default) is read-only: the SDK options restrict it to
+      Read/Grep/Glob (enforced by the harness, not the prompt), scoped to one
+      configured repository. It investigates and answers, or produces a plan
+      for a later visit to execute.
+  implement (opt-in via code_allow_writes) lets the guest branch, implement,
+      run the tests, push and open a pull request. It can never merge or push
+      to main, it cannot touch .github/, and its shell is limited to
+      pre-approved command prefixes; the human-reviewed merge is the real
+      gate. docs/GUEST_PERMISSIONS.md spells out the exact bounds of both
+      modes.
 
 Configuration (config.local.json / MMC_ env):
   code_repos: {"crossband": "~/dev/crossband", ...}
       Repositories the guest may be pointed at. Empty (the default) keeps the
-      feature dark — the tool is never offered.
+      feature dark: the tool is never offered.
   code_mcp: {"membro": {"command": "<membro>/.venv/bin/python",
                         "args": ["-m", "memory_service.mcp_server"],
                         "env": {"PYTHONPATH": "<membro>"}}}
       Optional MCP servers mounted into the guest (e.g. Membro, so the guest
-      can recall long-term memory while planning). Read-side only by design:
-      Membro quarantines any mcp-origin write anyway ("gate the write").
+      can recall long-term memory while working). Mounted in both modes and
+      allowed whole, meaning every tool the server exposes.
       PYTHONPATH is not optional. Membro runs from its checkout and is never
       pip-installed, so naming its interpreter does not put memory_service on
       the path: without it the server exits at spawn with ModuleNotFoundError
@@ -821,7 +829,7 @@ async def run_guest(task, repo_key, context, cfg, mode="investigate",
         if server.get("env"):
             server = {**server, "env": _interpolate_env(server["env"])}
         mcp_servers[name] = server
-        allowed.append(f"mcp__{name}")  # whole-server allow (read-side tools)
+        allowed.append(f"mcp__{name}")  # whole-server allow (every tool it exposes)
 
     # The guest must authenticate like a fresh `claude` in a clean terminal —
     # through the user's own local login. Blank every inherited CLAUDE*/
