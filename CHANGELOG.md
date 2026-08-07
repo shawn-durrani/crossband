@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+## v0.1.1 (2026-08-07)
+
+- A chat whose only seat is a trial (unverified-cost) model can now be
+  spoken to: explicit addressing reaches trial seats even when it
+  covers the whole roster, in both typed and spoken forms. Previously
+  such a chat completed rounds with no speakers and no error.
+- Source comments and config examples now tell the truth about the
+  guest's two modes, and every code_mcp example carries the required
+  env key (copying the old example produced a mount that died at
+  spawn with nothing telling you why).
 - UI and error copy now uses plain punctuation instead of em-dashes,
   matching the docs. Placeholder glyphs (a bare em-dash standing for an
   empty value) are unchanged.

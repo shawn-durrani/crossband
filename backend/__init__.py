@@ -4,4 +4,4 @@ The frontend carries the same version in frontend/package.json; both move
 together at a release, since a user runs one application rather than two.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
