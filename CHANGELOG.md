@@ -24,8 +24,12 @@ out the old `dev.sideband.server` label and installs
 - The app's loggers moved from `mmc.*` to `crossband.*`; if you grep
   `service.log` by logger name, update the pattern.
 - Guest worktrees and temporary git refs now use crossband-guest
-  namespaces; leftovers from the old names are still cleaned up until
-  v0.3.
+  namespaces. Old-namespace leftovers are still reclaimed until v0.3:
+  stale worktree directories are swept (registered with git or not) and
+  orphaned refs/mmc-guest refs are deleted at the next visit to that
+  repo. One limit: a guest session begun before the upgrade cannot be
+  resumed with continue_last, because its transcript is keyed by the
+  old working directory; summon a fresh visit instead.
 - The source tag sent to Membro stays `multi-model-chat`, now
   documented as deliberately permanent: Membro keys conversation
   identity on it, and renaming it would fork every open chat's memory

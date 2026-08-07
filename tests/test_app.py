@@ -176,20 +176,20 @@ def _restore_logging():
     back exactly as found - otherwise one test's CROSSBAND_LOG_LEVEL leaks into
     every test that runs after it in the same process."""
     root = logging.getLogger()
-    mmc = logging.getLogger("crossband")
+    app_logger = logging.getLogger("crossband")
     root_level, root_handlers = root.level, list(root.handlers)
-    mmc_level = mmc.level
+    app_level = app_logger.level
     yield
     root.setLevel(root_level)
     root.handlers[:] = root_handlers
-    mmc.setLevel(mmc_level)
+    app_logger.setLevel(app_level)
 
 
 def test_log_level_unset_leaves_logging_untouched(tmp_path, _restore_logging):
     """Default: CROSSBAND_LOG_LEVEL unset must be a no-op, so a deployment that
     never sets it behaves byte-for-byte as it did before this existed: the
     content-free INFO-level cache telemetry stays silent by default, same as
-    every other "mmc.*" INFO log line."""
+    every other "crossband.*" INFO log line."""
     root = logging.getLogger()
     before_level, before_handlers = root.level, list(root.handlers)
     settings = Settings(data_dir=str(tmp_path / "data"), log_level="",
@@ -199,9 +199,9 @@ def test_log_level_unset_leaves_logging_untouched(tmp_path, _restore_logging):
     assert root.handlers == before_handlers
 
 
-def test_log_level_set_raises_mmc_logger_verbosity(tmp_path, _restore_logging):
+def test_log_level_set_raises_crossband_logger_verbosity(tmp_path, _restore_logging):
     """Set CROSSBAND_LOG_LEVEL=info (case-insensitive) for a deliberate sampling
-    session and the "mmc.*" hierarchy - including providers.py's Claude-chat
+    session and the "crossband.*" hierarchy - including providers.py's Claude-chat
     cache-telemetry line - becomes reachable."""
     settings = Settings(data_dir=str(tmp_path / "data"), log_level="info",
                         memory_url="http://127.0.0.1:1")

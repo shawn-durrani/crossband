@@ -608,7 +608,20 @@ def _sweep_stale_siblings(repo: Path, repo_key, chat_id):
         # separator / exact-name check keeps chat1 from matching chat10.
         if p.name == prefix or p.name.startswith(prefix + "-"):
             _remove_worktree(repo, p)
+            if p.exists():
+                # git no longer registers it (re-clone, manual prune, moved
+                # repo) so worktree remove was a no-op; without this the
+                # directory leaks forever - and old-prefix leftovers become
+                # unreclaimable once v0.3 drops that namespace.
+                _force_clear_leftover(p)
     _git(repo, "worktree", "prune")
+    # v0.2 rename: crashed pre-rename resolutions can have left refs under the
+    # old namespace, pinning fetched objects in the target repo indefinitely.
+    # Each run deletes only its OWN new-namespace ref, so sweep the old
+    # namespace here until v0.3 retires this with the rest of the fallback.
+    r = _git(repo, "for-each-ref", "refs/mmc-guest/", "--format=%(refname)")
+    for ref in (r.stdout or "").split():
+        _git(repo, "update-ref", "-d", ref)
 
 
 def _fresh_base(repo: Path) -> str:

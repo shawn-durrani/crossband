@@ -22,7 +22,16 @@ LABEL="dev.crossband.server"
 OLD_LABEL="dev.sideband.server"
 TEMPLATE="ops/${LABEL}.plist.template"
 DEST="$HOME/Library/LaunchAgents/${LABEL}.plist"
-PORT="${CROSSBAND_PORT:-${MMC_PORT:-8902}}"  # MMC_ fallback ends in v0.3
+# Same port-resolution rule as start.sh: shell env first, then .env (where a
+# supervised install actually sets it), then the default - so the kill-the-
+# hand-started-instance step below targets the port the old instance really
+# bound. MMC_ fallback ends in v0.3.
+_env_port() {
+  [ -f .env ] && sed -n "s/^${1}=//p" .env | tail -1 || true
+}
+PORT="${CROSSBAND_PORT:-${MMC_PORT:-$(_env_port CROSSBAND_PORT)}}"
+PORT="${PORT:-$(_env_port MMC_PORT)}"
+PORT="${PORT:-8902}"
 DOMAIN="gui/$(id -u)"
 
 [ -f "$TEMPLATE" ] || { echo "✗ template not found: $TEMPLATE" >&2; exit 1; }
@@ -51,6 +60,14 @@ fi
 # instance still holding the port, before bootstrapping the agent (RunAtLoad
 # starts the one real instance).
 launchctl bootout "$DOMAIN/$OLD_LABEL" 2>/dev/null || true
+# Post-condition: never delete the old plist while its job is still loaded -
+# a plist-less KeepAlive job would respawn and fight the new agent for the
+# port until logout. If the bootout genuinely failed, stop and say so.
+if launchctl print "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1; then
+  echo "✗ could not unload the old $OLD_LABEL agent; not proceeding." >&2
+  echo "  Try: launchctl bootout $DOMAIN/$OLD_LABEL   then rerun this script." >&2
+  exit 1
+fi
 rm -f "$HOME/Library/LaunchAgents/${OLD_LABEL}.plist"
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 sleep 1

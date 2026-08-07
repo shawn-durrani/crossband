@@ -315,31 +315,33 @@ def _env_overrides(environ) -> dict:
     out = {}
     fields = Settings.model_fields
     for name, field in fields.items():
-        var = ENV_PREFIX + name.upper()
-        raw = environ.get(var)
-        if raw is None:
-            # v0.2 fallback: the old MMC_ name still applies, with a rename
-            # warning. If BOTH prefixes set the field, the new one already won
-            # above and the elif never fires; the ignored old value is called
-            # out by _warn_deprecated_env at startup instead.
-            old = environ.get(DEPRECATED_ENV_PREFIX + name.upper())
-            if old is None:
-                continue
-            raw = old
         ann = field.annotation
-        try:
-            if ann is int:
-                out[name] = int(raw)
-            elif ann is float:
-                out[name] = float(raw)
-            elif ann is bool:
-                out[name] = raw.strip().lower() in ("1", "true", "yes", "on")
-            elif ann is dict:
-                out[name] = json.loads(raw)
-            else:
-                out[name] = raw
-        except (ValueError, json.JSONDecodeError):
-            continue  # ignore unparseable env values rather than crash
+        # v0.2 fallback: try the new name, then the old MMC_ name (removed in
+        # v0.3; each use is called out at startup by deprecated_env_vars).
+        # Candidate semantics deliberately match db.py's `or` chain and the
+        # scripts' ${:-} chains: a new-name line that is present but EMPTY or
+        # unparseable falls through to a usable old value instead of silently
+        # discarding both - the half-migrated .env with a blank
+        # CROSSBAND_DATA_DIR= placeholder would otherwise boot an empty
+        # database while the old value sits right there.
+        for raw in (environ.get(ENV_PREFIX + name.upper()),
+                    environ.get(DEPRECATED_ENV_PREFIX + name.upper())):
+            if raw is None or raw == "":
+                continue
+            try:
+                if ann is int:
+                    out[name] = int(raw)
+                elif ann is float:
+                    out[name] = float(raw)
+                elif ann is bool:
+                    out[name] = raw.strip().lower() in ("1", "true", "yes", "on")
+                elif ann is dict:
+                    out[name] = json.loads(raw)
+                else:
+                    out[name] = raw
+                break
+            except (ValueError, json.JSONDecodeError):
+                continue  # unparseable candidate: try the next, never crash
     return out
 
 
