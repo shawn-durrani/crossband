@@ -4,6 +4,37 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+## v0.2.0 (2026-08-07)
+
+The rename release: the Sideband-era identifiers are retired.
+
+**Migrating an existing install:** rename the `MMC_` lines in your
+`.env` to `CROSSBAND_` (until v0.3 the old names still work and every
+use logs the exact rename at startup), and rerun
+`bash ops/install-supervisor.sh` if you use the supervisor - it boots
+out the old `dev.sideband.server` label and installs
+`dev.crossband.server` itself.
+
+- Environment variables moved from `MMC_*` to `CROSSBAND_*`, with a
+  one-release fallback and per-variable startup warnings.
+- The launchd label is `dev.crossband.server`; the installer migrates a
+  pre-rename install automatically.
+- The guest diagnostics MCP is `crossband-diag`, so the tool id in the
+  tool-activity strip reads `mcp__crossband-diag__get_diagnostic`.
+- The app's loggers moved from `mmc.*` to `crossband.*`; if you grep
+  `service.log` by logger name, update the pattern.
+- Guest worktrees and temporary git refs now use crossband-guest
+  namespaces. Old-namespace leftovers are still reclaimed until v0.3:
+  stale worktree directories are swept (registered with git or not) and
+  orphaned refs/mmc-guest refs are deleted at the next visit to that
+  repo. One limit: a guest session begun before the upgrade cannot be
+  resumed with continue_last, because its transcript is keyed by the
+  old working directory; summon a fresh visit instead.
+- The source tag sent to Membro stays `multi-model-chat`, now
+  documented as deliberately permanent: Membro keys conversation
+  identity on it, and renaming it would fork every open chat's memory
+  history.
+
 ## v0.1.1 (2026-08-07)
 
 - A chat whose only seat is a trial (unverified-cost) model can now be

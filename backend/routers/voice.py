@@ -41,7 +41,7 @@ from .. import db, diagnostics, engine, voice, voice_trace
 
 router = APIRouter(tags=["voice"])
 
-log = logging.getLogger("mmc.voice")
+log = logging.getLogger("crossband.voice")
 
 PREFERRED_VOICES = ["Adam", "Rachel", "Antoni", "Bella", "Josh", "Domi", "Elli", "Sam"]
 

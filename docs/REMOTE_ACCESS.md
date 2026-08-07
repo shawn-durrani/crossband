@@ -43,7 +43,7 @@ from one step.
 3. **Start the app** as usual on the Mac: `./start.sh` (stays bound to 127.0.0.1).
 4. **Tell the app to trust that name.** Add to `.env`:
    ```
-   MMC_TRUSTED_HOSTS=my-mac.tailXXXX.ts.net
+   CROSSBAND_TRUSTED_HOSTS=my-mac.tailXXXX.ts.net
    ```
    and restart. (Without this the app's DNS-rebinding guard would refuse the proxied
    request. Loopback keeps working regardless.)
@@ -101,7 +101,7 @@ default, and it now documents its own supported path onto a tailnet. This page
 previously said that was impossible and would need a feature request. It is
 not: Membro grew both halves, and its own docs are the reference.
 
-- **`MEMORY_TRUSTED_HOSTS`** is Membro's equivalent of `MMC_TRUSTED_HOSTS`: a
+- **`MEMORY_TRUSTED_HOSTS`** is Membro's equivalent of `CROSSBAND_TRUSTED_HOSTS`: a
   comma-separated list of the non-loopback hosts allowed to reach its login
   surface. An anonymous tailnet caller reaches the lock screen and nothing
   else.

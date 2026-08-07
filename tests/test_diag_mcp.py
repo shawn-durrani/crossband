@@ -275,8 +275,8 @@ def test_e2e_guest_can_call_get_diagnostic_through_the_mounted_mcp_surface(
     asyncio.run(drain())
 
     opts = captured["options"]
-    assert "mcp__sideband-diag" in opts.allowed_tools   # offered to the guest
-    server_config = opts.mcp_servers["sideband-diag"]   # the exact mounted server
+    assert "mcp__crossband-diag" in opts.allowed_tools   # offered to the guest
+    server_config = opts.mcp_servers["crossband-diag"]   # the exact mounted server
 
     from mcp.shared.memory import create_connected_server_and_client_session
 
@@ -382,7 +382,7 @@ def test_e2e_guest_conversation_spend_is_scoped_to_the_summoning_chat(
     asyncio.run(drain())
 
     opts = captured["options"]
-    server_config = opts.mcp_servers["sideband-diag"]
+    server_config = opts.mcp_servers["crossband-diag"]
 
     from mcp.shared.memory import create_connected_server_and_client_session
 

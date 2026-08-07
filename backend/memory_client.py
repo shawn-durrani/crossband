@@ -15,7 +15,7 @@ import time
 
 import httpx
 
-log = logging.getLogger("mmc.memory")
+log = logging.getLogger("crossband.memory")
 
 CONTRACT_MAJOR = 1
 # The historical source-app identifier this client sends on every write. It is

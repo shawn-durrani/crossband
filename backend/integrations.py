@@ -475,7 +475,7 @@ def _room_and_ability_entries(cfg, environ):
                    if tokened else
                    "no token set, so it accepts any local caller (loopback-only by default).")),
         requires=[_requirement(
-            env=["MMC_INGEST_TOKEN"], label="A bearer token (only needed off-loopback)",
+            env=["CROSSBAND_INGEST_TOKEN"], label="A bearer token (only needed off-loopback)",
             satisfied=tokened, optional=True, setup_service=None)],
     ))
     return entries

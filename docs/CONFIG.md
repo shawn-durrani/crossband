@@ -4,7 +4,7 @@ Crossband is configured in **four layers**, each overriding the last
 (`backend/config.py::load_settings`):
 
 ```
-defaults (in code)  ←  config.json (committed)  ←  config.local.json (gitignored)  ←  MMC_* environment
+defaults (in code)  ←  config.json (committed)  ←  config.local.json (gitignored)  ←  CROSSBAND_* environment
 ```
 
 - **`config.json`**: committed, shared defaults. Only put values here that
@@ -13,8 +13,8 @@ defaults (in code)  ←  config.json (committed)  ←  config.local.json (gitign
   gitignored. Machine paths, repo names, private MCP servers, anything the
   public repo must never learn. Copy
   [`config.local.json.example`](../config.local.json.example) to start.
-- **Environment**: any setting can be overridden as `MMC_<NAME>` (upper-case
-  the key: `MMC_PORT=9000`, `MMC_USER_NAME=Alex`). Dict-valued settings take
+- **Environment**: any setting can be overridden as `CROSSBAND_<NAME>` (upper-case
+  the key: `CROSSBAND_PORT=9000`, `CROSSBAND_USER_NAME=Alex`). Dict-valued settings take
   JSON. Unparseable values are ignored rather than crashing startup.
 - **API keys are NOT settings.** They live in `.env` only (`ANTHROPIC_API_KEY`,
   `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `TAVILY_API_KEY`, `BRAVE_API_KEY`,
@@ -24,7 +24,7 @@ A malformed config file never bricks startup. It reads as empty and the
 layer is skipped. Unknown keys are ignored.
 
 Restart the service after changing a file (`./start.sh`, or
-`launchctl kickstart -k gui/$(id -u)/dev.sideband.server` under the
+`launchctl kickstart -k gui/$(id -u)/dev.crossband.server` under the
 supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 
 ## Server
@@ -35,7 +35,7 @@ supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 | `port` | `8902` | The one port everything is served on. |
 | `data_dir` | `""` | Where SQLite + backups + logs live. Empty → `<repo>/data`. |
 | `trusted_hosts` | `""` | Extra Host headers to accept (comma-separated), for Tailscale serve: `my-mac.my-tailnet.ts.net`. Empty = loopback only. [REMOTE_ACCESS.md](REMOTE_ACCESS.md). |
-| `log_level` | `""` | Verbosity for the app's own `mmc.*` loggers. Empty = WARNING+. Set `INFO` for a deliberate cache-telemetry sampling session ([COST_TELEMETRY.md](COST_TELEMETRY.md)), then unset. |
+| `log_level` | `""` | Verbosity for the app's own `crossband.*` loggers. Empty = WARNING+. Set `INFO` for a deliberate cache-telemetry sampling session ([COST_TELEMETRY.md](COST_TELEMETRY.md)), then unset. |
 | `shutdown_timeout_s` | `15` | Seconds a stop may wait on work still in flight (a reply mid-generation, a live voice call) before cancelling it and exiting anyway. The live-events watcher connections end at once regardless. Raise it so long rounds always finish, lower it for a snappier deploy loop ([OPERATIONS.md](OPERATIONS.md)). |
 
 ## Models

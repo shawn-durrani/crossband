@@ -33,7 +33,7 @@ import logging
 
 from . import db, events, guest, work_status
 
-log = logging.getLogger("mmc.guestjobs")
+log = logging.getLogger("crossband.guestjobs")
 
 # How long a routine RESULT hand-back waits for the conversation to settle
 # (no active round) before a narrator relays it. A BLOCKER uses 0 - it still

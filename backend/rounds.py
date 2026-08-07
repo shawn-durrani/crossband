@@ -13,7 +13,7 @@ import asyncio
 import itertools
 import logging
 
-log = logging.getLogger("mmc.rounds")
+log = logging.getLogger("crossband.rounds")
 
 _ids = itertools.count(1)
 _rounds: dict[int, "Round"] = {}  # chat_id -> latest round (kept after done for catch-up)

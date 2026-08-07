@@ -43,7 +43,7 @@ try:  # HEIC/HEIF: iPhone's default format, previously rejected outright
 except Exception:  # pragma: no cover - optional dependency
     HEIF_OK = False
 
-log = logging.getLogger("mmc.images")
+log = logging.getLogger("crossband.images")
 
 # Anthropic and OpenAI both downscale beyond ~1568px on the long edge before
 # tokenising. Storing anything larger buys zero model-visible detail.

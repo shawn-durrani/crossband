@@ -521,7 +521,7 @@ def test_trace_recording_failure_never_breaks_the_round(app, monkeypatch, caplog
         raise RuntimeError("db is on fire")
     monkeypatch.setattr(voice_trace_mod, "record_server_stage", boom)
 
-    caplog.set_level(logging.WARNING, logger="mmc.engine")
+    caplog.set_level(logging.WARNING, logger="crossband.engine")
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
         with c.stream("POST", f"/api/chats/{chat['id']}/send",

@@ -27,7 +27,7 @@ import asyncio
 import logging
 from contextlib import AsyncExitStack
 
-log = logging.getLogger("mmc.mcp")
+log = logging.getLogger("crossband.mcp")
 
 RETRY_S = 60
 CALL_TIMEOUT_S = 45

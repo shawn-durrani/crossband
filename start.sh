@@ -3,7 +3,19 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PORT="${MMC_PORT:-8902}"
+# The port must match what the backend will actually bind, and for a
+# supervised install the only place that is set is .env - so read it (values
+# only; .env is not sourced wholesale here to keep set -u semantics simple)
+# BEFORE the collision guard. Previously this line ran first and the guard
+# checked 8902 while the backend bound the .env port, making the guard inert
+# for custom-port installs. MMC_ fallback ends in v0.3.
+_env_port() {
+  # last assignment wins, comments and blanks ignored; missing file = empty
+  [ -f .env ] && sed -n "s/^${1}=//p" .env | tail -1 || true
+}
+PORT="${CROSSBAND_PORT:-${MMC_PORT:-$(_env_port CROSSBAND_PORT)}}"
+PORT="${PORT:-$(_env_port MMC_PORT)}"
+PORT="${PORT:-8902}"
 
 # One clean instance at a time — but wait a little first. A restart normally
 # follows a stop by a second or two, and an instance that was told to stop still

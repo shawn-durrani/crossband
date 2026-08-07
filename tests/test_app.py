@@ -172,24 +172,24 @@ def test_update_participant_reasoning_effort_validated_against_existing_provider
 @pytest.fixture
 def _restore_logging():
     """`_configure_log_level` mutates process-global logging state (root
-    logger + the "mmc" logger), so every test that exercises it must put both
-    back exactly as found - otherwise one test's MMC_LOG_LEVEL leaks into
+    logger + the "crossband" logger), so every test that exercises it must put both
+    back exactly as found - otherwise one test's CROSSBAND_LOG_LEVEL leaks into
     every test that runs after it in the same process."""
     root = logging.getLogger()
-    mmc = logging.getLogger("mmc")
+    app_logger = logging.getLogger("crossband")
     root_level, root_handlers = root.level, list(root.handlers)
-    mmc_level = mmc.level
+    app_level = app_logger.level
     yield
     root.setLevel(root_level)
     root.handlers[:] = root_handlers
-    mmc.setLevel(mmc_level)
+    app_logger.setLevel(app_level)
 
 
 def test_log_level_unset_leaves_logging_untouched(tmp_path, _restore_logging):
-    """Default: MMC_LOG_LEVEL unset must be a no-op, so a deployment that
+    """Default: CROSSBAND_LOG_LEVEL unset must be a no-op, so a deployment that
     never sets it behaves byte-for-byte as it did before this existed: the
     content-free INFO-level cache telemetry stays silent by default, same as
-    every other "mmc.*" INFO log line."""
+    every other "crossband.*" INFO log line."""
     root = logging.getLogger()
     before_level, before_handlers = root.level, list(root.handlers)
     settings = Settings(data_dir=str(tmp_path / "data"), log_level="",
@@ -199,22 +199,22 @@ def test_log_level_unset_leaves_logging_untouched(tmp_path, _restore_logging):
     assert root.handlers == before_handlers
 
 
-def test_log_level_set_raises_mmc_logger_verbosity(tmp_path, _restore_logging):
-    """Set MMC_LOG_LEVEL=info (case-insensitive) for a deliberate sampling
-    session and the "mmc.*" hierarchy - including providers.py's Claude-chat
+def test_log_level_set_raises_crossband_logger_verbosity(tmp_path, _restore_logging):
+    """Set CROSSBAND_LOG_LEVEL=info (case-insensitive) for a deliberate sampling
+    session and the "crossband.*" hierarchy - including providers.py's Claude-chat
     cache-telemetry line - becomes reachable."""
     settings = Settings(data_dir=str(tmp_path / "data"), log_level="info",
                         memory_url="http://127.0.0.1:1")
     create_app(settings)
-    assert logging.getLogger("mmc.providers").getEffectiveLevel() <= logging.INFO
+    assert logging.getLogger("crossband.providers").getEffectiveLevel() <= logging.INFO
 
 
 def test_log_level_unrecognized_value_is_ignored_not_fatal(tmp_path, _restore_logging, caplog):
-    """A typo in MMC_LOG_LEVEL must never crash startup - it's a diagnostics
+    """A typo in CROSSBAND_LOG_LEVEL must never crash startup - it's a diagnostics
     knob, not a required setting - and is reported so the typo is easy to
     catch rather than silently doing nothing."""
     settings = Settings(data_dir=str(tmp_path / "data"), log_level="not-a-level",
                         memory_url="http://127.0.0.1:1")
-    with caplog.at_level(logging.WARNING, logger="mmc"):
+    with caplog.at_level(logging.WARNING, logger="crossband"):
         create_app(settings)  # must not raise
     assert any("not-a-level" in r.message for r in caplog.records)

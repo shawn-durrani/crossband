@@ -10,7 +10,7 @@ from .. import attachments as att_mod
 from .. import db, images
 from .. import tools as tools_mod
 
-log = logging.getLogger("mmc.attachments")
+log = logging.getLogger("crossband.attachments")
 router = APIRouter(tags=["attachments"])
 
 

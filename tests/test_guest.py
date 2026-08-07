@@ -324,7 +324,7 @@ def test_run_guest_options_enforce_read_only(tmp_path, monkeypatch):
     opts = captured["options"]
     assert opts.tools == ["Read", "Grep", "Glob"]           # the loadout
     assert set(opts.allowed_tools) == {
-        "Read", "Grep", "Glob", "mcp__membro", "mcp__sideband-diag"}
+        "Read", "Grep", "Glob", "mcp__membro", "mcp__crossband-diag"}
     assert "Bash" in opts.disallowed_tools and "Write" in opts.disallowed_tools
     # headless mode + self-contained settings apply to read-only too
     assert opts.permission_mode == "dontAsk"
@@ -333,7 +333,7 @@ def test_run_guest_options_enforce_read_only(tmp_path, monkeypatch):
     assert opts.max_turns == 7
     assert "membro" in opts.mcp_servers                     # memory rides along
     # get_diagnostic is always mounted - no code_mcp opt-in needed
-    assert "sideband-diag" in opts.mcp_servers
+    assert "crossband-diag" in opts.mcp_servers
     # guest authenticates via the user's own login in a clean child env
     assert opts.env.get("CLAUDECODE") == "" and opts.env.get("ANTHROPIC_API_KEY") == ""
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in opts.env  # headless cred passes through
@@ -422,7 +422,7 @@ def test_code_mcp_env_ref_is_resolved_in_options(tmp_path, monkeypatch):
     assert env["MEMORY_AUTH_TOKEN"] == "live-token"   # resolved, not literal
     assert env["MEMORY_API_URL"] == "http://127.0.0.1:8901/v1"
     assert "mcp__membro-admin" in captured["options"].allowed_tools
-    assert "sideband-diag" in captured["options"].mcp_servers  # always mounted
+    assert "crossband-diag" in captured["options"].mcp_servers  # always mounted
 
 
 def test_run_guest_missing_repo_path_degrades(tmp_path):
