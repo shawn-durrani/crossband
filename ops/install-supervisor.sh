@@ -62,7 +62,13 @@ fi
 launchctl bootout "$DOMAIN/$OLD_LABEL" 2>/dev/null || true
 # Post-condition: never delete the old plist while its job is still loaded -
 # a plist-less KeepAlive job would respawn and fight the new agent for the
-# port until logout. If the bootout genuinely failed, stop and say so.
+# port until logout. bootout returns before a draining service is fully
+# unloaded (seen in practice: the check fired while the job was mid-drain),
+# so give it up to 10 seconds before declaring failure.
+for _ in $(seq 1 100); do
+  launchctl print "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1 || break
+  sleep 0.1
+done
 if launchctl print "$DOMAIN/$OLD_LABEL" >/dev/null 2>&1; then
   echo "✗ could not unload the old $OLD_LABEL agent; not proceeding." >&2
   echo "  Try: launchctl bootout $DOMAIN/$OLD_LABEL   then rerun this script." >&2
