@@ -60,7 +60,7 @@ def _pid_alive(pid: str) -> bool:
 
 
 def _lock_busy_message(lock_path, holder: str, waited_s: float) -> str:
-    """The message an operator reads at the worst possible moment — mid-deploy,
+    """The message an operator reads at the worst possible moment - mid-deploy,
     having just stopped the old instance. It must therefore be TRUE about
     whether anything is really still running, and say what to do next."""
     if holder and _pid_alive(holder):
@@ -74,7 +74,7 @@ def _lock_busy_message(lock_path, holder: str, waited_s: float) -> str:
         )
     return (
         f"The data directory is locked ({lock_path}), but the pid recorded there "
-        f"({holder or 'none'}) is not running — so something holds the lock "
+        f"({holder or 'none'}) is not running - so something holds the lock "
         f"without having claimed it.\n"
         f"  Find the holder:    lsof {lock_path}"
     )
@@ -85,7 +85,7 @@ def acquire_lock(lock_path, wait_s: float = LOCK_WAIT_S):
     file object (keep it referenced for the process lifetime) or raises.
 
     Waits up to `wait_s` for the lock rather than failing instantly, because the
-    common case for "locked" is not a second instance — it is the PREVIOUS
+    common case for "locked" is not a second instance - it is the PREVIOUS
     instance, told to stop a moment ago, still finishing its shutdown. Failing
     at once told the operator "another instance is already running" about a
     process they had just killed, which is both false and the exact opposite of
@@ -112,7 +112,7 @@ def acquire_lock(lock_path, wait_s: float = LOCK_WAIT_S):
 
 
 def _secure_env_file(path) -> None:
-    """`.env` holds live API keys, so it is owner-only — always.
+    """`.env` holds live API keys, so it is owner-only - always.
 
     Enforced HERE as well as in start.sh because the service is often launched
     by a process supervisor that never runs start.sh. Tightening on every
@@ -132,7 +132,7 @@ def _configure_log_level(level_name: str) -> None:
     """Opt-in verbosity for the app's own "mmc.*" loggers (empty/default:
     no-op, so behavior is byte-for-byte unchanged from before this existed).
     uvicorn configures ITS OWN loggers (uvicorn / uvicorn.error / uvicorn.access)
-    independently and always has — this only ever touches the root logger, and
+    independently and always has - this only ever touches the root logger, and
     only when MMC_LOG_LEVEL is explicitly set, so it can't interact with that.
     Exists so content-free INFO-level diagnostics already being logged (e.g.
     providers.py's Claude-chat cache-telemetry line) are actually
@@ -142,7 +142,7 @@ def _configure_log_level(level_name: str) -> None:
         return
     level = getattr(logging, level_name.strip().upper(), None)
     if not isinstance(level, int):
-        log.warning("MMC_LOG_LEVEL=%r is not a recognized level name — ignoring", level_name)
+        log.warning("MMC_LOG_LEVEL=%r is not a recognized level name - ignoring", level_name)
         return
     logging.basicConfig(level=level)
     logging.getLogger("mmc").setLevel(level)
@@ -173,7 +173,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         app.state.lock = acquire_lock(str(db.LOCK_PATH))
         # Bind the global live-events bus to THIS loop before
-        # anything can insert a message — a notify() before bind_loop() would
+        # anything can insert a message - a notify() before bind_loop() would
         # otherwise silently no-op.
         events.bind_loop(asyncio.get_running_loop())
         await memory.probe(force=True)
@@ -181,7 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if st["available"]:
             log.info("memory service UP at %s (contract %s)", st["url"], st["contract_version"])
         else:
-            log.warning("memory service not reachable at %s — running memoryless", st["url"])
+            log.warning("memory service not reachable at %s - running memoryless", st["url"])
 
         async def backup_loop():
             while True:
@@ -192,7 +192,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     log.exception("periodic backup failed")
 
         backup_task = asyncio.create_task(backup_loop())
-        # Voice latency traces are diagnostics, not records — prune the
+        # Voice latency traces are diagnostics, not records - prune the
         # table on startup so it self-limits instead of growing forever.
         try:
             con = db.connect()
@@ -202,7 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             log.exception("voice-trace prune failed")
         # These belong HERE, not in router.on_startup: Starlette ignores
-        # on_startup/on_shutdown when a lifespan context is provided — the
+        # on_startup/on_shutdown when a lifespan context is provided - the
         # sweep registered that way had silently never run.
         app.state.reflection_sweep = engine.spawn(
             engine.reflection_sweep_loop(settings.as_cfg, memory))
@@ -230,9 +230,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # DNS-rebinding defense: a malicious page can re-point its own domain at
     # 127.0.0.1 and the browser will treat http://evil.com:8902 as same-origin
     # with this app (CORS never enters into it). The Host header still says
-    # evil.com though — so any request whose Host isn't an allowed name is
+    # evil.com though - so any request whose Host isn't an allowed name is
     # refused. Loopback is always allowed; `trusted_hosts` adds a Tailscale
-    # tailnet name (the tailnet itself is the auth boundary — only your devices
+    # tailnet name (the tailnet itself is the auth boundary - only your devices
     # can reach that name).
     allowed_hosts = {"127.0.0.1", "localhost", "::1"} | {
         h.strip().lower() for h in settings.trusted_hosts.split(",") if h.strip()}
@@ -244,7 +244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(status_code=403, content={
                 "detail": "This app serves localhost (and configured trusted hosts) only."})
         # Defense-in-depth for the trusted-host (Tailscale) path: browsers stamp
-        # Sec-Fetch-Site, so reject cross-site requests to /api/* — a malicious
+        # Sec-Fetch-Site, so reject cross-site requests to /api/* - a malicious
         # page that knows the tailnet name can't drive the API from another origin.
         # Non-browser clients (curl, the app itself) don't send it → allowed.
         if request.url.path.startswith("/api/") \
@@ -278,7 +278,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         shared_instructions = db.get_setting(con, "shared_instructions")
         # The seed value for the frontend's global live-events
         # watermark. Without this, a client opening GET /api/events/stream for
-        # the first time would have to pass since=0 — replaying every message
+        # the first time would have to pass since=0 - replaying every message
         # ever created as a burst of "new" events on first load, which the UI
         # would misread as unread activity in every chat with history.
         latest_message_id = (con.execute(
@@ -295,7 +295,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "latest_message_id": latest_message_id,
             # Chats with a round still generating. Detached rounds
             # keep running after you navigate away, so this is what lets the
-            # sidebar show a background chat as busy — and clear it reliably.
+            # sidebar show a background chat as busy - and clear it reliably.
             "running_chat_ids": rounds.active_chat_ids(),
             "config": {
                 "user_name": cfg["user_name"],

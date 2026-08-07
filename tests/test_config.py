@@ -68,13 +68,13 @@ def test_price_for_exact_and_dated_variant_only():
 
 def test_price_for_fails_closed_on_new_named_model():
     """The load-bearing regression. A newly configured model with a NEW
-    name must NOT be silently priced as an older family — it fails closed to
+    name must NOT be silently priced as an older family - it fails closed to
     unknown until an exact/aliased rate card is supplied. A `-mini`/`-pro`/named
     variant is a different model, not a reissue.
 
     `gpt-5.6-terra` was this test's headline case until it was given a real,
     verified card. Its separately-published sibling `gpt-5.6-terra-pro` takes
-    over the role — and is the sharper case, because it now sits one suffix away
+    over the role - and is the sharper case, because it now sits one suffix away
     from a priced entry and still must not inherit it."""
     from backend.config import provenance_for, compute_cost
     for m in ("gpt-5.6-terra-pro", "gpt-5-mini", "claude-sonnet-5-pro"):
@@ -131,7 +131,7 @@ def test_cache_terms_are_per_provider_not_a_global_multiplier():
 def test_gpt56_terra_is_priced_from_the_published_card():
     """The live GPT seat's model, priced from OpenAI's published standard
     short-context row ($2.00 in / $0.20 cached / $12.00 out) rather than aliased
-    onto a neighbouring family. Stamped with its OWN verification date — the
+    onto a neighbouring family. Stamped with its OWN verification date - the
     older OpenAI entries were not re-checked, and restamping unchecked figures
     is how a rate card starts lying."""
     from backend import provenance

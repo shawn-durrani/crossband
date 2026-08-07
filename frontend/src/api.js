@@ -55,7 +55,7 @@ export const api = {
   modelsStatus: () => fetch('/api/models/status').then(json),
   // Rate cards: the effective price for every known + configured model,
   // each tagged builtin/override/unpriced. Saving writes config.local.json,
-  // which load_settings() re-reads every call — so a new rate is live on the
+  // which load_settings() re-reads every call - so a new rate is live on the
   // next round, no restart.
   rateCards: () => fetch('/api/pricing').then(json),
   saveRateCard: (model, body) => fetch(`/api/pricing/${encodeURIComponent(model)}`, {

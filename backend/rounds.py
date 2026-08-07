@@ -2,10 +2,10 @@
 
 A round runs as a background task writing SSE events into a per-chat buffer;
 HTTP responses merely TAIL that buffer. A client disconnect (a dead zone on
-the highway) no longer cancels generation — the replies finish and persist,
+the highway) no longer cancels generation - the replies finish and persist,
 and the client catches up from where it left off when the tunnel returns
 (`GET /round/stream?round_id&after=N`). Stopping a round is now an explicit
-act (`POST /round/abort`) instead of "the connection closed" — so a network
+act (`POST /round/abort`) instead of "the connection closed" - so a network
 drop stops masquerading as a user barge-in.
 """
 
@@ -59,7 +59,7 @@ def active(chat_id: int) -> Round | None:
 
 
 def active_chat_ids() -> list[int]:
-    """Chat ids with a round still generating — the source of truth for the
+    """Chat ids with a round still generating - the source of truth for the
     running-task indicators. Because rounds are DETACHED (they keep
     running after the client navigates away), this reports background activity a
     client-only flag cannot see, and clears the moment the round finishes."""
@@ -73,7 +73,7 @@ def get(chat_id: int, round_id: int) -> Round | None:
 
 def start(chat_id: int, agen) -> Round:
     """Run `agen` (an SSE-string async generator) to completion in the
-    background, buffering every event. One active round per chat — callers
+    background, buffering every event. One active round per chat - callers
     check active() first (the API returns 409)."""
     r = Round(chat_id)
 
@@ -103,12 +103,12 @@ ABORT_SETTLE_S = 10.0  # bound on waiting for a cancelled round to settle
 async def abort(chat_id: int) -> bool:
     """Cancel the active round (the deliberate stop: barge-in / Stop button).
     The in-flight reply persists with its cut-off marker via run_round's own
-    CancelledError handling. We wait — BOUNDED — for the task to settle so a
+    CancelledError handling. We wait - BOUNDED - for the task to settle so a
     follow-up send can't race the persistence; but a wedged Claude Code guest
     subprocess must never latch the running lock, so if the task refuses
     to die within ABORT_SETTLE_S we force the round DONE anyway. The orphaned
     task keeps trying to unwind in the background; losing a partial reply from a
-    genuinely stuck subprocess is the accepted trade — clearing the deadlock (so
+    genuinely stuck subprocess is the accepted trade - clearing the deadlock (so
     the chat unblocks and the running indicator drops) wins."""
     r = active(chat_id)
     if not r or not r.task:

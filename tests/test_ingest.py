@@ -1,4 +1,4 @@
-"""External event ingestion: one generic inbound endpoint —
+"""External event ingestion: one generic inbound endpoint -
 namespaced speakers (no participant impersonation), idempotent by
 (source, dedupe_key), optional bearer token, payload-agnostic."""
 

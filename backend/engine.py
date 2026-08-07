@@ -4,8 +4,8 @@ SSE, persisting as it goes.
 Rounds run DETACHED (see rounds.py): a background task drives this generator
 to completion whatever happens to the HTTP connection, so a network drop never
 kills a reply. The CancelledError/GeneratorExit handling below now fires only
-on a DELIBERATE stop — the abort endpoint (barge-in / Stop button) cancelling
-the round task — and persists the partial reply with a "[cut off by <User>]"
+on a DELIBERATE stop - the abort endpoint (barge-in / Stop button) cancelling
+the round task - and persists the partial reply with a "[cut off by <User>]"
 marker so the transcript stays honest and the models know to drop that thread.
 """
 
@@ -40,7 +40,7 @@ def slugify(name):
 async def _timed_ms(coro):
     """Await `coro` and return (result, elapsed_ms), clocked from inside the
     task so the duration is the coroutine's OWN runtime. Two tasks wrapped
-    this way and awaited in either order each report their own duration —
+    this way and awaited in either order each report their own duration -
     unlike clocking around the awaits, which charges the second task only
     for the tail that outlived the first."""
     t0 = time.monotonic()
@@ -57,7 +57,7 @@ async def _timed_ms(coro):
 # the round starts the facts are usually already fetched. The store is
 # strictly advisory: the round ADOPTS a prewarm only when it is fresh and
 # its text matches the final transcript closely enough (_prewarm_matches);
-# anything else falls back to the normal fresh recall — a miss can never be
+# anything else falls back to the normal fresh recall - a miss can never be
 # worse than not prewarming at all, and identical transcripts still yield
 # identical facts.
 
@@ -74,7 +74,7 @@ def _norm_query(text):
 
 def _prewarm_matches(prewarm_norm, final_norm):
     """The last partial usually trails the final text by trailing words or
-    punctuation — accept when one normalized form is a prefix of the other
+    punctuation - accept when one normalized form is a prefix of the other
     covering >= PREWARM_MIN_OVERLAP of its length. Ambient recall is
     advisory by design ("use what bears, ignore what doesn't"), and equal
     transcripts compare equal here, so the acceptance bound above holds."""
@@ -165,12 +165,12 @@ def _record_first_token_split(turn_id, chat_id, participant, t_iter_start,
     """Split the client's bundled final_to_first_token stopwatch server-side,
     the instant the round's first responder produces its first visible token.
     `t_iter_start` -> `t_provider_call` is context assembly (DB reads,
-    tool-definition building, and — on the round's first responder only — the
+    tool-definition building, and - on the round's first responder only - the
     memory summary/recall reads); `t_provider_call` -> now is the provider's
     own raw time-to-first-token (thinking/deliberation included: see
     providers.py's reasoning-policy fix). Best-effort and content-free by
     construction (voice_trace.record_server_stage enforces the allowlist +
-    numeric bounds again) — a tracing failure here must never break the
+    numeric bounds again) - a tracing failure here must never break the
     actual voice round, so it's caught and logged, not raised."""
     if not turn_id or t_iter_start is None or t_provider_call is None:
         return
@@ -207,7 +207,7 @@ def _record_first_token_split(turn_id, chat_id, participant, t_iter_start,
 
 def _auto_participates(p):
     """A seat runs in an UNADDRESSED (full) round unless it is explicitly a
-    `trial` seat — trial is manual-invoke-only. A row with no lifecycle
+    `trial` seat - trial is manual-invoke-only. A row with no lifecycle
     recorded (older callers, bare test rosters) is treated as participating; only
     an explicit trial is gated, so nothing regresses."""
     return prov.auto_participates(p.get("lifecycle") or prov.ONBOARDED)
@@ -218,11 +218,11 @@ def pick_responders(text, chat, roster):
 
     Explicit selection is always honored: @mentions of one or more roster
     members select exactly those, and a spoken-style leading vocative
-    ("Claude and GPT, can you…" — voice can't type @) does the same. An
-    explicitly-addressed seat speaks even if it is a `trial` seat — that IS the
+    ("Claude and GPT, can you…" - voice can't type @) does the same. An
+    explicitly-addressed seat speaks even if it is a `trial` seat - that IS the
     manual-invoke path.
 
-    Otherwise everyone replies, rotating who opens each round — EXCEPT `trial`
+    Otherwise everyone replies, rotating who opens each round - EXCEPT `trial`
     (unverified-cost) seats, which are manual-invoke-only and never run in an
     unaddressed round. Onboarded seats behave exactly as before. If a chat holds
     only trial seats, an unaddressed message selects no one until a seat is
@@ -266,11 +266,11 @@ def pick_responders(text, chat, roster):
 def _vocative_responders(text, roster):
     """Spoken addressing: when the message OPENS by naming members
     ("Claude and GPT, …", "GPT-OSS: you can sit this one out"), select those.
-    Deliberately conservative — every leading token must be a roster name (an
+    Deliberately conservative - every leading token must be a roster name (an
     optional greeting word aside), otherwise it's not treated as addressing:
     "Hey guys, …" or "Okay, let's try" never match."""
     head = (text or "").strip()[:80]
-    # Strip leading greeting/filler BEFORE the comma split — spoken addressing
+    # Strip leading greeting/filler BEFORE the comma split - spoken addressing
     # is usually "Hey, GPT, can you…", and splitting at the first comma used to
     # leave just "Hey": no name found, full round, and the un-addressed models
     # answered anyway.
@@ -287,7 +287,7 @@ def _vocative_responders(text, roster):
     # duplicates collapse there, so the guard bought nothing else.
     def norm(s):
         # Voice transcription mangles compound names ("GPT-OSS" → "GPT OSS",
-        # "gpt oss") — compare with separators stripped so spoken forms match.
+        # "gpt oss") - compare with separators stripped so spoken forms match.
         return re.sub(r"[\s.\-_]+", "", s.lower())
 
     by_name = {}
@@ -309,7 +309,7 @@ def _vocative_responders(text, roster):
 async def run_turn(chat_id, responders, next_first, settings, memory,
                    mcp=None, turn_id=None):
     """A conversational turn: one round. A Claude Code guest summoned this round
-    no longer speaks as the round's final turn — it runs DETACHED as a background
+    no longer speaks as the round's final turn - it runs DETACHED as a background
     job (backend/guestjobs.py) and hands its result back through a narrator on
     its own schedule. So a turn is now exactly one round; the guest's lifecycle
     is independent of it (a barge-in or a new message can't cancel an in-flight
@@ -317,7 +317,7 @@ async def run_turn(chat_id, responders, next_first, settings, memory,
 
     `turn_id`: the client's own voice-trace correlation id, when this turn came
     from a live voice session (routers/chats.py's SendIn.turn_id). None for a
-    normal text send — no server-side stage split is recorded then, since
+    normal text send - no server-side stage split is recorded then, since
     there's no client-side turn to correlate it with."""
     async for chunk in run_round(chat_id, responders, next_first, settings,
                                  memory, mcp=mcp, turn_id=turn_id):
@@ -337,7 +337,7 @@ def make_handback(settings, memory, mcp):
     async def handback(chat_id, kind):
         from . import rounds
         if rounds.active(chat_id) is not None:
-            return  # the conversation resumed on its own — reply is already in view
+            return  # the conversation resumed on its own - reply is already in view
         con = db.connect()
         chat = con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
         roster = db.get_chat_participants(con, chat_id) if chat else []
@@ -361,7 +361,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     marker (see module docstring). `is_handback` marks a round spawned by a
     guest job's hand-back: a guest summoned inside such a round still runs but
     does NOT itself narrate, which bounds auto-rounds to one follow-up.
-    `turn_id`: see run_turn's docstring — threaded through to _run_round_inner
+    `turn_id`: see run_turn's docstring - threaded through to _run_round_inner
     so the round's first responder can record the server-side
     context-assembly/provider-TTFT stage split."""
     cfg = settings.as_cfg()
@@ -395,7 +395,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
                          provenance_for(p["model"], cfg["pricing"], **seat_cost))
             usage_json = json.dumps(u)
         con = db.connect()
-        # The single centralized insert path — also wakes any
+        # The single centralized insert path - also wakes any
         # connected client via the global events bus, same as an out-of-band
         # deploy notice does.
         msg = db.insert_message(con, chat_id, p["slug"], content,
@@ -413,7 +413,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
                                             handback, is_handback, turn_id):
             yield chunk
     except (GeneratorExit, asyncio.CancelledError):
-        # Client disconnected mid-reply — keep the partial, marked. This
+        # Client disconnected mid-reply - keep the partial, marked. This
         # persist stays SYNCHRONOUS on purpose: inside cancellation
         # cleanup a fresh `await` is itself immediately cancelled, and the
         # partial would be lost instead of persisted. One blocking fsync on
@@ -427,9 +427,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                            handback=None, is_handback=False, turn_id=None):
     memory_summary_cache = None  # fetched at most once per round
     ambient_cache = None  # ambient recall for the latest user message, once per round
-    spoken = []  # who already replied THIS round — later speakers are told
+    spoken = []  # who already replied THIS round - later speakers are told
     # The transcript is read IN FULL once per round; every later speaker
-    # only fetches the delta (id > last seen) — normally just the previous
+    # only fetches the delta (id > last seen) - normally just the previous
     # speaker's persisted reply, plus any mid-round external inserts, so
     # nothing a full re-read would have shown is ever missed. Guest-CLI
     # availability (a filesystem PATH scan) and the memory probe (an HTTP
@@ -440,12 +440,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
     memory_up = None
     for idx, participant in enumerate(responders):
         # Server-side half of the client's final_to_first_token stopwatch
-        # — only meaningful for the round's FIRST responder (the one the
+        # - only meaningful for the round's FIRST responder (the one the
         # client is actually timing; the round is sequential, so a later
         # speaker's provider call starts well after that measurement ends).
         t_iter_start = time.monotonic() if (turn_id and idx == 0) else None
         memory_summary_ms = memory_recall_ms = None
-        # The speaker's DB reads run in a worker thread — sqlite's
+        # The speaker's DB reads run in a worker thread - sqlite's
         # blocking I/O (and its up-to-5s busy_timeout under lock contention)
         # must not pin the event loop that is simultaneously relaying live
         # voice websockets and SSE streams.
@@ -463,19 +463,19 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # background task after each round (prompt caching keeps the larger prefix
         # cheap), so a round never stalls mid-conversation waiting on a summary.
         summary = chat["summary"]
-        # slash commands are notes to tooling — never part of what models read
+        # slash commands are notes to tooling - never part of what models read
         transcript = [m for m in messages
                       if m["id"] > chat["summary_upto"]
                       and not (m["speaker"] == "user"
                                and m["content"].lstrip().startswith("/"))]
         # This warning flips with memory-service health while `summary_upto`
-        # stays put — so unlike a real summary fold it does NOT change the
+        # stays put - so unlike a real summary fold it does NOT change the
         # transcript, and concatenating it into `summary` (the CACHED stable
         # block) made every flip re-write the whole prefix at Anthropic's 1.25x
         # cache-write rate. It is the same defect as the earlier prompt-cache
         # regression (volatile content parked in the cached stable block), on a
         # path that earlier fix never looked at, and it fires exactly when
-        # memory is already degraded — so a memory outage doubled as a
+        # memory is already degraded - so a memory outage doubled as a
         # prompt-cache outage. It rides the volatile tail now; the model reads
         # the same sentence.
         write_warning = bool(memory is not None and memory.any_write_failed())
@@ -483,7 +483,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         round_cfg = dict(cfg)
         round_cfg["memory_write_warning"] = (
             "a recent memory save failed, so some facts from a just-finished chat "
-            "may not be recorded yet — don't assume they're stored."
+            "may not be recorded yet - don't assume they're stored."
         ) if write_warning else ""
         round_cfg["shared_instructions"] = state["shared_instructions"]
         round_cfg["round_predecessors"] = list(spoken)  # dynamic, this round only
@@ -500,13 +500,13 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
 
         # Is summon_claude_code already claimed (queued this round, or a
         # detached job still running from an earlier one)? If so it is not
-        # offered as a tool this turn — the strongest form of "don't duplicate
-        # it" — and every participant's system prompt gets a note explaining
+        # offered as a tool this turn - the strongest form of "don't duplicate
+        # it" - and every participant's system prompt gets a note explaining
         # why, so nobody narrates or re-proposes it either (voice included).
         claim = guest.claimed(chat_id)
         round_cfg["delegation_note"] = guest.delegation_note(claim)
 
-        # get_diagnostic: always offered, no per-chat toggle — same reasoning
+        # get_diagnostic: always offered, no per-chat toggle - same reasoning
         # as the guest's unconditional MCP mount: it carries no secret and
         # reaches nothing beyond this process's own in-memory/db state, so
         # gating it behind web_on/code_on would only reintroduce the
@@ -532,7 +532,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             if memory_summary_cache is None:
                 # Summary + ambient recall, concurrently. The ambient recall
                 # keys on the latest user message and prepares the per-fact
-                # detail the summary won't hold — models kept forgetting to
+                # detail the summary won't hold - models kept forgetting to
                 # reach for it themselves (the tool remains for deliberate
                 # digging; origin="auto" keeps the two distinguishable in the
                 # memory service's access log and live view).
@@ -549,8 +549,8 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 # Adopt a speech-end prewarm when it is fresh and its
                 # text matches this round's final transcript; otherwise run
                 # the normal fresh recall (and cancel the stale task). For an
-                # adopted task _timed_ms clocks the round's RESIDUAL wait —
-                # near zero when the prewarm already finished — which is what
+                # adopted task _timed_ms clocks the round's RESIDUAL wait -
+                # near zero when the prewarm already finished - which is what
                 # server_memory_recall_wait should honestly report.
                 pre = _recall_prewarm.pop(chat_id, None)
                 adopted = None
@@ -594,10 +594,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             ):
                 if kind == "text":
                     if t_provider_call is not None:
-                        # First visible token — record the split once,
+                        # First visible token - record the split once,
                         # best-effort (a trace-write failure must never break
                         # the actual round), then never again this participant.
-                        # On a worker thread — this write races the
+                        # On a worker thread - this write races the
                         # first delta reaching the client otherwise.
                         await asyncio.to_thread(
                             _record_first_token_split,
@@ -618,14 +618,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                         "output_text": payload["output"],
                     })
                 elif kind == "work_status":
-                    # A structured liveness event (never text) — proves the
+                    # A structured liveness event (never text) - proves the
                     # round is alive over the SAME SSE stream the reply
                     # rides, WITHOUT touching live["content"]. This is the
                     # fix for the earlier persistence bug: the old
                     # text-shaped version was folded into live["content"] and
                     # ended up baked into the persisted assistant message.
                     # Never buffered, never replayed, never part of any DB
-                    # row — a client that isn't connected right now simply
+                    # row - a client that isn't connected right now simply
                     # never sees it, which is the point.
                     yield sse({
                         "type": "work_status",
@@ -634,7 +634,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                         "label": payload["label"],
                     })
         except (GeneratorExit, asyncio.CancelledError):
-            raise  # client disconnected — run_round persists the partial reply
+            raise  # client disconnected - run_round persists the partial reply
         except Exception as e:
             yield sse({"type": "error", "speaker": participant["slug"], "message": str(e)})
             if not live["content"]:
@@ -642,9 +642,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 continue
         if not live["content"] and not live["tools"]:
             # model finished without text or tool calls (some local reasoning
-            # models occasionally emit only reasoning) — say so, never vanish
+            # models occasionally emit only reasoning) - say so, never vanish
             yield sse({"type": "error", "speaker": participant["slug"],
-                       "message": "returned an empty reply (no text, no tool calls) — try again"})
+                       "message": "returned an empty reply (no text, no tool calls) - try again"})
             live["participant"] = None
             continue
         # The between-speakers persist (INSERT + fsync) runs on a worker
@@ -690,7 +690,7 @@ def _launch_guest_job(chat_id, summons, cfg, handback, narrate=True):
     DETACHED job. Returns the `guest_job` SSE dict to push to the round's
     attached client (so its status chip appears immediately), or None when the
     guest can't run (code disabled after summons, or a job already in flight).
-    The job itself runs independently of this round — see guestjobs.start."""
+    The job itself runs independently of this round - see guestjobs.start."""
     from . import guestjobs
     con = db.connect()
     chat = con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
@@ -700,7 +700,7 @@ def _launch_guest_job(chat_id, summons, cfg, handback, narrate=True):
     if not chat or not chat["code_enabled"]:
         return None
     if guestjobs.active_for_chat(chat_id):
-        return None  # one guest job per chat — block, don't queue
+        return None  # one guest job per chat - block, don't queue
 
     lines = []
     for m in messages[-GUEST_CONTEXT_MESSAGES:]:
@@ -708,17 +708,17 @@ def _launch_guest_job(chat_id, summons, cfg, handback, narrate=True):
         lines.append(f"{who}: {m['content']}")
     context = "\n".join(lines)[-GUEST_CONTEXT_CHARS:]
 
-    # continue_last: resume the guest's previous visit in this chat — the
+    # continue_last: resume the guest's previous visit in this chat - the
     # stored session_id re-enters that session with its full working context,
     # e.g. "now implement the plan you just made". A session is bound to one
     # repo's worktree, so it only resumes when the repos agree: on a mismatch
-    # the explicit repo wins, the resume is dropped, and the chat is told —
+    # the explicit repo wins, the resume is dropped, and the chat is told -
     # silently overriding stranded a guest in the wrong checkout.
     resume = None
     repo = summons["repo"]
     resume_note = ""
     # On resume, reuse the prior visit's worktree key so the guest lands in the
-    # SAME cwd — the CLI's session lookup is keyed by working directory, so a
+    # SAME cwd - the CLI's session lookup is keyed by working directory, so a
     # fresh isolated path would strand the resume without its working context.
     # None → a fresh, uniquely-keyed worktree.
     session_key = None
@@ -731,7 +731,7 @@ def _launch_guest_job(chat_id, summons, cfg, handback, narrate=True):
                     if prior_repo and prior_repo != repo:
                         resume_note = (
                             f'(continue_last ignored: the previous visit was in '
-                            f'"{prior_repo}" but this summon targets "{repo}" — '
+                            f'"{prior_repo}" but this summon targets "{repo}" - '
                             f'sessions are bound to one repo, so this is a fresh '
                             f'session without the earlier working context)\n\n')
                     else:
@@ -771,13 +771,13 @@ async def post_round_reflect_job(chat_id, cfg):
     auto-title if the chat has grown past TITLE_REFRESH_DELTA since it was last
     titled. Both are cheap watermark-guarded no-ops until their delta is hit.
 
-    The title check runs on EVERY round completion, decoupled from the fold —
+    The title check runs on EVERY round completion, decoupled from the fold -
     an always-active chat that never triggers the summary fold (or the leave/
     sweep reflection pass) would otherwise outrun its title forever.
     maybe_title_chat still no-ops on user-renamed chats (title_upto == -1) and
     still uses the cheap utility model. Best-effort."""
     try:
-        # The full-transcript read — the heavy part — runs on a worker
+        # The full-transcript read - the heavy part - runs on a worker
         # thread so a voice turn arriving right after "done" doesn't compete
         # with it for the event loop. The maybe_* calls keep their own
         # connection for the small watermark writes (their LLM call is async
@@ -811,7 +811,7 @@ REFLECT_IDLE_S = 180   # a chat must be this quiet before the sweep reflects it
 def sweep_candidates(con, idle_s=REFLECT_IDLE_S, limit=10):
     """Chats the periodic sweep should reflect: quiet for a while, with content
     past a watermark (un-ingested messages, or enough new ones to (re)title).
-    Exists because the leave hook only fires on chat-SWITCH in the UI — close
+    Exists because the leave hook only fires on chat-SWITCH in the UI - close
     the tab (or end a phone voice session) and titles stick as first-message
     placeholders and the transcript never reaches memory. leave_chat_job is
     watermark-guarded, so sweeping a candidate twice is a cheap no-op."""
@@ -849,8 +849,8 @@ async def reflection_sweep_loop(get_cfg, memory):
 
 async def leave_chat_job(chat_id, cfg, memory):
     """The /distill leave hook, run in the background so leaving is instant:
-    (a) chat-side reflection — rolling summary, auto-title, project distill;
-    (b) memory-service handoff — ingest new messages past the watermark, then
+    (a) chat-side reflection - rolling summary, auto-title, project distill;
+    (b) memory-service handoff - ingest new messages past the watermark, then
         trigger the service's reflection pass. Failures are recorded on the
         memory client and surfaced in /api/state."""
     memory_enabled = False
@@ -895,18 +895,18 @@ async def leave_chat_job(chat_id, cfg, memory):
                 "SELECT a.* FROM attachments a JOIN messages m ON a.message_id=m.id "
                 "WHERE m.chat_id=? AND m.id>? ORDER BY a.id", (chat_id, upto[0]))]
             for a in rows:
-                # ship the actual bytes — the memory service stores files whole
+                # ship the actual bytes - the memory service stores files whole
                 # so nothing that traveled with a chat is ever lost to memory
                 if a["size"] > memory_client_mod.MAX_ATTACH_BYTES:
                     log.warning("attachment %s (%d bytes) exceeds the handoff "
-                                "cap — kept locally, not mirrored to memory",
+                                "cap - kept locally, not mirrored to memory",
                                 a["filename"], a["size"])
                     continue
                 try:
                     data = base64.standard_b64encode(
                         open(att_mod.file_path(a), "rb").read()).decode()
                 except OSError:
-                    log.warning("attachment file missing for %s — skipped",
+                    log.warning("attachment file missing for %s - skipped",
                                 a["filename"])
                     continue
                 by_id[a["message_id"]].setdefault("attachments", []).append(

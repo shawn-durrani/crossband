@@ -16,8 +16,8 @@
 //   hint          one plain-English line about this provider
 //
 // Note: OpenAI's open-weight models (the gpt-oss family) are served *through*
-// these — run them locally via Ollama/LM Studio, or hosted via Groq / Together /
-// Fireworks / OpenRouter — so there's no separate "gpt-oss" entry. Pick the host
+// these - run them locally via Ollama/LM Studio, or hosted via Groq / Together /
+// Fireworks / OpenRouter - so there's no separate "gpt-oss" entry. Pick the host
 // and set the model id to the gpt-oss variant it serves.
 //
 // base_urls verified current 2026-07-07.
@@ -31,7 +31,7 @@ export const PRESETS = [
     needsKey: false,
     keyEnvExample: '',
     getKeyUrl: '',
-    hint: 'Runs models on your own machine — private and free, no key. Install Ollama, `ollama pull llama3.1`, then set the model to that name.',
+    hint: 'Runs models on your own machine - private and free, no key. Install Ollama, `ollama pull llama3.1`, then set the model to that name.',
   },
   {
     id: 'lmstudio',
@@ -41,7 +41,7 @@ export const PRESETS = [
     needsKey: false,
     keyEnvExample: '',
     getKeyUrl: '',
-    hint: 'Runs models on your own machine via the LM Studio app — no key. Start its local server, then set the model to a loaded model id.',
+    hint: 'Runs models on your own machine via the LM Studio app - no key. Start its local server, then set the model to a loaded model id.',
   },
   {
     id: 'openai',
@@ -51,7 +51,7 @@ export const PRESETS = [
     needsKey: true,
     keyEnvExample: 'OPENAI_API_KEY',
     getKeyUrl: 'https://platform.openai.com/api-keys',
-    hint: 'The default OpenAI API. Leave the base URL blank — the SDK points at OpenAI itself.',
+    hint: 'The default OpenAI API. Leave the base URL blank - the SDK points at OpenAI itself.',
   },
   {
     id: 'groq',

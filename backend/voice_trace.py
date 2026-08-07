@@ -16,7 +16,7 @@ and TTS provider, retained long enough to diagnose outliers.
 
 THE PRIVACY FLOOR (non-negotiable, enforced here not just documented): a trace
 is CONTENT-FREE. `sanitize()` accepts only allowlisted stage names, numeric
-durations, and bounded provider/model/voice/slug identifiers — never a
+durations, and bounded provider/model/voice/slug identifiers - never a
 transcript, a reply, or any spoken words. Anything not on the allowlist is
 dropped. So even a buggy or hostile client cannot turn this into a transcript
 log; the worst it can do is submit uninteresting numbers.
@@ -24,7 +24,7 @@ log; the worst it can do is submit uninteresting numbers.
 
 # The stages we know how to measure, each a DURATION in milliseconds between two
 # points on the voice timeline. Kept as an explicit allowlist so the ingest path
-# is closed by default — an unknown stage name is dropped, never stored. Every
+# is closed by default - an unknown stage name is dropped, never stored. Every
 # stage here is actually emitted by the client (frontend/src/voiceTrace.js); we
 # deliberately do NOT list stages we can't measure, so the summary endpoint
 # never advertises a permanently-empty column.
@@ -40,7 +40,7 @@ ALLOWED_STAGES = {
     "first_token_to_first_audio",
     # how long a ready reply waited before the shared audio sink was handed to
     # it (multi-agent serialization: speaker N queues behind speaker N-1).
-    # Emitted for 2nd+ speakers only — the lead reply has nobody ahead of it.
+    # Emitted for 2nd+ speakers only - the lead reply has nobody ahead of it.
     "playback_queue_wait",
     # a speaker's first audio bytes → its audio becoming AUDIBLE (queue + decode)
     "first_audio_to_playback",
@@ -50,15 +50,15 @@ ALLOWED_STAGES = {
 
 # Stages the SERVER itself measures and inserts directly via
 # db.insert_voice_trace (backend/engine.py's round loop), correlated by the
-# same client-owned turn_id — but never accepted through the public
+# same client-owned turn_id - but never accepted through the public
 # POST /api/voice/trace ingest (sanitize_stage below only recognizes
 # ALLOWED_STAGES), so a client can never fabricate server-side attribution.
 # Together these split final_to_first_token's client-side bundle into: how
 # long context assembly (DB reads, tool-definition building, memory reads)
 # took before the provider call even started, vs. the provider's own raw
-# time-to-first-token (which includes any thinking/deliberation — see
+# time-to-first-token (which includes any thinking/deliberation - see
 # backend/providers.py's reasoning-policy handling). Emitted only for the
-# round's FIRST responder — the one the client's stopwatch is timing.
+# round's FIRST responder - the one the client's stopwatch is timing.
 SERVER_STAGES = {
     # round dispatch (this responder's turn starting) → the provider call
     # actually being issued: DB reads, tool-definition assembly, and (only
@@ -77,7 +77,7 @@ SERVER_STAGES = {
     "server_memory_recall_wait",
 }
 
-# The full recognized set for aggregation (voice_trace.aggregate, below) —
+# The full recognized set for aggregation (voice_trace.aggregate, below) -
 # client-submitted stages plus server-measured ones. sanitize_stage/
 # sanitize_turn deliberately check ONLY ALLOWED_STAGES, not this union: the
 # public ingest endpoint must never accept a client's claim about server-side
@@ -120,11 +120,11 @@ def ensure_epoch(con) -> float:
 # One-line interpretation per stage, shipped INSIDE the diagnostic payload:
 # the numbers travel with their framing, so a model (or human) quoting them
 # inherits "by design" where it applies instead of inventing alarm. Static,
-# content-free text — the privacy floor is untouched.
+# content-free text - the privacy floor is untouched.
 STAGE_NOTES = {
     "end_of_speech_to_final":
         "includes the user's configured end-of-turn pause (~2s by default) "
-        "plus transcription finalization — not pure system time",
+        "plus transcription finalization - not pure system time",
     "final_to_first_token":
         "final transcript to first model token: network transit + "
         "orchestration + the model starting to answer",
@@ -132,18 +132,18 @@ STAGE_NOTES = {
         "server-side context build before the model call (DB reads, tool "
         "definitions, memory waits)",
     "server_provider_first_token":
-        "the model's own time to first visible token, thinking included — "
+        "the model's own time to first visible token, thinking included - "
         "governed by the seat's reasoning-effort setting",
     "server_memory_recall_wait":
-        "the round's residual wait on memory recall — near zero when a "
+        "the round's residual wait on memory recall - near zero when a "
         "speech-end prewarm was adopted",
     "server_memory_summary_wait":
-        "fetch of the precomputed memory summary — expected near zero",
+        "fetch of the precomputed memory summary - expected near zero",
     "first_token_to_first_audio":
         "TTS synthesis from first text to first audio bytes",
     "playback_queue_wait":
         "a LATER speaker's finished audio waiting for the current speaker "
-        "to stop talking — multi-voice serialization by design, not a "
+        "to stop talking - multi-voice serialization by design, not a "
         "responsiveness defect",
     "first_audio_to_playback":
         "decode + buffering until audible; for later speakers this also "
@@ -154,13 +154,13 @@ STAGE_NOTES = {
 }
 
 _MAX_STR = 64          # bound every identifier string we persist
-_MAX_MS = 3_600_000    # 1 hour — anything larger is a clock glitch, not a stage
+_MAX_MS = 3_600_000    # 1 hour - anything larger is a clock glitch, not a stage
 _MAX_STAGES_PER_POST = 200  # a single turn can't plausibly report more than this
 
 
 def _clean_str(v):
-    """Coerce to a short, single-line, plain identifier. Never trusted content —
-    just a provider/model/slug label — so we hard-cap length and strip control
+    """Coerce to a short, single-line, plain identifier. Never trusted content -
+    just a provider/model/slug label - so we hard-cap length and strip control
     characters rather than trying to be clever."""
     if not isinstance(v, str):
         return ""
@@ -197,7 +197,7 @@ def sanitize_stage(raw):
 def sanitize_turn(payload):
     """Validate a whole turn's trace POST. Returns (turn_id, chat_id, [stages]).
     turn_id is required and bounded; chat_id is optional (may be null for a turn
-    that never reached a chat). Silently drops any stage that doesn't sanitize —
+    that never reached a chat). Silently drops any stage that doesn't sanitize -
     partial telemetry is fine, a rejected turn would just lose the good rows too."""
     if not isinstance(payload, dict):
         return None, None, []
@@ -222,13 +222,13 @@ def sanitize_turn(payload):
 
 def record_server_stage(con, turn_id, chat_id, stage, ms, *, provider="",
                         model="", speaker=""):
-    """Persist ONE server-measured stage (backend/engine.py's round loop) — the
+    """Persist ONE server-measured stage (backend/engine.py's round loop) - the
     trusted counterpart to sanitize_stage for numbers the server itself timed
     with a monotonic clock, never client input. Still defensive: `stage` must
     be one we know about (SERVER_STAGES) and `ms` is clamped into the same
     sane bounds as client-submitted stages, so a clock glitch or a future
     refactor can't silently write nonsense into the diagnostics table.
-    Best-effort by design — a caller wraps this and never lets a tracing
+    Best-effort by design - a caller wraps this and never lets a tracing
     failure break the actual voice round; see engine.py's usage."""
     if not turn_id or stage not in SERVER_STAGES:
         return

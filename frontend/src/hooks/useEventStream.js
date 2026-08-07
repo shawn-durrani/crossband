@@ -9,7 +9,7 @@ import { mergeGuestJob } from '../guestJobs'
 
 // The global live-events connection, lifted out of App.jsx.
 //
-// ONE persistent SSE stream per tab, not per chat — see backend/events.py's
+// ONE persistent SSE stream per tab, not per chat - see backend/events.py's
 // module docstring for the full design. Everything the connection owns lives
 // here: the watermark, the reconnect token, the abort controller, the queue of
 // events deferred while a round was streaming, and the belt-and-suspenders
@@ -19,7 +19,7 @@ import { mergeGuestJob } from '../guestJobs'
 // **Why callbacks go through a ref.** The stream is opened once, in a mount
 // effect, so everything it closes over is frozen at first render. Today that
 // happens to be safe because the handlers only touch refs and setState
-// functions, both stable — but `onVoiceAttach` is an ordinary function
+// functions, both stable - but `onVoiceAttach` is an ordinary function
 // re-created every render, and freezing it would be a real bug waiting for
 // someone to add state to it. `cb.current` is refreshed on every render, so the
 // long-lived stream always calls today's handlers. Same hazard App.jsx already
@@ -63,14 +63,14 @@ export function useEventStream({
           if (ev.chat_id !== activeChatIdRef.current) return
           if (d.messages.length) cb.current.onMessages((m) => mergeMessagesById(m, d.messages))
         })
-        .catch(() => {}) // transient — the next live event or the fallback poll retries
+        .catch(() => {}) // transient - the next live event or the fallback poll retries
     } else if (ev.chat_id !== activeChatIdRef.current) {
       cb.current.onUnread((s) => (s.has(ev.chat_id) ? s : new Set(s).add(ev.chat_id)))
     }
   }
 
   // One event off the wire: bump the watermark, then either hydrate the active
-  // chat's content (an incremental fetch — never the whole transcript) or just
+  // chat's content (an incremental fetch - never the whole transcript) or just
   // flag another chat as having unseen activity.
   function handleLiveEvent(ev) {
     if (ev.type === 'guest_job') {
@@ -112,7 +112,7 @@ export function useEventStream({
         await streamSSE(`/api/events/stream?since=${watermarkRef.current}`,
                         null, handleLiveEvent, ctrl.signal, 'GET')
         if (token !== tokenRef.current) return // superseded while connected
-        delay = INITIAL_BACKOFF_MS // clean end (shouldn't normally happen) — reset backoff
+        delay = INITIAL_BACKOFF_MS // clean end (shouldn't normally happen) - reset backoff
       } catch (e) {
         if (e.name === 'AbortError') return // unmounted, or a newer connect attempt took over
       }
@@ -156,7 +156,7 @@ export function useEventStream({
         const d = await api.messagesAfter(chatId, highestId(messagesRef.current))
         if (chatId !== activeChatIdRef.current) return
         if (d.messages.length) cb.current.onMessages((m) => mergeMessagesById(m, d.messages))
-      } catch { /* transient — try again next tick */ }
+      } catch { /* transient - try again next tick */ }
     }
     const t = setInterval(tick, 30000)
     return () => clearInterval(t)

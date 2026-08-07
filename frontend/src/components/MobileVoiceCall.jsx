@@ -6,18 +6,18 @@ import { orbStateFor, statusFor, showInterruptHint, displayPartial } from '../vo
 // session is live (voiceState !== 'off'). Mobile-only: the wrapper is `sm:hidden`
 // so desktop keeps its in-thread .voice-dock untouched.
 //
-// This is a VIEW over state App already owns — it renders the orb (driven by
+// This is a VIEW over state App already owns - it renders the orb (driven by
 // voiceState), the roster, and the transient captions the useCaptions hook
 // produces from the SSE event flow. It does not touch the voice pipeline; the
 // actions it takes are stopVoice() (End), the mic mute toggle, and per-agent
 // sit-out via onToggleParticipant (the same roster toggle as the desktop
-// header chips — an agent tapped out skips rounds from the next turn).
+// header chips - an agent tapped out skips rounds from the next turn).
 export default function MobileVoiceCall({ voiceState, held = 0, participants, roster = [],
                                           activeIds = [], onToggleParticipant, captions,
                                           captionHistory = [], speakingSlug, onEnd, voice,
                                           partial = null, banner = null, onDismissBanner }) {
   const [muted, setMuted] = useState(false)
-  // Transcript browsing: faded captions aren't gone — swipe up (or tap the
+  // Transcript browsing: faded captions aren't gone - swipe up (or tap the
   // hint) to scroll back through everything said this session.
   const [browsing, setBrowsing] = useState(false)
   const touchY = useRef(null)
@@ -72,7 +72,7 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
       )}
       {/* Top row: tappable agent chips (tap = sit out / bring back), private chip */}
       <div className="mvc-top">
-        <div className="mvc-who" role="group" aria-label="Agents — tap one to mute or unmute them">
+        <div className="mvc-who" role="group" aria-label="Agents - tap one to mute or unmute them">
           {roster.map((p) => {
             const active = activeIds.includes(p.id)
             const lastActive = active && activeIds.length === 1
@@ -83,10 +83,10 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                 className={`mvc-agent${active ? '' : ' out'}`}
                 aria-pressed={!active}
                 aria-label={active
-                  ? (lastActive ? `${p.name} is the last agent — can't mute` : `Mute ${p.name} (sits out from the next turn)`)
+                  ? (lastActive ? `${p.name} is the last agent - can't mute` : `Mute ${p.name} (sits out from the next turn)`)
                   : `Unmute ${p.name}`}
                 title={active
-                  ? (lastActive ? `${p.name} is the last agent — a chat needs one` : `Tap to mute ${p.name} — sits out from the next turn`)
+                  ? (lastActive ? `${p.name} is the last agent - a chat needs one` : `Tap to mute ${p.name} - sits out from the next turn`)
                   : `Tap to bring ${p.name} back in`}
                 disabled={lastActive}
                 onClick={() => onToggleParticipant?.(p.id)}
@@ -102,7 +102,7 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
         <span className="mvc-lock">🔒 private</span>
       </div>
 
-      {/* Caption zone — transient flash / drift / fade; swipe up to browse
+      {/* Caption zone - transient flash / drift / fade; swipe up to browse
           everything said this session (captions fade, they don't vanish). */}
       <div className="mvc-stage" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
         {browsing ? (
@@ -168,11 +168,11 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
           <div className="mvc-subhint">talk any time to interrupt</div>
         )}
         <button type="button" className="mvc-hint" onClick={() => setBrowsing((b) => !b)}>
-          {browsing ? 'Tap here to return to live captions' : 'Just talk — swipe up for the transcript'}
+          {browsing ? 'Tap here to return to live captions' : 'Just talk - swipe up for the transcript'}
         </button>
 
-        {/* Mute is THE control in a car — it's both "stop listening" and, when
-            you've just spoken, "done talking, send it" — so it gets the big
+        {/* Mute is THE control in a car - it's both "stop listening" and, when
+            you've just spoken, "done talking, send it" - so it gets the big
             thumb-sized pill. End is deliberately smaller and set apart: a
             hang-up should never be a fat-finger away from mute. */}
         <div className="mvc-controls">
@@ -184,7 +184,7 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
             onClick={toggleMute}
           >
             {muted ? <MicOff size={24} /> : <Mic size={24} />}
-            <span>{muted ? 'Muted — tap to unmute' : 'Mute'}</span>
+            <span>{muted ? 'Muted - tap to unmute' : 'Mute'}</span>
           </button>
           <button
             type="button"

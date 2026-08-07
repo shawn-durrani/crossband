@@ -47,7 +47,7 @@ export default function ImportModal({ onClose }) {
         <p className="text-sm text-ink-mid leading-relaxed">
           Upload your data export (Claude: Settings → Privacy → Export data · ChatGPT:
           Settings → Data controls → Export). Your conversations become chats here, and
-          your memory is seeded with the full history — so the AIs can recall things you
+          your memory is seeded with the full history - so the AIs can recall things you
           discussed months ago. Re-importing a newer export only adds what&apos;s new.
         </p>
         <input ref={fileRef} type="file" accept=".zip,.json" className="block w-full text-sm"
@@ -57,12 +57,12 @@ export default function ImportModal({ onClose }) {
                  onChange={(e) => setMine(e.target.checked)} disabled={busy} />
           <span><b className="text-ink-mid">Mine facts into memory</b> (recommended): a small
             model reads each imported conversation once to extract durable facts. A large
-            history takes a while and uses real API credit — you can watch it work on
+            history takes a while and uses real API credit - you can watch it work on
             Membro&apos;s admin page.</span>
         </label>
         {progress && (
           <div className="text-sm text-ink-mid" aria-live="polite">
-            {progress.phase}{progress.total ? ` — ${progress.done}/${progress.total}` : '…'}
+            {progress.phase}{progress.total ? ` - ${progress.done}/${progress.total}` : '…'}
             {progress.total > 0 && (
               <div className="mt-1 h-1.5 bg-edge2 rounded-full overflow-hidden">
                 <div className="h-full bg-btn transition-all"

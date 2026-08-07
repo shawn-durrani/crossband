@@ -33,7 +33,7 @@ test('empty / missing inputs are safe and mean "nothing running"', () => {
   assert.equal(isChatRunning(new Set([1]), null), false)
 })
 
-test('membership is strict — no numeric/string coercion', () => {
+test('membership is strict - no numeric/string coercion', () => {
   const set = computeRunningChats([7])
   assert.equal(isChatRunning(set, 7), true)
   assert.equal(isChatRunning(set, '7'), false)

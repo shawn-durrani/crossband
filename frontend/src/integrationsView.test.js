@@ -94,7 +94,7 @@ test('credential fix is offered for missing/unhealthy keyed capabilities only', 
   assert.equal(offersCredentialFix(entry({ kind: 'llm', health: 'unconfigured' })), true)
   assert.equal(offersCredentialFix(entry({ kind: 'audio', health: 'unhealthy' })), true)
   assert.equal(offersCredentialFix(entry({ kind: 'llm', health: 'healthy' })), false)
-  // memory has no key; MCP is read-only here — neither offers a key fix
+  // memory has no key; MCP is read-only here - neither offers a key fix
   assert.equal(offersCredentialFix(entry({ kind: 'memory', health: 'unconfigured' })), false)
   assert.equal(offersCredentialFix(entry({ kind: 'mcp', health: 'unhealthy' })), false)
 })
@@ -160,7 +160,7 @@ test('trial + unknown cost → promote shown but disabled, explaining why', () =
 // The backend keeps Tavily and Brave as separate, individually-fixable entries;
 // the console collapses the {Tavily, Brave} any-of group into ONE "Web search"
 // row while leaving Reddit as its own untouched row. So the Web research section
-// always renders exactly TWO rows — never one, never three — and Reddit's own
+// always renders exactly TWO rows - never one, never three - and Reddit's own
 // configuration must never leak into the Web-search row's satisfied state.
 
 const webEngine = (id, name, satisfied, health) => entry({
@@ -295,7 +295,7 @@ test('the new capabilities are sectioned, not dropped on the floor', () => {
 })
 
 test('sections come from the server when supplied', () => {
-  // A new kind must need no change here — the hand-written list was the last
+  // A new kind must need no change here - the hand-written list was the last
   // hardcoded site and the reason the console read as a catalogue.
   const entries = [{ id: 'x:1', kind: 'weather', health: 'healthy', seats: [] }]
   const fromServer = [{ kind: 'weather', title: 'Weather', blurb: 'A kind this file has never heard of.' }]
@@ -334,7 +334,7 @@ test('a two-part credential asks for both halves', () => {
 test('nothing is asked for when there is nothing to fix', () => {
   const req = [{ type: 'credential', env: ['K'], satisfied: true, setup_service: 's' }]
   assert.equal(credentialPrompt({ kind: 'llm', health: 'healthy', requires: req }), null)
-  // memory is a service you run and MCP is a file you edit — neither is a key
+  // memory is a service you run and MCP is a file you edit - neither is a key
   assert.equal(credentialPrompt({ kind: 'memory', health: 'unconfigured', requires: req }), null)
   assert.equal(credentialPrompt({ kind: 'mcp', health: 'unhealthy', requires: req }), null)
   assert.equal(credentialPrompt(null), null)
@@ -393,7 +393,7 @@ test('config-file capabilities teach in place', () => {
         `${kind} snippet uses the real project name "${token}" where a placeholder belongs`)
     }
   }
-  // in-app-affordance kinds get no snippet — they have real buttons
+  // in-app-affordance kinds get no snippet - they have real buttons
   assert.equal(configHowTo({ kind: 'llm' }), null)
   assert.equal(configHowTo({ kind: 'audio' }), null)
   assert.equal(configHowTo(null), null)

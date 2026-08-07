@@ -2,7 +2,7 @@
 //
 // The form speaks operator (one command line, KEY=VALUE env lines); the API
 // speaks spec ({command, args[], env{}}). The translation lives here, in one
-// tested place, so the panel component stays render-only — same split as
+// tested place, so the panel component stays render-only - same split as
 // headerView/integrationsView.
 
 // "python -m my_tool.mcp_server" -> {command, args[]}. Whitespace split
@@ -40,7 +40,7 @@ export function buildSpec(draft) {
     errors.push("name: 1-32 lowercase letters, digits, '-' or '_'")
   }
   const cmd = parseCommandLine(draft.commandLine)
-  if (!cmd) errors.push('command: required — the executable to spawn')
+  if (!cmd) errors.push('command: required - the executable to spawn')
   const envResult = parseEnvLines(draft.envText)
   if (envResult.error) errors.push(`env: ${envResult.error}`)
   const slot = draft.slot === 'guests' ? 'guests' : 'models'
@@ -65,17 +65,17 @@ export function draftFromRow(row) {
 
 // What the status dot should say. Order matters: an error outranks a pending
 // restart (the running instance TRIED this config and failed), and only the
-// models slot ever reports live state — guests spawn per-visit.
+// models slot ever reports live state - guests spawn per-visit.
 export function rowStatus(row) {
   if (row.slot === 'guests') {
     return row.pending_restart
-      ? { tone: 'pending', text: 'saved — applies to the next guest after restart' }
+      ? { tone: 'pending', text: 'saved - applies to the next guest after restart' }
       : { tone: 'ok', text: 'available to summoned guests' }
   }
   if (row.error) return { tone: 'error', text: row.error }
   if (row.connected) {
-    return { tone: 'ok', text: `connected — ${row.tools.length} tool${row.tools.length === 1 ? '' : 's'}` }
+    return { tone: 'ok', text: `connected - ${row.tools.length} tool${row.tools.length === 1 ? '' : 's'}` }
   }
-  if (row.pending_restart) return { tone: 'pending', text: 'saved — restart to connect' }
+  if (row.pending_restart) return { tone: 'pending', text: 'saved - restart to connect' }
   return { tone: 'error', text: 'not connected' }
 }

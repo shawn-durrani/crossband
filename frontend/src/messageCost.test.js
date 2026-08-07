@@ -40,7 +40,7 @@ test('an api-key guest turn is metered cash', () => {
 })
 
 test('a resident model turn is metered whatever else is missing', () => {
-  // The Messages/Responses API is key-billed by licence — a subscription can't
+  // The Messages/Responses API is key-billed by licence - a subscription can't
   // serve it, so a resident turn has no auth field and needs none.
   assert.equal(classifyUsage(residentTurn(0.02), 'claude').category, 'metered')
   assert.equal(classifyUsage('{"input":1,"output":1,"cost":0.01}', 'gpt').category, 'metered')
@@ -102,7 +102,7 @@ test('a subscription bubble says so in words, not just colour', () => {
   assert.match(label.title, /not charged/)
 })
 
-test('a billed bubble is a bare amount — money needs no qualifier', () => {
+test('a billed bubble is a bare amount - money needs no qualifier', () => {
   const label = costLabel(classifyUsage(apiKeyTurn(0.42), GUEST_SLUG))
   assert.equal(label.tone, 'billed')
   assert.equal(label.text, '$0.42')      // provider-reported: not hedged with ~
@@ -157,7 +157,7 @@ test('the regression: subscription guest turns are not the chat total', () => {
 })
 
 test('tokens still count every turn, billed or not', () => {
-  // Tokens are usage, not money — the split doesn't hide any of it.
+  // Tokens are usage, not money - the split doesn't hide any of it.
   const t = chatCostTotals([
     { speaker: 'claude', usage_json: residentTurn(1) },
     { speaker: GUEST_SLUG, usage_json: subscriptionTurn(1) },
@@ -179,7 +179,7 @@ test('a chat with no usage at all shows no dollar figure', () => {
 test('an all-billed chat shows one figure and no explanation', () => {
   const t = chatCostTotals([{ speaker: 'claude', usage_json: residentTurn(2) }])
   assert.equal(chatCostFigures(t).length, 1)
-  // Nothing to disambiguate — a chat that only cost money says nothing extra.
+  // Nothing to disambiguate - a chat that only cost money says nothing extra.
   assert.equal(chatCostNote(t), null)
 })
 
@@ -210,7 +210,7 @@ test('unverified cost is explained too, and never claimed as spend', () => {
 
 test('the note names what it is talking about', () => {
   // The export picker totals a SELECTION, not one chat. Same sentence, honest
-  // scope — a footer claiming "nothing in this chat" would be a small lie.
+  // scope - a footer claiming "nothing in this chat" would be a small lie.
   const covered = { billed: 0, covered: 5, unknown: 0 }
   assert.match(chatCostNote(covered), /Nothing in this chat/)
   assert.match(chatCostNote(covered, 'the selected chats'), /Nothing in the selected chats/)

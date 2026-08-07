@@ -1,4 +1,4 @@
-"""Shared cost accounting — the single definition of "what a dollar is" that
+"""Shared cost accounting - the single definition of "what a dollar is" that
 every money-showing surface consumes, so they can never diverge. Build the
 accounting once; each surface is just a different window/grouping over the same
 events. Today that means the cumulative Spend page, the chat header's running
@@ -12,18 +12,18 @@ fact. Left as a marker: describe what is built, not what was intended.
 PROVENANCE HONESTY. A recorded dollar is not automatically a charged dollar.
 Every cost is sorted into exactly one of three buckets:
 
-  metered            — pay-as-you-go API billing we can stand behind. Resident
+  metered            - pay-as-you-go API billing we can stand behind. Resident
                        model turns are ALWAYS here: the Messages/Responses API
-                       is key-billed by license — a subscription cannot serve
+                       is key-billed by license - a subscription cannot serve
                        it. Voice (ElevenLabs TTS/STT) is metered too. A Claude
                        Code guest turn lands here only when the turn RECORDED
                        that it ran on the metered API key.
-  subscription_equiv — Claude Code's own ``total_cost_usd`` for a turn that ran
+  subscription_equiv - Claude Code's own ``total_cost_usd`` for a turn that ran
                        on a subscription or OAuth login instead of the metered
                        API key: an API-list-price ESTIMATE covered by that
                        subscription, not incremental cash. Informational;
                        NEVER summed into billed spend.
-  unknown            — a Claude Code guest turn with no recorded auth mode
+  unknown            - a Claude Code guest turn with no recorded auth mode
                        (turns logged before provenance capture landed).
                        We can't prove it either way, so it is shown apart and
                        never silently folded into metered spend.
@@ -55,7 +55,7 @@ SOURCE_CODE = "claude_code"     # summoned Claude Code guest turns
 SOURCE_TTS = "tts"              # ElevenLabs text-to-speech (voice out)
 SOURCE_STT = "stt"              # ElevenLabs speech-to-text (voice in)
 # Cheap utility-model calls (rolling summary / auto-title / project
-# distillation, backend/chat_memory.py) — previously invisible entirely: no
+# distillation, backend/chat_memory.py) - previously invisible entirely: no
 # chat_id-attributed insert_message, no usage tracking at all.
 # Kept apart from SOURCE_NORMAL (the chat participants) so the Spend page can
 # show Claude-chat vs Claude Code vs Haiku/utility separately.
@@ -65,7 +65,7 @@ SOURCE_LABELS = {
     SOURCE_NORMAL: "Model turns",
     # "Coding agent", not "guest": the Spend page's by_source rows are a
     # workload/category label, and "guest" undersells what the turn actually
-    # is. Read-time only — the key (SOURCE_CODE) and every other shape are
+    # is. Read-time only - the key (SOURCE_CODE) and every other shape are
     # unchanged, so no migration and no API/frontend change follow from this.
     SOURCE_CODE: "Coding agent",
     SOURCE_TTS: "Voice · TTS",
@@ -79,7 +79,7 @@ SOURCE_LABELS = {
 # page must compare on so a coding agent's spend is NEVER merged into a chat
 # participant's model bar. Every cost source maps to exactly one producer; a
 # new source that forgets to declare one falls back to being its own producer
-# (surfaced, never silently folded into "chat"). Derived, not stored — so any
+# (surfaced, never silently folded into "chat"). Derived, not stored - so any
 # newly onboarded producer flows in with a one-line map entry and no migration.
 PRODUCER_CHAT = "chat"          # resident chat participants
 PRODUCER_AGENT = "agent"        # summoned Claude Code / other agent guests
@@ -104,10 +104,10 @@ PRODUCER_LABELS = {
 
 def producer_for(source: str) -> str:
     """The producer class for a cost source. Unknown sources become their own
-    producer rather than being folded into chat — surfaced, never silent."""
+    producer rather than being folded into chat - surfaced, never silent."""
     return SOURCE_PRODUCER.get(source, source)
 
-# provenance categories — the CASH axis: is this incremental spend?
+# provenance categories - the CASH axis: is this incremental spend?
 CAT_METERED = "metered"
 CAT_SUBSCRIPTION = "subscription_equiv"
 CAT_UNKNOWN = "unknown"
@@ -115,7 +115,7 @@ CATEGORIES = (CAT_METERED, CAT_SUBSCRIPTION, CAT_UNKNOWN)
 
 _AUTH_CATEGORY = {"api_key": CAT_METERED, "subscription": CAT_SUBSCRIPTION}
 
-# provenance sources — the finer HOW-KNOWN axis, carried alongside the
+# provenance sources - the finer HOW-KNOWN axis, carried alongside the
 # cash category so a dashboard can group by provenance and treat only
 # provider_reported as billed, never folding rate-card estimates or
 # subscription-equivalents into billed spend. Vocabulary lives in provenance.py.
@@ -157,13 +157,13 @@ class CostEvent:
     # Metered dollars attributable to those writes. Populated ONLY for
     # rate_card_estimate events, where the formula is ours. A Claude Code guest
     # turn's cost is the SDK's own opaque total_cost_usd and cannot honestly be
-    # decomposed — its tokens are reported, its dollars are not split.
+    # decomposed - its tokens are reported, its dollars are not split.
     cache_write_cost: float = 0.0
 
     @property
     def producer(self) -> str:
         """The structured producer class this cost belongs to (chat / agent /
-        voice / utility) — the like-with-like axis the Spend page compares on so
+        voice / utility) - the like-with-like axis the Spend page compares on so
         an agent's spend is never merged into a chat participant's bar."""
         return producer_for(self.source)
 
@@ -180,7 +180,7 @@ def _cache_write_cost(u: dict, model: str, pricing: dict, provenance: str) -> fl
     Only rate_card_estimate rows qualify: that cost was computed by us, from
     this exact formula, so decomposing it back out is arithmetic rather than
     inference. A subscription_equivalent row's figure is Claude Code's own
-    total_cost_usd — one opaque number bundling thinking and tool loops — and
+    total_cost_usd - one opaque number bundling thinking and tool loops - and
     splitting it would be inventing a breakdown the provider never gave us.
     """
     if provenance != prov.RATE_CARD_ESTIMATE:
@@ -197,7 +197,7 @@ def _cache_write_cost(u: dict, model: str, pricing: dict, provenance: str) -> fl
 
 def _recorded_provenance(u: dict):
     """The provenance SOURCE recorded on a usage row at turn time, if any. A
-    recorded value is authoritative and immutable — a later rate-card/config
+    recorded value is authoritative and immutable - a later rate-card/config
     edit must never rewrite an already-recorded turn's provenance."""
     rec = u.get("cost_provenance")
     if isinstance(rec, dict) and rec.get("source") in prov.PROVENANCE_STATES:
@@ -259,7 +259,7 @@ def iter_cost_events(con, *, code_slug=CODE_SLUG, chat_id=None, pricing=None):
             provider = p.get("provider") or "unknown"
             # Cash axis is unchanged (resident API turns = metered). Provenance
             # is the honest refinement: a figure computed from the local price
-            # table is a rate_card_estimate, never a billed amount — unless the
+            # table is a rate_card_estimate, never a billed amount - unless the
             # row recorded a different provenance (e.g. a self_hosted seat), in
             # which case that recorded value wins and stays immutable.
             provenance = (_recorded_provenance(u)
@@ -352,7 +352,7 @@ def cache_health(read: int, written: int) -> dict:
     below 1:1 while a neighbouring seat on the same API read many times per
     write, and nothing surfaced the difference.
 
-    ``ratio`` is None when nothing was written — no activity is not a 0:0
+    ``ratio`` is None when nothing was written - no activity is not a 0:0
     problem, and must not render as one.
     """
     if not written:
@@ -393,11 +393,11 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
     cache_read = cache_written = 0
     cache_write_cost = 0.0
     by_source, by_provider, by_model, by_chat = {}, {}, {}, {}
-    # by_party groups on the SPEAKER — the conversation party or usage producer
+    # by_party groups on the SPEAKER - the conversation party or usage producer
     # that incurred the cost (a participant slug, a summoned guest's slug,
     # "voice", "utility", …). It is keyed on the event's own speaker field, so a
     # brand-new participant, guest or integration flows into the split with no
-    # code change here — nothing is hardcoded to a fixed roster.
+    # code change here - nothing is hardcoded to a fixed roster.
     by_party = {}
     by_provenance = {}
     # by_producer is the like-with-like landing axis: chat vs
@@ -409,7 +409,7 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
     by_producer = {}
     by_producer_model = {}
     not_tracked = set()
-    # Provenances that appeared with a REAL (possibly $0) tracked cost — so a
+    # Provenances that appeared with a REAL (possibly $0) tracked cost - so a
     # self_hosted_zero_marginal $0.00 is reported as a declared fact, never
     # confused with an untracked gap.
     tracked_provenances = set()
@@ -468,7 +468,7 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         },
         "by_source": _grouped_list(by_source),
         # Per conversation party / usage producer (speaker-keyed, fully
-        # dynamic — see the definition above): the split the in-call
+        # dynamic - see the definition above): the split the in-call
         # diagnostic reports after the metered total.
         "by_party": _grouped_list(by_party),
         "by_provider": _grouped_list(by_provider),
@@ -476,14 +476,14 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         # Producer-aware axes: the landing "mostly spent on" draws
         # by_producer_model so a guest's spend is never merged into a chat
         # participant's model bar; by_producer is the coarse chat-vs-agents
-        # split. Both reconcile to the same totals as by_model — same events,
-        # grouped differently — so there is no double count.
+        # split. Both reconcile to the same totals as by_model - same events,
+        # grouped differently - so there is no double count.
         "by_producer": _grouped_list(by_producer),
         "by_producer_model": _grouped_list(by_producer_model),
         "by_provenance": _grouped_list(by_provenance),
         "by_chat": _grouped_list(by_chat),
         "not_tracked": sorted(not_tracked),
-        # Provenances present with a tracked cost (self_hosted included) — the
+        # Provenances present with a tracked cost (self_hosted included) - the
         # signal a UI uses to render $0.00-but-declared apart from "no data".
         "tracked_provenances": sorted(tracked_provenances),
     }
@@ -517,7 +517,7 @@ def auth_provenance(cfg: dict) -> dict:
             "label": "Claude Code guest → metered API key",
             "note": "New guest turns bill pay-as-you-go to ANTHROPIC_API_KEY "
                     "(real cash). Historical turns are classified by the auth "
-                    "each recorded — turns from before provenance capture show "
+                    "each recorded - turns from before provenance capture show "
                     "as unknown.",
         }
     return {

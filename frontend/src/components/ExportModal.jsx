@@ -116,7 +116,7 @@ export default function ExportModal({ chats, onClose }) {
           })}
         </div>
 
-        {/* Why the selection can show two dollar figures, in words — visible,
+        {/* Why the selection can show two dollar figures, in words - visible,
             not a tooltip, and absent when there is nothing to disambiguate. */}
         {selectionNote && (
           <p className="text-[11px] text-ink-faint leading-snug">{selectionNote}</p>

@@ -2,8 +2,8 @@
 
 The serial loop paid tool latencies as a SUM (three 20s searches = 60s).
 These tests pin the replacement contract: sibling calls overlap in time,
-while every ordered artifact — yielded tool events, the tool_result replay,
-the OpenAI item layout — stays exactly what the serial loop produced.
+while every ordered artifact - yielded tool events, the tool_result replay,
+the OpenAI item layout - stays exactly what the serial loop produced.
 """
 
 import asyncio

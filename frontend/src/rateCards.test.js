@@ -78,7 +78,7 @@ test('missing or negative rates are refused', () => {
     .errors.input, /negative/)
 })
 
-test('a $0 rate is allowed — a declared zero is a real figure, not a gap', () => {
+test('a $0 rate is allowed - a declared zero is a real figure, not a gap', () => {
   // As an estimate it still needs a checkable source and a real date...
   assert.equal(validateDraft({
     input: '0', output: '0', source: 'https://example.com/pricing', as_of: '2026-07-31',
@@ -93,7 +93,7 @@ test('a $0 rate is allowed — a declared zero is a real figure, not a gap', () 
 
 // ---------- ported validation rules ----------
 
-test('a self-hosted declaration needs only a note — no rates, no date', () => {
+test('a self-hosted declaration needs only a note - no rates, no date', () => {
   const v = validateDraft({ provenance: SELF_HOSTED, source: '' })
   assert.equal(v.ok, false)
   assert.match(v.errors.source, /auditable/)
@@ -177,7 +177,7 @@ test('editing seeds the form from the existing card; adding starts blank', () =>
   assert.equal(blank.source, '')
 })
 
-test('unpriced models sort first — they are why the page was opened', () => {
+test('unpriced models sort first - they are why the page was opened', () => {
   const rows = sortRows([BUILTIN, UNPRICED, { model: 'aaa', priced: true, origin: 'builtin' }])
   assert.equal(rows[0].model, 'gpt-5.6-terra-pro')
   assert.equal(rows[1].model, 'aaa')

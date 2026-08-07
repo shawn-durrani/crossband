@@ -1,6 +1,6 @@
 """Model onboarding lifecycle: every seat defaults conservatively
 to `trial`, may still be invoked manually there, and can only become `onboarded`
-once an explicit cost-provenance record exists — never a silent upgrade.
+once an explicit cost-provenance record exists - never a silent upgrade.
 
 Synthetic data only. Async endpoints exercised via TestClient."""
 
@@ -31,7 +31,7 @@ def client(tmp_path):
 
 def test_seeded_roster_is_onboarded(con):
     # The out-of-the-box claude/gpt seats are the product's default always-on
-    # roster with priced models — seeded 'onboarded' so a fresh install actually
+    # roster with priced models - seeded 'onboarded' so a fresh install actually
     # has auto-responders. Trial is now a real gate (trial seats don't auto-speak,
     # engine.pick_responders); defaulting the seed to trial would mean nobody
     # replies on first run. Only USER-added seats default to trial.
@@ -74,7 +74,7 @@ def test_migration_grandfathers_only_priced_rows(tmp_path):
     # enforces: an existing row is grandfathered to 'onboarded' only when its
     # model has a KNOWN cost provenance. A known/priced model (claude-opus-4-8)
     # keeps working (no regression); an unpriced/custom model must NOT be waved
-    # through — it stays a manually-invokable 'trial', exactly like a freshly
+    # through - it stays a manually-invokable 'trial', exactly like a freshly
     # added unsourced seat. No special-casing for "it already existed".
     _seed_v6_db(tmp_path, [("priced", "claude-opus-4-8"),
                            ("custom", "my-local-llama-42")])
@@ -154,7 +154,7 @@ def test_invalid_lifecycle_rejected(client):
 #
 # A model served from THIS machine with no API key cannot be metering anyone, so
 # it resolves to a declared $0 (self_hosted_zero_marginal) instead of `unknown`
-# — which is what makes it promotable. The gate itself is unchanged: the seat
+# - which is what makes it promotable. The gate itself is unchanged: the seat
 # still LANDS as trial and still has to be promoted deliberately.
 
 @pytest.mark.parametrize("base_url", [

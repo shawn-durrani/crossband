@@ -2,9 +2,9 @@
 its degraded/unconfigured behavior.
 
 Two layers of coverage:
-  • integrations.collect() directly, with fakes — exact control over configured
+  • integrations.collect() directly, with fakes - exact control over configured
     vs missing creds, a passing/failing/exploding probe, and MCP server states.
-  • GET /api/integrations end-to-end via TestClient — additive, read-only, and
+  • GET /api/integrations end-to-end via TestClient - additive, read-only, and
     never crashes when external services are down (memory unroutable in CI).
 
 Synthetic data only: fake keys, fake MCP server names, no real credentials.
@@ -109,7 +109,7 @@ def test_every_entry_has_the_stable_shape_and_kind():
 
 def test_cost_provenance_shape_is_stable():
     # cost_provenance is a real record now. With no seats there's nothing
-    # to price, so it stays an honest `unknown` — but always the full shape.
+    # to price, so it stays an honest `unknown` - but always the full shape.
     for e in collect(environ={"ANTHROPIC_API_KEY": FAKE_KEY}).values():
         cp = e["cost_provenance"]
         assert set(cp) == {"source", "as_of", "source_ref", "estimated"}
@@ -177,14 +177,14 @@ def test_keyless_local_seat_is_self_hosted_without_a_rate_card_entry():
     seat = collect(environ={"OPENAI_API_KEY": FAKE_KEY},
                    participants=parts)["openai"]["seats"][0]
     assert seat["cost_provenance"]["source"] == provenance.SELF_HOSTED_ZERO_MARGINAL
-    # No dated price list was read — the $0 follows from where the endpoint is.
+    # No dated price list was read - the $0 follows from where the endpoint is.
     assert seat["cost_provenance"]["as_of"] is None
     assert seat["eligible_for_auto_selection"] is True
 
 
 def test_self_hosted_declaration_is_onboardable_and_distinct():
     # An explicit self-hosted rate-card entry (input/output 0) declares a
-    # zero-marginal cost that is NOT unknown — so the seat can be onboarded and
+    # zero-marginal cost that is NOT unknown - so the seat can be onboarded and
     # becomes auto-eligible.
     from backend import provenance
     pricing = {"llama": {"input": 0.0, "output": 0.0,
@@ -207,7 +207,7 @@ def test_every_entry_carries_chat_toggle_and_requires():
         assert "chat_toggle" in e
         assert isinstance(e["requires"], list)
         for r in e["requires"]:
-            # env carries NAMES only — never a value — and the full requirement shape.
+            # env carries NAMES only - never a value - and the full requirement shape.
             assert set(r) >= {"type", "label", "env", "optional", "satisfied",
                               "setup_service", "any_of"}
             assert all(name.isupper() or "_" in name for name in r["env"])
@@ -438,7 +438,7 @@ def test_endpoint_does_not_alter_chat_execution(client):
 # ---------- the room + abilities capabilities ----------
 #
 # The coding guest, the GitHub tools and event ingestion are real, shipped,
-# user-visible capabilities that appeared in NO registry section — they existed
+# user-visible capabilities that appeared in NO registry section - they existed
 # only inside the /api/state config blob, so the console could not show their
 # health and nothing listed what the room can actually do.
 
@@ -463,7 +463,7 @@ def test_the_three_capabilities_appear_with_the_stable_shape():
 
 def test_guest_with_no_repos_reads_as_unconfigured_not_broken():
     # code_repos is the opt-in: with none, the tool is never offered. That is
-    # "not set up", not "failing" — the distinction the health vocabulary exists
+    # "not set up", not "failing" - the distinction the health vocabulary exists
     # for, and the one a user needs to know which way to act.
     e = collect(environ={}, cfg={})["code:claude_code"]
     assert e["configured"] is False
@@ -478,7 +478,7 @@ def test_guest_billing_facts_ride_a_typed_object_not_prose():
     # These are CONFIG facts, so they must hold on a machine where the guest
     # cannot actually run. `guest.status()` zeroes repos/writes whenever the SDK
     # or CLI is missing, so reading them from there reported a fully-configured
-    # room as "not set up" — which is exactly the unconfigured-vs-unhealthy
+    # room as "not set up" - which is exactly the unconfigured-vs-unhealthy
     # confusion this entry exists to prevent. CI (no Claude Code installed)
     # caught it; this test now fails on ANY machine if that regresses.
     e = collect(environ={}, cfg={"code_repos": {"app": "/tmp/app"},
@@ -491,7 +491,7 @@ def test_guest_billing_facts_ride_a_typed_object_not_prose():
 
 def test_configured_but_unusable_guest_is_unhealthy_not_unconfigured():
     """A missing CLI is not a missing configuration. The owner who set up two
-    repos needs to be told the CLI is absent, not that they never set it up —
+    repos needs to be told the CLI is absent, not that they never set it up -
     different problems, different fixes."""
     from backend import guest as guest_mod
     real = guest_mod.status

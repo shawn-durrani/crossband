@@ -60,7 +60,7 @@ export default function McpServersPanel() {
     await load()
   }
 
-  // Test the DRAFT if the form is open, else a saved row — same endpoint.
+  // Test the DRAFT if the form is open, else a saved row - same endpoint.
   const test = async (rowOrNull) => {
     const spec = rowOrNull
       ? buildSpec(draftFromRow(rowOrNull))
@@ -92,7 +92,7 @@ export default function McpServersPanel() {
           An MCP server is a small local program that gives your models extra tools.
           &ldquo;Chat models&rdquo; servers are used in every conversation; &ldquo;coding guests&rdquo;
           servers are mounted only when you summon Claude Code. Entries are stored in
-          config.local.json — private to this machine.
+          config.local.json - private to this machine.
         </p>
       </div>
 
@@ -142,13 +142,13 @@ export default function McpServersPanel() {
                 {testResult && !testResult.running && testResult.name === row.name && (
                   <div className={`text-xs mt-1 ${testResult.ok ? 'text-ok' : 'text-err'}`}>
                     {testResult.ok
-                      ? `test passed — tools: ${testResult.tools.join(', ')}`
-                      : `test failed — ${testResult.error}`}
+                      ? `test passed - tools: ${testResult.tools.join(', ')}`
+                      : `test failed - ${testResult.error}`}
                   </div>
                 )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <button title="Spawn this server now and list its tools — the difference between configured and working"
+                <button title="Spawn this server now and list its tools - the difference between configured and working"
                   className="text-ink-dim hover:text-ink p-1.5 disabled:opacity-40"
                   disabled={busy} onClick={() => test(row)}>
                   {testResult?.running && testResult.name === row.name
@@ -194,7 +194,7 @@ export default function McpServersPanel() {
             </label>
           </div>
           <label className="text-xs text-ink-mid space-y-1 block">
-            <span>Command (executable + args, split on spaces — no shell quoting)</span>
+            <span>Command (executable + args, split on spaces - no shell quoting)</span>
             <input className={field} value={draft.commandLine}
               placeholder="/Users/you/dev/tool/.venv/bin/python -m tool.mcp_server"
               onChange={(e) => setDraft({ ...draft, commandLine: e.target.value })} />
@@ -220,8 +220,8 @@ export default function McpServersPanel() {
           {testResult && !testResult.running && testResult.name === (draft.name || '').trim() && (
             <div className={`text-xs ${testResult.ok ? 'text-ok' : 'text-err'}`}>
               {testResult.ok
-                ? `test passed — tools: ${testResult.tools.join(', ')}`
-                : `test failed — ${testResult.error}`}
+                ? `test passed - tools: ${testResult.tools.join(', ')}`
+                : `test failed - ${testResult.error}`}
             </div>
           )}
           <div className="flex items-center gap-2">

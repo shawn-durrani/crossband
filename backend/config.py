@@ -31,28 +31,28 @@ DEFAULT_VOICE_PRICING = {"tts_per_1m_chars": 110.0, "stt_per_hour": 0.40}
 # CORRECTION. This block used to assert that "OpenAI charges no separate
 # cache-write premium (it reports no cache-creation tokens at all)" and set
 # write_mult to 0.0. That was wrong on the pricing: OpenAI's published card
-# bills gpt-5.6-terra at $2.00/M input and **$2.50/M to write cache** — the same
+# bills gpt-5.6-terra at $2.00/M input and **$2.50/M to write cache** - the same
 # 1.25x premium Anthropic charges. Only the READ multiplier matched ($0.20 /
 # $2.00 = 0.1). The half that was true is the *measurement*, and it is a
 # different defect: our OpenAI adapter reads only
 # `input_tokens_details.cached_tokens` (reads), so every GPT row records
 # cache_creation=0 and the corrected multiplier currently has nothing to
-# multiply. Tracked separately — do not "fix" it by reverting this number.
+# multiply. Tracked separately - do not "fix" it by reverting this number.
 ANTHROPIC_CACHE = {"read_mult": 0.1, "write_mult": 1.25}
 OPENAI_CACHE = {"read_mult": 0.1, "write_mult": 1.25}
 
 # $ per 1M tokens. Matched EXACTLY by model id, then by an entry's explicitly
 # declared `aliases` (a differently-named model the operator has attested shares
-# this card), then — only — by a narrow date/build-stamped reissue of the SAME
+# this card), then - only - by a narrow date/build-stamped reissue of the SAME
 # model (e.g. `gpt-5.5` prices `gpt-5.5-2026-01-15`). There is deliberately no
 # broad model-family fallback: a newly configured model with a NEW name (e.g.
-# `gpt-5.6-terra`, `gpt-5-mini`) is NOT silently priced as an older family — it
+# `gpt-5.6-terra`, `gpt-5-mini`) is NOT silently priced as an older family - it
 # stays `unknown`/unpriced, is surfaced as such, and is ineligible for trusted
 # comparison until an exact entry or an explicit `aliases` declaration is
 # supplied. See price_for() for the exact match order.
 #
 # Each entry also carries its provenance: every figure here is a
-# `rate_card_estimate` — a published list price, NOT a billed amount — so it
+# `rate_card_estimate` - a published list price, NOT a billed amount - so it
 # records the `as_of` date and the `source` it was transcribed from. Anything
 # absent from this table has `unknown` provenance and computes cost=None; its
 # seat stays `trial` until an explicit record is supplied. A self-hosted/local
@@ -77,7 +77,7 @@ def _openai_rate_card(input, output, as_of, source, *, aliases=()):
 
 def _self_hosted(source):
     """A local/self-hosted model: a DECLARED $0 marginal cost (distinct from
-    'unknown' — see provenance.py) so the seat is onboardable and its cost
+    'unknown' - see provenance.py) so the seat is onboardable and its cost
     tracks as a real, verifiable $0 rather than a gap."""
     return {"input": 0.0, "output": 0.0,
             "provenance": provenance.SELF_HOSTED_ZERO_MARGINAL,
@@ -117,7 +117,7 @@ DEFAULT_PRICING = {
     "gpt-5.5": _openai_rate_card(1.75, 14.0, _PRICING_AS_OF, _OPENAI_PRICING_URL),
     "gpt-5.1": _openai_rate_card(1.25, 10.0, _PRICING_AS_OF, _OPENAI_PRICING_URL),
     "gpt-5": _openai_rate_card(1.25, 10.0, _PRICING_AS_OF, _OPENAI_PRICING_URL),
-    # Local (Ollama) — declared $0 marginal, onboardable, not "unknown".
+    # Local (Ollama) - declared $0 marginal, onboardable, not "unknown".
     "gpt-oss:20b": _self_hosted("local (Ollama, self-hosted)"),
 }
 
@@ -133,14 +133,14 @@ class Settings(BaseModel):
     # DNS-rebinding guard would otherwise 403. Set
     # MMC_TRUSTED_HOSTS=my-mac.my-tailnet.ts.net. Empty = loopback only (default).
     trusted_hosts: str = ""
-    # Verbosity for the app's own "mmc.*" loggers — separate from uvicorn's
+    # Verbosity for the app's own "mmc.*" loggers - separate from uvicorn's
     # request/access logging, which is unaffected either way. Empty (default):
-    # unchanged from before this existed — only WARNING+ reaches
+    # unchanged from before this existed - only WARNING+ reaches
     # data/service.log, so the content-free per-request diagnostics logged at
     # INFO (e.g. providers.py's Claude-chat cache-telemetry line) are
     # silent. Set MMC_LOG_LEVEL=INFO for a deliberate sampling session (see
     # docs/COST_TELEMETRY.md), then unset it again. This only changes what's
-    # written to the log — never what gets cached, priced, or billed.
+    # written to the log - never what gets cached, priced, or billed.
     log_level: str = ""
     # Seconds a graceful stop may spend waiting on connections that are still
     # open (a chat round mid-generation, a live voice call) before they are
@@ -176,7 +176,7 @@ class Settings(BaseModel):
     # never enforcement: it only logs a fingerprinted, text-free line (see
     # providers._check_attribution) and NEVER blocks or edits a reply. A "no
     # verbatim match" can be entirely legitimate (the grounding turn was
-    # compressed into the rolling summary, or paraphrased) — it is not a
+    # compressed into the rolling summary, or paraphrased) - it is not a
     # fabrication verdict. Set false (MMC_ATTRIBUTION_AUDIT=false) to turn the
     # diagnostic off entirely.
     attribution_audit: bool = True
@@ -223,7 +223,7 @@ class Settings(BaseModel):
 
     # External event ingestion (POST /api/ingest). Loopback is the primary
     # boundary; set a token ONLY if a producer posts from beyond loopback
-    # (e.g. another tailnet machine) — then requests need
+    # (e.g. another tailnet machine) - then requests need
     # Authorization: Bearer <token>. Empty (default) = loopback-trust only.
     ingest_token: str = ""
 
@@ -252,11 +252,11 @@ class Settings(BaseModel):
     # the summon_claude_code tool overrides this. Unknown values degrade to
     # "default". The level ACTUALLY applied is reported back on the guest reply.
     code_effort: str = "default"
-    # Implement mode (guest ships PRs): off by default — write capability
+    # Implement mode (guest ships PRs): off by default - write capability
     # never appears by accident. The guest branches, tests, pushes and opens
     # a PR; it can never merge or push to main.
     code_allow_writes: bool = False
-    # New chats start with the code toggle on (harmless without code_repos —
+    # New chats start with the code toggle on (harmless without code_repos -
     # the tools are only offered when the harness is actually available).
     code_default_on: bool = False
     code_impl_max_turns: int = 150
@@ -340,7 +340,7 @@ def load_settings(root: Path | None = None, environ=None) -> Settings:
     # The table-valued fields LAYER over their built-in defaults instead of
     # replacing them. Pydantic's default_factory only runs when the key is
     # absent, so before this a config.local.json carrying `pricing` with one
-    # model wiped every OTHER model's card — silently unpricing the whole
+    # model wiped every OTHER model's card - silently unpricing the whole
     # roster, dropping every seat to `trial`, and recording cost=None across
     # the board. docs/CONFIG.md actively told operators to edit `pricing` to
     # add a model, so following the documentation was the way to trigger it.
@@ -355,7 +355,7 @@ def load_settings(root: Path | None = None, environ=None) -> Settings:
 
 # A date/build-stamped reissue of the SAME model: the key, then a boundary
 # separator, then a DIGIT (a date or build number, e.g. `-2026-01-15`,
-# `-20260101`). This is the ONLY implicit prefix inheritance left — deliberately
+# `-20260101`). This is the ONLY implicit prefix inheritance left - deliberately
 # narrow, so a differently-NAMED model (`gpt-5.6-terra`, `gpt-5-mini`, whose
 # suffix begins with `.` or a letter) never matches a shorter family key and is
 # never silently priced as an older family.
@@ -373,7 +373,7 @@ def price_for(model, pricing):
 
     Match order, most-trusted first:
       1. exact model-id match;
-      2. an entry that explicitly declares this id in its ``aliases`` — an
+      2. an entry that explicitly declares this id in its ``aliases`` - an
          operator-attested "this model is priced like that one";
       3. a narrow date/build-stamped reissue of the same model (see
          _is_dated_variant): ``gpt-5.5`` prices ``gpt-5.5-2026-01-15``.
@@ -403,7 +403,7 @@ def is_self_hosted_endpoint(base_url, api_key_env=None) -> bool:
     """Is this seat served from THIS machine, keylessly?
 
     A model the price table has never heard of normally resolves to `unknown`
-    provenance, which blocks onboarding — correct for a hosted model whose rate
+    provenance, which blocks onboarding - correct for a hosted model whose rate
     nobody has recorded, but a dead end for the documented zero-key path (pull a
     model in Ollama, add it, it never speaks and cannot be promoted). A seat
     served from loopback with no API key cannot be metering anyone: nothing
@@ -415,7 +415,7 @@ def is_self_hosted_endpoint(base_url, api_key_env=None) -> bool:
       metered service, so it keeps `unknown` and the existing gate.
     · **Keyless only.** A seat carrying an `api_key_env` is authenticating to
       something. This is what rules out the one case that would otherwise
-      mis-price silently — a paid provider reached through a localhost tunnel —
+      mis-price silently - a paid provider reached through a localhost tunnel -
       since that always needs a credential.
 
     Everything outside those two conditions is unchanged: still `unknown`, still
@@ -436,7 +436,7 @@ def is_self_hosted_endpoint(base_url, api_key_env=None) -> bool:
 def compute_cost(model, usage, pricing, *, base_url=None, api_key_env=None):
     p = price_for(model, pricing)
     if p is None and is_self_hosted_endpoint(base_url, api_key_env):
-        # A declared $0 (see is_self_hosted_endpoint), not "no data" — this must
+        # A declared $0 (see is_self_hosted_endpoint), not "no data" - this must
         # stay in lockstep with provenance_for below, or the seat would report a
         # self-hosted provenance while its cost read as untracked.
         return 0.0
@@ -464,10 +464,10 @@ def provenance_for(model, pricing, *, base_url=None, api_key_env=None):
 
     The one exception: a model absent from the table but served
     from a keyless loopback endpoint resolves to `self_hosted_zero_marginal`
-    instead of `unknown`, so ANY local model a user pulls is onboardable — not
+    instead of `unknown`, so ANY local model a user pulls is onboardable - not
     just the one (`gpt-oss:20b`) that happens to be named in the table. The
     conditions are deliberately narrow; see is_self_hosted_endpoint. The record
-    carries no `as_of` because nothing was transcribed from a dated price list —
+    carries no `as_of` because nothing was transcribed from a dated price list -
     the $0 follows from where the endpoint is, and that is true whenever it's
     read."""
     p = price_for(model, pricing)
@@ -491,7 +491,7 @@ def key_status():
     }
 
 
-# What each key unlocks — used for the loud startup report.
+# What each key unlocks - used for the loud startup report.
 KEY_ROLES = {
     "ANTHROPIC_API_KEY": "Claude participants cannot reply; rolling summaries, "
                          "auto-titles and project distillation are disabled",
@@ -507,11 +507,11 @@ def report_missing_keys(settings: Settings, log) -> None:
     a missing provider key aborts startup instead of silently degrading."""
     missing = [k for k in KEY_ROLES if not os.environ.get(k)]
     for k in missing:
-        log.error("MISSING KEY %s — %s. Add it to .env and restart.", k, KEY_ROLES[k])
+        log.error("MISSING KEY %s - %s. Add it to .env and restart.", k, KEY_ROLES[k])
     hard = [k for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY") if k in missing]
     if settings.require_keys and hard:
         raise RuntimeError(
-            f"Required API key(s) not set: {', '.join(hard)} — "
+            f"Required API key(s) not set: {', '.join(hard)} - "
             f"set them in .env or start with MMC_REQUIRE_KEYS=false"
         )
 

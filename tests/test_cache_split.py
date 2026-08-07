@@ -75,7 +75,7 @@ def test_voice_mode_tail_lands_in_volatile_and_stays_last(cfg):
 
 
 def test_group_chat_system_is_the_stable_and_volatile_concatenation(cfg):
-    """The monolithic accessor (tests/docs convenience — both live adapters
+    """The monolithic accessor (tests/docs convenience - both live adapters
     assemble from the split now) must never drift from the split path --
     same content, stable then volatile, voice tail last."""
     live_cfg = _cfg(cfg, memory_ambient="fact", round_predecessors=["gpt"])
@@ -182,7 +182,7 @@ def test_system_is_stable_only_volatile_rides_after_the_breakpoint(cfg, monkeypa
                             preds=["gpt"], participant=SONNET)
     kwargs = fake_client.messages.captured_kwargs
     system = kwargs["system"]
-    assert len(system) == 1  # stable only — volatile never in system again
+    assert len(system) == 1  # stable only - volatile never in system again
     assert system[0]["cache_control"] == {"type": "ephemeral"}
     assert "ttl" not in system[0]["cache_control"]
     assert "a memory fact" not in system[0]["text"]
@@ -203,7 +203,7 @@ def test_transcript_breakpoint_is_second_to_last_message_not_last(cfg, monkeypat
                                                                   transcript, names):
     """With more than one transcript message, the cache_control
     breakpoint must land on messages[-2] (the large/stable history), NEVER on
-    messages[-1] (the just-added, freshest turn) — that exact message never
+    messages[-1] (the just-added, freshest turn) - that exact message never
     recurs verbatim on a later call, so breakpointing it means every call
     writes a fresh cache entry that's never read back. The volatile tail
     still rides at the very end of messages[-1], after (never as) the
@@ -212,7 +212,7 @@ def test_transcript_breakpoint_is_second_to_last_message_not_last(cfg, monkeypat
                             preds=["gpt"], transcript=transcript, names_map=names)
     messages = fake_client.messages.captured_kwargs["messages"]
     # On a model with a mid-conversation system role the context rides a
-    # trailing system turn, which shifts these indices by one. Drop it first —
+    # trailing system turn, which shifts these indices by one. Drop it first -
     # the guarantee is about where the breakpoint sits in the TRANSCRIPT,
     # and must hold under either delivery shape.
     if messages[-1]["role"] == "system":
@@ -226,7 +226,7 @@ def test_transcript_breakpoint_is_second_to_last_message_not_last(cfg, monkeypat
         return c if isinstance(c, list) else [{"text": c}]
 
     last_blocks = _blocks(last)
-    # no block of the last (freshest) message may carry the breakpoint —
+    # no block of the last (freshest) message may carry the breakpoint -
     # including the volatile tail when this shape appends one
     for b in last_blocks:
         assert "cache_control" not in b
@@ -236,7 +236,7 @@ def test_transcript_breakpoint_is_second_to_last_message_not_last(cfg, monkeypat
 
 def test_transcript_breakpoint_falls_back_to_only_message_when_len_one(cfg, monkeypatch):
     """With a single transcript message (e.g. the very first turn) there is
-    no second-to-last message yet — the sole message is used as the
+    no second-to-last message yet - the sole message is used as the
     breakpoint, matching the existing empty-transcript tests above."""
     fake_client, _ = _drive(monkeypatch, cfg)
     messages = fake_client.messages.captured_kwargs["messages"]
@@ -247,7 +247,7 @@ def test_prefix_is_byte_stable_when_only_volatile_changes(cfg, monkeypatch):
     """THE regression guard, and it must hold for BOTH delivery shapes: two
     calls differing only in ambient memory / round predecessors must produce a
     byte-identical system block and byte-identical messages up to the
-    breakpoint — everything the provider hashes for the cache prefix. (The
+    breakpoint - everything the provider hashes for the cache prefix. (The
     first cut failed exactly this.)"""
     for seat in (SONNET, OPUS5):
         a_client, _ = _drive(monkeypatch, cfg, ambient="fact about flat whites",
@@ -259,7 +259,7 @@ def test_prefix_is_byte_stable_when_only_volatile_changes(cfg, monkeypatch):
 
         def prefix(kw):
             """Everything up to and including the breakpoint turn, with any
-            volatile tail stripped — i.e. exactly what the cache keys on."""
+            volatile tail stripped - i.e. exactly what the cache keys on."""
             msgs = [dict(m) for m in kw["messages"]]
             if msgs[-1]["role"] == "system":      # system-turn shape
                 return msgs[:-1]
@@ -317,7 +317,7 @@ def test_prefix_is_byte_stable_when_delegation_or_memory_summary_changes(cfg, mo
     summons (delegation_note set, then cleared) or a save_memory-triggered
     summary rebuild must not move a single byte of the cached prefix. Before
     the fix each flip re-wrote the entire 110-184k-token prefix at Anthropic's
-    1.25x cache-WRITE rate — 12.5x what reading it back costs."""
+    1.25x cache-WRITE rate - 12.5x what reading it back costs."""
     for seat in (SONNET, OPUS5):
         a_client, _ = _drive(
             monkeypatch,
@@ -374,7 +374,7 @@ def test_memory_write_warning_rides_the_volatile_tail(cfg):
 
 def test_prefix_is_byte_stable_when_the_write_warning_flips(cfg, monkeypatch):
     """This warning flips with memory-service health while `summary_upto`
-    stays put — so unlike a real summary fold the transcript does NOT change,
+    stays put - so unlike a real summary fold the transcript does NOT change,
     and the cached block is the only thing that could differ. It must not.
     Concatenated into chat_summary (as it was), a memory outage doubled as a
     prompt-cache outage."""
@@ -391,12 +391,12 @@ def test_prefix_is_byte_stable_when_the_write_warning_flips(cfg, monkeypatch):
 
 
 def test_chat_summary_stays_in_the_cached_block_on_purpose(cfg):
-    """Deliberate — NOT an oversight left over from the reorder, so do not
+    """Deliberate - NOT an oversight left over from the reorder, so do not
     "finish the job" here. `chats.summary` has exactly one writer
     (backend/chat_memory.py) and it always moves `summary_upto` in the same
     statement; the transcript is gated on that same watermark
     (backend/engine.py). A summary rebuild therefore ALREADY re-writes the
-    transcript, so moving the summary out could not prevent that bust — while
+    transcript, so moving the summary out could not prevent that bust - while
     costing 900-1900 tokens of uncached input on every turn (~$0.4-0.5/day) for
     zero saving. Those economics apply only to fields that change
     INDEPENDENTLY of the transcript."""
@@ -496,7 +496,7 @@ OPUS5 = {**PARTICIPANT, "model": "claude-opus-5"}        # has it
 
 def test_system_role_turn_used_where_supported_and_kept_out_of_the_prefix(cfg, monkeypatch):
     """On a model with a mid-conversation system role, context rides that
-    channel — unforgeable from inside the transcript — and still sits AFTER
+    channel - unforgeable from inside the transcript - and still sits AFTER
     the transcript breakpoint, so the cached prefix is untouched."""
     fake_client, _ = _drive(monkeypatch, cfg, ambient="a memory fact",
                             preds=["gpt"], participant=OPUS5)
@@ -510,7 +510,7 @@ def test_system_role_turn_used_where_supported_and_kept_out_of_the_prefix(cfg, m
 
 
 def test_in_turn_fallback_carries_the_marker_on_models_without_the_role(cfg, monkeypatch):
-    """Sonnet 5 has no system role, so the in-turn block remains — and it is
+    """Sonnet 5 has no system role, so the in-turn block remains - and it is
     authenticated by a marker untrusted content cannot know."""
     fake_client, _ = _drive(monkeypatch, cfg, ambient="a memory fact",
                             preds=["gpt"], participant=SONNET)
@@ -523,7 +523,7 @@ def test_in_turn_fallback_carries_the_marker_on_models_without_the_role(cfg, mon
 
 def test_the_rules_describe_the_shape_the_code_actually_sends(cfg):
     """THE regression guard. The old rules promised the real block is 'always
-    its OWN turn, never nested inside a participant's attribution' — while the
+    its OWN turn, never nested inside a participant's attribution' - while the
     code nested it in the user turn. Any future rule must not reintroduce a
     tell the sender contradicts, and must name the marker."""
     stable, _ = providers.split_system_prompt(SONNET, ROSTER, dict(cfg), None, "", False)
@@ -624,7 +624,7 @@ def test_cache_prefix_rides_usage_json(cfg, monkeypatch):
 def test_changing_the_tool_list_is_reported_as_a_tools_change(cfg, monkeypatch):
     """THE guard for that. engine.py adds/removes summon_claude_code depending on
     whether a summons is claimed. The tools array leads the cache prefix, so
-    that alone invalidates everything — and before this it was invisible,
+    that alone invalidates everything - and before this it was invisible,
     because every hash we logged stayed identical."""
     providers._last_prefix.clear()
     _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
@@ -643,7 +643,7 @@ def test_an_identical_call_reports_nothing_changed(cfg, monkeypatch):
 def test_a_chat_switch_is_tracked_separately_not_reported_as_a_break(cfg, monkeypatch):
     """Switching chats legitimately changes the whole prefix. Keying on chat_id
     means the next turn in EACH chat compares against that chat's own previous
-    call, so a switch never masquerades as a regression — which is exactly what
+    call, so a switch never masquerades as a regression - which is exactly what
     made the earlier fix look unfixed."""
     providers._last_prefix.clear()
     _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)

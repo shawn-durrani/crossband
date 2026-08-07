@@ -1,6 +1,6 @@
 """Small non-streamed utility completions (rolling summaries, auto-titles,
 project distillation). Chat-side and lab-routable: the utility model is picked
-by name — claude-* routes to Anthropic, gpt-*/o* to OpenAI's Responses API.
+by name - claude-* routes to Anthropic, gpt-*/o* to OpenAI's Responses API.
 Returns None when the needed key is missing so callers degrade gracefully."""
 
 import asyncio
@@ -15,7 +15,7 @@ def _is_openai_model(model: str) -> bool:
 
 
 def model_family(model: str) -> str:
-    """Coarse routing family for a model name ("openai" or "anthropic") — the
+    """Coarse routing family for a model name ("openai" or "anthropic") - the
     same rule utility_complete routes on, exposed so callers that need to
     reason about model families (e.g. the offline critic eval harness, which
     reports recall by author/critic family pairing) don't duplicate it."""
@@ -27,7 +27,7 @@ class UtilityCompletion:
     """A utility completion plus the telemetry the offline critic eval harness
     needs (token counts, wall-clock latency, timeout signal). `text` is None
     when the needed key is missing OR the call exceeded `timeout`; check
-    `timed_out` to tell those apart. utility_complete() below is unchanged —
+    `timed_out` to tell those apart. utility_complete() below is unchanged -
     it just discards everything but `.text`."""
     text: str | None
     input_tokens: int = 0
@@ -40,7 +40,7 @@ class UtilityCompletion:
 # per-key cache): a fresh AsyncOpenAI/AsyncAnthropic per utility call paid a
 # new TLS handshake for every rolling summary, auto-title and distillation.
 # Key checks still run FIRST, so keyless callers degrade to None before any
-# client is ever built — and tests stay keyless.
+# client is ever built - and tests stay keyless.
 _clients: dict = {}
 
 
@@ -88,7 +88,7 @@ async def utility_complete_with_usage(prompt: str, cfg: dict, max_tokens: int = 
     """Same routing as utility_complete, plus usage/latency and an optional
     per-call timeout (seconds). `model` overrides cfg["utility_model"] so a
     caller (the critic eval harness) can hold cfg fixed while sweeping models.
-    Existing callers are unaffected — utility_complete() still takes neither
+    Existing callers are unaffected - utility_complete() still takes neither
     argument and behaves exactly as before."""
     model = model or cfg.get("utility_model") or "claude-haiku-4-5"
     start = time.monotonic()

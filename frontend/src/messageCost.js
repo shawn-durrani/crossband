@@ -34,7 +34,7 @@ const AUTH_PROVENANCE = {
   subscription: 'subscription_equivalent',
 }
 
-// backend/provenance.py PROVENANCE_STATES — an unrecognised value is treated as
+// backend/provenance.py PROVENANCE_STATES - an unrecognised value is treated as
 // no record at all rather than trusted.
 const PROVENANCE_STATES = new Set([
   'provider_reported', 'rate_card_estimate', 'self_hosted_zero_marginal',
@@ -42,7 +42,7 @@ const PROVENANCE_STATES = new Set([
 ])
 
 // Same palette as the Spend page, so one kind of dollar looks the same
-// everywhere. Colour is never the only signal — every figure below is also
+// everywhere. Colour is never the only signal - every figure below is also
 // named in words.
 export const COST_TONE = {
   billed: '',
@@ -86,7 +86,7 @@ export function classifyUsage(usageJson, speaker) {
     output,
     tokens: input + output,
     cost: u.cost == null ? 0 : u.cost,
-    // A turn can exist without a tracked cost. That is a gap, not a $0 — the
+    // A turn can exist without a tracked cost. That is a gap, not a $0 - the
     // two are never rendered the same way.
     hasCost: u.cost != null,
     // CASH axis: is this incremental money? A resident turn is metered whatever
@@ -104,7 +104,7 @@ export function classifyUsage(usageJson, speaker) {
 // What one message's cost says, in words.
 //
 // The rule that matters: a figure that is NOT money carries a visible
-// plain-English qualifier — never a colour or an icon alone, and never anything
+// plain-English qualifier - never a colour or an icon alone, and never anything
 // less visible than the number it qualifies. `~` means the figure is an
 // estimate; a provider-reported amount and a declared $0 are not hedged,
 // because neither is a guess.
@@ -116,13 +116,13 @@ export function costLabel(entry) {
       tone: 'declared',
       text: `${amount} self-hosted`,
       title: 'Ran on your own hardware, so there is no metered charge. A '
-        + 'declared $0 — not a missing figure.',
+        + 'declared $0 - not a missing figure.',
     }
   }
   if (entry.category === 'subscription_equiv') {
     return {
       tone: 'covered',
-      text: `${amount} subscription — no extra charge`,
+      text: `${amount} subscription - no extra charge`,
       title: 'This turn ran on your Claude subscription. The amount is what the '
         + 'same work would have cost on the metered API; your plan already '
         + 'covers it, so you were not charged for this turn.',
@@ -142,7 +142,7 @@ export function costLabel(entry) {
     tone: 'billed',
     text: `${exact ? '' : '~'}${amount}`,
     title: exact
-      ? 'Billed to your metered API key — the cost the provider itself reported '
+      ? 'Billed to your metered API key - the cost the provider itself reported '
         + 'for this turn.'
       : 'Billed to your metered API key. Estimated from the local price table '
         + '(prices editable in config.json).',
@@ -150,7 +150,7 @@ export function costLabel(entry) {
 }
 
 // Roll a chat's messages up onto the same three buckets, then name them with
-// spendView's split — the one place that decides which bucket is "billed".
+// spendView's split - the one place that decides which bucket is "billed".
 export function chatCostTotals(messages) {
   const totals = { metered: 0, subscription_equiv: 0, unknown: 0 }
   let tokens = 0
@@ -196,7 +196,7 @@ export function chatCostNote(t, subject = 'this chat') {
   const { billed = 0, covered = 0, unknown = 0 } = t
   const parts = []
   if (covered > 0) {
-    parts.push(`${money(covered)} of it ran on your Claude subscription — usage `
+    parts.push(`${money(covered)} of it ran on your Claude subscription - usage `
       + 'your plan already covers, not money charged.')
   }
   if (unknown > 0) {

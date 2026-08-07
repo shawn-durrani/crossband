@@ -93,8 +93,8 @@ function EditForm({ row, onSaved, onCancel }) {
           relabelled as billed spend. */}
       <fieldset>
         <legend className="text-xs text-ink-mid">What kind of price is this?</legend>
-        {[[ESTIMATE, 'A published list price', 'Dated and sourced. An estimate — not your actual bill.'],
-          [SELF_HOSTED, 'Local / self-hosted — $0', 'A declared zero marginal cost, which is a real figure rather than a gap.']]
+        {[[ESTIMATE, 'A published list price', 'Dated and sourced. An estimate - not your actual bill.'],
+          [SELF_HOSTED, 'Local / self-hosted - $0', 'A declared zero marginal cost, which is a real figure rather than a gap.']]
           .map(([val, label, hint]) => (
             <label key={val} className="flex items-start gap-2 mt-1.5 cursor-pointer">
               <input type="radio" name={id('prov')} className="mt-1" value={val}
@@ -121,7 +121,7 @@ function EditForm({ row, onSaved, onCancel }) {
              label={selfHosted ? 'What is this?' : 'Where this figure came from'}
              hint={selfHosted
                ? 'A short note, so the declared $0 is auditable later.'
-               : 'An http(s) link to the provider’s rate card. Required — a rate with no checkable source is refused.'}
+               : 'An http(s) link to the provider’s rate card. Required - a rate with no checkable source is refused.'}
              value={draft.source} onChange={set('source')} error={errors.source}
              placeholder={selfHosted ? 'local (Ollama, self-hosted)' : 'https://…/pricing'} />
       {!selfHosted && (
@@ -135,7 +135,7 @@ function EditForm({ row, onSaved, onCancel }) {
         <summary className="cursor-pointer select-none">Cache terms and aliases (optional)</summary>
         <p className="mt-1.5 text-[11px] text-ink-faint">
           Providers charge differently to <em>store</em> a conversation in their cache than to
-          re-read it — that difference, not the headline rate, is where most of a long chat&apos;s
+          re-read it - that difference, not the headline rate, is where most of a long chat&apos;s
           cost lives. Leave blank to use the provider default. Aliases are other model ids you
           are attesting share this exact price.
         </p>
@@ -217,7 +217,7 @@ export default function RateCardsPanel() {
             A <strong>rate card</strong> is what Crossband charges a model&apos;s tokens at when it
             works out what a chat cost. These are published list prices, not your actual bill.
             If a model has no rate card, Crossband deliberately records{' '}
-            <em>no cost at all</em> rather than guessing from a similarly-named model — that is
+            <em>no cost at all</em> rather than guessing from a similarly-named model - that is
             why an unpriced model&apos;s seat can&apos;t be promoted. Adding a rate here fixes
             that immediately, without restarting anything.
           </p>
@@ -266,7 +266,7 @@ export default function RateCardsPanel() {
                   </div>
                 ) : (
                   <div className="mt-1 text-xs text-amber-400">
-                    No rate known — turns on this model record no cost, and its seat
+                    No rate known - turns on this model record no cost, and its seat
                     can&apos;t be promoted.
                   </div>
                 )}

@@ -8,17 +8,17 @@ per-turn recorder (engine.py/guest.py) and the integrations view
 
 Two orthogonal axes:
 
-  PROVENANCE — how a cost figure is known, per cost record:
+  PROVENANCE - how a cost figure is known, per cost record:
     provider_reported         the provider returned an attributable monetary
                               cost (e.g. a Claude Code guest turn's
                               total_cost_usd on the metered API key). The only
                               provenance we call "billed".
     rate_card_estimate        computed from a dated, sourced local price table.
-                              Always an ESTIMATE, never billed spend — a token
+                              Always an ESTIMATE, never billed spend - a token
                               count times a published per-1M rate is not an
                               invoice.
     self_hosted_zero_marginal an explicit local/self-hosted declaration
-                              (Ollama, LM Studio, …). No metered marginal cost —
+                              (Ollama, LM Studio, …). No metered marginal cost -
                               which is NOT "free" in an absolute sense (hardware
                               and power are real, just out of scope) and, more
                               importantly, is NOT the same as "no data": a $0.00
@@ -26,10 +26,10 @@ Two orthogonal axes:
     subscription_equivalent   API-equivalent usage covered by a subscription
                               (a Claude Code turn on a subscription or OAuth login). Informational,
                               never incremental cash.
-    unknown                   no provenance record yet — the conservative
+    unknown                   no provenance record yet - the conservative
                               default. Shown apart, never folded into spend.
 
-  LIFECYCLE — per model seat, how far along onboarding it is:
+  LIFECYCLE - per model seat, how far along onboarding it is:
     trial       may be added and invoked MANUALLY for evaluation, but is not
                 normal/selectable-by-default and is never eligible for future
                 price-aware auto-selection. The conservative default for every
@@ -67,9 +67,9 @@ _ESTIMATED = frozenset({RATE_CARD_ESTIMATE, SUBSCRIPTION_EQUIVALENT})
 PROVENANCE_LABELS = {
     PROVIDER_REPORTED: "Provider-reported (billed)",
     RATE_CARD_ESTIMATE: "Rate-card estimate",
-    SELF_HOSTED_ZERO_MARGINAL: "Self-hosted — no metered marginal cost",
+    SELF_HOSTED_ZERO_MARGINAL: "Self-hosted - no metered marginal cost",
     SUBSCRIPTION_EQUIVALENT: "Subscription-equivalent (informational)",
-    UNKNOWN: "Unknown — no provenance recorded",
+    UNKNOWN: "Unknown - no provenance recorded",
 }
 
 # ---- lifecycle states ----
@@ -108,7 +108,7 @@ def record(source=UNKNOWN, *, as_of=None, source_ref=None):
 
 def auto_participates(lifecycle) -> bool:
     """Whether a seat SPEAKS in a normal, unaddressed round without being
-    explicitly invoked. Onboarded seats do — exactly as before.
+    explicitly invoked. Onboarded seats do - exactly as before.
     A `trial` seat does NOT: it is manual-invoke-only, reached by @mention or by
     being addressed by name. This is the real behavioral gate the lifecycle flag
     enforces on the round loop, and is deliberately distinct from

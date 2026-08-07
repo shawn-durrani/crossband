@@ -12,9 +12,9 @@
 // never out-shout the live model, or a landed switch misreads as "no".
 //
 // Tone contract (drives visual weight, brightest → dimmest):
-//   'attention' — a change is set but the last reply predates it (needs the eye).
-//   'confirm'   — the last reply already ran on the live model (reassurance, muted).
-//   'muted'     — background context (stale config seed); never dominant.
+//   'attention' - a change is set but the last reply predates it (needs the eye).
+//   'confirm'   - the last reply already ran on the live model (reassurance, muted).
+//   'muted'     - background context (stale config seed); never dominant.
 export function modelReadoutLines(status) {
   if (!status) return []
   const { last_used, seed, seed_drift, pending } = status
@@ -23,7 +23,7 @@ export function modelReadoutLines(status) {
   if (pending) {
     lines.push({
       key: 'pending', tone: 'attention', icon: 'alert',
-      label: 'last reply used', model: last_used, tail: '— change applies next turn',
+      label: 'last reply used', model: last_used, tail: '- change applies next turn',
     })
   } else if (last_used) {
     lines.push({
@@ -35,7 +35,7 @@ export function modelReadoutLines(status) {
   if (seed_drift) {
     lines.push({
       key: 'seed', tone: 'muted', icon: null,
-      label: 'config seed was', model: seed, tail: '— live now differs',
+      label: 'config seed was', model: seed, tail: '- live now differs',
     })
   }
   return lines

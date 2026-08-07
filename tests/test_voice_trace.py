@@ -35,7 +35,7 @@ def test_sanitize_stage_drops_unknown_stage():
     "tts_request_to_first_audio",
 ])
 def test_sanitize_drops_stages_we_no_longer_emit(dead):
-    """Renamed/removed stages must not sneak back into the table — the summary
+    """Renamed/removed stages must not sneak back into the table - the summary
     endpoint would otherwise advertise columns the client never fills."""
     assert dead not in voice_trace.ALLOWED_STAGES
     assert voice_trace.sanitize_stage({"stage": dead, "ms": 100}) is None
@@ -149,7 +149,7 @@ def test_insert_and_query_roundtrip(app):
 
 def test_record_server_stage_writes_recognized_stage(app):
     """Server-measured stages go straight through record_server_stage
-    (no client-input sanitize gate — this IS the trusted server path), but
+    (no client-input sanitize gate - this IS the trusted server path), but
     are still checked against SERVER_STAGES so a typo/refactor can't write an
     unrecognized stage name."""
     con = db.connect()
@@ -182,7 +182,7 @@ def test_record_server_stage_drops_unrecognized_stage_and_bad_values(app):
 
 def test_server_stages_are_never_client_ingestible():
     """The public POST /api/voice/trace path must keep rejecting server-only
-    stage names — a client can't fabricate server-side attribution just
+    stage names - a client can't fabricate server-side attribution just
     because the name is now recognized by aggregate()."""
     for stage in voice_trace.SERVER_STAGES:
         assert voice_trace.sanitize_stage({"stage": stage, "ms": 1}) is None
@@ -243,8 +243,8 @@ def test_trace_ingest_rejects_turnless_payload(app):
 def test_full_multi_speaker_turn_roundtrips(app):
     """The whole-turn payload the DEFERRED flush now produces (the lifecycle
     fix): a 2-speaker round where the follower's playback/queue marks are only
-    recorded AFTER round-done, once the playChain drains. All of it — both
-    speakers' TTS/playback and the follower's queue wait — must ingest and
+    recorded AFTER round-done, once the playChain drains. All of it - both
+    speakers' TTS/playback and the follower's queue wait - must ingest and
     surface in the summary, per model/TTS provider."""
     from fastapi.testclient import TestClient
     with TestClient(app, base_url="http://127.0.0.1") as c:

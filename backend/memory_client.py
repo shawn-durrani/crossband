@@ -4,7 +4,7 @@ The service is optional: probe() checks GET /health and caches availability for
 ~30 seconds. When reachable and contract-compatible, memory features light up
 (summary injection, recall/save/search tools, ingest+distill on chat leave);
 when absent, every method degrades to a harmless no-op and the app runs fully
-memoryless. All access goes through the versioned HTTP contract — never the
+memoryless. All access goes through the versioned HTTP contract - never the
 service's database.
 """
 
@@ -66,7 +66,7 @@ class MemoryClient:
                 if not self._warned_mismatch:
                     log.warning(
                         "memory service at %s speaks contract %s but this app needs "
-                        "major %d — treating memory as ABSENT", self.base_url,
+                        "major %d - treating memory as ABSENT", self.base_url,
                         version or "?", CONTRACT_MAJOR)
                     self._warned_mismatch = True
                 self._available = False
@@ -107,7 +107,7 @@ class MemoryClient:
                      include_superseded: bool = False,
                      origin: str = "http") -> list[dict]:
         """origin="auto" marks ambient recalls (fired per user message to
-        prepare context) apart from a model's deliberate tool call — the
+        prepare context) apart from a model's deliberate tool call - the
         service's access log and live view keep the two distinguishable.
         Older services without the field simply ignore it."""
         if not await self.probe():
@@ -143,7 +143,7 @@ class MemoryClient:
                         confidence: str = "medium") -> dict | None:
         """POST /facts. Returns the response dict, or None when the service is
         down / the write failed. Model-authored facts land quarantined when the
-        service's trust gate says so — that's the service's call, not ours."""
+        service's trust gate says so - that's the service's call, not ours."""
         if not await self.probe():
             return None
         body = {
@@ -162,9 +162,9 @@ class MemoryClient:
             return None
 
     async def ingest(self, conversation_id: str, messages: list[dict]) -> dict | None:
-        """POST /ingest — idempotent on (source_app, external_id). Messages may
+        """POST /ingest - idempotent on (source_app, external_id). Messages may
         carry attachments ({filename, mime, data_b64}); they ride along so the
-        memory's episodic record holds everything that traveled with the chat —
+        memory's episodic record holds everything that traveled with the chat -
         the point is to never lose this stuff. A message that is attachments-only
         (no text) is still sent, as a placeholder line, so its files land."""
         if not messages or not await self.probe():
@@ -190,7 +190,7 @@ class MemoryClient:
         return r.json()
 
     async def distill(self, conversation_id: str) -> None:
-        """POST /distill — async on the service side (202 + job)."""
+        """POST /distill - async on the service side (202 + job)."""
         r = await self._client.post(self.api + "/distill", json={
             "source_app": SOURCE_APP, "conversation_id": conversation_id,
         })
@@ -211,7 +211,7 @@ class MemoryClient:
 
     async def distill_and_wait(self, conversation_id: str, regenerate: bool = True):
         """Mine one conversation and wait. regenerate=False defers the summary
-        rebuild — bulk import rebuilds once at the end, not once per chat."""
+        rebuild - bulk import rebuilds once at the end, not once per chat."""
         if not await self.probe():
             return None
         try:
@@ -249,7 +249,7 @@ class MemoryClient:
         self.writes[chat_id] = {"state": "running", "error": None, "ts": time.time()}
         try:
             if not await self.probe():
-                # service absent: not an error — silently off
+                # service absent: not an error - silently off
                 self.writes.pop(chat_id, None)
                 return
             msgs = await asyncio.to_thread(get_new_messages)

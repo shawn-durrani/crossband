@@ -14,7 +14,7 @@ from backend.config import Settings  # noqa: E402
 def client_factory(tmp_path):
     """Build a TestClient against a fresh data dir, with a chosen base_url so
     the Host-header boundary middleware can be exercised. No lifespan (raw
-    app) — these tests hit middleware + routes, not startup."""
+    app) - these tests hit middleware + routes, not startup."""
     from fastapi.testclient import TestClient
 
     from backend.app import create_app

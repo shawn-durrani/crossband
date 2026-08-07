@@ -12,7 +12,7 @@ from backend import config
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     """A client whose writes land in a temp config.local.json, never the
-    developer's own — same harness shape as test_pricing_api."""
+    developer's own - same harness shape as test_pricing_api."""
     from fastapi.testclient import TestClient
     from backend.routers import mcp_servers as r
     local = tmp_path / "config.local.json"
@@ -44,7 +44,7 @@ def test_add_edit_remove_round_trip(api):
     assert written["mcp_servers"]["spend-tracker"]["args"] == []
     assert "label" not in written["mcp_servers"]["spend-tracker"]
 
-    # remove — and the empty block disappears entirely
+    # remove - and the empty block disappears entirely
     assert client.delete("/api/mcp-servers/models/spend-tracker").status_code == 200
     written = json.loads(local.read_text())
     assert "mcp_servers" not in written

@@ -65,10 +65,10 @@ test('empty and zero rows are dropped, not rendered as noise', () => {
   assert.deepEqual(roughBreakdown([{ label: 'z', metered: 0 }]), [])
 })
 
-test('the rough breakdown is metered only — subscription is never blended in', () => {
+test('the rough breakdown is metered only - subscription is never blended in', () => {
   // the "mostly spent on" bars draw the same dollar the headline states.
   // A row that is entirely subscription-covered contributes nothing here, and a
-  // mixed row shows only its metered part — a sunk subscription is not spend.
+  // mixed row shows only its metered part - a sunk subscription is not spend.
   const out = roughBreakdown([
     { label: 'metered-only', metered: 5 },
     { label: 'mixed', metered: 2, subscription_equiv: 100 },
@@ -95,7 +95,7 @@ test('cumulative tracks BILLED spend only, matching the headline', () => {
 })
 
 test('the two periods align by DAY NUMBER, not by date', () => {
-  // Day 1 must sit above day 1 — the periods cover different calendar dates, so
+  // Day 1 must sit above day 1 - the periods cover different calendar dates, so
   // aligning any other way makes the comparison meaningless.
   const t = trendLines([{ day: 'a', metered: 1 }, { day: 'b', metered: 1 }],
                        [{ day: 'y', metered: 4 }, { day: 'z', metered: 4 }])

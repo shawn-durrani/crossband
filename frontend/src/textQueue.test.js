@@ -2,7 +2,7 @@
 // Run: node --test frontend/src/textQueue.test.js
 //
 // The load-bearing test is the atomic-flip race: a cancel and a flip issued in
-// the same tick must resolve to EITHER "nothing sends" OR "one send commits" —
+// the same tick must resolve to EITHER "nothing sends" OR "one send commits" -
 // never a partial send. Everything else guards the surrounding state machine.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -63,7 +63,7 @@ test('cancel AFTER the flip cleanly no-ops (message already ingesting)', () => {
 
 // THE CORE CORRECTNESS REQUIREMENT: the queued→in-flight flip is a single
 // atomic decision. We prove both interleavings of a same-tick cancel+flip.
-test('atomic flip — cancel-first wins: nothing sends', () => {
+test('atomic flip - cancel-first wins: nothing sends', () => {
   let b = createBatch()
   b = addFragment(b, 'racing', 1)
   // cancel executes first this tick…
@@ -73,7 +73,7 @@ test('atomic flip — cancel-first wins: nothing sends', () => {
   assert.equal(committed, false)
 })
 
-test('atomic flip — flip-first wins: send commits, later cancel no-ops', () => {
+test('atomic flip - flip-first wins: send commits, later cancel no-ops', () => {
   let b = createBatch()
   b = addFragment(b, 'racing', 1)
   // flip executes first this tick…

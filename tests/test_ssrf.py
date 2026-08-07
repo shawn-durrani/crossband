@@ -48,7 +48,7 @@ def test_rejects_hostname_resolving_to_private(monkeypatch):
 
 
 def test_rejects_hostname_with_any_private_answer(monkeypatch):
-    # DNS answers with one public and one private record — reject (rebinding)
+    # DNS answers with one public and one private record - reject (rebinding)
     monkeypatch.setattr(tools.socket, "getaddrinfo",
                         lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0)),
                                             (2, 1, 6, "", ("127.0.0.1", 0))])

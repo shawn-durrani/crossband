@@ -39,7 +39,7 @@ def test_phone_photo_shrinks_hard_and_stays_within_model_resolution():
 
 
 def test_image_already_within_model_resolution_is_left_alone():
-    """Tokens scale with dimensions, not bytes — re-encoding something already
+    """Tokens scale with dimensions, not bytes - re-encoding something already
     small saves nothing and only costs quality (worst for text screenshots)."""
     assert images.downscale(_photo(w=400, h=300), "image/jpeg", "thumb.jpg") is None
     assert images.downscale(_photo(w=1568, h=1000), "image/jpeg", "ok.jpg") is None
@@ -64,7 +64,7 @@ def test_animated_gif_is_never_touched():
 
 def test_exif_orientation_is_baked_in_not_dropped():
     """Strip EXIF without applying it and portrait phone photos come out
-    sideways — the classic re-encode bug. Only reachable on images we actually
+    sideways - the classic re-encode bug. Only reachable on images we actually
     re-encode; smaller ones keep their own EXIF untouched."""
     img = Image.new("RGB", (4000, 3000), (10, 20, 30))
     exif = img.getexif()

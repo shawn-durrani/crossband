@@ -1,6 +1,6 @@
 """GitHub issue tools: read + file issues from chat, gated on
 the chat's code toggle, repos from github_repos config, auth from GITHUB_TOKEN
-or the machine's gh CLI. The GitHub API boundary is mocked — keyless, no
+or the machine's gh CLI. The GitHub API boundary is mocked - keyless, no
 network."""
 
 import asyncio

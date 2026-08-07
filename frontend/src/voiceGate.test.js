@@ -19,7 +19,7 @@ test('a normal round un-drops on the user turn and voices its speakers', () => {
   assert.equal(g.dropQueue, false) // _beginSpeaker will open TTS
 })
 
-test('a barge-in only silences the round it happened in — not the next one', () => {
+test('a barge-in only silences the round it happened in - not the next one', () => {
   // Round 1: user turn, then a false barge-in mid-round sets dropQueue.
   let g = gateEvent(initGate(), 'user_saved')
   g = bargeIn(g)
@@ -39,11 +39,11 @@ test('a barge-in only silences the round it happened in — not the next one', (
 test('regression: without the round-done reset, a stuck drop would mute round 2', () => {
   // Documents the OLD broken behavior so the fix can't silently regress: if the
   // round end did NOT clear dropQueue, the next user turn resets it via
-  // user_saved — but a barge-in whose STT produced no send (echo/false trip)
+  // user_saved - but a barge-in whose STT produced no send (echo/false trip)
   // leaves NO user_saved, so audio would stay dead. gateRoundDone closes that.
   let g = bargeIn(gateEvent(initGate(), 'user_saved'))
   const withoutReset = gateEvent(g, 'delta') // a non-resetting event
-  assert.equal(withoutReset.dropQueue, true) // still muted — the trap
+  assert.equal(withoutReset.dropQueue, true) // still muted - the trap
   const withReset = gateRoundDone()
   assert.equal(withReset.dropQueue, false)   // the fix frees it
 })
@@ -61,7 +61,7 @@ test('"Let them continue": a barge-in in round 1 does not silence rounds 2..N', 
 
 test('an autonomous speaker with no active round un-drops (post-continue)', () => {
   // A speaker_start with roundActive already true must NOT clear a drop set this
-  // round — only a start that OPENS a fresh autonomous round does.
+  // round - only a start that OPENS a fresh autonomous round does.
   let g = bargeIn({ roundActive: true, dropQueue: true })
   const midRound = gateEvent(g, 'speaker_start')
   assert.equal(midRound.dropQueue, true) // same round: still muted
@@ -69,7 +69,7 @@ test('an autonomous speaker with no active round un-drops (post-continue)', () =
   assert.equal(freshRound.dropQueue, false) // new autonomous round: audible
 })
 
-test('gateEvent is pure — it never mutates the input state', () => {
+test('gateEvent is pure - it never mutates the input state', () => {
   const g = { roundActive: false, dropQueue: false }
   gateEvent(g, 'user_saved')
   assert.deepEqual(g, { roundActive: false, dropQueue: false })

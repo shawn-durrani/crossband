@@ -22,23 +22,23 @@ function effortSupport(provider, model) {
   const m = (model || '').toLowerCase()
   if (provider === 'anthropic') {
     if (/haiku|claude-3|sonnet-4-5|sonnet-4\.5|sonnet-4-0/.test(m))
-      return { ok: false, note: `Not supported on this Claude model (Haiku / Sonnet 4.5) — it would be ignored.` }
-    return { ok: true, note: `Default sends no override. Low/Medium/High/Max set output_config.effort ("Max" needs Opus 4.6+, otherwise uses High) — a bounded, non-deliberating request. Adaptive lets Claude decide how long to think per reply, which can add several seconds — including in voice — before the first word.` }
+      return { ok: false, note: `Not supported on this Claude model (Haiku / Sonnet 4.5) - it would be ignored.` }
+    return { ok: true, note: `Default sends no override. Low/Medium/High/Max set output_config.effort ("Max" needs Opus 4.6+, otherwise uses High) - a bounded, non-deliberating request. Adaptive lets Claude decide how long to think per reply, which can add several seconds - including in voice - before the first word.` }
   }
   if (/^gpt-5|^o1|^o3|^o4/.test(m))
-    return { ok: true, note: `OpenAI: Default sends no override; Low/Medium/High set reasoning.effort ("Max" maps to High). Applies in tool-free chats; automatically skipped when 🌐 research tools are on (provider limitation). No Adaptive option — that's an Anthropic-only concept.` }
-  return { ok: false, note: `Only OpenAI reasoning models (gpt-5.x, o-series) support reasoning effort — it would be ignored otherwise.` }
+    return { ok: true, note: `OpenAI: Default sends no override; Low/Medium/High set reasoning.effort ("Max" maps to High). Applies in tool-free chats; automatically skipped when 🌐 research tools are on (provider limitation). No Adaptive option - that's an Anthropic-only concept.` }
+  return { ok: false, note: `Only OpenAI reasoning models (gpt-5.x, o-series) support reasoning effort - it would be ignored otherwise.` }
 }
 
-// The <select> options for this provider — Default + the fixed levels always;
+// The <select> options for this provider - Default + the fixed levels always;
 // Adaptive appended ONLY for Anthropic (backend/providers.py's
-// ANTHROPIC_REASONING_CHOICES vs OPENAI_REASONING_CHOICES — a future
+// ANTHROPIC_REASONING_CHOICES vs OPENAI_REASONING_CHOICES - a future
 // OpenAI-compatible provider added the same way, provider="openai" plus a
 // custom base_url, gets the same OpenAI set here automatically since it's
 // keyed on `provider`, not on model or base_url).
 function reasoningOptions(provider) {
   const fixed = [
-    { value: '', label: 'Default (no effort/thinking override — provider’s plain default)' },
+    { value: '', label: 'Default (no effort/thinking override - provider’s plain default)' },
     { value: 'low', label: 'Low' },
     { value: 'medium', label: 'Medium' },
     { value: 'high', label: 'High' },
@@ -46,7 +46,7 @@ function reasoningOptions(provider) {
   ]
   if (provider === 'anthropic') {
     fixed.push({ value: 'adaptive',
-                label: 'Adaptive (Claude decides thinking duration — can add seconds, incl. in voice)' })
+                label: 'Adaptive (Claude decides thinking duration - can add seconds, incl. in voice)' })
   }
   return fixed
 }
@@ -186,7 +186,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
       setModels(r.models)
     } catch (e) {
       setModels(null)
-      setError(`Couldn't fetch models: ${e.message} — you can still type a model ID manually.`)
+      setError(`Couldn't fetch models: ${e.message} - you can still type a model ID manually.`)
     } finally {
       setLoadingModels(false)
     }
@@ -250,7 +250,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
 
   // Promote a trial seat to onboarded. The backend re-checks the cost-provenance
   // gate and returns 409 with a plain-English reason if the seat isn't actually
-  // onboardable — we surface that verbatim rather than guessing client-side, so
+  // onboardable - we surface that verbatim rather than guessing client-side, so
   // the button never silently no-ops.
   async function promote(p) {
     setError(null)
@@ -294,7 +294,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
               <Users size={18} className="text-ink-dim" /> Models
             </h1>
             <p className="text-sm text-ink-mid mt-0.5">
-              The models in your room. Each seat has its own name, persona and voice —
+              The models in your room. Each seat has its own name, persona and voice -
               and you choose which model version it runs.
             </p>
           </div>
@@ -311,7 +311,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
           <label className="block">
             <span className="text-sm text-ink-mid flex items-baseline">
               Shared instructions
-              <span className="text-ink-faint ml-1.5">(every participant, every chat — controls tone & length)</span>
+              <span className="text-ink-faint ml-1.5">(every participant, every chat - controls tone & length)</span>
               <button
                 className="ml-auto inline-flex items-center gap-1 text-xs text-link hover:opacity-80"
                 onClick={saveShared}
@@ -362,7 +362,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                       and offer the promotion / recovery path inline. */}
                   {badge?.tone === 'trial' && (
                     <div className="mt-1.5 text-xs text-amber-600/90 dark:text-amber-500 leading-relaxed">
-                      Manual-invoke only — won't join a normal round on its own;
+                      Manual-invoke only - won't join a normal round on its own;
                       @mention or address it by name to include it.
                       {promo.show && (
                         <div className="mt-1 flex items-start gap-2">
@@ -412,7 +412,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                     {p.label}
                   </button>
                 ))}
-                <span className="text-ink-faint">— or fill the form for anything else</span>
+                <span className="text-ink-faint">- or fill the form for anything else</span>
               </div>
             )}
             <div className="grid grid-cols-2 gap-3">
@@ -471,7 +471,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                       </option>
                     )}
                     {models.map((m) => (
-                      <option key={m.id} value={m.id}>{m.label !== m.id ? `${m.label} — ${m.id}` : m.id}</option>
+                      <option key={m.id} value={m.id}>{m.label !== m.id ? `${m.label} - ${m.id}` : m.id}</option>
                     ))}
                   </select>
                 ) : (
@@ -484,7 +484,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                 <label className="block col-span-2">
                   <span className="text-sm text-ink-mid">
                     Preset{' '}
-                    <span className="text-ink-faint">(fills the two fields below — pick a local or hosted endpoint, or Custom)</span>
+                    <span className="text-ink-faint">(fills the two fields below - pick a local or hosted endpoint, or Custom)</span>
                   </span>
                   <select
                     className={field}
@@ -513,13 +513,13 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                 </label>
               )}
               <label className="block">
-                <span className="text-sm text-ink-mid">Base URL <span className="text-ink-faint">(optional — for OpenAI-compatible APIs)</span></span>
+                <span className="text-sm text-ink-mid">Base URL <span className="text-ink-faint">(optional - for OpenAI-compatible APIs)</span></span>
                 <input className={field} value={editing.base_url || ''}
                   placeholder="e.g. https://generativelanguage.googleapis.com/v1beta/openai/"
                   onChange={(e) => setEditing({ ...editing, base_url: e.target.value })} />
               </label>
               <label className="block">
-                <span className="text-sm text-ink-mid">API key env var <span className="text-ink-faint">(name only — key goes in .env)</span></span>
+                <span className="text-sm text-ink-mid">API key env var <span className="text-ink-faint">(name only - key goes in .env)</span></span>
                 <input className={field} value={editing.api_key_env || ''}
                   placeholder={editing.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'}
                   onChange={(e) => setEditing({ ...editing, api_key_env: e.target.value })} />
@@ -528,7 +528,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
             <label className="block">
               <span className="text-sm text-ink-mid">
                 Reasoning effort{' '}
-                <span className="text-ink-faint">(how hard it thinks before replying — higher is deeper but slower and pricier)</span>
+                <span className="text-ink-faint">(how hard it thinks before replying - higher is deeper but slower and pricier)</span>
               </span>
               <select
                 className={`${field} disabled:opacity-50 disabled:cursor-not-allowed`}
@@ -582,7 +582,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                   <input
                     className={field}
                     value={editing.voice_id || ''}
-                    placeholder="voice ID — or fetch the list above"
+                    placeholder="voice ID - or fetch the list above"
                     onChange={(e) => setEditing({ ...editing, voice_id: e.target.value })}
                   />
                 )}
@@ -612,14 +612,14 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                 Switching the model/version is non-destructive: chat history and project
                 memory are plain text, so the new model inherits the full transcript and
                 this persona. Past replies stay attributed as they were. Only the reply
-                style changes going forward — and the first reply after a switch re-reads
+                style changes going forward - and the first reply after a switch re-reads
                 the whole history without the provider's cache (a one-off cost blip).
               </p>
             )}
             <label className="block">
               <span className="text-sm text-ink-mid">System prompt / persona <span className="text-ink-faint">(this model only, every chat)</span></span>
               <textarea className={`${field} h-28`} value={editing.system_prompt || ''}
-                placeholder="e.g. You are the skeptic of the group — stress-test ideas and play devil's advocate."
+                placeholder="e.g. You are the skeptic of the group - stress-test ideas and play devil's advocate."
                 onChange={(e) => setEditing({ ...editing, system_prompt: e.target.value })} />
             </label>
             <label className="flex items-center gap-2 text-sm text-ink-mid">

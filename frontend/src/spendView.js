@@ -20,7 +20,7 @@ export function headline(totals) {
 }
 
 // Is the headline number trustworthy on its own? Only when everything in the
-// window is billed. Anything else and the page has to say what it's mixing —
+// window is billed. Anything else and the page has to say what it's mixing -
 // silently showing one total made of three different kinds of dollar is the
 // dishonest version of this page.
 export function accuracy(totals) {
@@ -47,7 +47,7 @@ export function accuracy(totals) {
 }
 
 // Up or down against the SAME-LENGTH period immediately before. Returns null
-// when there is nothing honest to compare against — an all-time view has no
+// when there is nothing honest to compare against - an all-time view has no
 // "before", and a previous period with no spend makes a percentage meaningless
 // (anything over zero is infinity, which tells you nothing).
 export function direction(totals, previousTotals, spanDays) {
@@ -75,7 +75,7 @@ export function direction(totals, previousTotals, spanDays) {
   }
 }
 
-// The rough shape of the window — a few slices, biggest first, with a single
+// The rough shape of the window - a few slices, biggest first, with a single
 // "everything else" tail. A landing page answers "mostly what?", not "exactly
 // what?"; the full table is one click deeper.
 //
@@ -104,7 +104,7 @@ export const SPANS = [
 
 // Cumulative BILLED spend, day by day. Two deliberate choices:
 //
-// Cumulative, because the question is "how are we tracking" — on a running
+// Cumulative, because the question is "how are we tracking" - on a running
 // total the SLOPE is the burn rate, so flattening reads as easing off and
 // steepening as accelerating. Daily bars make you integrate by eye.
 //
@@ -123,7 +123,7 @@ export function cumulative(series) {
 }
 
 // Two cumulative lines on one scale: this period, and the same-length period
-// before it. Indexed by DAY NUMBER, not date, so day 1 sits above day 1 — the
+// before it. Indexed by DAY NUMBER, not date, so day 1 sits above day 1 - the
 // only way an at-a-glance comparison means anything when the two periods cover
 // different calendar dates.
 //
@@ -150,7 +150,7 @@ export function trendLines(series, previousSeries) {
     now: path(now),
     before: before.length ? path(before) : null,
     peak,
-    // Where this period sits against the last one at the SAME point in time —
+    // Where this period sits against the last one at the SAME point in time -
     // comparing a part-finished period against a whole one would flatter it.
     aheadBy: before.length
       ? now[now.length - 1].value - (before[Math.min(now.length, before.length) - 1]?.value || 0)

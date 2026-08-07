@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS utility_usage(
   -- Cheap-model spend attribution. chat_memory.py's rolling
   -- summaries/auto-titles/project-distillation calls never go through
   -- db.insert_message (they write directly to chats/projects, not the
-  -- transcript) so they had no cost record at all — invisible utility-model
+  -- transcript) so they had no cost record at all - invisible utility-model
   -- (typically Haiku) spend. This table is their one, mirroring voice_usage.
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS inbound_events(
 CREATE TABLE IF NOT EXISTS guest_jobs(
   -- Async Claude Code guest execution: a guest run is a BACKGROUND job,
   -- decoupled from the voice/turn lifecycle that summoned it. This table is the
-  -- durable, connection-independent status store — surviving a client
+  -- durable, connection-independent status store - surviving a client
   -- disconnect, tab backgrounding, or a process restart mid-run (the same
   -- persistence gap tab/backgrounding voice playback needs, so it is built
   -- to be reused there).
@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS voice_turn_traces(
   -- Per-turn voice latency instrumentation. One row per measured STAGE
   -- of one voice turn, correlated by turn_id (a client-owned opaque id). This
   -- is deliberately CONTENT-FREE: it stores stage names, durations, and the
-  -- provider/model/voice identifiers that produced them — never a transcript,
+  -- provider/model/voice identifiers that produced them - never a transcript,
   -- a reply, or any spoken words. That privacy floor is enforced on ingest
   -- (voice_trace.sanitize), so the table can never accrue sensitive text even
   -- if a future caller tried to send it.
@@ -228,9 +228,9 @@ CREATE INDEX IF NOT EXISTS idx_utility_usage_chat ON utility_usage(chat_id);
 
 
 DEFAULT_SHARED_INSTRUCTIONS = (
-    "Talk like a sharp friend in a group chat — not a consultant, not a coach. "
+    "Talk like a sharp friend in a group chat - not a consultant, not a coach. "
     "Default reply: ONE to THREE sentences. One thought per message; this is a "
-    "conversation, so leave room — don't say everything you know, and never lecture. "
+    "conversation, so leave room - don't say everything you know, and never lecture. "
     "No lists, no headings, no wind-ups ('Here's the thing…'), no recapping the "
     "question. Research/tool results: lead with THE answer in one sentence, max two "
     "supporting facts. If something truly needs length, say the headline and ask "
@@ -244,7 +244,7 @@ def connect():
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     # don't fail with "database is locked" when a reply stream, a background
-    # fold, and the UI hit the file at once — wait politely instead
+    # fold, and the UI hit the file at once - wait politely instead
     con.execute("PRAGMA busy_timeout = 5000")
     return con
 
@@ -252,7 +252,7 @@ def connect():
 def backup_database():
     """Consistent snapshot via SQLite's online backup API (safe while the app
     is running and mid-write). Keeps the newest BACKUP_KEEP copies, and mirrors
-    completed snapshots to an optional secondary directory (never the live DB —
+    completed snapshots to an optional secondary directory (never the live DB -
     sync daemons watching a live WAL database cause lock hangs)."""
     if not os.path.exists(DB_PATH):
         return None
@@ -296,7 +296,7 @@ def _mirror_snapshot(snapshot_path):
 
 
 def init(settings=None):
-    """Create/verify the schema and seed defaults. Fresh DB only — no legacy
+    """Create/verify the schema and seed defaults. Fresh DB only - no legacy
     migration ladder; user_version stamps the schema for future migrations."""
     backup_database()  # pre-init snapshot, every startup (no-op on first run)
     con = connect()
@@ -308,7 +308,7 @@ def init(settings=None):
         con.close()
         raise RuntimeError(
             f"data/chat.db has schema version {version}, newer than this build "
-            f"({SCHEMA_VERSION}) — refusing to open it. Update the app."
+            f"({SCHEMA_VERSION}) - refusing to open it. Update the app."
         )
     if version == 1:  # v1 → v2: archive flag (CREATE IF NOT EXISTS won't add it)
         con.execute("ALTER TABLE chats ADD COLUMN archived_at REAL")
@@ -320,21 +320,21 @@ def init(settings=None):
         con.execute("ALTER TABLE messages ADD COLUMN import_uuid TEXT")
     if 1 <= version <= 4:  # v5: per-chat Claude Code guest toggle (off by default)
         con.execute("ALTER TABLE chats ADD COLUMN code_enabled INTEGER NOT NULL DEFAULT 0")
-    # v6: inbound_events — new table, created by the executescript below
+    # v6: inbound_events - new table, created by the executescript below
     if 1 <= version <= 6:  # v7: per-seat onboarding lifecycle. The
         # column DEFAULTS to 'trial' (conservative), so the ALTER lands every
         # pre-existing row on 'trial'. We then grandfather ONLY the rows whose
-        # model has a KNOWN cost provenance up to 'onboarded' — i.e. exactly the
+        # model has a KNOWN cost provenance up to 'onboarded' - i.e. exactly the
         # gate the /api/participants PATCH endpoint enforces (409 unless
         # provenance_for() resolves a known source). Rationale: trial is a real
-        # behavioral gate (trial seats don't auto-speak — engine.pick_responders),
+        # behavioral gate (trial seats don't auto-speak - engine.pick_responders),
         # so a priced/sourced seat must keep working (no regression), but an
         # existing UNPRICED/custom/local seat must NOT be waved through to
-        # onboarded for free — it goes through the same gate as a freshly-added
+        # onboarded for free - it goes through the same gate as a freshly-added
         # unsourced seat and stays a manually-invokable trial. (Skip if the table
         # isn't there yet; executescript creates the column on a fresh DB.)
-        # NOTE: provenance_for() can now also resolve a *seat* — a keyless
-        # loopback endpoint is self-hosted — but this backfill deliberately keeps
+        # NOTE: provenance_for() can now also resolve a *seat* - a keyless
+        # loopback endpoint is self-hosted - but this backfill deliberately keeps
         # asking by MODEL only. A local seat is exactly the case that should land
         # on trial and be promoted deliberately, which is what a freshly-added
         # local seat does too; grandfathering them here would auto-onboard seats
@@ -348,13 +348,13 @@ def init(settings=None):
                 if provenance_for(row["model"], pricing)["source"] != provenance.UNKNOWN:
                     con.execute("UPDATE participants SET lifecycle='onboarded' "
                                 "WHERE id=?", (row["id"],))
-    # v8: guest_jobs — a NEW table, created by the CREATE IF NOT EXISTS in
+    # v8: guest_jobs - a NEW table, created by the CREATE IF NOT EXISTS in
     # the executescript below on both fresh and upgraded DBs; no ALTER needed.
-    # v9: voice_turn_traces — likewise a NEW table, created by the
+    # v9: voice_turn_traces - likewise a NEW table, created by the
     # executescript below; no ALTER, nothing to backfill.
-    # v10: utility_usage — likewise a NEW table, created by the
+    # v10: utility_usage - likewise a NEW table, created by the
     # executescript below; no ALTER, nothing to backfill.
-    if 1 <= version <= 10:  # v11: utility_usage.provenance —
+    if 1 <= version <= 10:  # v11: utility_usage.provenance -
         # persist cost provenance AT WRITE TIME instead of recomputing it from
         # the live rate card at read time, matching every other cost source
         # (engine.py turns, guest.py turns) so a later rate-card edit can never
@@ -365,7 +365,7 @@ def init(settings=None):
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                        "AND name='utility_usage'").fetchone():
             con.execute("ALTER TABLE utility_usage ADD COLUMN provenance TEXT")
-    if 1 <= version <= 11:  # v12: guest_jobs.status_label/status_at —
+    if 1 <= version <= 11:  # v12: guest_jobs.status_label/status_at -
         # the periodic guest-job ping stopped inserting a fake chat message;
         # its latest check-in now lives here instead, so a reconnecting
         # client reads current state (GET /api/chats/{id}/guest_jobs) rather
@@ -385,7 +385,7 @@ def init(settings=None):
         # The out-of-the-box roster is 'onboarded': these are the product's
         # default always-on seats with priced models, not unevaluated trials.
         # Seeding them trial would mean a fresh install where nobody
-        # auto-replies, because of the onboarding gate — a broken first run.
+        # auto-replies, because of the onboarding gate - a broken first run.
         # Only user-added seats start as trial.
         con.execute(
             "INSERT INTO participants(slug, name, provider, model, color, lifecycle, position, created_at) "
@@ -470,15 +470,15 @@ def chat_voice_totals(con, chat_id):
 
 def log_utility_usage(con, chat_id, kind, model, input_tokens, output_tokens, cost,
                        provenance=None):
-    """Persist one utility-model call's cost — the rolling-summary/
+    """Persist one utility-model call's cost - the rolling-summary/
     auto-title/project-distillation calls in chat_memory.py never go through
     insert_message, so this is their only cost record. `cost` may be None
-    (model absent from the pricing table) — recorded as-is, same "not
+    (model absent from the pricing table) - recorded as-is, same "not
     tracked, not $0.00" honesty as voice_usage.
 
     `provenance` is the cost provenance SOURCE string (e.g.
     'rate_card_estimate') resolved AT CALL TIME by the caller and recorded
-    immutably alongside the cost — mirroring the discipline every other cost
+    immutably alongside the cost - mirroring the discipline every other cost
     source follows, so a later rate-card edit can
     never rewrite what this row's provenance meant when it was logged.
     Defaults to None for callers that don't resolve one (e.g. a bare test
@@ -494,7 +494,7 @@ def log_utility_usage(con, chat_id, kind, model, input_tokens, output_tokens, co
 def insert_voice_trace(con, turn_id, chat_id, stage, ms, *, provider="",
                        model="", tts_provider="", speaker=""):
     """Persist ONE stage of a voice turn's latency trace. Callers must
-    pass already-sanitized values (see voice_trace.sanitize) — this is a thin
+    pass already-sanitized values (see voice_trace.sanitize) - this is a thin
     writer, not a validator. Content-free by construction: no transcript, reply,
     or spoken text is ever a parameter here."""
     con.execute(
@@ -550,15 +550,15 @@ def get_chat_messages(con, chat_id):
 
 
 def get_messages_after(con, since, chat_id=None):
-    """Rows with id > `since` — the single global monotonic watermark the
+    """Rows with id > `since` - the single global monotonic watermark the
     live-events stream and its DB catch-up both key off (message ids
     are AUTOINCREMENT across ALL chats, not per-chat, so one integer is a
     complete cursor for "everything I haven't seen yet").
 
-    chat_id=None (the events-stream case): minimal rows (id + chat_id only) —
+    chat_id=None (the events-stream case): minimal rows (id + chat_id only) -
     the global stream deliberately never carries message content.
     chat_id=<int> (the messages-after endpoint case): full rows, same
-    attachments/tool_events shape as get_chat_messages, scoped to one chat —
+    attachments/tool_events shape as get_chat_messages, scoped to one chat -
     what the frontend fetches for the chat it's actually looking at."""
     if chat_id is None:
         return [dict(r) for r in con.execute(
@@ -585,14 +585,14 @@ def get_messages_after(con, since, chat_id=None):
 def insert_message(con, chat_id, speaker, content, *, usage_json=None,
                     import_uuid=None, tool_events=None, attachment_ids=None,
                     notify=True):
-    """THE single write path for a LIVE message — every insert
+    """THE single write path for a LIVE message - every insert
     that should be pushed to a connected client goes through here, not a raw
     `INSERT INTO messages`. Centralizing this is what makes the live-events
     bus (backend/events.py) trustworthy: a future insert site literally cannot
     forget to wake connected clients, because there's only one way in.
 
     tool_events, if given, is the engine's own shape: a list of
-    {"tool", "input" (dict), "output" (str)} — matched to engine.py's
+    {"tool", "input" (dict), "output" (str)} - matched to engine.py's
     `live["tools"]` accumulator so callers don't need to pre-serialize.
 
     Commits BEFORE notifying, always, with no way for a caller to reorder
@@ -616,7 +616,7 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
             (msg_id, rec["tool"], _json_dumps(rec["input"]), rec["output"], now()),
         )
     con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), chat_id))
-    con.commit()  # durable BEFORE anyone is told about it — see docstring
+    con.commit()  # durable BEFORE anyone is told about it - see docstring
 
     msg = dict(con.execute("SELECT * FROM messages WHERE id=?", (msg_id,)).fetchone())
     msg["tool_events"] = [dict(r) for r in con.execute(
@@ -627,7 +627,7 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
     if notify:
         # Lazy import: db.py stays a dependency-free leaf module (nothing else
         # in backend/ imports FROM db at import time, only INTO it), and
-        # events.py imports db normally — a module-level import here would be
+        # events.py imports db normally - a module-level import here would be
         # circular. notify_new_message() is a fire-and-forget, thread-safe
         # no-op when no stream has bound the event loop yet (e.g. plain unit
         # tests that never open /api/events/stream).
@@ -645,7 +645,7 @@ def _json_dumps(obj):
 #
 # The durable status store for async Claude Code guest runs. Like messages, a
 # guest job is written here first (source of truth), then a live push wakes any
-# connected client (backend/events.py) — so status survives a disconnect, a tab
+# connected client (backend/events.py) - so status survives a disconnect, a tab
 # backgrounding, or a process restart mid-run. Kept intentionally generic
 # (status + kind + a message pointer) so tab/backgrounding persistence for
 # voice playback/connection can reuse the same store without a schema fork.
@@ -680,7 +680,7 @@ def get_guest_job(con, job_id):
 
 
 def get_chat_guest_jobs(con, chat_id, limit=20):
-    """Most-recent-first jobs for one chat — the snapshot a client fetches for
+    """Most-recent-first jobs for one chat - the snapshot a client fetches for
     the chat it is viewing (live changes then arrive over the events stream)."""
     return [dict(r) for r in con.execute(
         "SELECT * FROM guest_jobs WHERE chat_id=? ORDER BY id DESC LIMIT ?",
@@ -688,7 +688,7 @@ def get_chat_guest_jobs(con, chat_id, limit=20):
 
 
 def get_guest_jobs_after(con, ts):
-    """Jobs whose status changed after `ts` — the events-stream cursor query,
+    """Jobs whose status changed after `ts` - the events-stream cursor query,
     across all chats. Mirrors get_messages_after's id cursor, but keyed on
     updated_at because a job row is UPDATED in place across its lifecycle."""
     return [dict(r) for r in con.execute(

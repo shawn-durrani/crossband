@@ -1,5 +1,5 @@
 """Chat-side reflection: rolling chat summaries, auto-titles, and project
-memory distillation. Ported from the predecessor's memory.py — the CHAT-side
+memory distillation. Ported from the predecessor's memory.py - the CHAT-side
 parts only. The durable user-fact ledger, summary generation, and history
 search live in Membro, the companion memory service (see memory_client.py)."""
 
@@ -15,18 +15,18 @@ TITLE_REFRESH_DELTA = 8   # re-title once this many messages arrive after the la
 
 async def _run_utility(con, chat_id, kind, prompt, cfg, max_tokens):
     """Run one utility-model call and persist its token cost so
-    rolling-summary/auto-title/project-distillation spend — historically
-    invisible, since these calls never go through db.insert_message — shows
+    rolling-summary/auto-title/project-distillation spend - historically
+    invisible, since these calls never go through db.insert_message - shows
     up on the Spend page. Returns the reply text, or None (missing key /
-    degrade — the same "keep going without it" behavior as before; nothing
+    degrade - the same "keep going without it" behavior as before; nothing
     to log since no call was actually made).
 
     Commits immediately after logging, on its own, rather than leaving the
     insert pending for the caller to commit alongside its own write. Every
     caller here treats a falsy-but-non-None result (empty string, or a title
-    that strips down to nothing — e.g. a haiku reply that's just quote marks)
+    that strips down to nothing - e.g. a haiku reply that's just quote marks)
     as "no title/summary to apply" and returns early *before* its own
-    `con.commit()` — which used to silently roll back the utility_usage row
+    `con.commit()` - which used to silently roll back the utility_usage row
     for the exact degenerate-output case this table exists to catch. The API
     call already happened and cost real money regardless of what the caller
     does with the text, so its cost record must survive independent of the
@@ -39,7 +39,7 @@ async def _run_utility(con, chat_id, kind, prompt, cfg, max_tokens):
     pricing = cfg.get("pricing") or config_mod.DEFAULT_PRICING
     cost = config_mod.compute_cost(model, usage, pricing)
     # Provenance recorded AT WRITE TIME, not recomputed from
-    # the live rate card later — same reasoning as engine.py's chat turns: a
+    # the live rate card later - same reasoning as engine.py's chat turns: a
     # later rate-card edit must never rewrite what this call's cost meant when
     # it was actually made.
     provenance = config_mod.provenance_for(model, pricing)["source"]
@@ -89,7 +89,7 @@ async def maybe_summarize(con, chat, messages, cfg):
         "Preserve key facts, decisions, open questions, and each participant's stated "
         "positions. Note any attachments by name. "
         "Every retained fact, decision, or stated position MUST keep an explicit "
-        f"speaker tag in square brackets — e.g. '[{cfg['user_name']}] wants the deploy "
+        f"speaker tag in square brackets - e.g. '[{cfg['user_name']}] wants the deploy "
         "delayed', '[GPT] proposed the rollback plan'. Never merge two participants' "
         "statements into one unattributed line, never restate what an AI participant "
         f"said as if [{cfg['user_name']}] said it, and if the existing summary below "
@@ -100,7 +100,7 @@ async def maybe_summarize(con, chat, messages, cfg):
     )
     new_summary = await _run_utility(con, chat["id"], "summarize", prompt, cfg, 2000)
     if new_summary is None:
-        # No utility model available — keep going with the full transcript.
+        # No utility model available - keep going with the full transcript.
         return chat["summary"], recent
 
     con.execute(
@@ -124,7 +124,7 @@ async def maybe_title_chat(con, chat, messages, cfg):
     message id; -1 = user-renamed (locked). Returns the new title, or None."""
     upto = chat.get("title_upto") or 0
     if upto < 0:
-        return None  # user named it — leave it alone
+        return None  # user named it - leave it alone
     real = [m for m in messages if (m["content"] or "").strip()]
     if len(real) < TITLE_MIN_MESSAGES:
         return None
@@ -136,7 +136,7 @@ async def maybe_title_chat(con, chat, messages, cfg):
     full = transcript_text(messages, names, cfg)
     excerpt = full if len(full) <= 1600 else full[:1200] + "\n…\n" + full[-400:]
     prompt = (
-        "Write a very short title for this conversation — 2 to 4 words, ideally under "
+        "Write a very short title for this conversation - 2 to 4 words, ideally under "
         "~28 characters, so it fits a narrow chat sidebar. Name the actual topic as "
         "tersely as a file name; drop articles and filler. No quotes, no trailing "
         "punctuation, no 'Chat about' / 'Discussion of' prefixes. Reply with ONLY the "
@@ -144,10 +144,10 @@ async def maybe_title_chat(con, chat, messages, cfg):
     )
     title = await _run_utility(con, chat["id"], "title", prompt, cfg, 16)
     if not title:
-        return None  # no utility model / empty — keep the existing title
+        return None  # no utility model / empty - keep the existing title
     title = title.strip().strip('"\'“”‘’')
     if not title:
-        # Quote-marks-only reply (e.g. '""') strips down to "" here — bail
+        # Quote-marks-only reply (e.g. '""') strips down to "" here - bail
         # before .splitlines()[0], which raises IndexError on an empty
         # string. The utility_usage row for this call is already committed by
         # _run_utility regardless of this early return.
@@ -176,9 +176,9 @@ async def distill_project_memory(con, chat, project, messages, cfg):
         "between a human and one or more AI models. Update the notes with anything "
         "durable from the conversation excerpt below: facts about the human and their goals, "
         "decisions made, conclusions reached, preferences expressed, and ongoing threads. "
-        "Tag every durable item with who it came from, in square brackets — e.g. "
+        "Tag every durable item with who it came from, in square brackets - e.g. "
         f"'[{cfg['user_name']}] wants weekly status emails', '[Claude] recommended "
-        "Postgres over SQLite' — never state an AI participant's suggestion or "
+        "Postgres over SQLite' - never state an AI participant's suggestion or "
         f"conclusion as if [{cfg['user_name']}] said it. "
         "Drop chit-chat. Keep the notes organized with short markdown headings and bullets, "
         "under 600 words total. Reply with ONLY the updated notes.\n\n"

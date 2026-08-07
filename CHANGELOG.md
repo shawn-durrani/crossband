@@ -4,6 +4,9 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- UI and error copy now uses plain punctuation instead of em-dashes,
+  matching the docs. Placeholder glyphs (a bare em-dash standing for an
+  empty value) are unchanged.
 - `./start.sh` now serves the app on a first run. It creates `.env` from
   the example, warns about whichever keys are missing, and starts the
   server, instead of exiting and asking you to rerun it after the venv

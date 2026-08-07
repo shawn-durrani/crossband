@@ -6,7 +6,7 @@ import Message from './Message'
 // (extracted from App.jsx).
 //
 // The voice dock is positioned against this component's `relative` wrapper, so
-// it arrives as `children` rather than being rendered here — it belongs to a
+// it arrives as `children` rather than being rendered here - it belongs to a
 // live voice session, not to the transcript, and keeping it out means this file
 // has nothing to say about voice.
 //
@@ -28,7 +28,7 @@ export default function ThreadView({
           {messages.length === 0 && (
             <div className="mx-auto max-w-md text-center mt-14 space-y-6">
               {/* An empty chat has to teach the one thing that makes this app
-                  different — everyone answers — before you type anything. */}
+                  different - everyone answers - before you type anything. */}
               <div className="space-y-2">
                 <MessagesSquare size={32} className="mx-auto text-ink-faint" strokeWidth={1.5} />
                 <p className="text-ink-mid">One conversation, every model in the room.</p>
@@ -78,7 +78,7 @@ export default function ThreadView({
           {streaming && roundProgress && (
             <div className="flex justify-center pt-6">
               <span className="text-xs text-ink-dim">
-                Round {roundProgress.n} of {roundProgress.total} — collaborating without you (Stop to step in)
+                Round {roundProgress.n} of {roundProgress.total} - collaborating without you (Stop to step in)
               </span>
             </div>
           )}

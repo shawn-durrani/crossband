@@ -2,7 +2,7 @@
 by ops/install-supervisor.sh at install time. These tests pin the two things
 that make it safe and correct without needing macOS or launchd:
 
-  1. The committed template carries NO real path — only placeholders — so no
+  1. The committed template carries NO real path - only placeholders - so no
      personal home directory can leak into the repo (the same discipline the
      leak scanner enforces).
   2. After substitution the result is a valid plist that actually configures a
@@ -80,7 +80,7 @@ def test_installer_takes_over_cleanly_and_validates():
 
 def test_every_test_suite_has_a_doc_entry():
     """docs/TESTING.md promises an entry per suite, and that promise drifted
-    three times in one week — each time a PR added a file and the doc wasn't
+    three times in one week - each time a PR added a file and the doc wasn't
     touched. Enforce the correspondence in both directions instead of trusting
     anyone to remember. (Exact test COUNTS are deliberately absent from the doc
     for the same reason: a hand-maintained number is a number that goes stale.)
@@ -106,18 +106,18 @@ def test_every_test_suite_has_a_doc_entry():
     assert not js_doc - js, f"documented but missing: {sorted(js_doc - js)}"
 
     assert not _re.search(r"\d+ tests across \d+ files", doc), (
-        "docs/TESTING.md should not hardcode a test count — it goes stale")
+        "docs/TESTING.md should not hardcode a test count - it goes stale")
 
 
 def test_frontend_rebuild_gate_watches_the_manifest_not_just_src():
     """start.sh only rebuilds the SPA when something newer than `dist` exists,
-    and that freshness check has to include the MANIFEST and BUILD CONFIG —
+    and that freshness check has to include the MANIFEST and BUILD CONFIG -
     not just the source tree.
 
     It watched `frontend/src` and `frontend/index.html` only, and deploying the
     React 19 upgrade found out what that costs: a pull changing just
     package.json touches neither, so the gate declared dist current, skipped
-    the whole block — and with it the `npm install` — leaving the service
+    the whole block - and with it the `npm install` - leaving the service
     running the previous bundle against the previous node_modules. Nothing
     errored. Stale code served silently is worse than a failed build, because
     every symptom points at the application rather than the deploy.
@@ -129,17 +129,17 @@ def test_frontend_rebuild_gate_watches_the_manifest_not_just_src():
     start = src.index("find frontend/src")
     # Only the paths BEFORE `-newer` are inputs; what follows it is the
     # comparison target (frontend/dist), which is a build artifact and is
-    # gitignored — sweeping it into the checks below fails in CI, where it has
+    # gitignored - sweeping it into the checks below fails in CI, where it has
     # never been built.
     watched = src[start:src.index("-newer", start)]
     for required in ("frontend/src", "frontend/index.html",
                      "frontend/package.json", "frontend/package-lock.json",
                      "frontend/vite.config.js"):
         assert required in watched, (
-            f"start.sh's rebuild gate must watch {required} — otherwise a change "
+            f"start.sh's rebuild gate must watch {required} - otherwise a change "
             f"to it leaves the service serving a stale bundle")
     # Every watched input must exist, or `find` errors into /dev/null and the
-    # gate silently degrades to "never rebuild" — the same failure by a
+    # gate silently degrades to "never rebuild" - the same failure by a
     # different route.
     for path in watched.split():
         if path.startswith("frontend/"):
@@ -154,10 +154,10 @@ def test_docs_index_and_config_reference_stay_complete():
     here so they cannot silently rot the way the un-guarded halves of this
     file's sibling checks did:
 
-    1. docs/README.md indexes EVERY document in docs/ — an index with holes
+    1. docs/README.md indexes EVERY document in docs/ - an index with holes
        is worse than none, because it teaches readers the unlisted files
        don't exist.
-    2. docs/CONFIG.md mentions EVERY Settings field — it advertises itself
+    2. docs/CONFIG.md mentions EVERY Settings field - it advertises itself
        as code-derived, and a settings reference that silently lags the code
        is the config.local.json documentation gap this exists to close.
     Plus the entry-point wiring: README.md and CLAUDE.md must link the index,
@@ -171,7 +171,7 @@ def test_docs_index_and_config_reference_stay_complete():
         # A real link target, not a mere mention: links inside docs/README.md
         # are sibling-relative, so the href is exactly "(NAME.md" (a first
         # draft of this accepted the name anywhere and passed on link TEXT
-        # while the href was broken — caught by negative-testing the guard).
+        # while the href was broken - caught by negative-testing the guard).
         assert f"({name}" in docs_index, (
             f"docs/{name} is not linked from docs/README.md; index it")
 

@@ -3,14 +3,14 @@ guest execution from the turn lifecycle.
 
 Two backend halves of the fix:
 
-  1. `GET /api/chats/{id}/active_round` — a voice-active client that DIDN'T start
+  1. `GET /api/chats/{id}/active_round` - a voice-active client that DIDN'T start
      a round (a Claude Code hand-back) polls this to learn the round id so it can
      attach and actually SPEAK the narration. Before rounds were detached, that
      round reached the client only as persisted text; audio never played.
 
   2. A hand-back (`engine.make_handback`) must spin up a DISCOVERABLE active round
      that streams the same speaker_start/delta/speaker_end vocabulary the voice
-     pipeline consumes — otherwise the narration is silent by construction.
+     pipeline consumes - otherwise the narration is silent by construction.
 
 Providers are mocked; no network.
 """
@@ -32,7 +32,7 @@ def app(tmp_path):
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     yield create_app(settings)
-    rounds._rounds.clear()  # module global — don't leak a round into the next test
+    rounds._rounds.clear()  # module global - don't leak a round into the next test
 
 
 def fake_stream(text_chunks):
@@ -98,7 +98,7 @@ def test_handback_round_is_discoverable_and_streams_voiceable_events(app, monkey
 
     r = asyncio.run(go())
     types = _event_types(r)
-    # the narrator's turn streams the exact vocabulary voice.js taps — so a
+    # the narrator's turn streams the exact vocabulary voice.js taps - so a
     # voice client attaching via /round/stream will actually speak it
     assert "speaker_start" in types
     assert "delta" in types

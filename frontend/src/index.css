@@ -14,7 +14,7 @@
   --text-head: 18px;  --lh-head: 28px;
   --text-title: 22px; --lh-title: 28px;
 
-  /* Spacing scale (4px base) — no off-scale values in new CSS */
+  /* Spacing scale (4px base) - no off-scale values in new CSS */
   --space-2: 2px;  --space-4: 4px;   --space-8: 8px;   --space-12: 12px;
   --space-16: 16px; --space-20: 20px; --space-24: 24px; --space-32: 32px;
   --space-48: 48px; --space-64: 64px;
@@ -22,7 +22,7 @@
   /* Radius */
   --r-sm: 6px; --r-md: 10px; --r-lg: 16px; --r-full: 999px;
 
-  /* Elevation — borders do the work, shadows whisper (overlays only) */
+  /* Elevation - borders do the work, shadows whisper (overlays only) */
   --shadow-pop: 0 4px 16px rgb(0 0 0 / .35), 0 0 0 1px var(--t-edge);
 
   /* Motion */
@@ -30,7 +30,7 @@
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --ease-in: cubic-bezier(0.3, 0, 0.8, 0.15);
 
-  /* Speaker palette — OKLCH equal lightness/chroma so no model looks "more
+  /* Speaker palette - OKLCH equal lightness/chroma so no model looks "more
      important"; participant data colors remain the runtime source of truth,
      these are the recommended defaults + fallbacks. */
   --speaker-1: oklch(0.72 0.12 25);
@@ -42,12 +42,12 @@
 
 @theme {
   /* Inter self-identifies when installed; system stack is the fallback strategy
-     (no CDN fonts — the app must stay offline-capable). */
+     (no CDN fonts - the app must stay offline-capable). */
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-/* Semantic theme tokens — dark is default, [data-theme] flips them. */
+/* Semantic theme tokens - dark is default, [data-theme] flips them. */
 :root {
   --t-app: #09090b;
   --t-panel: #18181b;
@@ -73,7 +73,7 @@
   --t-focus: #38bdf8;
 }
 
-/* Midnight — deep blue-slate, cool ink */
+/* Midnight - deep blue-slate, cool ink */
 [data-theme="midnight"] {
   --t-app: #0a0f1e;
   --t-panel: #121a2b;
@@ -99,7 +99,7 @@
   --t-focus: #6db1ff;
 }
 
-/* Espresso — warm graphite and brown-greys */
+/* Espresso - warm graphite and brown-greys */
 [data-theme="espresso"] {
   --t-app: #131110;
   --t-panel: #1b1815;
@@ -125,7 +125,7 @@
   --t-focus: #f0b37e;
 }
 
-/* OLED — true black, maximum contrast */
+/* OLED - true black, maximum contrast */
 [data-theme="oled"] {
   --t-app: #000000;
   --t-panel: #0d0d0f;
@@ -236,7 +236,7 @@ body {
 }
 ::selection { background: var(--t-selection); }
 
-/* markdown content inside messages — 15px/1.6, ≤68ch reading measure */
+/* markdown content inside messages - 15px/1.6, ≤68ch reading measure */
 .md-body {
   font-size: var(--text-body);
   line-height: 1.6;
@@ -295,7 +295,7 @@ body {
 
 /* ---- Running-task indicators -------------------------------------------- */
 
-/* Sidebar dot: a soft pulse on a chat that has a round/agent working — subtle,
+/* Sidebar dot: a soft pulse on a chat that has a round/agent working - subtle,
    accent-coloured, and legible against both list states. The global
    prefers-reduced-motion guard drops the animation to a steady dot; because the
    dot's colour alone still reads as "busy" (and the active chat shows the
@@ -341,7 +341,7 @@ body {
 }
 @keyframes running-spin { to { transform: rotate(360deg); } }
 
-/* (b) streaming: per-word opacity fade (no movement — translate reads as jitter)
+/* (b) streaming: per-word opacity fade (no movement - translate reads as jitter)
    + a 2px blinking caret block at the tail. Words are wrapped in spans only
    while streaming; completion re-renders without them. */
 .stream-word { animation: word-in var(--dur-base) var(--ease-out); }
@@ -413,7 +413,7 @@ body {
 /* ---- Voice mode: one morphing orb + one status word ---------------------- */
 .voice-dock {
   /* Column: session controls (auto/manual + pause) sit on top, aligned to the
-     right; the orb+status row sits below. The orb is the anchor — its row is
+     right; the orb+status row sits below. The orb is the anchor - its row is
      row-reverse so the status text grows LEFTWARD and the orb never moves. */
   display: flex; flex-direction: column; align-items: flex-end;
   gap: var(--space-8);
@@ -473,7 +473,7 @@ body {
   transition: transform var(--dur-fast) var(--ease-out), background var(--dur-slow) var(--ease-out);
 }
 /* Listening: the orb reacts to the REAL mic level (voice.js sets --level 0..1
-   ~20Hz) — scale + glow ring grow as you speak, so "Listening" visibly hears
+   ~20Hz) - scale + glow ring grow as you speak, so "Listening" visibly hears
    you. A soft breathing halo covers the silent-idle case. */
 .voice-orb.listening {
   transform: scale(calc(1 + var(--level, 0) * 0.25));
@@ -506,7 +506,7 @@ body {
 }
 @keyframes orb-spin { to { transform: rotate(360deg); } }
 /* Speaking: concentric ring ripples outward; static rim ring = mic stays hot
-   (barge-in affordance — the label says "talk to interrupt" so color is never
+   (barge-in affordance - the label says "talk to interrupt" so color is never
    the sole carrier). */
 .voice-orb.speaking { box-shadow: 0 0 0 3px color-mix(in oklab, var(--orb-tint) 40%, transparent); }
 .voice-orb.speaking::after {
@@ -552,9 +552,9 @@ body {
   box-shadow: var(--shadow-pop);
 }
 
-/* ---- Mobile voice "call" — full-screen overlay (see MobileVoiceCall.jsx) ----
+/* ---- Mobile voice "call" - full-screen overlay (see MobileVoiceCall.jsx) ----
    Ported from the approved mockup; all colours are --t-* tokens so every theme
-   stays coherent. The component is sm:hidden — desktop uses the dock above. */
+   stays coherent. The component is sm:hidden - desktop uses the dock above. */
 .mvc {
   position: fixed; inset: 0; z-index: 40;
   display: flex; flex-direction: column;
@@ -566,7 +566,7 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 /* Mobile-only, enforced HERE: the component's Tailwind sm:hidden lives in a
-   cascade @layer, and this unlayered display:flex silently beat it — the
+   cascade @layer, and this unlayered display:flex silently beat it - the
    call overlay covered the desktop too. Unlayered vs unlayered, this wins. */
 @media (min-width: 640px) { .mvc { display: none; } }
 .mvc-top {
@@ -605,7 +605,7 @@ body {
   display: inline-flex; align-items: center; gap: var(--space-4);
 }
 
-/* Caption zone — the transient flash-then-fade area. Fills the space above the
+/* Caption zone - the transient flash-then-fade area. Fills the space above the
    bottom cluster (both are flow children of .mvc-stage, so nothing overlaps). */
 .mvc-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .mvc-captions {
@@ -642,7 +642,7 @@ body {
 @keyframes mvc-cap-drift { to { transform: translateY(-10px); } }
 @keyframes mvc-cap-out { to { opacity: 0; transform: translateY(-22px); } }
 
-/* Bottom cluster — status → orb → hint → controls in a flow column; the orb
+/* Bottom cluster - status → orb → hint → controls in a flow column; the orb
    sits in a size-reserved slot so its scaling/glow never overlaps the text. */
 .mvc-bottom {
   flex-shrink: 0;
@@ -657,7 +657,7 @@ body {
   height: 104px; display: grid; place-items: center; /* reserves room for the 1.5× scale */
 }
 .mvc-orb-wrap .voice-orb { width: 60px; height: 60px; }
-/* "talk any time to interrupt" — shown only while a model speaks and the mic
+/* "talk any time to interrupt" - shown only while a model speaks and the mic
    could actually interrupt it (hidden while muted). */
 .mvc-subhint {
   font-size: var(--text-micro); color: var(--t-ink-faint); text-align: center;
@@ -670,7 +670,7 @@ body {
 }
 .mvc-hint:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
 
-/* Transcript browsing — faded captions aren't gone: swipe up (or tap the
+/* Transcript browsing - faded captions aren't gone: swipe up (or tap the
    hint) and everything said this session scrolls back into view. */
 .mvc-history {
   flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -691,7 +691,7 @@ body {
 }
 .mvc-live-pill:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
 
-/* Bottom controls: a dominant mute pill (the car control — also "done
+/* Bottom controls: a dominant mute pill (the car control - also "done
    talking, send it") + a smaller, set-apart red end. Never color-only:
    the pill carries a text label in both states. */
 .mvc-controls {
@@ -727,7 +727,7 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--t-edge2); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* Global reduced-motion guard — motion is state communication, and states are
+/* Global reduced-motion guard - motion is state communication, and states are
    always paired with text, so killing animation loses nothing. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

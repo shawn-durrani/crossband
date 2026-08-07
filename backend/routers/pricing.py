@@ -6,7 +6,7 @@ now the app could tell you a model was unpriced, block its seat on that basis,
 and then offer no way out except hand-editing `config.local.json` on the
 server. This router is the way out.
 
-WHERE OVERRIDES LIVE. `config.local.json` — the file `config.load_settings()`
+WHERE OVERRIDES LIVE. `config.local.json` - the file `config.load_settings()`
 already layers (`defaults < config.json < config.local.json < env`), re-reading
 on EVERY call, so a saved card takes effect on the next round with no restart.
 Deliberately not a new store: `db` imports `config`, so `config` cannot import
@@ -39,7 +39,7 @@ router = APIRouter(prefix="/api/pricing", tags=["pricing"])
 
 # The two provenances an operator may attest on a static card.
 # `provider_reported` and `subscription_equivalent` are DERIVED per turn
-# from what a provider or subscription actually returned — allowing either to be
+# from what a provider or subscription actually returned - allowing either to be
 # hand-entered would let an estimate be relabelled as billed spend.
 _EDITABLE_PROVENANCE = ratecard.EDITABLE_PROVENANCE
 
@@ -50,7 +50,7 @@ class CacheTerms(BaseModel):
 
 
 class RateCardIn(BaseModel):
-    """The wire shape. Everything is Optional here on purpose — the real rules
+    """The wire shape. Everything is Optional here on purpose - the real rules
     live in `ratecard.validate_and_build`, which refuses with a
     plain-English reason a form can display, rather than pydantic's 422. A
     self-hosted declaration carries no rates at all, so `input`/`output` cannot
@@ -62,7 +62,7 @@ class RateCardIn(BaseModel):
     cache: CacheTerms | None = None
     aliases: list[str] = Field(default_factory=list)
     # Which of the two operator-declarable provenances this is. Defaults to a
-    # published estimate — the overwhelmingly common case, and the one the
+    # published estimate - the overwhelmingly common case, and the one the
     # earlier pricing surface hardcoded.
     provenance: str = prov.RATE_CARD_ESTIMATE
 
@@ -78,7 +78,7 @@ def _write_overrides(block: dict) -> None:
     """Replace config.local.json's `pricing` block, preserving every other key.
 
     Atomic (temp file + os.replace) because this file is read on every
-    load_settings() call — a torn write would not brick startup (_read_json
+    load_settings() call - a torn write would not brick startup (_read_json
     swallows a malformed file) but WOULD silently drop every local setting the
     operator has, which is worse than a crash. A single `.bak` of the previous
     contents is kept alongside: atomicity guarantees the file
@@ -110,7 +110,7 @@ def _write_overrides(block: dict) -> None:
 
 def _card_row(model: str, effective: dict, overrides: dict) -> dict:
     """One model's effective card plus WHERE it came from, so the UI can tell a
-    shipped default from an operator's own figure — never conflate the two."""
+    shipped default from an operator's own figure - never conflate the two."""
     card = price_for(model, effective)
     if card is None:
         return {"model": model, "origin": "unpriced", "card": None,
@@ -133,7 +133,7 @@ def _card_row(model: str, effective: dict, overrides: dict) -> dict:
 
 def _known_models(effective: dict) -> list[str]:
     """Every model worth showing a row for: the price table's own keys plus the
-    models seats are actually configured to run — the second half is the point,
+    models seats are actually configured to run - the second half is the point,
     since an UNPRICED configured model is exactly the row the operator came
     here to fix and it appears in no table."""
     from .. import db
@@ -149,7 +149,7 @@ def _known_models(effective: dict) -> list[str]:
             con.close()
     except Exception:
         # A pricing page must still render if the participants table is
-        # unavailable — the built-in rows remain useful on their own.
+        # unavailable - the built-in rows remain useful on their own.
         pass
     s = load_settings()
     for attr in ("anthropic_model", "openai_model", "utility_model"):
@@ -179,7 +179,7 @@ def upsert_rate_card(model: str, body: RateCardIn):
     finite bounded rates, real ISO dates, an http(s) source for an estimate,
     and aliases that are exact ids colliding with no other priced model."""
     effective = load_settings().pricing
-    # Every OTHER known id, for the alias-collision check — an alias must name a
+    # Every OTHER known id, for the alias-collision check - an alias must name a
     # model that has no card of its own, or two cards claim the same id.
     existing = {m for m in effective if m != model.strip()}
     payload = {
@@ -196,7 +196,7 @@ def upsert_rate_card(model: str, body: RateCardIn):
     try:
         model_id, card = ratecard.validate_and_build(payload, existing_ids=existing)
     except ratecard.RateCardError as e:
-        # 400 with the module's own plain-English message — the form shows it
+        # 400 with the module's own plain-English message - the form shows it
         # verbatim, so the reason a save was refused is never a bare 422.
         raise HTTPException(status_code=400, detail=str(e))
     block = _overrides()
@@ -207,7 +207,7 @@ def upsert_rate_card(model: str, body: RateCardIn):
 
 @router.delete("/{model:path}")
 def delete_rate_card(model: str):
-    """Drop an override. Falls back to the built-in card, or — honestly — to
+    """Drop an override. Falls back to the built-in card, or - honestly - to
     unpriced when there is no built-in. Never leaves a stale figure behind."""
     model = model.strip()
     block = _overrides()

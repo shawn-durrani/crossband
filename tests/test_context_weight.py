@@ -43,7 +43,7 @@ def test_fold_now_fires_on_an_image_heavy_chat_that_used_to_slip_under():
 
 
 def test_a_genuinely_light_chat_is_still_light():
-    """The fix must not make every chat look heavy — that would just move the
+    """The fix must not make every chat look heavy - that would just move the
     blindness to the other end."""
     msgs = [_msg(i, "a short message") for i in range(1, 12)]
     assert context_weight.fold_weight(msgs) < 60_000
@@ -55,7 +55,7 @@ def test_a_genuinely_light_chat_is_still_light():
 
 def test_folded_messages_stop_counting():
     """Anything before the watermark is represented by the summary and is no
-    longer sent verbatim — counting it would over-report forever."""
+    longer sent verbatim - counting it would over-report forever."""
     msgs = [_msg(1, "", [PHOTO]), _msg(2, "", [PHOTO])]
     chat = {"summary_upto": 1, "summary": "s", "memory_enabled": 0}
     est = context_weight.estimate(chat, msgs, {"tool_log_chars": 1200})
@@ -73,7 +73,7 @@ def test_pdfs_and_text_files_count_by_length_not_as_images():
 
 def test_image_token_cost_is_capped_not_proportional_to_bytes():
     """Providers downscale to ~1568px before tokenising, so a 12 MP original
-    and a 1568px copy cost the SAME tokens — only the upload differs."""
+    and a 1568px copy cost the SAME tokens - only the upload differs."""
     big = context_weight.message_weight([_msg(1, "", [{"mime": "image/jpeg", "size": 5_000_000}])])
     small = context_weight.message_weight([_msg(1, "", [{"mime": "image/jpeg", "size": 300_000}])])
     assert big["attachment_tokens"] == small["attachment_tokens"]
@@ -87,7 +87,7 @@ def test_conversation_performance_diagnostic_is_offered_and_dispatches():
     assert "conversation_performance" in diagnostics.DIAGNOSTIC_NAMES
     schema = diagnostics.diagnostic_input_schema()
     assert "conversation_performance" in schema["properties"]["name"]["enum"]
-    # the two allowlists must not drift — asserted in the module, re-asserted here
+    # the two allowlists must not drift - asserted in the module, re-asserted here
     assert set(diagnostics._DIAGNOSTIC_DISPATCH) == set(diagnostics.DIAGNOSTIC_NAMES)
 
 

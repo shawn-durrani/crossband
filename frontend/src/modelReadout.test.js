@@ -49,10 +49,10 @@ test('the reported case: switch landed + config seed drifted', () => {
     seed: 'gpt-5.1', seed_drift: true, pending: false,
   })
   assert.equal(lines.length, 2)
-  // Confirmation comes first and is muted-confirm — it answers "did it take? yes".
+  // Confirmation comes first and is muted-confirm - it answers "did it take? yes".
   assert.equal(lines[0].key, 'confirmed')
   assert.equal(lines[0].tone, 'confirm')
-  // The stale seed is LAST and muted — context, never the headline number.
+  // The stale seed is LAST and muted - context, never the headline number.
   const seedLine = lines[1]
   assert.equal(seedLine.key, 'seed')
   assert.equal(seedLine.tone, 'muted')

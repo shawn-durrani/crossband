@@ -24,10 +24,10 @@ export const VERDICTS = {
                 + 'starts drifting upward.' },
   poor: { label: 'Re-writing', tone: 'poor',
           title: 'The prefix is being re-written MORE often than it is read back '
-               + '— the cache is costing money instead of saving it. Something in '
+               + '- the cache is costing money instead of saving it. Something in '
                + 'the prompt is changing between turns.' },
   no_writes: { label: 'No cache writes recorded', tone: 'neutral',
-               title: 'Reads without writes — either this provider does not report '
+               title: 'Reads without writes - either this provider does not report '
                     + 'written tokens to us, or nothing was cached.' },
   none: { label: 'No cache activity', tone: 'neutral',
           title: 'This model did no prompt caching in this window.' },
@@ -60,7 +60,7 @@ function rank(g) {
 }
 
 // The one-line answer this block exists to give. Deliberately NOT the window
-// average — see the module header.
+// average - see the module header.
 export function headline(summary) {
   const rows = cacheRows(summary?.breakdown?.by_producer_model)
   const worst = rows[0]
@@ -73,7 +73,7 @@ export function headline(summary) {
     text: bad
       ? `${worst.label} is re-writing its prompt cache (${formatRatio(worst.cache)} read:write).`
       : 'Prompt caches are being re-read, not re-written.',
-    // Share is a window-level fact and stays window-level — it is the "so
+    // Share is a window-level fact and stays window-level - it is the "so
     // what" for the row above, not a per-row claim.
     shareText: share > 0
       ? `${(share * 100).toFixed(1)}% of metered spend went on cache writes.`

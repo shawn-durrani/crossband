@@ -1,4 +1,4 @@
-"""External event ingestion — the generic inbound half of the tooling
+"""External event ingestion - the generic inbound half of the tooling
 side-channel (slash commands go out, notices and events come in).
 
 Any local producer (a parcel-tracking watcher, a calendar watcher, the deploy
@@ -8,10 +8,10 @@ contract is the firewall that keeps producer logic out of this repo.
 
 Trust model: loopback is the primary boundary, like every /api/* route.
 MMC_INGEST_TOKEN (optional, default off) adds a bearer check for producers
-arriving via the tailnet proxy — mirroring Membro's MEMORY_AUTH_TOKEN. This
+arriving via the tailnet proxy - mirroring Membro's MEMORY_AUTH_TOKEN. This
 is the app's first optional auth surface; it guards exactly one route.
 
-The speaker is stored namespaced (`ext:<source>`) — speaker flows into the
+The speaker is stored namespaced (`ext:<source>`) - speaker flows into the
 transcript the models read, so an un-namespaced producer calling itself
 "claude" or "user" could impersonate a participant. The prefix makes that
 structurally impossible without Crossband ever holding a producer whitelist.
@@ -39,7 +39,7 @@ class IngestIn(BaseModel):
     source: str
     target_chat: int
     dedupe_key: str = Field(min_length=1, max_length=200)
-    priority: str = "normal"  # "normal" | "high" — rendering hint only
+    priority: str = "normal"  # "normal" | "high" - rendering hint only
     payload: IngestPayload
 
 
@@ -79,7 +79,7 @@ async def ingest(body: IngestIn, request: Request):
         text += "\n" + body.payload.body.strip()
     if body.payload.url:
         text += f"\n{body.payload.url.strip()}"
-    # The centralized insert path — wakes any connected client via
+    # The centralized insert path - wakes any connected client via
     # the global events bus (this route is async def for exactly that reason;
     # see backend/events.py + db.insert_message's docstrings).
     msg = db.insert_message(con, body.target_chat, f"ext:{body.source}", text[:8500])

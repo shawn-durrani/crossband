@@ -15,8 +15,8 @@ test('a healthy foreground session needs no repair', () => {
 })
 
 test('THE bug: a suspended context is resumed on return', () => {
-  // Backgrounding suspends the context; everything the mic feeds — the VAD
-  // analyser, the STT ScriptProcessor, playback — goes silent until it resumes.
+  // Backgrounding suspends the context; everything the mic feeds - the VAD
+  // analyser, the STT ScriptProcessor, playback - goes silent until it resumes.
   const p = recoveryPlan({ ...live, ctxState: 'suspended' })
   assert.equal(p.resumeContext, true)
 })
@@ -26,7 +26,7 @@ test('a dropped STT socket is reopened on return', () => {
   assert.equal(p.reopenStt, true)
 })
 
-test('both can need repair at once — backgrounding takes both', () => {
+test('both can need repair at once - backgrounding takes both', () => {
   const p = recoveryPlan({ ...live, ctxState: 'suspended', sttOpen: false })
   assert.deepEqual(p, { resumeContext: true, reopenStt: true })
 })
@@ -43,7 +43,7 @@ test('nothing is repaired when no call is running', () => {
   assert.deepEqual(p, { resumeContext: false, reopenStt: false })
 })
 
-test('a CLOSED context is never "resumed" — that needs a restart', () => {
+test('a CLOSED context is never "resumed" - that needs a restart', () => {
   // stop() closes it; resume() on a closed context rejects. Claiming we can
   // recover it would hide a real restart behind a no-op.
   const p = recoveryPlan({ ...live, ctxState: 'closed' })
@@ -58,7 +58,7 @@ test('STT is not reopened when realtime mode is off', () => {
 
 test('a deliberate teardown is not fought', () => {
   // stop(), a mode switch, or the batch fallback all close the socket on
-  // purpose — reopening there would override the user's own instruction.
+  // purpose - reopening there would override the user's own instruction.
   const p = recoveryPlan({ ...live, sttOpen: false, sttClosing: true })
   assert.equal(p.reopenStt, false)
 })

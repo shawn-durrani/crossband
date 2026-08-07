@@ -36,7 +36,7 @@ export function isActive(job) {
   return !!job && job.status === 'running'
 }
 
-// The collapsed, single-line chip label — minimal footprint, no reasoning shown
+// The collapsed, single-line chip label - minimal footprint, no reasoning shown
 // (that's expand-on-demand). One genuine line on mobile.
 //
 // status_label/status_at are the fully-ephemeral periodic check-in: never a
@@ -55,7 +55,7 @@ export function chipLabel(job) {
     case 'completed':
       return job.kind === 'blocker'
         ? 'Claude Code needs input'
-        : 'Claude Code finished — handing back'
+        : 'Claude Code finished - handing back'
     case 'failed':
       return 'Claude Code hit an error'
     case 'cancelled':

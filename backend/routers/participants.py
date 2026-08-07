@@ -14,7 +14,7 @@ _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _reasoning_error(provider):
-    """The 400 message for an unsupported/misspelled reasoning_effort —
+    """The 400 message for an unsupported/misspelled reasoning_effort -
     provider-aware so it correctly tells an OpenAI seat "adaptive" isn't a
     thing for it, rather than a generic complaint."""
     choices = [c or "Default" for c in providers.reasoning_choices(provider)]
@@ -62,7 +62,7 @@ class ParticipantIn(BaseModel):
 def create_participant(body: ParticipantIn):
     if not body.name or not body.model or body.provider not in ("anthropic", "openai"):
         raise HTTPException(400, "name, model and provider ('anthropic' or 'openai') are required")
-    # Reject an unsupported/misspelled reasoning_effort up front — provider-
+    # Reject an unsupported/misspelled reasoning_effort up front - provider-
     # aware, since "adaptive" only exists for Anthropic. A silently-dropped value
     # here used to mean the saved policy quietly never reached the provider call.
     if not providers.valid_reasoning_effort(body.provider, body.reasoning_effort):
@@ -102,7 +102,7 @@ def update_participant(pid: int, body: ParticipantIn):
     if "reasoning_effort" in updates:
         # Validate against the EFFECTIVE provider (a PATCH may change
         # provider and reasoning_effort together, or set effort alone against
-        # the seat's existing provider) — "adaptive" only ever validates for
+        # the seat's existing provider) - "adaptive" only ever validates for
         # Anthropic, on either path.
         effective_provider = updates.get("provider", row["provider"])
         if not providers.valid_reasoning_effort(effective_provider, updates["reasoning_effort"]):
@@ -111,7 +111,7 @@ def update_participant(pid: int, body: ParticipantIn):
     if "enabled" in updates:
         updates["enabled"] = int(updates["enabled"])
     # Onboarding gate: a seat may become 'onboarded' only once an
-    # explicit provenance record exists — never a silent upgrade of an unsourced
+    # explicit provenance record exists - never a silent upgrade of an unsourced
     # model. Trial stays freely settable (manual evaluation is always allowed).
     if updates.get("lifecycle") == provenance.ONBOARDED:
         model = updates.get("model") or row["model"]
@@ -119,7 +119,7 @@ def update_participant(pid: int, body: ParticipantIn):
         # Resolve provenance for the SEAT, not just the model id: a model
         # served from a keyless loopback endpoint is self-hosted, so it has a
         # known ($0 marginal) cost even though no rate card names it. Read the
-        # incoming values first — a single PATCH may point the seat at a local
+        # incoming values first - a single PATCH may point the seat at a local
         # endpoint and promote it in one go.
         source = provenance_for(
             model, pricing,
@@ -132,7 +132,7 @@ def update_participant(pid: int, body: ParticipantIn):
                 409,
                 f"Cannot onboard '{model}': no cost-provenance record. Add a "
                 "priced rate-card entry or an explicit self-hosted declaration "
-                "first — until then this model stays a manual trial.")
+                "first - until then this model stays a manual trial.")
     if updates:
         sets = ", ".join(f"{k}=?" for k in updates)
         con.execute(f"UPDATE participants SET {sets} WHERE id=?", (*updates.values(), pid))

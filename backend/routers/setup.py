@@ -1,7 +1,7 @@
 """First-run setup: point-and-click key configuration for non-technical users.
 
-GET  /api/setup/status  — per-service {configured, valid, detail}; no key material ever.
-POST /api/setup/key     — validate a pasted key LIVE with a minimal cheap call, then
+GET  /api/setup/status  - per-service {configured, valid, detail}; no key material ever.
+POST /api/setup/key     - validate a pasted key LIVE with a minimal cheap call, then
                           persist it to the repo's .env (chmod 600) AND os.environ so
                           it works without a restart.
 
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/setup", tags=["setup"])
 ENV_PATH = ROOT / ".env"
 VALIDATE_TIMEOUT = 15.0
 
-# SERVICES + the live-validation cache now live in backend/diagnostics.py —
+# SERVICES + the live-validation cache now live in backend/diagnostics.py -
 # the single source of truth shared with GET /api/setup/status, GET
 # /api/models/status's sibling routes, and the get_diagnostic MCP tool
 # (backend/diag_mcp.py). Aliased here so the rest of this module
@@ -44,10 +44,10 @@ class KeyIn(BaseModel):
 
 def _friendly_http_error(name: str, status: int) -> str:
     if status in (401, 403):
-        return (f"That key wasn't accepted by {name} — check you copied all of it "
+        return (f"That key wasn't accepted by {name} - check you copied all of it "
                 "(keys are long and easy to cut short).")
     return (f"{name} replied with an unexpected error (HTTP {status}). "
-            "The key may still be fine — try again in a moment.")
+            "The key may still be fine - try again in a moment.")
 
 
 async def _validate(service: str, key: str, secret: str | None) -> tuple[bool, str | None]:
@@ -78,7 +78,7 @@ async def _validate(service: str, key: str, secret: str | None) -> tuple[bool, s
                 json=fill(probe.get("body")) or None,
                 params=fill(probe.get("params")) or None)
     except httpx.HTTPError:
-        return False, (f"Couldn't reach {name} — check your internet connection "
+        return False, (f"Couldn't reach {name} - check your internet connection "
                        "and try again.")
     if r.status_code < 400 or r.status_code == 429:
         return True, None
@@ -132,7 +132,7 @@ async def setup_key(body: KeyIn):
     secret = (body.secret or "").strip() or None
     if svc == "reddit" and not secret:
         return {"valid": False,
-                "error": "Reddit needs both parts — the client id and the secret "
+                "error": "Reddit needs both parts - the client id and the secret "
                          "from your reddit.com/prefs/apps 'script' app."}
 
     ok, error = await _validate(svc, key, secret)

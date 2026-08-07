@@ -16,16 +16,16 @@ import { createBatch, addFragment, cancelBatch, flipBatch, combineFragments } fr
 // roundCtrl, tailedRounds, voiceAttachInFlight).
 //
 // Explicitly NOT owned, told to App through callbacks instead:
-//   onRunningMark/onRunningClear — the optimistic running set folds into
+//   onRunningMark/onRunningClear - the optimistic running set folds into
 //     server truth in App's applyRunning; this loop only knows its own round.
-//   onChatDirty — the distill-on-leave bookkeeping belongs with the chat CRUD
+//   onChatDirty - the distill-on-leave bookkeeping belongs with the chat CRUD
 //     that consumes it.
-//   onRoundSettled — useEventStream's deferred-event drain, late-bound by App
+//   onRoundSettled - useEventStream's deferred-event drain, late-bound by App
 //     because the two hooks reference each other.
 //
 // Every public function reads the active chat through `activeChatIdRef` at
 // call time, never through a captured state value. That is what makes them
-// safe to close over from anywhere — the VoiceController is constructed once
+// safe to close over from anywhere - the VoiceController is constructed once
 // and keeps its first `sendText` forever, which under the old inline version
 // silently bound the chat id from that render (harmless only because voice
 // stops on chat switch today).
@@ -48,7 +48,7 @@ export function useRoundStream({
   // Streaming-message ids per speaker, for delta/end/tool events to target.
   const liveIds = useRef({})
   const roundCtrl = useRef(null)
-  // Round ids we've already fed to voice — the one we started (round_start),
+  // Round ids we've already fed to voice - the one we started (round_start),
   // and any detached round we attached to. Stops a voice-mode re-attach from
   // double-voicing a round, and from re-attaching one the user barged out of.
   const tailedRounds = useRef(new Set())
@@ -82,7 +82,7 @@ export function useRoundStream({
       }
     } else if (ev.type === 'speaker_start') {
       // Note: the orb tint follows AUDIO playback (voice.js onSpeaker), not this
-      // text event — TTS lags and outlasts the text, so text-driven tinting would
+      // text event - TTS lags and outlasts the text, so text-driven tinting would
       // drop the colour while the agent is still talking.
       const id = `live-${ev.speaker}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
       liveIds.current[ev.speaker] = id
@@ -160,7 +160,7 @@ export function useRoundStream({
     // a network drop can re-attach and catch up instead of killing the round.
     const track = { roundId: null, count: 0 }
     // Only a round that ends NATURALLY drains the queued batch. Aborts (Stop or
-    // navigating away mid-round) leave the batch queued — draining then could
+    // navigating away mid-round) leave the batch queued - draining then could
     // start a second round on a chat whose detached round is still running.
     let aborted = false
     const onEvent = (ev) => {
@@ -179,13 +179,13 @@ export function useRoundStream({
       } catch (e) {
         if (e.name === 'AbortError') throw e
         if (track.roundId) {
-          // The round is still running server-side — hold on and re-attach.
+          // The round is still running server-side - hold on and re-attach.
           await reattachRound(chatId, track, onEvent, signal)
         } else if (queueable && e instanceof TypeError) {
           // The send never reached the server (offline): hold it, retry later.
           pendingSends.current.push({ url, body })
           setHeldSends(pendingSends.current.length)
-          cb.current.onBanner('No connection — holding your message; it sends when the tunnel returns.')
+          cb.current.onBanner('No connection - holding your message; it sends when the tunnel returns.')
           ensureSendRetry()
           return
         } else {
@@ -219,12 +219,12 @@ export function useRoundStream({
       // Drop the optimistic flag; refreshState() below reconciles from the
       // server, so a still-detached round stays lit and a finished one clears.
       cb.current.onRunningClear(chatId)
-      // NB: don't clear speakingSlug here — the text round is done but the TTS
+      // NB: don't clear speakingSlug here - the text round is done but the TTS
       // audio is still playing. voice.js onSpeaker(null) clears it when the last
       // reply finishes speaking, so the orb stays coloured for the whole reply.
       voiceRef.current?.onRoundDone()
       cb.current.refreshState()
-      // Refresh the round chat's voice/context totals — guarded to the LIVE
+      // Refresh the round chat's voice/context totals - guarded to the LIVE
       // active chat. The inline version captured activeChatId at send time and
       // repainted it unconditionally, so finishing a round after switching
       // chats could stamp chat A's header data onto a view showing chat B
@@ -239,14 +239,14 @@ export function useRoundStream({
     }
   }
 
-  // Voice mode: attach to a DETACHED round this client didn't start — a Claude
-  // Code hand-back narration, or a round that began while we were backgrounded —
+  // Voice mode: attach to a DETACHED round this client didn't start - a Claude
+  // Code hand-back narration, or a round that began while we were backgrounded -
   // and feed it to the audio pipeline so it's actually SPOKEN. Voice-only
   // on purpose: the text/captions still render via the normal new_message
   // hydration path, so this can't double-paint the transcript. We only ever
   // attach to a round we've NEVER fed to voice (guarded by tailedRounds), so
   // tailing from the buffer start (after=0) voices the whole narration exactly
-  // once — nothing was spoken yet.
+  // once - nothing was spoken yet.
   async function voiceAttachRound(chatId) {
     if (voiceAttachInFlight.current || streamingRef.current) return
     voiceAttachInFlight.current = true
@@ -264,7 +264,7 @@ export function useRoundStream({
           null,
           (ev) => { if (chatId === activeChatIdRef.current) voiceRef.current?.onEvent(ev) },
           ctrl.signal, 'GET')
-      } catch { /* dropped/aborted — messages persisted regardless */ }
+      } catch { /* dropped/aborted - messages persisted regardless */ }
       voiceRef.current?.onRoundDone() // clears roundActive/dropQueue for the next turn
     } finally {
       voiceAttachInFlight.current = false
@@ -275,7 +275,7 @@ export function useRoundStream({
   // backoff and replay what we missed. Ends when the stream completes, the
   // user aborts, or the round is gone (finished while away → refetch the chat).
   async function reattachRound(chatId, track, onEvent, signal) {
-    cb.current.onBanner('Connection lost — the models are still working; reconnecting…')
+    cb.current.onBanner('Connection lost - the models are still working; reconnecting…')
     for (let delay = 2000; ; delay = Math.min(8000, delay + 1500)) {
       await new Promise((r) => setTimeout(r, delay))
       if (signal.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e }
@@ -288,7 +288,7 @@ export function useRoundStream({
       } catch (e) {
         if (e.name === 'AbortError') throw e
         if (/no such round/i.test(e.message)) {
-          // finished while we were away — everything persisted server-side
+          // finished while we were away - everything persisted server-side
           const d = await api.getChat(chatId).catch(() => null)
           if (d && chatId === activeChatIdRef.current) {
             cb.current.onActiveChatRefresh(d.chat)
@@ -297,7 +297,7 @@ export function useRoundStream({
           cb.current.onBanner('')
           return
         }
-        // still offline — loop and try again
+        // still offline - loop and try again
       }
     }
   }
@@ -333,7 +333,7 @@ export function useRoundStream({
     putBatch(chatId, addFragment(getBatch(chatId), text, Date.now(), attachments.map((a) => a.id)))
   }
 
-  // Cancel the active chat's pending batch — allowed only before the atomic
+  // Cancel the active chat's pending batch - allowed only before the atomic
   // flip. The pure state machine no-ops if it's already committed.
   function cancelActiveBatch() {
     const chatId = stateRef.current.chatId
@@ -356,7 +356,7 @@ export function useRoundStream({
     runStream(`/api/chats/${chatId}/send`, { text, attachment_ids }, { queueable: true })
   }
 
-  // Restore / discard a chat's pending batch as the user navigates — called by
+  // Restore / discard a chat's pending batch as the user navigates - called by
   // App's selectChat and deleteChat, which own navigation.
   function restoreBatchFor(chatId) { setActiveBatch(getBatch(chatId)) }
   function dropBatchFor(chatId) { batchStore.current.delete(chatId) }
@@ -378,7 +378,7 @@ export function useRoundStream({
       // Correlates this turn with the client-side voice-trace stages
       // (frontend/src/voiceTrace.js) so the server can log its own
       // context-assembly/provider-TTFT split against the SAME turn_id.
-      // Always undefined for text sends — JSON.stringify drops it, so the
+      // Always undefined for text sends - JSON.stringify drops it, so the
       // backend sees no turn_id and records nothing extra.
       turn_id: turnId,
     }, { queueable: true })
@@ -394,7 +394,7 @@ export function useRoundStream({
   }
 
   function stopRound() {
-    // Detached rounds don't die with the connection — stopping is explicit.
+    // Detached rounds don't die with the connection - stopping is explicit.
     const chatId = activeChatIdRef.current
     if (chatId) api.abortRound(chatId).catch(() => {})
     roundCtrl.current?.abort()
@@ -404,7 +404,7 @@ export function useRoundStream({
   // away. This is hygiene layered on top of the write-guard: it stops the old
   // stream's reader loop and clears the live UI so nothing keeps ticking.
   //
-  // CRITICAL: this aborts only our reader/stream + local UI + voice — it must
+  // CRITICAL: this aborts only our reader/stream + local UI + voice - it must
   // NOT abort the backend round. Chat A's detached round keeps running
   // server-side, finishes, and persists; we catch up via reattachRound when the
   // user returns. Never call api.abortRound() here (that's for deliberate

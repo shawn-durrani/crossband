@@ -2,7 +2,7 @@
 //
 // THE INVARIANT: the `queued → in-flight` transition is a SINGLE ATOMIC FLIP.
 // A cancel issued in the same tick as the worker's flip must resolve
-// deterministically — either cancel wins and NOTHING sends, or the send commits
+// deterministically - either cancel wins and NOTHING sends, or the send commits
 // and cancel no-ops. There is never a partial send. (Same bug-class as the
 // cross-chat write-guard: one boolean decides, and it's checked in one place.)
 //
@@ -25,7 +25,7 @@ export function createBatch() {
   return { status: 'empty', fragments: [], attachmentIds: [] }
 }
 
-// True once the batch has been handed toward the backend — past this point it is
+// True once the batch has been handed toward the backend - past this point it is
 // immutable and normal chat semantics take over (cancel becomes a no-op).
 export function isCommitted(batch) {
   return batch.status === 'in-flight' || batch.status === 'accepted'
@@ -41,7 +41,7 @@ export function pendingCount(batch) {
   return isCommitted(batch) ? 0 : batch.fragments.length
 }
 
-// Append one typed message. Refused once the batch is committed — a fragment
+// Append one typed message. Refused once the batch is committed - a fragment
 // added after the flip would be a partial send, which the invariant forbids.
 export function addFragment(batch, text, ts, attachmentIds = []) {
   if (isCommitted(batch)) return batch
@@ -66,7 +66,7 @@ export function cancelBatch(batch) {
 // a batch that was cancelled (or never had fragments) yields committed:false and
 // the caller sends nothing. Because JS runs this to completion on one thread,
 // whichever of cancelBatch/flipBatch ran first in a shared tick has already
-// rewritten `status`, so the loser sees a non-queued batch and does nothing —
+// rewritten `status`, so the loser sees a non-queued batch and does nothing -
 // never a partial send.
 export function flipBatch(batch) {
   if (batch.status !== 'queued') return { batch, committed: false }

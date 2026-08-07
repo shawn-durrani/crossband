@@ -138,7 +138,7 @@ def test_tool_only_offered_when_enabled_and_available(app, monkeypatch):
 
 def _poll(fn, tries=200, delay=0.03):
     """Drive the detached guest task by polling (each request/sleep lets the
-    app's background loop advance) until `fn()` is truthy — or give up."""
+    app's background loop advance) until `fn()` is truthy - or give up."""
     import time
     for _ in range(tries):
         val = fn()
@@ -171,7 +171,7 @@ def test_guest_runs_as_detached_job_not_an_inline_turn(app, monkeypatch):
             body = "".join(r.iter_text())
         events = sse_events(body)
         starts = [e["speaker"] for e in events if e["type"] == "speaker_start"]
-        # the round is the roster ONLY — the guest is decoupled
+        # the round is the roster ONLY - the guest is decoupled
         assert starts == ["claude", "gpt"]
         # ...but a job is announced so its status chip can appear immediately
         job_ev = next(e for e in events if e["type"] == "guest_job")
@@ -212,7 +212,7 @@ def test_completed_result_is_handed_back_by_a_narrator(app, monkeypatch):
                       {"code_repos": {"demo": "/tmp"}, "chat_id": cid})
         with c.stream("POST", f"/api/chats/{cid}/send", json={"text": "go"}) as r:
             "".join(r.iter_text())
-        # the roster drains AFTER the guest reply lands — guest not the last word
+        # the roster drains AFTER the guest reply lands - guest not the last word
         speakers = _poll(lambda: (
             (s := [m["speaker"] for m in
                    c.get(f"/api/chats/{cid}").json()["messages"]])
@@ -222,7 +222,7 @@ def test_completed_result_is_handed_back_by_a_narrator(app, monkeypatch):
 
 def test_no_guest_no_extra_round(app, monkeypatch):
     """The resume fires ONLY after a guest turn: an ordinary round (no summons)
-    is exactly one round, unchanged — no runaway follow-ups."""
+    is exactly one round, unchanged - no runaway follow-ups."""
     monkeypatch.setattr(engine.providers, "stream_reply", fake_stream(["hi"]))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
@@ -250,7 +250,7 @@ def test_guest_skipped_when_code_disabled_after_summons(app, monkeypatch):
 
 def test_guest_error_fails_the_job_round_still_completes(app, monkeypatch):
     """A guest that blows up fails its JOB (visible status), while the
-    round that summoned it finishes normally — the failure is decoupled from the
+    round that summoned it finishes normally - the failure is decoupled from the
     turn, not reported as a cut-off inline message."""
     monkeypatch.setattr(engine.providers, "stream_reply", fake_stream(["ok"]))
 
@@ -258,7 +258,7 @@ def test_guest_error_fails_the_job_round_still_completes(app, monkeypatch):
                    resume=None, chat_id=0, model="", effort="",
                    session_key=None, ref=""):
         raise RuntimeError("CLI exploded")
-        yield  # pragma: no cover — makes this an async generator
+        yield  # pragma: no cover - makes this an async generator
 
     monkeypatch.setattr(engine.guest, "run_guest", boom)
     with TestClient(app, base_url="http://127.0.0.1") as c:
@@ -332,7 +332,7 @@ def test_run_guest_options_enforce_read_only(tmp_path, monkeypatch):
     assert opts.cwd == str(guest._worktree_path("demo", 0))  # isolated
     assert opts.max_turns == 7
     assert "membro" in opts.mcp_servers                     # memory rides along
-    # get_diagnostic is always mounted — no code_mcp opt-in needed
+    # get_diagnostic is always mounted - no code_mcp opt-in needed
     assert "sideband-diag" in opts.mcp_servers
     # guest authenticates via the user's own login in a clean child env
     assert opts.env.get("CLAUDECODE") == "" and opts.env.get("ANTHROPIC_API_KEY") == ""
@@ -345,7 +345,7 @@ def test_run_guest_options_enforce_read_only(tmp_path, monkeypatch):
     assert captured["options"].env.get("ANTHROPIC_API_KEY") == "sk-x"
     assert "explain x" in captured["prompt"] and "ctx" in captured["prompt"]
     # usage event carries real cost + the phase-2 resume handle. `events` is
-    # the FIRST (default) run — clean env, no key restored — so its recorded
+    # the FIRST (default) run - clean env, no key restored - so its recorded
     # billing provenance is subscription, not the metered API key.
     usage = next(p for k, p in events if k == "usage")
     assert usage["cost"] == 0.01 and usage["session_id"] == "s-1"
@@ -377,7 +377,7 @@ def test_interpolate_env_resolves_refs_and_fails_closed(monkeypatch):
 
 def test_code_mcp_env_ref_is_resolved_in_options(tmp_path, monkeypatch):
     """End-to-end: a code_mcp server whose env references ${MEMORY_AUTH_TOKEN}
-    reaches the SDK with the resolved value — this is what lets membro-admin be
+    reaches the SDK with the resolved value - this is what lets membro-admin be
     wired to guests without pasting the token into config."""
     import claude_agent_sdk as sdk
     captured = {}
@@ -517,7 +517,7 @@ def test_per_summon_model_overrides_config(tmp_path, monkeypatch):
 
 def test_summon_tool_validates_and_stores_model():
     cfg = {"chat_id": 3, "code_repos": {"demo": "/tmp/x"}}
-    # invalid alias rejected at the boundary — nothing queued, nothing to SDK
+    # invalid alias rejected at the boundary - nothing queued, nothing to SDK
     bad = guest.request(3, {"task": "look at engine", "model": "gpt-5"}, cfg)
     assert "unknown model" in bad and guest.take(3) is None
     # valid alias is echoed in the ack and stored on the summons
@@ -627,7 +627,7 @@ def test_summon_validates_and_stores_ref():
 
 
 def test_summon_refuses_ref_with_continue_last():
-    """ref + continue_last would silently mix two working contexts — refuse it
+    """ref + continue_last would silently mix two working contexts - refuse it
     with a clear message, queue nothing."""
     cfg = {"chat_id": 6, "code_repos": {"demo": "/tmp/x"},
            "code_allow_writes": True}
@@ -675,7 +675,7 @@ def test_resolve_ref_checks_out_branch_actual_content(tmp_path):
 
 
 def test_resolve_ref_checks_out_unmerged_pr_head(tmp_path):
-    """A PR number resolves via refs/pull/<N>/head — so a review sees UNMERGED
+    """A PR number resolves via refs/pull/<N>/head - so a review sees UNMERGED
     PR content that never touched main (the exact live failure)."""
     def g(repo, *a):
         subprocess.run(["git", "-C", str(repo), *a], check=True,
@@ -703,7 +703,7 @@ def test_resolve_ref_checks_out_unmerged_pr_head(tmp_path):
 
 
 def test_resolve_ref_invalid_raises_never_falls_back_to_main(tmp_path):
-    """An unresolvable ref is a loud preflight error — the host must NOT silently
+    """An unresolvable ref is a loud preflight error - the host must NOT silently
     hand back a main worktree (that masquerade is exactly what is forbidden)."""
     work = _git_repo_with_origin(tmp_path)
     with pytest.raises(RuntimeError) as e:
@@ -716,7 +716,7 @@ def test_resolve_ref_invalid_raises_never_falls_back_to_main(tmp_path):
 
 def test_bad_ref_summon_refuses_join_not_stale_main(tmp_path):
     """End-to-end: run_guest with an unresolvable ref refuses to join rather than
-    silently checking out main — the whole point of host-owned checkout."""
+    silently checking out main - the whole point of host-owned checkout."""
     work = _git_repo_with_origin(tmp_path)
     async def drain():
         return [ev async for ev in guest.run_guest(
@@ -730,7 +730,7 @@ def test_bad_ref_summon_refuses_join_not_stale_main(tmp_path):
 def test_run_guest_records_target_ref_in_usage_and_tells_the_guest(tmp_path, monkeypatch):
     """A ref summon: the host resolves + checks out the target, records it in the
     usage audit trail (requested ref + resolved commit), and the system prompt
-    tells the guest its cwd already IS that ref — so a read-only review needs no
+    tells the guest its cwd already IS that ref - so a read-only review needs no
     git/Bash of its own."""
     import claude_agent_sdk as sdk
     captured = {}
@@ -789,9 +789,9 @@ def test_run_guest_records_target_ref_in_usage_and_tells_the_guest(tmp_path, mon
 
 def test_concurrent_ref_resolution_no_fetch_head_race(monkeypatch):
     """Two jobs resolving DIFFERENT targets against the same primary repo must
-    each get their OWN commit — never whichever fetch ran last. Regression for
+    each get their OWN commit - never whichever fetch ran last. Regression for
     the shared-FETCH_HEAD race: a fake git forces both fetches to complete
-    (a barrier) BEFORE either resolves, and pins FETCH_HEAD to a poison value —
+    (a barrier) BEFORE either resolves, and pins FETCH_HEAD to a poison value -
     so any code path that read the shared FETCH_HEAD would return the wrong
     commit. The fix fetches each target into its own job-keyed private ref."""
     import threading
@@ -840,14 +840,14 @@ def test_concurrent_ref_resolution_no_fetch_head_race(monkeypatch):
     assert out["A"] == ("a" * 40, "ref branch-a")
     assert out["B"] == ("b" * 40, "PR #7")
     assert poison not in (out["A"][0], out["B"][0])
-    # both private refs were cleaned up (finally ran) — no cross-deletion, no leak
+    # both private refs were cleaned up (finally ran) - no cross-deletion, no leak
     assert refs == {}
 
 
 def test_verified_model_from_session_beats_requested_tier(tmp_path, monkeypatch):
     """The core of it: the chat surfaces the model Claude Code ACTUALLY ran, sourced
-    from its session metadata — resolving a requested "default" to the concrete
-    model — not the caller's intent."""
+    from its session metadata - resolving a requested "default" to the concrete
+    model - not the caller's intent."""
     import claude_agent_sdk as sdk
     captured = {}
 
@@ -893,11 +893,11 @@ def test_verified_model_from_session_beats_requested_tier(tmp_path, monkeypatch)
     assert usage["model_alias"] == "default"
     assert usage["verified_model"] == "claude-sonnet-4-5-20250929"
     assert usage["model"] == "claude-sonnet-4-5-20250929"  # header shows it
-    # the readout is appended to the reply — always visible in-chat — and it
+    # the readout is appended to the reply - always visible in-chat - and it
     # scopes "verified" to the MODEL only (read back from the session)…
     assert "claude-sonnet-4-5-20250929` (verified from Claude Code's session)" in text
     # …while the EFFORT is labelled requested/applied, NOT verified (the SDK
-    # never reports thinking-token usage back — see the overclaim fix).
+    # never reports thinking-token usage back - see the overclaim fix).
     assert "effort **think** (requested" in text
     assert "effort **think** (verified" not in text
 
@@ -909,7 +909,7 @@ def test_status_reports_why_unavailable():
 
 def test_status_use_api_key_reflects_real_billing_path(tmp_path, monkeypatch):
     """status().use_api_key must match run_guest's actual decision: metered
-    ONLY when code_use_api_key is set AND a key exists — so the UI drift
+    ONLY when code_use_api_key is set AND a key exists - so the UI drift
     indicator never cries wolf and never stays silent on real drift."""
     cfg = {"code_repos": {"demo": str(tmp_path)}}
     # subscription: flag off (even with a key present)
@@ -924,7 +924,7 @@ def test_status_use_api_key_reflects_real_billing_path(tmp_path, monkeypatch):
 
 def test_status_use_api_key_present_even_when_unavailable(monkeypatch):
     """The billing field must ride EVERY status() return, not just the available
-    one — otherwise a machine without the Claude Code CLI (e.g. CI) KeyErrors on
+    one - otherwise a machine without the Claude Code CLI (e.g. CI) KeyErrors on
     it. This is the regression that turned CI red."""
     monkeypatch.setattr(guest, "_cli_present", lambda: False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
@@ -1032,7 +1032,7 @@ def test_run_guest_implement_options(tmp_path, monkeypatch):
 
 def test_implement_downgrades_to_read_only_if_writes_flag_off(tmp_path, monkeypatch):
     """A queued implement summons must not gain write tools if the config flag
-    was flipped off before the guest ran — options fall back to read-only."""
+    was flipped off before the guest ran - options fall back to read-only."""
     import claude_agent_sdk as sdk
     captured = {}
 
@@ -1104,8 +1104,8 @@ def test_continue_last_resumes_prior_session_and_repo(app, monkeypatch):
 
 
 def test_continue_last_reuses_prior_worktree_key(app, monkeypatch):
-    """A resumed visit must land in the SAME cwd as the visit it continues — the
-    CLI's session lookup is keyed by working directory — so the stored
+    """A resumed visit must land in the SAME cwd as the visit it continues - the
+    CLI's session lookup is keyed by working directory - so the stored
     worktree_key is threaded back as the new visit's session_key. Without
     this a resume would get a fresh isolated path and lose its working context."""
     monkeypatch.setattr(engine.providers, "stream_reply", fake_stream(["ok"]))
@@ -1227,7 +1227,7 @@ def test_secret_files_are_read_blocked():
 
 def test_secret_read_rules_are_implement_mode_only(tmp_path, monkeypatch):
     """Pin the ASYMMETRY, in both directions, from the options the SDK is
-    actually handed — not from the constants alone.
+    actually handed - not from the constants alone.
 
     The credential-file rules live in IMPLEMENT_DENIED and nowhere else.
     Investigate mode's denied list (DENIED_TOOLS) names whole tools and carries
@@ -1326,7 +1326,7 @@ def test_worktree_recreated_after_crash(tmp_path):
     _git_repo(tmp_path)
     wt1 = guest._add_worktree(tmp_path, "demo", 43)
     (wt1 / "half-done.txt").write_text("crash leftovers")
-    # no cleanup ran (simulated crash) — next visit must still succeed
+    # no cleanup ran (simulated crash) - next visit must still succeed
     wt2 = guest._add_worktree(tmp_path, "demo", 43)
     assert wt2 == wt1 and not (wt2 / "half-done.txt").exists()
     guest._remove_worktree(tmp_path, wt2)
@@ -1336,7 +1336,7 @@ def test_leftover_directory_git_cannot_remove_does_not_wedge_the_next_visit(tmp_
     """A leftover worktree DIRECTORY that git no longer has registered used to
     wedge that repo+chat forever. `worktree remove` refuses a path this repo
     doesn't own, `prune` leaves the directory alone, and `worktree add` then
-    fails on the non-empty path — so every later visit reported "[Claude Code
+    fails on the non-empty path - so every later visit reported "[Claude Code
     could not join: …]" until a human deleted it by hand. It is reachable in
     normal use: teardown is capped at GUEST_TEARDOWN_S and abandoned when it
     overruns, which is exactly how a registration-less directory gets left
@@ -1345,7 +1345,7 @@ def test_leftover_directory_git_cannot_remove_does_not_wedge_the_next_visit(tmp_
     dest = guest._worktree_path("demo", 950003)
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "leftover.txt").write_text("from a visit that never tore down")
-    assert not (dest / ".git").exists()  # never registered — git can't remove it
+    assert not (dest / ".git").exists()  # never registered - git can't remove it
     try:
         wt = guest._add_worktree(tmp_path, "demo", 950003)
         assert wt == dest
@@ -1370,7 +1370,7 @@ def test_force_clear_refuses_a_path_outside_the_guest_worktree_namespace(tmp_pat
 
 
 def _git_repo_with_origin(tmp_path):
-    """A repo whose `origin` bare remote has advanced PAST the local checkout —
+    """A repo whose `origin` bare remote has advanced PAST the local checkout -
     the exact stale-local-main setup that made a reviewer read pre-PR code and
     report false "the PR doesn't exist" blockers."""
     def g(repo, *a):
@@ -1409,7 +1409,7 @@ def test_worktree_path_is_session_keyed():
 
 
 def test_concurrent_sessions_get_distinct_worktrees_scoped_cleanup(tmp_path):
-    """Two concurrent sessions (here modelled as two chats — same-chat runs are
+    """Two concurrent sessions (here modelled as two chats - same-chat runs are
     serialized) get separate checkouts, and tearing one down leaves the
     other intact: cleanup is scoped to a session's own worktree, never a
     neighbour's."""
@@ -1429,7 +1429,7 @@ def test_concurrent_sessions_get_distinct_worktrees_scoped_cleanup(tmp_path):
 def test_stale_sibling_from_crash_is_reclaimed(tmp_path):
     """A hard-killed visit skips its teardown and leaves an orphan worktree.
     Because same-chat runs are serialized, the NEXT visit's sweep reclaims that
-    sibling rather than leaking it — per-session paths are otherwise never
+    sibling rather than leaking it - per-session paths are otherwise never
     reused."""
     _git_repo(tmp_path)
     leaked = guest._add_worktree(tmp_path, "demo", 900301, "deadsess")
@@ -1437,7 +1437,7 @@ def test_stale_sibling_from_crash_is_reclaimed(tmp_path):
     fresh = guest._add_worktree(tmp_path, "demo", 900301, "livesess")
     try:
         assert fresh != leaked
-        assert not leaked.exists()   # reclaimed — no orphan checkout leaks
+        assert not leaked.exists()   # reclaimed - no orphan checkout leaks
         assert fresh.is_dir() and (fresh / "README.md").exists()
     finally:
         guest._remove_worktree(tmp_path, fresh)
@@ -1446,7 +1446,7 @@ def test_stale_sibling_from_crash_is_reclaimed(tmp_path):
 
 def test_worktree_bases_on_fetched_origin_main_not_stale_local(tmp_path):
     """The stale-HEAD fix: _add_worktree fetches and bases the checkout
-    on origin/main, so a review session sees the ref's ACTUAL current commit —
+    on origin/main, so a review session sees the ref's ACTUAL current commit -
     not the pre-PR content the deploy checkout's stale local main still had."""
     work = _git_repo_with_origin(tmp_path)
     assert not (work / "pr_only.txt").exists()   # local checkout is behind origin
@@ -1458,7 +1458,7 @@ def test_worktree_bases_on_fetched_origin_main_not_stale_local(tmp_path):
 
 
 def test_non_repo_fails_loudly_not_shared(tmp_path):
-    """If worktree creation fails, the visit is refused — never silently run
+    """If worktree creation fails, the visit is refused - never silently run
     two writers on the shared checkout again."""
     async def drain():
         return [ev async for ev in guest.run_guest(
@@ -1483,7 +1483,7 @@ def test_code_default_on_config(tmp_path):
 def test_continue_last_repo_mismatch_starts_fresh_and_says_so(app, monkeypatch):
     """A stored session is bound to one repo's worktree. When continue_last
     points at a visit in a different repo than the summon asks for, the
-    explicit repo must win and the resume must be dropped — silently
+    explicit repo must win and the resume must be dropped - silently
     overriding stranded a guest in the wrong checkout, and the guest
     message must say why the working context was not carried over."""
     monkeypatch.setattr(engine.providers, "stream_reply", fake_stream(["ok"]))

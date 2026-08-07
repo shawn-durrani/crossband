@@ -1,9 +1,9 @@
 """The realtime STT relay, driven end to end with a faked ElevenLabs socket.
 
 Exists because of a live failure: the prewarm hook shipped with a missing
-import, and the relay died with NameError on the FIRST commit frame — no
+import, and the relay died with NameError on the FIRST commit frame - no
 test exercised the relay's message loop at all ("thin hook, covered by
-review" — it wasn't). These tests run the real handler: init → audio →
+review" - it wasn't). These tests run the real handler: init → audio →
 commit → final transcript back, with the prewarm observed firing, and prove
 a prewarm failure can no longer break transcription."""
 

@@ -1,5 +1,5 @@
-"""Boot smoke test: the app comes up keyless with the memory service down —
-GET /api/state returns 200 with memory.available false — plus the
+"""Boot smoke test: the app comes up keyless with the memory service down -
+GET /api/state returns 200 with memory.available false - plus the
 single-instance lockfile behaviour."""
 
 import logging
@@ -31,7 +31,7 @@ def test_state_boots_keyless_and_memoryless(app):
         assert data["chats"] == []
         assert data["running_chat_ids"] == []  # nothing generating at boot
         # Seed value for the frontend's global live-events
-        # watermark — 0 on a fresh database with no messages yet.
+        # watermark - 0 on a fresh database with no messages yet.
         assert data["latest_message_id"] == 0
 
 
@@ -98,7 +98,7 @@ def test_archive_hides_nothing_deletes_nothing(app):
         state = client.get("/api/state").json()
         row = next(c for c in state["chats"] if c["id"] == chat["id"])
         assert row["archived_at"] is not None  # flag travels; UI filters on it
-        # still fully retrievable — nothing was deleted
+        # still fully retrievable - nothing was deleted
         got = client.get(f"/api/chats/{chat['id']}").json()
         assert got["chat"]["title"] == "Sensitive demo chat"
         restored = client.patch(f"/api/chats/{chat['id']}",
@@ -173,7 +173,7 @@ def test_update_participant_reasoning_effort_validated_against_existing_provider
 def _restore_logging():
     """`_configure_log_level` mutates process-global logging state (root
     logger + the "mmc" logger), so every test that exercises it must put both
-    back exactly as found — otherwise one test's MMC_LOG_LEVEL leaks into
+    back exactly as found - otherwise one test's MMC_LOG_LEVEL leaks into
     every test that runs after it in the same process."""
     root = logging.getLogger()
     mmc = logging.getLogger("mmc")
@@ -201,8 +201,8 @@ def test_log_level_unset_leaves_logging_untouched(tmp_path, _restore_logging):
 
 def test_log_level_set_raises_mmc_logger_verbosity(tmp_path, _restore_logging):
     """Set MMC_LOG_LEVEL=info (case-insensitive) for a deliberate sampling
-    session and the "mmc.*" hierarchy — including providers.py's Claude-chat
-    cache-telemetry line — becomes reachable."""
+    session and the "mmc.*" hierarchy - including providers.py's Claude-chat
+    cache-telemetry line - becomes reachable."""
     settings = Settings(data_dir=str(tmp_path / "data"), log_level="info",
                         memory_url="http://127.0.0.1:1")
     create_app(settings)
@@ -210,8 +210,8 @@ def test_log_level_set_raises_mmc_logger_verbosity(tmp_path, _restore_logging):
 
 
 def test_log_level_unrecognized_value_is_ignored_not_fatal(tmp_path, _restore_logging, caplog):
-    """A typo in MMC_LOG_LEVEL must never crash startup — it's a diagnostics
-    knob, not a required setting — and is reported so the typo is easy to
+    """A typo in MMC_LOG_LEVEL must never crash startup - it's a diagnostics
+    knob, not a required setting - and is reported so the typo is easy to
     catch rather than silently doing nothing."""
     settings = Settings(data_dir=str(tmp_path / "data"), log_level="not-a-level",
                         memory_url="http://127.0.0.1:1")

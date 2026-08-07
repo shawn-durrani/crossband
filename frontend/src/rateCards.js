@@ -11,7 +11,7 @@
 // nobody had, and a form is a far faster way to invent a number than a text
 // editor ever was. Making pricing easy must not make guessing easy.
 //
-// Pure (no React), like lifecycle.js and modelReadout.js — the component
+// Pure (no React), like lifecycle.js and modelReadout.js - the component
 // renders whatever this returns.
 
 // A card's origin, in plain English. Never conflate a shipped default with a
@@ -63,7 +63,7 @@ function fmt(n) {
 }
 
 // Validate a draft BEFORE it is sent, so the refusal is explained in the form
-// rather than surfacing as a 400. The backend re-checks all of this — this is
+// rather than surfacing as a 400. The backend re-checks all of this - this is
 // the courteous half, not the enforcing half.
 // Mirrors backend/ratecard.py's rules so a refusal is explained in the form
 // rather than arriving as a 400. The backend re-checks all of it and is the
@@ -76,7 +76,7 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export function validateDraft(draft) {
   const errors = {}
-  // A self-hosted declaration carries no rates at all — its $0 IS the claim —
+  // A self-hosted declaration carries no rates at all - its $0 IS the claim -
   // so only the source note is required.
   if (draft?.provenance === SELF_HOSTED) {
     if (!String(draft?.source || '').trim()) {
@@ -90,7 +90,7 @@ export function validateDraft(draft) {
     const n = num(v)
     if (Number.isNaN(n)) errors[field] = `Enter an ${label} rate in $ per 1M tokens.`
     else if (n < 0) errors[field] = 'A rate cannot be negative.'
-    else if (n > MAX_RATE) errors[field] = 'That looks too large — check the units ($ per 1M tokens).'
+    else if (n > MAX_RATE) errors[field] = 'That looks too large - check the units ($ per 1M tokens).'
   }
   checkRate(draft?.input, 'input', 'input')
   checkRate(draft?.output, 'output', 'output')
@@ -105,14 +105,14 @@ export function validateDraft(draft) {
   const asOf = String(draft?.as_of || '').trim()
   if (!asOf) errors.as_of = 'Enter the date this rate was published or checked.'
   else if (!ISO_RE.test(asOf) || Number.isNaN(Date.parse(asOf))) {
-    errors.as_of = 'Use a real date in YYYY-MM-DD form — a date nothing can parse '
+    errors.as_of = 'Use a real date in YYYY-MM-DD form - a date nothing can parse '
       + 'is the same as no date.'
   }
   return { ok: Object.keys(errors).length === 0, errors }
 }
 
 // Draft -> request body. Cache terms are omitted entirely when not supplied, so
-// the card inherits the provider default exactly as a built-in one does —
+// the card inherits the provider default exactly as a built-in one does -
 // one rule, not two.
 export function draftToBody(draft) {
   const provenance = draft.provenance === SELF_HOSTED ? SELF_HOSTED : ESTIMATE
@@ -154,7 +154,7 @@ export function draftFrom(row) {
   }
 }
 
-// Unpriced models first — they are the reason someone opened this page, and
+// Unpriced models first - they are the reason someone opened this page, and
 // the only state that actively blocks a seat. Otherwise alphabetical.
 export function sortRows(rows) {
   return [...(rows || [])].sort((a, b) => {
