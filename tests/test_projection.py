@@ -507,10 +507,10 @@ def test_any_label_write_ends_the_pending_state(names, cfg):
     """Once the pass has spoken the wait is over, whatever it said: a named
     label projects as that person, and even a malformed write degrades to
     the owner (the shared degradation rule) rather than pending forever."""
-    labelled = _labelled(_voice_msg("it was Kat"), ["Kat"], uncertain=[])
+    labelled = _labelled(_voice_msg("it was Sam"), ["Sam"], uncertain=[])
     text = build_anthropic_messages(
         "claude", [labelled], names, _room_cfg(cfg))[0]["content"][0]["text"]
-    assert LABEL_RE.match(text).group("name") == f"Kat{IN_ROOM_SUFFIX}"
+    assert LABEL_RE.match(text).group("name") == f"Sam{IN_ROOM_SUFFIX}"
     junk = _voice_msg("garbled", voice_labels="{not json")
     assert _user_turn_head(junk, _room_cfg(cfg)) == cfg["user_name"]
 
