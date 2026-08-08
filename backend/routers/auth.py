@@ -85,9 +85,16 @@ def session_state(request: Request) -> dict:
             has_passkey = bool(passkeys.credentials_for_rp(con, rp))
         finally:
             con.close()
+    # The pre-enrolment open posture is a LOOPBACK posture only. The
+    # middleware already holds an anonymous trusted-host caller to the login
+    # surface, so this answer must agree with it: a tailnet phone on an
+    # unenrolled install gets the setup screen, not a half-open app whose
+    # every data fetch 401s.
+    host = (request.url.hostname or "").lower()
+    open_posture = (not enrolled) and host in ("127.0.0.1", "localhost", "::1")
     return {
         "enrolled": enrolled,
-        "authenticated": (not enrolled) or auth.request_session_ok(request),
+        "authenticated": open_posture or auth.request_session_ok(request),
         "passkey": has_passkey,
     }
 

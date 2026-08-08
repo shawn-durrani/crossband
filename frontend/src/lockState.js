@@ -8,7 +8,11 @@
 
 export function gateView(session, webauthnAvailable = false) {
   if (!session) return 'probing'
-  if (!session.enrolled || session.authenticated) return 'open'
+  if (session.authenticated) return 'open'
+  // Unenrolled AND unauthenticated: a trusted-host (tailnet) caller on an
+  // install with no password yet - the server holds it to the login surface,
+  // so the right face is setup, not a half-open app.
+  if (!session.enrolled) return 'setup'
   if (session.passkey && webauthnAvailable) return 'passkey'
   return 'password'
 }
