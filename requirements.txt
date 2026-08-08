@@ -16,4 +16,14 @@ claude-agent-sdk  # summon_claude_code guest (needs the Claude Code CLI at runti
 # Capped at <3: verification semantics are security-load-bearing, so a major
 # bump is its own reviewed change. Same pin as the membro/spendglass siblings.
 webauthn>=2.2,<3
+# Local speaker identification for room mode (#28 part 2): offline voice-embed
+# matcher so a known voice is named locally in a fraction of a second, skipping
+# the ElevenLabs diarize batch call for the common single-speaker case. Small
+# and pure - it bundles its own runtime (no torch, no separate onnxruntime); the
+# only extra it needs is numpy. The wheel and the model are BOTH optional at
+# runtime: backend/voiceid.py guards the import and falls back to the ElevenLabs
+# path if either is absent, so this never becomes a hard dependency of the app.
+# The 38MB model itself is fetched once at runtime and never committed.
+sherpa-onnx>=1.13,<2
+numpy
 pytest

@@ -263,6 +263,7 @@ week when it was maintained by hand.
 - (`test_tool_concurrency.py`) One assistant turn's tool calls run concurrently, in-order
 - (`test_tool_dispatch.py`) Tool dispatch
 - (`test_utility_usage.py`) Utility-model (Haiku) spend attribution
+- (`test_voice_id.py`) Local speaker identification (#28 part 2): the pure identify/open-set/ambiguity/two-voice decision seam with synthetic vectors, enrolment averaging cached by clip set with a mocked extractor, the pinned-model SHA-256 fetch-and-verify with no network, and the run_pass wiring (fast match skips the batch call, defer and disabled run the ElevenLabs path). An integration test builds the real extractor when the model is present and skips cleanly when it is not
 - (`test_voice_rounds.py`) Voice playback regression guards for the change that decoupled Claude Code guest execution from the turn lifecycle
 - (`test_voice_trace.py`) Per-turn voice latency instrumentation
 - (`test_work_status.py`) Announce pending external work before the chat goes silent, using a STRUCTURED status event (a trusted activity label) rather than hardcoded filler text, and NEVER persisting it into a chat message or the model's own reply content

@@ -205,6 +205,25 @@ class Settings(BaseModel):
     # CROSSBAND_ROOM_ROSTER_MAX.
     room_roster_max: int = 6
 
+    # Local speaker identification (#28 part 2): the offline fast identity path.
+    # When on (default), room mode names a confident single known voice locally
+    # in a fraction of a second and skips the ElevenLabs diarize batch call for
+    # that turn; the batch call still runs whenever the local matcher sees more
+    # than one voice or cannot decide, so crosstalk and uncertain handling are
+    # unchanged. When off (CROSSBAND_VOICE_ID_ENABLED=false), or when sherpa-onnx
+    # or the model is absent, behaviour is exactly today's ElevenLabs-only pass.
+    voice_id_enabled: bool = True
+    # Cosine match threshold. Calibrated for nemo_en_titanet_small: same-speaker
+    # ~0.63-0.73 vs best-impostor ~0.12-0.31 locally, so 0.5 sits in the gap.
+    voice_id_threshold: float = 0.5
+    # The pinned model. URL and SHA-256 pin TOGETHER - override both or neither;
+    # a URL override checked against the default hash simply fails verification
+    # and the matcher stays on the EL path. Empty here means "use the built-in
+    # pins" (backend/voiceid.py). The model is fetched once to
+    # <data_dir>/voice_models/ and never committed.
+    voice_id_model_url: str = ""
+    voice_id_model_sha256: str = ""
+
     # memory companion service (Membro)
     memory_url: str = "http://127.0.0.1:8901"
 

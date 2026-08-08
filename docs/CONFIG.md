@@ -75,6 +75,10 @@ supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 | `stt_model` | `scribe_v2` | Transcription model; realtime variant is used automatically when available. |
 | `voice_pricing` | built-in | ElevenLabs rate card used to price TTS/STT usage. |
 | `room_roster_max` | `6` | Room mode: how many people the roster may hold at once (the cap frees as people leave). A product choice, not a technical limit. |
+| `voice_id_enabled` | `true` | Room mode's offline local speaker matcher (#28). On, a **known** voice is named locally in a fraction of a second and the ElevenLabs diarize batch call is skipped for that turn; the batch call still runs whenever more than one voice is present or the match is uncertain, so crosstalk and unknown-voice handling are unchanged. Off (`CROSSBAND_VOICE_ID_ENABLED=false`), or when the `sherpa-onnx` wheel or the model file is absent, behaviour is exactly the ElevenLabs-only pass. Purely additive: it can never break voice, only speed up the common case. |
+| `voice_id_threshold` | `0.5` | Cosine similarity a voice must reach to be named. Calibrated for the bundled model (same-speaker ≈0.63–0.73 vs a stranger ≈0.12–0.31, so 0.5 sits in the gap). Raise it to name fewer, more certain matches; lower it to name more, less certainly. |
+| `voice_id_model_url` | `""` | Override the local speaker model's download URL. Empty uses the built-in pinned URL. Pin the **hash too**: a URL override checked against the default hash just fails verification and the matcher stays on the ElevenLabs path. |
+| `voice_id_model_sha256` | `""` | Override the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched **once** to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
 
 ## Memory (companion service)
 
