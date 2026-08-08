@@ -199,6 +199,11 @@ class Settings(BaseModel):
     tts_speed: float = 1.0  # 0.7-1.2; ElevenLabs speaking speed
     stt_model: str = "scribe_v2"
     voice_pricing: dict = Field(default_factory=lambda: dict(DEFAULT_VOICE_PRICING))
+    # Room mode (#28 phase 2): how many people the roster may hold at once
+    # (present people; the cap frees as people leave). A product choice, not a
+    # technical one - the diarization API clusters up to 32. Override with
+    # CROSSBAND_ROOM_ROSTER_MAX.
+    room_roster_max: int = 6
 
     # memory companion service (Membro)
     memory_url: str = "http://127.0.0.1:8901"

@@ -125,6 +125,21 @@ export const api = {
       clearTimeout(t)
     }
   },
+  // Room mode (#28 phase 2): the roster/flags snapshot a room_roster or
+  // room_flag live event tells us to refetch (the stream itself is
+  // content-free), remembered voices, forget, tap-to-correct, flag dismissal.
+  roster: (chatId) => fetch(`/api/chats/${chatId}/roster`).then(json),
+  voicePeople: () => fetch('/api/voice/people').then(json),
+  forgetVoice: (personId) => fetch(`/api/voice/people/${encodeURIComponent(personId)}`, {
+    method: 'DELETE',
+  }).then(json),
+  reassignSpeaker: (chatId, messageId, name) => fetch(
+    `/api/chats/${chatId}/messages/${messageId}/speaker`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).then(json),
+  resolveRoomFlag: (chatId, flagId) => fetch(
+    `/api/chats/${chatId}/flags/${flagId}/resolve`, { method: 'POST' }).then(json),
   usageSummary: (window = 'all') => fetch(`/api/usage/summary?window=${window}`).then(json),
   // Unified, read-only integration status that the Integrations console
   // renders. probe=false is a cheap dashboard load (no external calls);

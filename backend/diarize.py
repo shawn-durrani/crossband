@@ -20,9 +20,16 @@ message and pushed over the live-events stream.
 
 Honesty note, from the issue: batch diarization clusters are PER-REQUEST.
 speaker_0 in one utterance's call is not guaranteed to be the same person in
-the next call. Phase 1 labels are therefore best-effort per utterance;
-per-person anchoring and naming are phase 2. The raw clusters are persisted
-next to the labels so phase 2 can re-derive without a data migration.
+the next call. Phase 2 (#28) fixes comparability with ANCHORS: when the chat
+has a roster, each request is prefixed with a couple of seconds of every
+remembered present person's stored voice (backend/anchors.py) and hinted with
+num_speakers = roster + 1. The diarizer's prefix clusters then read straight
+back into NAMES, an utterance cluster matching a prefix cluster is that
+person, and an unmatched cluster is genuinely someone new - resolved by
+elimination when exactly one introduced person still lacks an anchor, and
+surfaced as an 'unknown_voice' ask-fallback flag otherwise. With no roster
+the pass behaves exactly as phase 1 (ordinals, label-only-when-interesting),
+and the phase-1 byte-identity/latency pins all still hold.
 
 Failure posture: a failed or slow pass leaves the message unlabelled and
 everything else untouched. No retry ever feeds back into the live path.
@@ -56,6 +63,66 @@ MATCH_PROBE_SECS = 0.5
 # Strong references to in-flight passes: asyncio only holds weak refs to
 # tasks, and a garbage-collected fire-and-forget task silently never runs.
 _TASKS: set = set()
+
+# ---- server-side room-mode registry (#28 phase 2) ----
+#
+# The durable truth is chats.room_mode; this dict is the LIVE mirror the STT
+# relay consults at each commit boundary - a plain dict lookup, no I/O, so the
+# audio path never touches the database. Writers: the relay's own init (seeded
+# from the chat row, off the audio path), the introduction scan, and the chat
+# PATCH override. A missing entry means "off", which is also the durable
+# default - so a process restart is consistent by construction.
+_ROOM_ENABLED: dict = {}
+
+# Last finished utterance per chat while room mode was OFF, so a confirmed
+# introduction can claim the audio that spoke it as the OWNER's first anchor.
+# Bounded three ways (one utterance per chat, tail-capped, at most
+# _STASH_MAX_CHATS chats, TTL'd on read) and in-memory only - nothing here
+# ever touches disk unless an introduction promotes it to an anchor clip.
+_STASHED: dict = {}
+_STASH_MAX_CHATS = 8
+INTRO_STASH_SECONDS = 30
+INTRO_STASH_TTL_S = 180.0
+
+MISMATCH_MIN_WORDS = 4  # don't cross-check a grunt
+
+
+def set_room_enabled(chat_id, on: bool):
+    if chat_id is None:
+        return
+    if on:
+        _ROOM_ENABLED[chat_id] = True
+    else:
+        _ROOM_ENABLED.pop(chat_id, None)
+
+
+def room_enabled(chat_id) -> bool:
+    return bool(_ROOM_ENABLED.get(chat_id))
+
+
+def stash_utterance(chat_id, pcm: bytes, sample_rate: int):
+    """Remember the freshest finished utterance for a chat (room mode off
+    path). Tail-capped: the introduction sentence is at the END of the
+    utterance's audio if anywhere."""
+    if chat_id is None or not pcm:
+        return
+    cap = INTRO_STASH_SECONDS * (sample_rate or 16000) * 2
+    _STASHED.pop(chat_id, None)  # re-insert = newest (dicts keep insert order)
+    _STASHED[chat_id] = (pcm[-cap:], sample_rate, time.monotonic())
+    while len(_STASHED) > _STASH_MAX_CHATS:
+        _STASHED.pop(next(iter(_STASHED)))
+
+
+def take_stashed_utterance(chat_id):
+    """Claim (and clear) the stashed utterance, if it is still fresh enough
+    to plausibly be the introduction the scan just confirmed."""
+    entry = _STASHED.pop(chat_id, None)
+    if not entry:
+        return None
+    pcm, sample_rate, at = entry
+    if time.monotonic() - at > INTRO_STASH_TTL_S:
+        return None
+    return pcm, sample_rate
 
 
 # ---------- pure rules (unit-tested directly, no I/O) ----------
@@ -120,6 +187,89 @@ def pick_target(rows, already_labelled) -> dict | None:
             continue
         return r
     return None
+
+
+# ---- anchored identification rules (#28 phase 2; pure, unit-tested) ----
+
+def split_words_at(words, prefix_seconds: float):
+    """Partition a diarized response's word list at the anchor-prefix
+    boundary: (prefix_words, utterance_words). Word timestamps are relative
+    to the WHOLE request (prefix + utterance); a small epsilon keeps a word
+    straddling the seam out of the prefix vote rather than corrupting it."""
+    eps = 0.05
+    prefix, utterance = [], []
+    for w in words or []:
+        if not isinstance(w, dict) or w.get("type") not in (None, "word"):
+            continue
+        if not w.get("speaker_id"):
+            continue
+        start = w.get("start")
+        end = w.get("end", start)
+        if start is None:
+            continue
+        if end is not None and end <= prefix_seconds + eps:
+            prefix.append(w)
+        elif start >= prefix_seconds - eps:
+            utterance.append(w)
+    return prefix, utterance
+
+
+def prefix_cluster_map(prefix_words, segments) -> dict:
+    """Read the diarizer's prefix clusters back into NAMES: each prefix word
+    falls inside one person's anchor segment (by midpoint); a cluster maps to
+    a person only when a clear majority (>= 60%) of its prefix words landed
+    in that person's segment - a cluster smeared across two people's anchors
+    identifies nobody. Returns {cluster_id: name}."""
+    votes: dict = {}  # cluster -> {name: count}
+    for w in prefix_words:
+        mid = (w["start"] + w.get("end", w["start"])) / 2
+        for seg in segments:
+            if seg["start"] <= mid < seg["end"]:
+                per = votes.setdefault(w["speaker_id"], {})
+                per[seg["name"]] = per.get(seg["name"], 0) + 1
+                break
+    out = {}
+    for cluster, per in votes.items():
+        total = sum(per.values())
+        name, count = max(per.items(), key=lambda kv: kv[1])
+        if total and count / total >= 0.6:
+            out[cluster] = name
+    return out
+
+
+def resolve_room_labels(clusters, cmap, pending_names, session) -> dict:
+    """The naming decision for one utterance in roster mode.
+
+    - a cluster in the prefix map gets that person's NAME;
+    - if exactly ONE unmatched cluster meets exactly ONE anchor-pending
+      person, elimination names them (uncertain until their anchor is
+      sufficient) - this is how a just-introduced person's anchor set gets
+      its first audio;
+    - any other unmatched cluster keeps a session ordinal, stays uncertain,
+      and asks ("someone new is speaking - who?").
+
+    Returns {"labels": [...], "uncertain": [...], "matched": {cluster: name},
+    "eliminated": {cluster: name}, "ask": [cluster, ...]}."""
+    labels, uncertain = [], []
+    matched, eliminated, ask = {}, {}, []
+    unmatched = [c for c in clusters if c not in cmap]
+    for c in clusters:
+        if c in cmap:
+            matched[c] = cmap[c]
+            labels.append(cmap[c])
+            continue
+        if len(unmatched) == 1 and len(pending_names) == 1:
+            name = pending_names[0]
+            eliminated[c] = name
+            labels.append(name)
+            uncertain.append(name)
+        else:
+            ordinal = session.assign([c])[0]
+            labels.append(ordinal)
+            uncertain.append(ordinal)
+            ask.append(c)
+    return {"labels": labels, "uncertain": uncertain, "matched": matched,
+            "eliminated": eliminated, "ask": ask}
 
 
 class RoomSession:
@@ -191,12 +341,26 @@ def schedule_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
 async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
     """One utterance's parallel pass: batch STT with diarize=true, then label
     reconciliation. Every blocking step runs on a worker thread; every
-    failure ends here (log only - the live path must never notice)."""
+    failure ends here (log only - the live path must never notice).
+
+    With a roster (#28 phase 2) the request grows an anchor prefix and a
+    num_speakers hint, and labelling goes through the naming rules
+    (_room_label_pass); with no roster this is byte-for-byte the phase-1
+    request and the phase-1 ordinal rules."""
     t0 = time.perf_counter()
+    plan = None
+    try:
+        plan = await asyncio.to_thread(_room_plan, chat_id, sample_rate)
+    except Exception:
+        # A broken roster read degrades to the phase-1 pass, never to a
+        # dropped utterance.
+        log.debug("room plan failed; running phase-1 pass", exc_info=True)
+    prefix_pcm, segments, pending, num_speakers = plan or (b"", [], [], None)
+    request_pcm = prefix_pcm + pcm
     try:
         result = await asyncio.to_thread(
-            voice.transcribe_diarized, pcm16_wav(pcm, sample_rate),
-            "audio/wav", cfg)
+            voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),
+            "audio/wav", cfg, num_speakers=num_speakers)
     except Exception:
         # Content-free by design, like every log on the voice path.
         log.info("diarize pass failed: chat=%s ms=%.0f", chat_id,
@@ -205,6 +369,16 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
         return
     duration_ms = (time.perf_counter() - t0) * 1000
     try:
+        # The second transcription pass is real, metered spend - the reason
+        # the room-mode toggle warns that voice minutes roughly double. The
+        # anchor prefix is transcribed audio too, so it is metered with it.
+        await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate, cfg)
+        if plan is not None:
+            await _room_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                                   session, cfg, result, segments, pending,
+                                   len(prefix_pcm) / 2 / (sample_rate or 16000),
+                                   duration_ms)
+            return
         clusters = utterance_clusters(result.get("words"))
         # EVERY cluster the session sees claims its ordinal, labelled or not:
         # the session's first voice is "Voice 1" even while it goes unlabelled
@@ -220,22 +394,149 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
         # dependence on this number - pinned by tests/test_room_mode.py.
         log.info("diarize pass: chat=%s ms=%.0f clusters=%d labels=%d",
                  chat_id, duration_ms, len(clusters), len(labels))
-        # The second transcription pass is real, metered spend - the reason
-        # the room-mode toggle warns that voice minutes roughly double.
-        await asyncio.to_thread(_meter, chat_id, pcm, sample_rate, cfg)
         if not labels:
             return
         payload = {"clusters": clusters, "labels": labels}
-        deadline = time.monotonic() + MATCH_WINDOW_SECS
-        while True:
-            target_id = await asyncio.to_thread(
-                _attach_labels, chat_id, commit_ts, payload, session)
-            if target_id or time.monotonic() >= deadline:
-                return
-            await asyncio.sleep(MATCH_PROBE_SECS)
+        await _attach_until_deadline(chat_id, commit_ts, payload, session)
     except Exception:
         log.info("diarize labelling failed: chat=%s", chat_id)
         log.debug("diarize labelling failure detail", exc_info=True)
+
+
+async def _attach_until_deadline(chat_id, commit_ts, payload, session):
+    """Probe for the utterance's user message until it appears or the window
+    closes. Returns the labelled message id, or None."""
+    deadline = time.monotonic() + MATCH_WINDOW_SECS
+    while True:
+        target_id = await asyncio.to_thread(
+            _attach_labels, chat_id, commit_ts, payload, session)
+        if target_id or time.monotonic() >= deadline:
+            return target_id
+        await asyncio.sleep(MATCH_PROBE_SECS)
+
+
+def _room_plan(chat_id, sample_rate):
+    """Roster snapshot for one pass (worker thread): the anchor prefix for
+    every SUFFICIENT present person, the names still pending an anchor, and
+    the num_speakers hint (present + 1 - the plus-one is what lets an
+    unannounced voice surface as an unmatched cluster). None when the chat
+    has no roster - the phase-1 pass then runs untouched."""
+    con = db.connect()
+    try:
+        present = db.get_room_roster(con, chat_id, present_only=True)
+    finally:
+        con.close()
+    if not present:
+        return None
+    from . import anchors
+    store = anchors.store()
+    sufficient = {p["person_id"] for p in store.people() if p["sufficient"]}
+    ids, pending = [], []
+    for row in present:
+        pid = row["person_id"]
+        if pid and pid in sufficient:
+            ids.append(pid)
+        else:
+            # No linked anchors, or anchors below the sufficiency bar: this
+            # person cannot be identified by voice yet, only by elimination.
+            pending.append(row["name"])
+    prefix_pcm, segments = store.build_prefix(ids, sample_rate)
+    num_speakers = min(32, len(present) + 1)
+    return prefix_pcm, segments, pending, num_speakers
+
+
+async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                           result, segments, pending, prefix_seconds,
+                           duration_ms):
+    """Roster-mode labelling for one utterance: prefix clusters -> names,
+    utterance clusters -> labels via resolve_room_labels, anchor
+    accumulation, the ask-fallback flag, and the mismatch cross-check."""
+    prefix_words, utter_words = split_words_at(result.get("words"),
+                                               prefix_seconds)
+    cmap = prefix_cluster_map(prefix_words, segments)
+    clusters = utterance_clusters(utter_words)
+    resolved = resolve_room_labels(clusters, cmap, pending, session)
+    if clusters:
+        session.prev_clusters = clusters
+    log.info("diarize pass (room): chat=%s ms=%.0f clusters=%d matched=%d "
+             "ask=%d", chat_id, duration_ms, len(clusters),
+             len(resolved["matched"]), len(resolved["ask"]))
+    if len(clusters) == 1:
+        # A clean single-speaker utterance is anchor food: it refreshes a
+        # matched person's clips, and it is the ONLY thing that can build a
+        # pending (just-introduced) person's anchors at all.
+        await asyncio.to_thread(_accumulate_anchor, chat_id, pcm, sample_rate,
+                                clusters[0], resolved)
+    if not resolved["labels"]:
+        return
+    payload = {"clusters": clusters, "labels": resolved["labels"],
+               "uncertain": resolved["uncertain"]}
+    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                             session)
+    if resolved["ask"]:
+        # Someone the anchors don't know and elimination can't name: surface
+        # the ask-fallback. The turn keeps its uncertain ordinal meanwhile.
+        await asyncio.to_thread(_raise_unknown_voice, chat_id, target_id)
+    if target_id:
+        from . import anchors
+        # Tap-to-correct's audio source: remembered in memory, bounded.
+        anchors.remember_audio(target_id, pcm, sample_rate, len(clusters))
+        primary = _primary_named_label(resolved)
+        if primary and len(utter_words) >= MISMATCH_MIN_WORDS:
+            from . import mismatch
+            mismatch.schedule_check(chat_id, target_id, primary, cfg)
+
+
+def _primary_named_label(resolved) -> str | None:
+    """The confidently-NAMED label the mismatch cross-check should test -
+    the first anchor-matched name on the turn. Eliminated/ordinal labels are
+    already displayed as uncertain, so second-guessing them adds nothing."""
+    named = set(resolved["matched"].values())
+    for label in resolved["labels"]:
+        if label in named:
+            return label
+    return None
+
+
+def _accumulate_anchor(chat_id, pcm, sample_rate, cluster, resolved):
+    """Feed one single-speaker utterance to the right person's anchor set
+    (worker thread). Matched person: a refresh candidate. Eliminated person:
+    their first real anchor audio - link the roster row once accepted, so the
+    UI's 'anchor pending' honestly ends."""
+    from . import anchors
+    store = anchors.store()
+    name = resolved["matched"].get(cluster)
+    if name:
+        person = store.find_by_name(name)
+        if person:
+            store.add_clip(person["person_id"], pcm, sample_rate,
+                           source="accumulated")
+        return
+    name = resolved["eliminated"].get(cluster)
+    if not name:
+        return
+    pid = store.ensure_person(name)
+    if store.add_clip(pid, pcm, sample_rate, source="accumulated"):
+        con = db.connect()
+        try:
+            db.link_room_person(con, chat_id, name, pid)
+        finally:
+            con.close()
+
+
+def _raise_unknown_voice(chat_id, message_id):
+    """One OPEN ask at a time per chat: an unanswered 'who is speaking?' must
+    not stack a copy per utterance while the same stranger keeps talking."""
+    con = db.connect()
+    try:
+        open_asks = [f for f in db.get_room_flags(con, chat_id)
+                     if f["kind"] == "unknown_voice"]
+        if open_asks:
+            return
+        db.insert_room_flag(con, chat_id, "unknown_voice",
+                            message_id=message_id)
+    finally:
+        con.close()
 
 
 def _meter(chat_id, pcm, sample_rate, cfg):

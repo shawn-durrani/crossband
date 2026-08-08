@@ -18,7 +18,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 13  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1)
+SCHEMA_VERSION = 14  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS chats(
   web_enabled INTEGER NOT NULL DEFAULT 1,
   memory_enabled INTEGER NOT NULL DEFAULT 1,
   code_enabled INTEGER NOT NULL DEFAULT 0,      -- summon_claude_code guest (opt-in per chat)
+  room_mode INTEGER NOT NULL DEFAULT 0,         -- multi-human room mode (#28 phase 2):
+                                                -- flipped by a spoken introduction or the
+                                                -- explicit toggle; durable per chat
   archived_at REAL,                             -- hidden from the sidebar; nothing deleted
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL,
@@ -213,6 +216,48 @@ CREATE TABLE IF NOT EXISTS guest_jobs(
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS room_roster(
+  -- Who is in the room for one chat (#28 phase 2). A row is appended by a
+  -- confirmed spoken introduction (or the reassign path) and marked left on a
+  -- confirmed departure; the cap (Settings.room_roster_max) counts PRESENT
+  -- rows only. `name` is the display name the introduction used; `person_id`
+  -- links the durable voice-anchor store entry (backend/anchors.py) once one
+  -- exists - NULL means the anchor is still pending, so identification for
+  -- this person stays uncertain. updated_at is the live-events cursor, like
+  -- guest_jobs.updated_at.
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  person_id TEXT NOT NULL DEFAULT '',   -- anchor-store person id ('' = anchor pending)
+  status TEXT NOT NULL DEFAULT 'present',  -- 'present' | 'left'
+  joined_at REAL NOT NULL,
+  left_at REAL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS room_flags(
+  -- Attribution doubts the UI must surface (#28 phase 2), one row each:
+  --   'unknown_voice' - a diarization cluster matched nobody's anchor
+  --                     ("someone new is speaking - who?");
+  --   'mismatch'      - the LLM cross-check thinks a turn's label disagrees
+  --                     with what was said ("turn labelled X reads like
+  --                     someone else"). NEVER changes a label - it exists to
+  --                     be resolved by a correction or dismissed.
+  -- Content-free by design: label/suspected hold roster NAMES only, never
+  -- transcript text. updated_at is the live-events cursor.
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL,                   -- 'unknown_voice' | 'mismatch'
+  label TEXT NOT NULL DEFAULT '',       -- the turn's current label (a name/ordinal)
+  suspected TEXT NOT NULL DEFAULT '',   -- who the cross-check thinks spoke ('' = unknown)
+  resolved_at REAL,                     -- set by a correction/dismissal; NULL = open
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_roster_chat ON room_roster(chat_id);
+CREATE INDEX IF NOT EXISTS idx_room_roster_updated ON room_roster(updated_at);
+CREATE INDEX IF NOT EXISTS idx_room_flags_chat ON room_flags(chat_id);
+CREATE INDEX IF NOT EXISTS idx_room_flags_updated ON room_flags(updated_at);
 CREATE TABLE IF NOT EXISTS voice_turn_traces(
   -- Per-turn voice latency instrumentation. One row per measured STAGE
   -- of one voice turn, correlated by turn_id (a client-owned opaque id). This
@@ -403,6 +448,14 @@ def init(settings=None):
                         "TEXT NOT NULL DEFAULT ''")
             con.execute("ALTER TABLE messages ADD COLUMN labels_updated_at "
                         "REAL NOT NULL DEFAULT 0")
+    if 1 <= version <= 13:  # v14: room mode goes multi-human (#28 phase 2).
+        # chats.room_mode defaults 0, so every existing chat simply has room
+        # mode off - exactly its pre-migration behaviour. room_roster and
+        # room_flags are NEW tables, created by the executescript below.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='chats'").fetchone():
+            con.execute("ALTER TABLE chats ADD COLUMN room_mode "
+                        "INTEGER NOT NULL DEFAULT 0")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -705,6 +758,142 @@ def get_label_updates_after(con, ts):
 def _json_dumps(obj):
     import json
     return json.dumps(obj)
+
+
+# ---------- room mode: roster + flags (#28 phase 2) ----------
+#
+# Same store discipline as guest_jobs: the DATABASE is the durable state and
+# the live-events catch-up buffer; the in-memory bell (events.notify_room_update)
+# is only the wake-up. Every write here commits BEFORE notifying.
+
+def set_chat_room_mode(con, chat_id, on):
+    """Flip the durable per-chat room-mode flag. Callers must ALSO update
+    diarize's in-process registry (diarize.set_room_enabled) so a live STT
+    session sees the flip at its next commit boundary without a DB read on
+    the audio path."""
+    con.execute("UPDATE chats SET room_mode=? WHERE id=?",
+                (1 if on else 0, chat_id))
+    con.commit()
+
+
+def get_room_roster(con, chat_id, present_only=False):
+    q = "SELECT * FROM room_roster WHERE chat_id=?"
+    if present_only:
+        q += " AND status='present'"
+    return [dict(r) for r in con.execute(q + " ORDER BY id", (chat_id,))]
+
+
+def add_room_person(con, chat_id, name, person_id=""):
+    """Append one person to a chat's roster (or re-mark a previously-left row
+    present). Returns the row. Cap enforcement is the CALLER's job
+    (introductions.apply_scan) - this is a thin writer."""
+    row = con.execute(
+        "SELECT * FROM room_roster WHERE chat_id=? AND lower(name)=lower(?)",
+        (chat_id, name)).fetchone()
+    if row:
+        con.execute(
+            "UPDATE room_roster SET status='present', left_at=NULL, "
+            "person_id=CASE WHEN person_id='' THEN ? ELSE person_id END, "
+            "updated_at=? WHERE id=?", (person_id, now(), row["id"]))
+        con.commit()
+        out = dict(con.execute("SELECT * FROM room_roster WHERE id=?",
+                               (row["id"],)).fetchone())
+    else:
+        cur = con.execute(
+            "INSERT INTO room_roster(chat_id, name, person_id, status, "
+            "joined_at, updated_at) VALUES(?,?,?,'present',?,?)",
+            (chat_id, name, person_id, now(), now()))
+        con.commit()
+        out = dict(con.execute("SELECT * FROM room_roster WHERE id=?",
+                               (cur.lastrowid,)).fetchone())
+    from . import events  # lazy, same circularity reason as insert_message
+    events.notify_room_update()
+    return out
+
+
+def mark_room_person_left(con, chat_id, name):
+    """Mark a roster row left (frees the cap). Returns True if a present row
+    was actually updated."""
+    cur = con.execute(
+        "UPDATE room_roster SET status='left', left_at=?, updated_at=? "
+        "WHERE chat_id=? AND lower(name)=lower(?) AND status='present'",
+        (now(), now(), chat_id, name))
+    con.commit()
+    if cur.rowcount:
+        from . import events
+        events.notify_room_update()
+    return bool(cur.rowcount)
+
+
+def link_room_person(con, chat_id, name, person_id):
+    """Attach the anchor-store person id to a roster row once anchors exist -
+    the moment 'anchor pending' ends for that name in this chat."""
+    cur = con.execute(
+        "UPDATE room_roster SET person_id=?, updated_at=? "
+        "WHERE chat_id=? AND lower(name)=lower(?) AND person_id=''",
+        (person_id, now(), chat_id, name))
+    con.commit()
+    if cur.rowcount:
+        from . import events
+        events.notify_room_update()
+
+
+def insert_room_flag(con, chat_id, kind, message_id=None, label="", suspected=""):
+    """One attribution-doubt row ('unknown_voice' or 'mismatch'). Carries
+    roster NAMES only - transcript text never enters this table."""
+    cur = con.execute(
+        "INSERT INTO room_flags(chat_id, message_id, kind, label, suspected, "
+        "created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+        (chat_id, message_id, kind, label, suspected, now(), now()))
+    con.commit()
+    row = dict(con.execute("SELECT * FROM room_flags WHERE id=?",
+                           (cur.lastrowid,)).fetchone())
+    from . import events
+    events.notify_room_update()
+    return row
+
+
+def resolve_room_flags(con, chat_id, message_id=None, flag_id=None, kind=None):
+    """Close open flags - a correction resolves its message's flags; a
+    dismissal resolves one flag by id; an answered introduction resolves the
+    chat's open 'unknown_voice' asks by kind. Returns how many closed."""
+    q = "UPDATE room_flags SET resolved_at=?, updated_at=? WHERE chat_id=? AND resolved_at IS NULL"
+    args = [now(), now(), chat_id]
+    if message_id is not None:
+        q += " AND message_id=?"
+        args.append(message_id)
+    if flag_id is not None:
+        q += " AND id=?"
+        args.append(flag_id)
+    if kind is not None:
+        q += " AND kind=?"
+        args.append(kind)
+    cur = con.execute(q, args)
+    con.commit()
+    if cur.rowcount:
+        from . import events
+        events.notify_room_update()
+    return cur.rowcount
+
+
+def get_room_flags(con, chat_id, open_only=True):
+    q = "SELECT * FROM room_flags WHERE chat_id=?"
+    if open_only:
+        q += " AND resolved_at IS NULL"
+    return [dict(r) for r in con.execute(q + " ORDER BY id", (chat_id,))]
+
+
+def get_room_updates_after(con, roster_ts, flag_ts):
+    """Roster and flag rows whose updated_at moved past each table's own
+    cursor - the live-events stream's catch-up query, mirroring
+    get_guest_jobs_after. Returns (roster_rows, flag_rows)."""
+    roster = [dict(r) for r in con.execute(
+        "SELECT * FROM room_roster WHERE updated_at > ? ORDER BY updated_at, id",
+        (roster_ts,))]
+    flags = [dict(r) for r in con.execute(
+        "SELECT * FROM room_flags WHERE updated_at > ? ORDER BY updated_at, id",
+        (flag_ts,))]
+    return roster, flags
 
 
 # ---------- guest jobs ----------

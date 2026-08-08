@@ -58,9 +58,47 @@ export function chipsForMessage(msg) {
   return out
 }
 
+// Phase 2 (#28): the payload may carry names, per-label uncertainty and a
+// corrected marker - {"labels": ["Shawn"], "uncertain": ["Alex"],
+// "corrected": true}. chipData is chipsForMessage plus that: each chip says
+// whether it is a confident voice match or still uncertain, and whether a
+// human correction set it. Same defensive posture - junk renders nothing.
+export function chipData(msg) {
+  if (!msg || msg.speaker !== 'user' || !msg.voice_labels) return []
+  let data
+  try {
+    data = JSON.parse(msg.voice_labels)
+  } catch {
+    return []
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return []
+  const uncertain = new Set(
+    (Array.isArray(data.uncertain) ? data.uncertain : [])
+      .filter((u) => typeof u === 'string')
+      .map((u) => u.trim().slice(0, MAX_LABEL_CHARS)))  // match display form
+  return chipsForMessage(msg).map((label) => ({
+    label,
+    uncertain: uncertain.has(label),
+    corrected: data.corrected === true,
+  }))
+}
+
 // Plain-English explainer for the chips, shared by every surface that shows
 // them so the honesty note is worded once. No jargon: what happened, and how
 // much to trust it.
 export const CHIP_EXPLAINER =
   'Labelled by a second listen that tells voices apart. Best effort: '
   + 'labels can be wrong, and voices are not named yet.'
+
+// Per-chip explainers for the named phase: how much to trust this exact
+// label, and that tapping it corrects it.
+export function chipTitle(chip) {
+  if (!chip) return ''
+  if (chip.corrected) return `Corrected by you to ${chip.label}.`
+  if (chip.uncertain) {
+    return `Probably ${chip.label} - their voice is still being learned, so `
+      + 'this stays uncertain. Tap to correct if wrong.'
+  }
+  if (/^Voice \d+$/.test(chip.label)) return CHIP_EXPLAINER
+  return `Matched to ${chip.label}'s remembered voice. Tap to correct if wrong.`
+}

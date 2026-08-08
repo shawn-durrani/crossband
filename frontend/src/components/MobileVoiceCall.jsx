@@ -16,7 +16,9 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                                           activeIds = [], onToggleParticipant, captions,
                                           captionHistory = [], speakingSlug, onEnd, voice,
                                           partial = null, banner = null, onDismissBanner,
-                                          roomMode = false, onRoomModeChange }) {
+                                          roomMode = false, onRoomModeChange,
+                                          rosterText = '', rosterHint = '',
+                                          askText = null }) {
   const [muted, setMuted] = useState(false)
   // Transcript browsing: faded captions aren't gone - swipe up (or tap the
   // hint) to scroll back through everything said this session.
@@ -122,6 +124,30 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
           <span className="mvc-lock">🔒 private</span>
         </div>
       </div>
+
+      {/* The roster chip (#28 phase 2): the transparency cue that turns are
+          being attributed by voice, and to whom. Same copy as the desktop
+          dock (roomState.js). */}
+      {rosterText && (
+        <div className="px-4 pt-1 flex justify-center">
+          <span
+            className="inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border border-sky-800 text-sky-200 bg-sky-950/50 max-w-full"
+            title={rosterHint}
+          >
+            <Users size={13} />
+            <span className="truncate">{rosterText}</span>
+          </span>
+        </div>
+      )}
+      {/* The ask-fallback, on the call screen where the answer is SPOKEN:
+          "that's Dave" is the whole flow. */}
+      {askText && (
+        <div className="px-4 pt-1 flex justify-center" role="status">
+          <span className="text-xs text-sky-200 bg-sky-950/60 border border-sky-800 rounded-lg px-3 py-1.5 max-w-full">
+            {askText}
+          </span>
+        </div>
+      )}
 
       {/* Caption zone - transient flash / drift / fade; swipe up to browse
           everything said this session (captions fade, they don't vanish). */}

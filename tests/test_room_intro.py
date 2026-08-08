@@ -1,0 +1,344 @@
+"""Introduction detection (#28 phase 2): the spoken introduction is the
+trigger, and it may NEVER cost the send anything.
+
+What these tests prove, in order of importance:
+
+1. THE LATENCY PIN: POST /send completes - the round is dispatched and the
+   SSE stream fully drains - while the utility-model confirmation is
+   deliberately wedged open. Introduction detection is fire-and-forget after
+   the user message persists; dispatch has no dependence on it.
+2. A confirmed introduction flips the chat's durable room_mode, mirrors it
+   into diarize's in-process registry, and appends the named people to the
+   roster (anchor pending); departures mark them left and free the cap.
+3. The roster cap (Settings.room_roster_max, env-mapped) is enforced.
+4. The lexical prefilter gates the utility spend: a turn that is not
+   introduction-shaped never makes a model call at all.
+5. The owner's anchor seeds from the stashed introduction utterance, and a
+   remembered (sufficient) person links immediately - re-identification.
+
+The utility model is always mocked (keyless like everything else); with no
+key at all the scan quietly does nothing, which is also pinned.
+"""
+
+import asyncio
+import json
+import threading
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend import anchors, db, diarize, introductions
+from backend.app import create_app
+from backend.config import Settings, load_settings
+
+
+@pytest.fixture
+def app(tmp_path):
+    diarize._ROOM_ENABLED.clear()
+    diarize._STASHED.clear()
+    settings = Settings(data_dir=str(tmp_path / "data"),
+                        memory_url="http://127.0.0.1:1")
+    return create_app(settings)
+
+
+def _wait_for(pred, timeout=6.0, interval=0.02):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        v = pred()
+        if v:
+            return v
+        time.sleep(interval)
+    return pred()
+
+
+def _chat_room_mode(chat_id):
+    con = db.connect()
+    try:
+        row = con.execute("SELECT room_mode FROM chats WHERE id=?",
+                          (chat_id,)).fetchone()
+        return bool(row and row["room_mode"])
+    finally:
+        con.close()
+
+
+def _roster(chat_id, present_only=True):
+    con = db.connect()
+    try:
+        return db.get_room_roster(con, chat_id, present_only=present_only)
+    finally:
+        con.close()
+
+
+def _send(client, chat_id, text):
+    """POST /send and DRAIN the SSE stream - the response completing is the
+    proof dispatch never waited on anything."""
+    with client.stream("POST", f"/api/chats/{chat_id}/send",
+                       json={"text": text}) as r:
+        body = b"".join(r.iter_bytes())
+    assert b'"user_saved"' in body and b'"done"' in body
+    return body
+
+
+@pytest.fixture
+def utility(monkeypatch):
+    """Mock the utility model at the llm_util seam. state['verdict'] is what
+    it returns (a dict, JSON-encoded); state['gate'] (a threading.Event)
+    wedges the call open; state['calls'] records every prompt."""
+    state = {"verdict": {"introductions": [], "departures": []},
+             "gate": None, "calls": []}
+
+    async def fake_utility(prompt, cfg, max_tokens=2000):
+        state["calls"].append(prompt)
+        if state["gate"] is not None:
+            await asyncio.to_thread(state["gate"].wait, 10)
+        return json.dumps(state["verdict"])
+
+    monkeypatch.setattr("backend.llm_util.utility_complete", fake_utility)
+    return state
+
+
+def loud_pcm(seconds, sample_rate=16000):
+    return b"\x00\x40" * int(seconds * sample_rate)
+
+
+# ── 1. the latency pin ──────────────────────────────────────────────────────
+
+def test_send_completes_while_the_confirmation_is_wedged_open(app, utility):
+    """The core law: the round is dispatched and done while the utility call
+    is still blocked. Only after the gate opens does the roster change."""
+    utility["verdict"] = {"introductions": ["Alex"], "departures": []}
+    utility["gate"] = threading.Event()
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "say hi to Alex, she's here with me")
+        # The send is fully over; the scan is still wedged - nothing changed.
+        assert not utility["gate"].is_set()
+        assert _chat_room_mode(chat["id"]) is False
+        assert _roster(chat["id"]) == []
+        utility["gate"].set()  # release; the scan catches up out of band
+        assert _wait_for(lambda: _chat_room_mode(chat["id"]))
+        roster = _wait_for(lambda: _roster(chat["id"]))
+        assert [p["name"] for p in roster] == ["Alex"]
+
+
+def test_prefilter_gates_the_utility_spend(app, utility):
+    """A turn with no introduction shape makes NO model call at all - the
+    prefilter is what keeps this feature nearly free on normal turns."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "let's plan the weekend")
+        time.sleep(0.3)
+        assert utility["calls"] == []
+
+
+def test_keyless_scan_is_a_quiet_no_op(app, monkeypatch):
+    """No utility key: llm_util returns None, the scan finds nothing, room
+    mode stays off. (The explicit toggle keeps working regardless.)"""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "my wife Alex is here with us")
+        time.sleep(0.4)
+        assert _chat_room_mode(chat["id"]) is False
+        assert _roster(chat["id"]) == []
+
+
+# ── 2. confirmed introductions and departures ───────────────────────────────
+
+def test_confirmed_introduction_flips_room_mode_and_grows_the_roster(
+        app, utility):
+    utility["verdict"] = {"introductions": ["Alex"], "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "my wife Alex is here with us")
+        assert _wait_for(lambda: _chat_room_mode(chat["id"]))
+        roster = _roster(chat["id"])
+        assert [p["name"] for p in roster] == ["Alex"]
+        assert roster[0]["person_id"] == ""  # anchor pending - nothing heard yet
+        # the live mirror the STT relay reads at commit boundaries
+        assert diarize.room_enabled(chat["id"]) is True
+
+
+def test_group_introduction_names_several_people(app, utility):
+    utility["verdict"] = {"introductions": ["Ana", "Ben", "Cass"],
+                          "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "the whole family is here: Ana, Ben and Cass")
+        roster = _wait_for(lambda: len(_roster(chat["id"])) == 3
+                           and _roster(chat["id"]))
+        assert [p["name"] for p in roster] == ["Ana", "Ben", "Cass"]
+
+
+def test_departure_frees_the_roster_slot(app, utility):
+    utility["verdict"] = {"introductions": ["Alex"], "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "say hi to Alex everyone")
+        assert _wait_for(lambda: _roster(chat["id"]))
+        utility["verdict"] = {"introductions": [], "departures": ["Alex"]}
+        _send(c, chat["id"], "Alex has left the room")
+        assert _wait_for(lambda: not _roster(chat["id"]))
+        gone = _roster(chat["id"], present_only=False)
+        assert gone[0]["status"] == "left" and gone[0]["left_at"]
+        # room mode STAYS on - the explicit toggle is the way off
+        assert _chat_room_mode(chat["id"]) is True
+
+
+def test_mid_session_introduction_appends_and_reintroduction_is_idempotent(
+        app, utility):
+    utility["verdict"] = {"introductions": ["Alex"], "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "this is Alex")
+        assert _wait_for(lambda: _roster(chat["id"]))
+        utility["verdict"] = {"introductions": ["Dave"], "departures": []}
+        _send(c, chat["id"], "and this is Dave")
+        assert _wait_for(lambda: len(_roster(chat["id"])) == 2)
+        utility["verdict"] = {"introductions": ["Alex"], "departures": []}
+        _send(c, chat["id"], "this is Alex again")
+        time.sleep(0.4)
+        assert len(_roster(chat["id"])) == 2  # no duplicate row
+
+
+# ── 3. the cap ──────────────────────────────────────────────────────────────
+
+def test_cap_allows_math():
+    assert introductions.cap_allows(0, 3, 6) == 3
+    assert introductions.cap_allows(5, 3, 6) == 1
+    assert introductions.cap_allows(6, 1, 6) == 0
+    assert introductions.cap_allows(2, 0, 6) == 0
+
+
+def test_roster_cap_is_enforced_from_settings(tmp_path, utility):
+    diarize._ROOM_ENABLED.clear()
+    app = create_app(Settings(data_dir=str(tmp_path / "data"),
+                              memory_url="http://127.0.0.1:1",
+                              room_roster_max=2))
+    utility["verdict"] = {"introductions": ["Ana", "Ben", "Cass"],
+                          "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "the whole family is here: Ana, Ben and Cass")
+        roster = _wait_for(lambda: len(_roster(chat["id"])) == 2
+                           and _roster(chat["id"]))
+        assert [p["name"] for p in roster] == ["Ana", "Ben"]  # Cass dropped
+
+
+def test_room_roster_max_rides_the_auto_env_mapping():
+    s = load_settings(environ={"CROSSBAND_ROOM_ROSTER_MAX": "3"})
+    assert s.room_roster_max == 3
+
+
+# ── 4. owner anchor + re-identification ─────────────────────────────────────
+
+def test_owner_anchor_seeds_from_the_stashed_introduction_utterance(app):
+    """The voice that spoke the introduction is the owner's anchor: the relay
+    stashes each finished utterance while room mode is off, and apply_scan
+    claims it. The owner also joins the roster, linked."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        con = db.connect()
+        cur = con.execute("INSERT INTO chats(title, created_at, updated_at) "
+                          "VALUES('t', 0, 0)")
+        con.commit()
+        chat_id = cur.lastrowid
+        con.close()
+        diarize.stash_utterance(chat_id, loud_pcm(2.0), 16000)
+        introductions.apply_scan(chat_id,
+                                 {"introductions": ["Alex"], "departures": []},
+                                 {"user_name": "Shawn", "room_roster_max": 6})
+        people = anchors.store().people()
+        assert [p["name"] for p in people] == ["Shawn"]
+        assert people[0]["clip_count"] == 1  # the introduction utterance
+        roster = _roster(chat_id)
+        assert sorted(p["name"] for p in roster) == ["Alex", "Shawn"]
+        owner_row = next(p for p in roster if p["name"] == "Shawn")
+        assert owner_row["person_id"] == people[0]["person_id"]
+        # the stash is CLAIMED - a second scan cannot double-feed it
+        assert diarize.take_stashed_utterance(chat_id) is None
+
+
+def test_typed_introduction_has_no_audio_and_that_is_fine(app):
+    with TestClient(app, base_url="http://127.0.0.1"):
+        con = db.connect()
+        cur = con.execute("INSERT INTO chats(title, created_at, updated_at) "
+                          "VALUES('t', 0, 0)")
+        con.commit()
+        chat_id = cur.lastrowid
+        con.close()
+        introductions.apply_scan(chat_id,
+                                 {"introductions": ["Alex"], "departures": []},
+                                 {"user_name": "Shawn", "room_roster_max": 6})
+        assert anchors.store().people() == []  # nothing stashed, nothing stored
+        assert [p["name"] for p in _roster(chat_id)] == ["Alex"]
+
+
+def test_remembered_sufficient_person_links_immediately(app):
+    """Re-identification: introducing a name whose anchors are already
+    sufficient links the roster row on the spot - no anchor-pending phase."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        store = anchors.store()
+        pid = store.ensure_person("Alex")
+        for _ in range(3):
+            store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
+        con = db.connect()
+        cur = con.execute("INSERT INTO chats(title, created_at, updated_at) "
+                          "VALUES('t', 0, 0)")
+        con.commit()
+        chat_id = cur.lastrowid
+        con.close()
+        introductions.apply_scan(chat_id,
+                                 {"introductions": ["Alex"], "departures": []},
+                                 {"user_name": "Shawn", "room_roster_max": 6})
+        roster = _roster(chat_id)
+        assert roster[0]["person_id"] == pid
+
+
+# ── pure rules ──────────────────────────────────────────────────────────────
+
+def test_prefilter_truth_table():
+    yes = [
+        "my wife Alex is here with us",
+        "say hi to Dave",
+        "This is Ana, she'll be joining us",
+        "the whole family is here: Ana, Ben and Cass",
+        "meet Sam, my colleague",
+        "I'm here with my dad",
+        "Dave has left",
+        "she had to go, it's just the two of us",
+    ]
+    no = [
+        "let's plan the weekend",
+        "what do you both think about the plan?",
+        "left-align the header please",  # 'left' without the departure shape
+        "",
+        None,
+    ]
+    for t in yes:
+        assert introductions.prefilter(t), t
+    for t in no:
+        assert not introductions.prefilter(t), t
+
+
+def test_parse_verdict_is_defensive():
+    ok = introductions.parse_verdict(
+        'Sure! {"introductions": ["Alex", "alex", "Dave"], "departures": []}')
+    assert ok == {"introductions": ["Alex", "Dave"], "departures": []}
+    for bad in (None, "", "not json", "{}", '{"introductions": "Alex"}',
+                '{"introductions": [42, null]}', "[1,2]"):
+        v = introductions.parse_verdict(bad)
+        assert v == {"introductions": [], "departures": []}, bad
+
+
+def test_parse_verdict_cleans_and_bounds_names():
+    v = introductions.parse_verdict(json.dumps({
+        "introductions": ["  alex  ", "<b>Dave</b>", "x" * 100,
+                          "A", "B", "C", "D", "E", "F"],
+        "departures": ["!!!"],
+    }))
+    assert v["introductions"][0] == "Alex"          # trimmed, title-cased
+    assert v["introductions"][1] == "BDaveb"        # markup stripped
+    assert all(len(n) <= introductions.MAX_NAME_CHARS
+               for n in v["introductions"])
+    assert len(v["introductions"]) <= introductions.MAX_NAMES_PER_TURN
+    assert v["departures"] == []                    # no letters, no name

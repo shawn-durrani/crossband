@@ -5,6 +5,7 @@ import { PRESETS, matchPreset } from '../presets'
 import { modelReadoutLines } from '../modelReadout'
 import { lifecycleBadge, promoteState, addSeatNotice } from '../lifecycle'
 import RateCardsPanel from './RateCardsPanel'
+import RememberedVoices from './RememberedVoices'
 
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
@@ -332,6 +333,10 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
             an unpriced model blocks, collapsed by default so it doesn't crowd
             the roster. */}
         {!editing && <RateCardsPanel />}
+
+        {/* Room mode's privacy surface: who the app can recognise by voice,
+            and the forget button that deletes their stored audio (#28). */}
+        {!editing && <RememberedVoices />}
 
         {!editing && (
           <div className="space-y-2">

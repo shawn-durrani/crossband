@@ -39,6 +39,7 @@ from .routers import models as models_router
 from .routers import participants as participants_router
 from .routers import pricing as pricing_router
 from .routers import projects as projects_router
+from .routers import room as room_router
 from .routers import settings as settings_router
 from .routers import setup as setup_router
 from .routers import voice as voice_router
@@ -364,6 +365,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chats_router.router)
     app.include_router(attachments_router.router)
     app.include_router(voice_router.router)
+    app.include_router(room_router.router)
     app.include_router(models_router.router)
     app.include_router(settings_router.router)
     app.include_router(pricing_router.router)

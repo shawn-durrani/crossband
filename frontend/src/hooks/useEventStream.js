@@ -27,6 +27,7 @@ import { mergeGuestJob } from '../guestJobs'
 export function useEventStream({
   messages, activeChatIdRef, streamingRef, voiceActiveRef,
   refreshState, onGuestJob, onMessages, onUnread, onVoiceAttach, onError,
+  onRoomEvent,
 }) {
   const watermarkRef = useRef(0)      // highest message id this tab has seen, ANY chat
   const messagesRef = useRef([])      // live mirror of `messages`, for the handler's closure
@@ -35,7 +36,8 @@ export function useEventStream({
   const ctrlRef = useRef(null)
 
   const cb = useRef(null)
-  cb.current = { refreshState, onGuestJob, onMessages, onUnread, onVoiceAttach, onError }
+  cb.current = { refreshState, onGuestJob, onMessages, onUnread, onVoiceAttach,
+                 onError, onRoomEvent }
 
   useEffect(() => { messagesRef.current = messages }, [messages])
 
@@ -85,6 +87,16 @@ export function useEventStream({
       // durable status is re-seeded from the snapshot when that chat opens).
       if (ev.chat_id === activeChatIdRef.current) {
         cb.current.onGuestJob((j) => mergeGuestJob(j, ev))
+      }
+      return
+    }
+    if (ev.type === 'room_roster' || ev.type === 'room_flag') {
+      // Room-mode roster/flag change (#28 phase 2): the event is content-free
+      // (ids + kind), so the open chat refetches its roster snapshot. Never
+      // deferred - roster state is not round content, and refetching during a
+      // streaming round is safe and idempotent.
+      if (ev.chat_id === activeChatIdRef.current) {
+        cb.current.onRoomEvent?.(ev.chat_id)
       }
       return
     }
