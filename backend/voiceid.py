@@ -374,6 +374,7 @@ def _get_extractor(cfg):
     """The ready extractor, or None while cold/fetching/unavailable. On the very
     first cold call it kicks off the background warm and returns None - the pass
     defers to the EL path until the matcher is ready. Never blocks, never raises."""
+    global _state
     if sherpa_onnx is None:
         return None
     with _lock:

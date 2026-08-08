@@ -547,19 +547,36 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # never-awaited task; the live path is untouched, and metering is skipped
     # because no second transcription happened.
     if plan is not None and voiceid.enabled(cfg):
-        candidates = [{"person_id": s["person_id"], "name": s["name"]}
-                      for s in segments]
-        verdict = await asyncio.to_thread(
-            voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+        verdict = None
+        try:
+            candidates = [{"person_id": s["person_id"], "name": s["name"]}
+                          for s in segments]
+            verdict = await asyncio.to_thread(
+                voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+        except Exception:
+            # The matcher must NEVER break voice: any failure here just falls
+            # through to the unchanged ElevenLabs path below.
+            log.info("voiceid identify failed; running the EL path: chat=%s",
+                     chat_id)
+            log.debug("voiceid identify failure detail", exc_info=True)
         if voiceid.matched(verdict):
             log.info("diarize pass (voiceid): chat=%s ms=%.0f score=%.3f",
                      chat_id, (time.perf_counter() - t0) * 1000,
                      verdict["score"])
-            await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
-                                   session, cfg, verdict, turn_id=turn_id)
+            try:
+                await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                                       session, cfg, verdict, turn_id=turn_id)
+            except Exception:
+                # We already committed to skipping the batch call; do NOT fall
+                # through to a second (EL) attempt on the same turn - that risks
+                # a double label. The turn stays unlabelled, exactly the failure
+                # posture of a failed batch pass.
+                log.info("voiceid fast-label failed: chat=%s", chat_id)
+                log.debug("voiceid fast-label failure detail", exc_info=True)
             return
-        log.info("diarize pass (voiceid defer): chat=%s reason=%s",
-                 chat_id, verdict["reason"])
+        if verdict is not None:
+            log.info("diarize pass (voiceid defer): chat=%s reason=%s",
+                     chat_id, verdict["reason"])
     request_pcm = prefix_pcm + pcm
     try:
         result = await asyncio.to_thread(
@@ -908,17 +925,27 @@ async def run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # multi-voice, unknown and ambiguous cases to the EL sniff below, so a
         # brand-new second voice (two clusters) still arms exactly as today.
         if voiceid.enabled(cfg):
-            candidates = [{"person_id": s["person_id"], "name": s["name"]}
-                          for s in segments]
-            verdict = await asyncio.to_thread(
-                voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+            verdict = None
+            try:
+                candidates = [{"person_id": s["person_id"], "name": s["name"]}
+                              for s in segments]
+                verdict = await asyncio.to_thread(
+                    voiceid.identify_utterance, pcm, sample_rate, candidates,
+                    cfg)
+            except Exception:
+                # Never break the sniff: a matcher failure falls through to the
+                # unchanged EL sniff below.
+                log.info("voiceid sniff identify failed; EL sniff: chat=%s",
+                         chat_id)
+                log.debug("voiceid sniff identify failure detail", exc_info=True)
             if voiceid.matched(verdict):
                 await _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts,
                                        session, cfg, verdict, t0,
                                        turn_id=turn_id)
                 return
-            log.info("diarize pass (sniff voiceid defer): chat=%s reason=%s",
-                     chat_id, verdict["reason"])
+            if verdict is not None:
+                log.info("diarize pass (sniff voiceid defer): chat=%s reason=%s",
+                         chat_id, verdict["reason"])
         request_pcm = prefix_pcm + pcm
         result = await asyncio.to_thread(
             voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),

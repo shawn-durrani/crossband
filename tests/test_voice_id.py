@@ -137,6 +137,39 @@ def test_env_overrides_map_the_new_settings():
     assert out["voice_id_model_url"] == "https://example/x.onnx"
 
 
+# ============================ 2b. extractor state machine =================
+# Reproduces the CI condition - sherpa-onnx installed but the model not yet
+# fetched - which must resolve to "unavailable" WITHOUT raising into the pass.
+
+def test_get_extractor_cold_with_sherpa_present_never_raises(monkeypatch):
+    monkeypatch.setattr(voiceid, "sherpa_onnx", object())  # pretend installed
+    spawned = {"n": 0}
+    monkeypatch.setattr(voiceid, "_spawn_fetch",
+                        lambda cfg: spawned.__setitem__("n", spawned["n"] + 1))
+    assert voiceid._get_extractor(_cfg()) is None    # cold -> claims the warm
+    assert voiceid._state == "fetching"
+    assert spawned["n"] == 1
+    assert voiceid._get_extractor(_cfg()) is None    # already fetching: no raise
+    assert spawned["n"] == 1                          # warm claimed exactly once
+
+
+def test_identify_with_sherpa_present_but_not_ready_defers(store, monkeypatch):
+    # The exact CI scenario: sherpa importable, model absent, matcher cold.
+    monkeypatch.setattr(voiceid, "sherpa_onnx", object())
+    monkeypatch.setattr(voiceid, "_spawn_fetch", lambda cfg: None)
+    v = voiceid.identify_utterance(_tone(_ALEX_VAL, 1.5), 16000,
+                                   _candidates(store), _cfg())
+    assert v["status"] == "defer" and v["reason"] == "unavailable"
+
+
+def test_get_extractor_ready_returns_extractor(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(voiceid, "sherpa_onnx", object())
+    monkeypatch.setattr(voiceid, "_extractor", sentinel)
+    monkeypatch.setattr(voiceid, "_state", "ready")
+    assert voiceid._get_extractor(_cfg()) is sentinel
+
+
 # ============================ 3. pinned-model fetch =======================
 
 class _FakeStream:
