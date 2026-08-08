@@ -55,6 +55,7 @@ MIN_CLIP_RMS = 120         # int16 RMS floor - near-silence is not an anchor
 KEEP_CLIPS = 5             # best N clips per person, by quality score
 SUFFICIENT_SECONDS = 6.0   # accepted seconds needed before identification is trusted
 PREFIX_PERSON_SECONDS = 2.5  # roughly how much of each person rides the prefix
+MAX_PREFERRED_CHARS = 40   # display-name bound, matching the roster's
 
 # Recent-utterance audio cache for tap-to-correct: message_id -> utterance
 # audio, IN MEMORY ONLY, bounded. A correction made while the session is warm
@@ -196,9 +197,14 @@ class AnchorStore:
         for pid, p in sorted(data["people"].items(),
                              key=lambda kv: kv[1].get("created_at", 0)):
             clips = p.get("clips", [])
+            name = p.get("name", pid)
             out.append({
                 "person_id": pid,
-                "name": p.get("name", pid),
+                "name": name,
+                # The correctable display name (#28 phase 3): what the roster
+                # chip, the memory ingest and the STT keyterms call this
+                # person. Defaults to the name they were introduced under.
+                "preferred_name": p.get("preferred_name") or name,
                 "created_at": p.get("created_at", 0),
                 "clip_count": len(clips),
                 "seconds": round(sum(c["seconds"] for c in clips), 1),
@@ -230,6 +236,24 @@ class AnchorStore:
                                    "created_at": time.time(), "clips": []}
             self._save(data)
         return pid
+
+    def set_preferred_name(self, person_id: str, preferred: str) -> bool:
+        """Set the person's correctable display name (#28 phase 3). The
+        introduced name stays as the identity key (voice labels and roster
+        rows keep matching); this only changes what the display, ingest and
+        keyterm surfaces call them. Returns False for an unknown person or
+        an empty name after trimming."""
+        preferred = (preferred or "").strip()[:MAX_PREFERRED_CHARS].strip()
+        if not preferred or not re.search(r"[A-Za-z]", preferred):
+            return False
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id)
+            if person is None:
+                return False
+            person["preferred_name"] = preferred
+            self._save(data)
+        return True
 
     def add_clip(self, person_id: str, pcm: bytes, sample_rate: int,
                  source: str) -> bool:

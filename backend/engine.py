@@ -887,8 +887,9 @@ async def leave_chat_job(chat_id, cfg, memory):
             c.close()
             return []
         msgs = [dict(r) for r in c.execute(
-            "SELECT id, speaker, content, created_at FROM messages "
-            "WHERE chat_id=? AND id>? ORDER BY id", (chat_id, upto[0]))]
+            "SELECT id, speaker, content, created_at, voice_labels "
+            "FROM messages WHERE chat_id=? AND id>? ORDER BY id",
+            (chat_id, upto[0]))]
         by_id = {m["id"]: m for m in msgs}
         if msgs:
             rows = [dict(r) for r in c.execute(
@@ -912,7 +913,27 @@ async def leave_chat_job(chat_id, cfg, memory):
                 by_id[a["message_id"]].setdefault("attachments", []).append(
                     {"filename": a["filename"], "mime": a["mime"],
                      "data_b64": data})
+        # Guest attribution (#28 phase 3, contract per membro#31): resolve
+        # each user turn's ingest speaker class from its voice labels and
+        # the chat's OPEN attribution flags. Owner turns stay "user" exactly
+        # as always; a doubted or uncertain turn goes as "guest:unknown",
+        # never as the owner.
+        flagged = {f["message_id"]
+                   for f in db.get_room_flags(c, chat_id, open_only=True)
+                   if f.get("message_id")}
         c.close()
+        preferred = {}
+        try:
+            from . import anchors
+            preferred = {p["name"].casefold(): p["preferred_name"]
+                         for p in anchors.store().people()}
+        except Exception:
+            log.warning("anchor store unreadable during handoff - guest "
+                        "names ingest as spoken", exc_info=True)
+        owner = cfg.get("user_name", "User")
+        for m in msgs:
+            m["speaker"] = memory_client_mod.ingest_speaker(
+                m, flagged, owner, preferred)
         return msgs
 
     def _advance(last_id):

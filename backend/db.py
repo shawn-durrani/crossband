@@ -18,7 +18,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 14  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2)
+SCHEMA_VERSION = 15  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -99,8 +99,15 @@ CREATE TABLE IF NOT EXISTS messages(
   -- (the normal case, and the silent result of any diarization failure).
   -- The transcript's content itself stays immutable; this is audio metadata.
   voice_labels TEXT NOT NULL DEFAULT '',
-  labels_updated_at REAL NOT NULL DEFAULT 0     -- live-events cursor, like guest_jobs.updated_at
+  labels_updated_at REAL NOT NULL DEFAULT 0,    -- live-events cursor, like guest_jobs.updated_at
+  -- #28 phase 3: the client's voice-trace turn id, persisted at insert so the
+  -- diarization pass can key its label write to the EXACT message the
+  -- utterance produced instead of guessing by time window. Empty for typed
+  -- messages and for voice clients that predate the field.
+  voice_turn_id TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_messages_voice_turn
+  ON messages(voice_turn_id) WHERE voice_turn_id != '';
 CREATE INDEX IF NOT EXISTS idx_messages_labels_updated
   ON messages(labels_updated_at);
 CREATE TABLE IF NOT EXISTS attachments(
@@ -456,6 +463,14 @@ def init(settings=None):
                        "AND name='chats'").fetchone():
             con.execute("ALTER TABLE chats ADD COLUMN room_mode "
                         "INTEGER NOT NULL DEFAULT 0")
+    if 1 <= version <= 14:  # v15: exact diarization label targeting (#28 phase 3)
+        # Default-empty, so every existing row simply has no recorded turn id
+        # - the diarization pass then behaves exactly as before for it. The
+        # partial index the executescript adds backs the exact-match lookup.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='messages'").fetchone():
+            con.execute("ALTER TABLE messages ADD COLUMN voice_turn_id "
+                        "TEXT NOT NULL DEFAULT ''")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -664,7 +679,7 @@ def get_messages_after(con, since, chat_id=None):
 
 def insert_message(con, chat_id, speaker, content, *, usage_json=None,
                     import_uuid=None, tool_events=None, attachment_ids=None,
-                    notify=True):
+                    notify=True, voice_turn_id=""):
     """THE single write path for a LIVE message - every insert
     that should be pushed to a connected client goes through here, not a raw
     `INSERT INTO messages`. Centralizing this is what makes the live-events
@@ -680,9 +695,10 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
     con.commit() has already returned, so a waiter that wakes up can always
     read the row it was woken for."""
     cur = con.execute(
-        "INSERT INTO messages(chat_id, speaker, content, usage_json, created_at, import_uuid) "
-        "VALUES(?,?,?,?,?,?)",
-        (chat_id, speaker, content, usage_json, now(), import_uuid),
+        "INSERT INTO messages(chat_id, speaker, content, usage_json, created_at, "
+        "import_uuid, voice_turn_id) VALUES(?,?,?,?,?,?,?)",
+        (chat_id, speaker, content, usage_json, now(), import_uuid,
+         voice_turn_id or ""),
     )
     msg_id = cur.lastrowid
     for att_id in (attachment_ids or []):
@@ -734,6 +750,22 @@ def set_message_voice_labels(con, message_id, payload):
     con.commit()
     from . import events  # lazy for the same circularity reason as insert_message
     events.notify_message_update()
+
+
+def get_message_by_voice_turn(con, chat_id, voice_turn_id):
+    """The one user message a diarization pass with a turn id may label:
+    matched on the client's own correlation id, persisted at insert (#28
+    phase 3). Exact by construction - a short interjection whose transcript
+    was dropped client-side simply has no row, and its labels attach
+    nowhere instead of smearing onto a neighbouring turn."""
+    if not voice_turn_id:
+        return None
+    row = con.execute(
+        "SELECT id, voice_labels, created_at FROM messages "
+        "WHERE chat_id=? AND speaker='user' AND voice_turn_id=? "
+        "ORDER BY id LIMIT 1",
+        (chat_id, voice_turn_id)).fetchone()
+    return dict(row) if row else None
 
 
 def get_voice_label_candidates(con, chat_id, since_ts):

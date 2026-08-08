@@ -232,6 +232,13 @@ class SendIn(BaseModel):
 
 @router.post("/api/chats/{chat_id}/send")
 async def send_message(chat_id: int, body: SendIn, request: Request):
+    # Bound/clean the client-supplied correlation id the same way the
+    # voice-trace ingest path does (backend/voice_trace._clean_str) - it's
+    # only ever used as an opaque DB key, never rendered or interpreted.
+    # Cleaned BEFORE the persist: it is stored on the message row so the
+    # diarization pass can label the EXACT turn it heard (#28 phase 3).
+    turn_id = (body.turn_id or "").strip()[:64] or None
+
     # The user-message persist (INSERT + fsync + placeholder-title
     # update) runs on a worker thread - this route shares the event loop
     # with live voice websocket relays, and a blocked fsync here is heard
@@ -248,7 +255,8 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
                 title = body.text.strip().splitlines()[0][:60]
                 con.execute("UPDATE chats SET title=? WHERE id=?", (title, chat_id))
             user_msg = db.insert_message(con, chat_id, "user", body.text,
-                                         attachment_ids=body.attachment_ids)
+                                         attachment_ids=body.attachment_ids,
+                                         voice_turn_id=turn_id or "")
             roster = db.get_chat_participants(con, chat_id)
             return chat, user_msg, roster
         finally:
@@ -285,10 +293,6 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
     memory = request.app.state.memory
     if rounds.active(chat_id):
         raise HTTPException(409, "a round is already running - abort it first")
-    # Bound/clean the client-supplied correlation id the same way the
-    # voice-trace ingest path does (backend/voice_trace._clean_str) - it's
-    # only ever used as an opaque DB key, never rendered or interpreted.
-    turn_id = (body.turn_id or "").strip()[:64] or None
 
     async def gen():
         yield engine.sse({"type": "user_saved", "message": user_msg})

@@ -4,6 +4,21 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode, phase 3 (#28): attribution lands everywhere it matters.
+  Voice labels now attach to exactly the turn that was spoken (a quick
+  interjection can no longer be labelled onto a neighbouring turn), and
+  the models finally SEE the labels: a turn confidently matched to a
+  named person reads as that person "(in the room)" in every model's
+  view of the chat, while an uncertain turn reads as an unidentified
+  speaker - never guessed, never silently credited to you. Names stop
+  drifting: your own name always comes from the `user_name` setting
+  (never from what the transcriber heard), each remembered voice gets
+  an editable preferred spelling (Models -> Remembered voices, pencil
+  icon), and everyone's names are fed to the live transcriber so it
+  spells them consistently. When a chat is saved to memory, guests'
+  statements are recorded as that guest - and membro quarantines them
+  for review - while anything the app is not sure about is marked as an
+  unknown guest rather than being filed as a fact about you.
 - Room mode, phase 2 (#28): voices get names, and the introduction is
   the trigger. Saying "my wife Alex is here" (no toggle needed) flips
   room mode on for the chat, adds Alex to the roster, and starts

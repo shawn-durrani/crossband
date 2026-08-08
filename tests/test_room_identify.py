@@ -511,6 +511,28 @@ def test_people_endpoint_and_forget_deletes_audio_and_unlinks(app, tmp_path):
         assert c.delete(f"/api/voice/people/{pid}").status_code == 404
 
 
+def test_rename_sets_preferred_name_and_roster_shows_it(app):
+    """The correctable display name (#28 phase 3): renaming a remembered
+    voice changes what the roster snapshot and people endpoint SHOW, while
+    `name` stays the identity key the voice labels keep matching."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _setup_room(c, sufficient=["Lex"])
+        pid = c.get("/api/voice/people").json()["people"][0]["person_id"]
+        assert c.post(f"/api/voice/people/{pid}/name",
+                      json={"name": "  Alex  "}).json() == {"ok": True}
+        person = c.get("/api/voice/people").json()["people"][0]
+        assert person["preferred_name"] == "Alex"
+        assert person["name"] == "Lex"  # identity untouched
+        row = next(p for p in c.get(f"/api/chats/{chat['id']}/roster")
+                   .json()["roster"] if p["name"] == "Lex")
+        assert row["display_name"] == "Alex"
+        # guards: unknown person 404s; a letterless name 400s
+        assert c.post("/api/voice/people/nope/name",
+                      json={"name": "Alex"}).status_code == 404
+        assert c.post(f"/api/voice/people/{pid}/name",
+                      json={"name": "!!!"}).status_code == 400
+
+
 def test_room_mode_patch_override_updates_flag_and_mirror(app):
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()

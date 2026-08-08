@@ -308,26 +308,45 @@ async def stt_stream_relay(ws: WebSocket):
     # buffer is only ever stashed locally at each commit; no batch call, no
     # task, no label - the phase-1 pins in tests/test_room_mode.py still hold.
     room = diarize.RoomSession(enabled=bool(init.get("room_mode")))
-    # Seed the server-side room-mode mirror from the chat row (one read, at
-    # session OPEN - never on the audio path). A chat whose room mode was
-    # flipped durably in an earlier session diarizes from the first utterance
-    # of this one: that is what "voices are remembered" means end to end.
+    # Session-open reads (one worker-thread trip, NEVER on the audio path):
+    # seed the server-side room-mode mirror from the chat row, and collect the
+    # names the transcriber should spell consistently. A chat whose room mode
+    # was flipped durably in an earlier session diarizes from the first
+    # utterance of this one: that is what "voices are remembered" means end
+    # to end.
+    #
+    # Keyterms (#28 phase 3): the owner's `user_name` plus the present
+    # roster's display names ride the upstream connection URL's keyterms
+    # parameter, so the realtime transcriber stops spelling the people in
+    # the room by ear. Chosen here, once, at open - the per-frame relay loop
+    # below is untouched, and a failed read degrades to the owner's name
+    # alone, never to a broken session.
+    keyterm_names = [cfg.get("user_name") or ""]
     if chat_id:
         try:
-            def _read_room_mode():
+            def _session_open_reads():
                 con = db.connect()
                 try:
                     row = con.execute("SELECT room_mode FROM chats WHERE id=?",
                                       (chat_id,)).fetchone()
-                    return bool(row and row["room_mode"])
+                    roster = db.get_room_roster(con, chat_id,
+                                                present_only=True)
                 finally:
                     con.close()
-            diarize.set_room_enabled(chat_id, await asyncio.to_thread(_read_room_mode))
+                from .. import anchors
+                preferred = {p["name"].lower(): p["preferred_name"]
+                             for p in anchors.store().people()}
+                names = [preferred.get(r["name"].lower(), r["name"])
+                         for r in roster]
+                return bool(row and row["room_mode"]), names
+            enabled, roster_names = await asyncio.to_thread(_session_open_reads)
+            diarize.set_room_enabled(chat_id, enabled)
+            keyterm_names += roster_names
         except Exception:
             log.warning("room-mode seed failed; session continues", exc_info=True)
     try:
         async with websockets.connect(
-            voice.STT_WS_URL,
+            voice.stt_ws_url(keyterm_names),
             additional_headers={"xi-api-key": voice.api_key()},
             max_size=16 * 1024 * 1024,
         ) as eleven:
@@ -400,11 +419,22 @@ async def stt_stream_relay(ws: WebSocket):
                         # upstream exactly as it always has, and a failure to
                         # even schedule must not break live transcription
                         # (same posture as the prewarm hook).
+                        #
+                        # The commit frame's `turn_id` (#28 phase 3) is the
+                        # client's voice-trace correlation id - the SAME id
+                        # its /send will persist on the user message, which
+                        # is what lets the pass label the exact turn. Ours
+                        # alone: it is not part of the upstream payload
+                        # built above, so the ElevenLabs byte stream stays
+                        # identical whether or not it is sent.
                         try:
                             pcm, pcm_sr = room.take_utterance()
+                            commit_turn_id = (str(msg.get("turn_id") or "")
+                                              .strip()[:64] or None)
                             if room.enabled or diarize.room_enabled(chat_id):
                                 diarize.schedule_pass(chat_id, pcm, pcm_sr,
-                                                      db.now(), room, cfg)
+                                                      db.now(), room, cfg,
+                                                      turn_id=commit_turn_id)
                             else:
                                 diarize.stash_utterance(chat_id, pcm, pcm_sr)
                         except Exception:

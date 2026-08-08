@@ -12,13 +12,38 @@
 // - person:     {person_id, name, seconds, clip_count, sufficient}
 
 const MAX_MENU_NAMES = 12
+const MAX_PREFERRED_CHARS = 40 // matches the backend's roster/display bound
+
+// The name a person is SHOWN under (#28 phase 3): their correctable
+// preferred display name when one is set, otherwise the name they were
+// introduced as. Works for roster rows (display_name, joined in by the
+// backend) and remembered-voice people (preferred_name) alike. The plain
+// `name` stays the identity key that voice labels are written with - only
+// display surfaces call this.
+export function displayName(p) {
+  if (!p) return ''
+  const preferred = typeof p.display_name === 'string' && p.display_name
+    ? p.display_name
+    : (typeof p.preferred_name === 'string' ? p.preferred_name : '')
+  if (preferred) return preferred
+  return typeof p.name === 'string' ? p.name : ''
+}
+
+// Validation for an edited preferred name: trimmed, bounded, must contain a
+// letter. Returns the cleaned name, or '' when there is nothing sendable -
+// the caller disables Save on ''. One rule, shared by every rename surface.
+export function cleanPreferredName(raw) {
+  if (typeof raw !== 'string') return ''
+  const name = raw.trim().slice(0, MAX_PREFERRED_CHARS).trim()
+  return /[a-zA-Z]/.test(name) ? name : ''
+}
 
 // The transparency cue: multi-voice processing is on, and THIS is who the
 // app is trying to tell apart. Empty roster = no chip at all.
 export function rosterChipText(roster) {
   const names = (roster || [])
-    .filter((p) => p && p.status !== 'left' && typeof p.name === 'string' && p.name)
-    .map((p) => p.name)
+    .filter((p) => p && p.status !== 'left' && displayName(p))
+    .map((p) => displayName(p))
   if (!names.length) return ''
   return `In the room: ${names.join(', ')}`
 }
@@ -28,7 +53,7 @@ export function rosterChipText(roster) {
 export function rosterTitle(roster) {
   const learning = (roster || [])
     .filter((p) => p && p.status !== 'left' && !p.sufficient)
-    .map((p) => p.name)
+    .map((p) => displayName(p) || p.name)
   const base =
     'Room mode is on: turns are attributed by voice, and audio is '
     + 'transcribed twice while it is on (roughly double voice spend). '
@@ -103,8 +128,12 @@ export function personSummary(person, sufficientSeconds) {
     ? 'voice remembered - identified automatically when they speak'
     : `still learning - ${secs.toFixed(1)}s of ${Number(sufficientSeconds) || 6}s `
       + 'of clear speech stored; turns stay uncertain until then'
+  const shown = displayName(person) || person.name
   return {
-    name: person.name,
+    name: shown,
+    // Honesty when a preferred spelling differs from the introduced name:
+    // the label chips keep writing the introduced name, so say so.
+    alias: shown !== person.name ? `heard as "${person.name}"` : '',
     detail: `${person.clip_count || 0} clip${person.clip_count === 1 ? '' : 's'}, `
       + `${secs.toFixed(1)}s`,
     status,

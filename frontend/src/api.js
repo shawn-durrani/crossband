@@ -130,6 +130,11 @@ export const api = {
   // content-free), remembered voices, forget, tap-to-correct, flag dismissal.
   roster: (chatId) => fetch(`/api/chats/${chatId}/roster`).then(json),
   voicePeople: () => fetch('/api/voice/people').then(json),
+  renameVoice: (personId, name) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/name`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).then(json),
   forgetVoice: (personId) => fetch(`/api/voice/people/${encodeURIComponent(personId)}`, {
     method: 'DELETE',
   }).then(json),

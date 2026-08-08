@@ -10,7 +10,9 @@ service's database.
 
 import asyncio
 import datetime
+import json
 import logging
+import re
 import time
 
 import httpx
@@ -33,6 +35,94 @@ def _iso(ts: float) -> str:
         return datetime.datetime.fromtimestamp(ts).astimezone().isoformat()
     except (TypeError, ValueError, OSError):
         return datetime.datetime.now().astimezone().isoformat()
+
+
+# ---- guest attribution on ingest (#28 phase 3, contract per membro#31) ----
+#
+# A new ADDITIVE speaker class rides /ingest beside the existing "user" and
+# model slugs: "guest:<name>" for a turn confidently attributed to a named
+# person in the room, and "guest:unknown" for a turn whose speaker the voice
+# evidence could not confirm. The walls this feeds are membro's: guest facts
+# quarantine by default, and an older membro treats any unrecognised speaker
+# class as untrusted - so nothing here waits on the membro-side build.
+#
+# The non-negotiable, stated in both issues: a turn that is uncertain, or
+# that carries an OPEN attribution flag (an unanswered "who is that?", or a
+# mismatch doubt the owner has not resolved), must NEVER be sent as the
+# owner. Before room mode existed, every voice near the microphone ingested
+# as "user"; this is the corruption path being closed.
+
+GUEST_UNKNOWN = "guest:unknown"
+_VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
+
+
+def _parse_voice_labels(raw):
+    """(labels, uncertain) out of a persisted voice_labels JSON string.
+    Anything malformed reads as unlabelled - the same degradation as the
+    transcript projection's."""
+    if not raw or not isinstance(raw, str):
+        return [], set()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return [], set()
+    if not isinstance(data, dict):
+        return [], set()
+    labels = [l for l in (data.get("labels")
+                          if isinstance(data.get("labels"), list) else [])
+              if isinstance(l, str) and l.strip()]
+    uncertain = {u for u in (data.get("uncertain")
+                             if isinstance(data.get("uncertain"), list) else [])
+                 if isinstance(u, str)}
+    return labels, uncertain
+
+
+def _wire_name(name: str) -> str:
+    """A guest name as it may appear inside the speaker class: single-line,
+    colon-free (the class separator), bounded."""
+    return " ".join((name or "").replace(":", " ").split())[:40]
+
+
+def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
+                   preferred_names=None) -> str:
+    """The speaker class one message carries into /ingest.
+
+    - a non-user message (model slug, system) passes through untouched;
+    - a user turn with NO voice labels is the owner typing or speaking
+      alone: "user", exactly as it has always been sent;
+    - an OPEN attribution flag on the turn means the attribution is doubted:
+      "guest:unknown", even if the label itself reads confident;
+    - any uncertain or ordinal label: "guest:unknown" - never the owner,
+      never the guessed name;
+    - confident labels that are all the owner: "user";
+    - exactly one confident guest name: "guest:<preferred name>" (the
+      correctable display name, falling back to the label itself);
+    - anything else (several people confidently sharing one turn): the turn
+      is not attributable to one speaker, so it fails safe to
+      "guest:unknown"."""
+    speaker = msg.get("speaker")
+    if speaker != "user":
+        return speaker
+    if msg.get("id") in (open_flag_ids or frozenset()):
+        return GUEST_UNKNOWN
+    labels, uncertain = _parse_voice_labels(msg.get("voice_labels"))
+    if not labels:
+        return "user"
+    if any(l in uncertain or _VOICE_ORDINAL_RE.match(l) for l in labels):
+        return GUEST_UNKNOWN
+    distinct = []
+    for l in labels:
+        if l not in distinct:
+            distinct.append(l)
+    owner = (owner_name or "").casefold()
+    if all(n.casefold() == owner for n in distinct):
+        return "user"
+    if len(distinct) != 1:
+        return GUEST_UNKNOWN
+    name = distinct[0]
+    preferred = (preferred_names or {}).get(name.casefold()) or name
+    wire = _wire_name(preferred) or _wire_name(name)
+    return f"guest:{wire}" if wire else GUEST_UNKNOWN
 
 
 class MemoryClient:

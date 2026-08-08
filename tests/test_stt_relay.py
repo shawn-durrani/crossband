@@ -142,3 +142,89 @@ def test_same_origin_websocket_still_connects(app, relay):
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
+
+
+# ── roster names as keyterm bias (#28 phase 3) ──────────────────────────────
+#
+# The realtime transcriber spelt the people in the room by ear (field-test
+# defect 3), so the relay now biases it: the owner's `user_name` plus the
+# present roster's display names ride the upstream connection URL's
+# `keyterms` query parameter, chosen once at session open. The per-frame
+# byte-identity pins live in tests/test_room_mode.py and still hold - the
+# keyterms change the connection URL, never a frame.
+
+def _capturing_relay(app, monkeypatch):
+    fake = FakeEleven()
+    seen = {}
+
+    def connect(url, **kw):
+        seen["url"] = url
+        return fake
+
+    monkeypatch.setattr(voice_router.websockets, "connect", connect)
+    monkeypatch.setattr(voice_router.voice, "enabled", lambda: True)
+    monkeypatch.setattr(voice_router.voice, "api_key", lambda: "test-key")
+    monkeypatch.setattr(voice_router.engine, "prewarm_recall",
+                        lambda *a, **kw: None)
+    app.state.allowed_hosts = {"testserver", "127.0.0.1", "localhost", "::1"}
+    return seen
+
+
+def test_stt_url_biases_owner_and_roster_display_names(app, monkeypatch):
+    """A chat with people in the room connects with keyterms = the owner's
+    user_name plus each present person's PREFERRED display name - the
+    correctable spelling, not the one first heard."""
+    from urllib.parse import parse_qs, urlparse
+
+    from backend import anchors, db
+
+    seen = _capturing_relay(app, monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        con = db.connect()
+        db.add_room_person(con, chat["id"], "Lex")
+        con.close()
+        pid = anchors.store().ensure_person("Lex")
+        assert anchors.store().set_preferred_name(pid, "Alex")
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            ws.send_json(_frame())
+            assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json({"done": True})
+    q = parse_qs(urlparse(seen["url"]).query)
+    assert q["keyterms"] == ["User", "Alex"]  # cfg user_name, then the roster
+
+
+def test_stt_url_without_a_roster_biases_the_owner_name_only(app, monkeypatch):
+    """No roster: the only keyterm is the owner's user_name - the name the
+    introduction utterance itself needs spelt right."""
+    from urllib.parse import parse_qs, urlparse
+
+    seen = _capturing_relay(app, monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            ws.send_json(_frame())
+            assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json({"done": True})
+    q = parse_qs(urlparse(seen["url"]).query)
+    assert q["keyterms"] == ["User"]
+
+
+def test_keyterm_list_is_bounded_and_deduplicated():
+    """Pure rule: the ElevenLabs caps are enforced before the URL is built -
+    at most 50 terms of at most 20 characters, case-insensitively unique,
+    first-seen order; and NO terms means the exact historical URL."""
+    from backend import voice as voice_mod
+
+    many = ["  Alex ", "alex", "", None, 42, "x" * 30] + \
+        [f"name{i}" for i in range(60)]
+    terms = voice_mod.clean_keyterms(many)
+    assert terms[0] == "Alex"
+    assert "alex" not in terms[1:]
+    assert all(isinstance(t, str) and 0 < len(t) <= 20 for t in terms)
+    assert len(terms) == 50
+    assert voice_mod.stt_ws_url([]) == voice_mod.STT_WS_URL
+    assert voice_mod.stt_ws_url(None) == voice_mod.STT_WS_URL
+    assert voice_mod.stt_ws_url(["Ana Belle"]).endswith("?keyterms=Ana+Belle")

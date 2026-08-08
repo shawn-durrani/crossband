@@ -9,8 +9,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  askFlag, flagCopy, FORGET_EXPLAINER, mismatchByMessage, personSummary,
-  reassignOptions, rosterChipText, rosterTitle,
+  askFlag, cleanPreferredName, displayName, flagCopy, FORGET_EXPLAINER,
+  mismatchByMessage, personSummary, reassignOptions, rosterChipText,
+  rosterTitle,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -102,4 +103,45 @@ test('person summary states sufficiency honestly', () => {
 test('the forget explainer says deletion, plainly', () => {
   assert.match(FORGET_EXPLAINER, /deletes/)
   assert.match(FORGET_EXPLAINER, /this computer/)
+})
+
+// ── preferred display names (#28 phase 3) ───────────────────────────────────
+
+test('displayName prefers the correctable name over the introduced one', () => {
+  assert.equal(displayName({ name: 'Lex', display_name: 'Alex' }), 'Alex')
+  assert.equal(displayName({ name: 'Lex', preferred_name: 'Alex' }), 'Alex')
+  assert.equal(displayName({ name: 'Lex' }), 'Lex')
+  assert.equal(displayName({ name: 'Lex', display_name: '' }), 'Lex')
+  assert.equal(displayName(null), '')
+  assert.equal(displayName({ name: 42 }), '')
+})
+
+test('the roster chip and hint show display names', () => {
+  const roster = [
+    { name: 'Shawn', status: 'present', sufficient: true },
+    { name: 'Lex', display_name: 'Alex', status: 'present', sufficient: false },
+  ]
+  assert.equal(rosterChipText(roster), 'In the room: Shawn, Alex')
+  assert.match(rosterTitle(roster), /Still learning: Alex/)
+})
+
+test('cleanPreferredName trims, bounds and requires a letter', () => {
+  assert.equal(cleanPreferredName('  Alex  '), 'Alex')
+  assert.equal(cleanPreferredName('A'.repeat(100)).length, 40)
+  assert.equal(cleanPreferredName('!!!'), '')
+  assert.equal(cleanPreferredName('   '), '')
+  assert.equal(cleanPreferredName(''), '')
+  assert.equal(cleanPreferredName(null), '')
+  assert.equal(cleanPreferredName(42), '')
+})
+
+test('person summary shows the preferred name and stays honest about the heard one', () => {
+  const renamed = personSummary(
+    { name: 'Lex', preferred_name: 'Alex', seconds: 7.5, clip_count: 4, sufficient: true }, 6)
+  assert.equal(renamed.name, 'Alex')
+  assert.match(renamed.alias, /heard as "Lex"/)
+  const plain = personSummary(
+    { name: 'Alex', seconds: 7.5, clip_count: 4, sufficient: true }, 6)
+  assert.equal(plain.name, 'Alex')
+  assert.equal(plain.alias, '')
 })

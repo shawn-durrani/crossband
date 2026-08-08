@@ -17,6 +17,44 @@ TTS_WS_URL = (
 STT_WS_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
 TIMEOUT = 30
 
+# Keyterm biasing on the realtime STT connection (#28 phase 3): roster names
+# ride the websocket URL's `keyterms` query parameter so the transcriber
+# spells the people in the room consistently instead of by ear. Caps match
+# the ElevenLabs documented limits: at most 50 terms, each at most 20
+# characters. Names only, chosen at session OPEN - nothing per-frame changes.
+KEYTERMS_MAX = 50
+KEYTERM_MAX_CHARS = 20
+
+
+def clean_keyterms(names) -> list:
+    """Bounded, de-duplicated keyterm list from candidate names: whitespace
+    trimmed, empties dropped, each term capped at KEYTERM_MAX_CHARS, at most
+    KEYTERMS_MAX terms, first-seen order, case-insensitive de-dup (the bias
+    works on either casing; sending both wastes a slot)."""
+    out, seen = [], set()
+    for raw in names or []:
+        if not isinstance(raw, str):
+            continue
+        term = raw.strip()[:KEYTERM_MAX_CHARS].strip()
+        if not term or term.lower() in seen:
+            continue
+        seen.add(term.lower())
+        out.append(term)
+        if len(out) >= KEYTERMS_MAX:
+            break
+    return out
+
+
+def stt_ws_url(keyterms=None) -> str:
+    """The realtime STT connection URL, with keyterm biasing when there are
+    names to bias towards. No keyterms = the exact historical URL, so a
+    session with nobody to name connects byte-for-byte as it always has."""
+    terms = clean_keyterms(keyterms)
+    if not terms:
+        return STT_WS_URL
+    from urllib.parse import urlencode
+    return STT_WS_URL + "?" + urlencode([("keyterms", t) for t in terms])
+
 
 def api_key():
     return os.environ.get("ELEVENLABS_API_KEY")
