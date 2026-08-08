@@ -57,7 +57,14 @@ def test_unenrolled_loopback_keeps_the_open_posture(app):
 
 def test_unenrolled_trusted_host_gets_only_the_login_surface(app):
     c = _client(app, base_url=f"https://{TAILNET}")
-    assert c.get("/api/auth/session").status_code == 200
+    s = c.get("/api/auth/session")
+    assert s.status_code == 200
+    # the session answer must AGREE with the middleware: a tailnet caller on
+    # an unenrolled install is held to the login surface, so it must not be
+    # told "authenticated" - that renders a half-open app whose every data
+    # fetch 401s. It gets the setup face instead.
+    assert s.json() == {"enrolled": False, "authenticated": False,
+                        "passkey": False}
     r = c.get("/api/state")
     assert r.status_code == 401
     assert "enrol" in r.json()["detail"]

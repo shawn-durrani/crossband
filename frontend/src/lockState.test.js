@@ -11,6 +11,10 @@ test('unenrolled installs stay open - the gate is enrolment-activated', () => {
   assert.equal(gateView({ enrolled: false, authenticated: true, passkey: false }), 'open')
 })
 
+test('unenrolled but held (a tailnet caller pre-enrolment) gets the setup face', () => {
+  assert.equal(gateView({ enrolled: false, authenticated: false, passkey: false }), 'setup')
+})
+
 test('a live session opens the app', () => {
   assert.equal(gateView({ enrolled: true, authenticated: true, passkey: false }), 'open')
   assert.equal(gateView({ enrolled: true, authenticated: true, passkey: true }, true), 'open')
