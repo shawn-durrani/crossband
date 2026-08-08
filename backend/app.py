@@ -232,7 +232,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except OSError:
                 pass
 
-    app = FastAPI(title="Crossband", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="crossband", version=__version__, lifespan=lifespan)
 
     # DNS-rebinding defense: a malicious page can re-point its own domain at
     # 127.0.0.1 and the browser will treat http://evil.com:8902 as same-origin
