@@ -20,7 +20,14 @@ maintainer:
   contents into code, tests, docs, commits or chat. Debug with a
   disposable data directory.
 - No real personal data in a diff, including spend figures, chat titles,
-  hostnames and paths. Fixtures are invented, not sampled.
+  hostnames, paths, and the names of real people (household members,
+  guests). This is paramount: field-test transcripts carry real names, so
+  when a phrasing from one becomes a test or a comment, rename it to the
+  synthetic roster (Alex, Sam, Dave, Mateo) FIRST. Fixtures are invented,
+  not sampled. Personal deny-list patterns live ONLY in the gitignored
+  `.secret-scan-local` (note the leading dot); a file named
+  `secret-scan-local` without the dot is NOT ignored and must never be
+  created.
 - Rules live in pure `.js` modules with `node --test` suites. Logic
   buried in a component has no automated guard.
 - Every live message insert goes through `db.insert_message`. A raw
