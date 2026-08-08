@@ -26,8 +26,9 @@ maintainer:
 - Every live message insert goes through `db.insert_message`. A raw
   insert elsewhere fails the build, and the guard is deliberate.
 - Cost provenance is stamped at write time and never backfilled.
-- Anything that spawns a process from request data is loopback-only, and
-  this app has no authentication.
+- Anything that spawns a process from request data is loopback-only,
+  and stays gated on the request's own host even now that the browser
+  gate exists: a session is not a licence to spawn from a remote host.
 
 ## Orientation
 

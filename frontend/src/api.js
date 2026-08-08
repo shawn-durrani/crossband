@@ -1,5 +1,13 @@
+// The browser gate (#25): when any API call comes back 401, the session
+// died (logout elsewhere, expiry, a restart) - AuthGate registers a handler
+// here so the whole app falls back to the lock screen instead of each
+// caller surfacing its own cryptic error.
+let onUnauthorized = null
+export function setUnauthorizedHandler(cb) { onUnauthorized = cb }
+
 async function json(res) {
   if (!res.ok) {
+    if (res.status === 401 && onUnauthorized) onUnauthorized()
     let detail = res.statusText
     try { detail = (await res.json()).detail || detail } catch { /* ignore */ }
     throw new Error(detail)
@@ -8,6 +16,19 @@ async function json(res) {
 }
 
 export const api = {
+  // The gate's own surface. authSession is deliberately raw fetch->json with
+  // no 401 hook: probing the lock state must never recurse into the handler.
+  authSession: () => fetch('/api/auth/session').then((r) => r.json()),
+  authSetup: (body) => fetch('/api/auth/setup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then(json),
+  authReset: (body) => fetch('/api/auth/reset', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then(json),
+  authLogin: (password) => fetch('/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+  }).then(json),
+  authLogout: () => fetch('/api/auth/logout', { method: 'POST' }).then(json),
   state: () => fetch('/api/state').then(json),
   createProject: (body) => fetch('/api/projects', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),

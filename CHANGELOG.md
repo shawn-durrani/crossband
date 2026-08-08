@@ -4,6 +4,14 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A browser gate (#25): an owner password (scrypt verifier, recovery
+  secret for enrolment/reset, opaque revocable sessions) now protects
+  the UI and API. Enrolment-activated: nothing changes until you set a
+  password from the app; after that, every surface asks for it and a
+  tailnet caller only ever sees the lock screen. Set
+  `CROSSBAND_RECOVERY_SECRET` in `.env` so enrolment and reset work
+  without terminal access.
+
 ## v0.2.0 (2026-08-07)
 
 The rename release: the Sideband-era identifiers are retired.

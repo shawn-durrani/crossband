@@ -14,9 +14,10 @@ from urllib.parse import urlparse
 import websockets
 
 def _ws_local(ws) -> bool:
-    """HTTP middleware doesn't cover websocket scope, so both of its checks live
+    """HTTP middleware doesn't cover websocket scope, so ALL of its checks live
     here: the Host allowlist (loopback + configured trusted_hosts, e.g. a
-    Tailscale name) and a cross-origin rejection.
+    Tailscale name), a cross-origin rejection, and - once an owner password is
+    enrolled (#25) - the session gate.
 
     Host alone is not enough. A browser sets Host to whatever it is connecting
     to, and websockets are exempt from CORS, so any page a user visits could
@@ -24,14 +25,23 @@ def _ws_local(ws) -> bool:
     metered ElevenLabs relays on the operator's key. Origin is set by the
     browser and cannot be forged from page JS, so an Origin whose host is not
     itself allowed is refused. Non-browser clients send no Origin and are
-    allowed, matching the HTTP middleware's Sec-Fetch-Site posture."""
-    allowed = getattr(ws.app.state, "allowed_hosts", {"127.0.0.1", "localhost", "::1"})
+    allowed, matching the HTTP middleware's Sec-Fetch-Site posture.
+
+    The session check mirrors the HTTP middleware's enrolment-activated gate:
+    cookies ride the websocket handshake, so the browser that unlocked the
+    page authenticates here for free, and an anonymous socket is refused the
+    moment a password exists."""
+    from .. import auth as auth_mod
+    app = ws.app
+    allowed = getattr(app.state, "allowed_hosts", {"127.0.0.1", "localhost", "::1"})
     if (ws.url.hostname or "").lower() not in allowed:
         return False
     origin = ws.headers.get("origin")
-    if origin is None:
-        return True
-    return (urlparse(origin).hostname or "").lower() in allowed
+    if origin is not None and (urlparse(origin).hostname or "").lower() not in allowed:
+        return False
+    if getattr(app.state, "auth_enrolled", False):
+        return auth_mod.session_ok(app, ws.cookies.get(auth_mod.SESSION_COOKIE))
+    return True
 import logging
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, WebSocket

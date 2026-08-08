@@ -71,8 +71,9 @@ script; [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md) writes the
 procedure out step by step. HTTPS is required because browsers will not
 give a page the microphone otherwise. Never expose the port to the
 internet, and never use Tailscale Funnel. Read
-[SECURITY.md](SECURITY.md) first: this app has no authentication, so who
-can reach the port is the whole security model.
+[SECURITY.md](SECURITY.md) first: who can reach the port is the outer
+security boundary, with the owner-password browser gate (passkey-first
+once one is enrolled) standing inside it.
 
 ## Documentation
 

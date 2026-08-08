@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from . import auth
 from . import db
 from . import engine
 from . import events
@@ -27,6 +28,7 @@ from .config import (ROOT, Settings, deprecated_env_vars, key_status,
                      load_settings, report_missing_keys)
 from .memory_client import MemoryClient
 from .routers import attachments as attachments_router
+from .routers import auth as auth_router
 from .routers import chats as chats_router
 from .routers import events as events_router
 from .routers import import_export as import_router
@@ -176,6 +178,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     memory = MemoryClient(settings.memory_url)
 
+    # Browser gate (#25): membro's credential model, enrolment-activated (see
+    # backend/auth.py for the posture and its stated tradeoff). The secret and
+    # session store live on app.state; the enrolled flag is cached here and
+    # updated by the setup/reset handlers, so the per-request check costs a
+    # dict lookup, not a database read.
+    import secrets as _secrets
+    recovery_secret = settings.recovery_secret or _secrets.token_urlsafe(24)
+    _con = db.connect()
+    try:
+        auth_enrolled = auth.is_enrolled(_con)
+    finally:
+        _con.close()
+    for line in auth.startup_lines(enrolled=auth_enrolled,
+                                   secret_configured=bool(settings.recovery_secret),
+                                   secret=recovery_secret):
+        log.warning("%s", line)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.lock = acquire_lock(str(db.LOCK_PATH))
@@ -239,25 +258,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # with this app (CORS never enters into it). The Host header still says
     # evil.com though - so any request whose Host isn't an allowed name is
     # refused. Loopback is always allowed; `trusted_hosts` adds a Tailscale
-    # tailnet name (the tailnet itself is the auth boundary - only your devices
-    # can reach that name).
+    # tailnet name (the tailnet is the OUTER boundary - only your devices can
+    # reach that name; the session gate below stands inside it).
     allowed_hosts = {"127.0.0.1", "localhost", "::1"} | {
         h.strip().lower() for h in settings.trusted_hosts.split(",") if h.strip()}
     app.state.allowed_hosts = allowed_hosts
+    app.state.recovery_secret = recovery_secret
+    app.state.auth_sessions = {}
+    app.state.auth_enrolled = auth_enrolled
 
     @app.middleware("http")
     async def _host_allowlist(request, call_next):
-        if (request.url.hostname or "").lower() not in allowed_hosts:
+        host = (request.url.hostname or "").lower()
+        if host not in allowed_hosts:
             return JSONResponse(status_code=403, content={
                 "detail": "This app serves localhost (and configured trusted hosts) only."})
         # Defense-in-depth for the trusted-host (Tailscale) path: browsers stamp
         # Sec-Fetch-Site, so reject cross-site requests to /api/* - a malicious
         # page that knows the tailnet name can't drive the API from another origin.
         # Non-browser clients (curl, the app itself) don't send it → allowed.
-        if request.url.path.startswith("/api/") \
+        path = request.url.path
+        if path.startswith("/api/") \
                 and request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse(status_code=403, content={
                 "detail": "cross-site requests to the API are not allowed"})
+        # The browser gate (#25). Once a password is enrolled, every /api
+        # route outside the login surface needs a session - loopback
+        # included. Before enrolment, loopback keeps its historical open
+        # posture (the startup banner nags), but a trusted non-loopback host
+        # is held to the login surface either way: the tailnet should never
+        # see more than the lock screen without a session.
+        if path.startswith("/api/") and path not in auth_router.LOGIN_SURFACE \
+                and not auth.request_session_ok(request):
+            if app.state.auth_enrolled:
+                return JSONResponse(status_code=401, content={
+                    "detail": "locked - unlock first"})
+            if host not in ("127.0.0.1", "localhost", "::1"):
+                return JSONResponse(status_code=401, content={
+                    "detail": "no owner password is enrolled yet - enrol from "
+                              "the app (recovery secret required) first"})
         return await call_next(request)
 
     app.add_middleware(
@@ -318,6 +357,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         }
 
+    app.include_router(auth_router.router)
     app.include_router(participants_router.router)
     app.include_router(projects_router.router)
     app.include_router(chats_router.router)

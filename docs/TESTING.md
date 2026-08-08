@@ -96,6 +96,7 @@ week when it was maintained by hand.
 - (`test_accounting.py`) Shared cost accounting
 - (`test_app.py`) Boot smoke test
 - (`test_attribution_audit.py`) The non-blocking DIAGNOSTIC half of the source-provenance fix
+- (`test_auth_gate.py`) The browser gate: enrolment-activated sessions, recovery-gated setup/reset, websocket guard
 - (`test_boundary.py`) Localhost trust boundary
 - (`test_cache_split.py`) Claude-chat prompt-cache layout
 - (`test_chat_memory.py`) Auto-title refresh triggers

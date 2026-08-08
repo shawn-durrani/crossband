@@ -24,8 +24,11 @@ def test_ssrf_rejects_ipv4_mapped_ipv6(monkeypatch):
 
 
 def test_trusted_host_allowed_others_still_refused(tmp_path):
-    # Remote access over Tailscale: the tailnet name is allowed, everything else
-    # (including a different would-be tailnet name) is still refused.
+    # Remote access over Tailscale: the tailnet name is an ALLOWED HOST (403
+    # for strangers), but since #25 an anonymous trusted-host caller reaches
+    # only the login surface - 401 elsewhere, even before a password exists.
+    # Loopback keeps the historical open posture until enrolment
+    # (test_auth_gate.py owns the post-enrolment contract).
     from fastapi.testclient import TestClient
 
     from backend.app import create_app
@@ -33,8 +36,9 @@ def test_trusted_host_allowed_others_still_refused(tmp_path):
     s = Settings(data_dir=str(tmp_path / "d"), memory_url="http://127.0.0.1:59999",
                  trusted_hosts="my-mac.my-tailnet.ts.net")
     app = create_app(s)
-    assert TestClient(app, base_url="http://my-mac.my-tailnet.ts.net"
-                      ).get("/api/state").status_code == 200
+    tailnet = TestClient(app, base_url="http://my-mac.my-tailnet.ts.net")
+    assert tailnet.get("/api/auth/session").status_code == 200  # lock screen surface
+    assert tailnet.get("/api/state").status_code == 401         # nothing else anonymous
     assert TestClient(app, base_url="http://127.0.0.1"
                       ).get("/api/state").status_code == 200      # loopback still fine
     assert TestClient(app, base_url="http://evil.example.com"
