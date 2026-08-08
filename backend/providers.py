@@ -323,6 +323,24 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "mid-sentence (\"…the leader I know of in Austr-\"). If a message looks cut off and "
         "the missing part matters, ask them to finish the thought - NEVER guess who or what "
         "they were about to name and run with it.",
+        # The room-labels explainer (#28 phase 4, second-field-test defect 2:
+        # a seat claimed "I can tell from the voice"). Constant text, so it
+        # lives in the STABLE cached block - the cache-layout pins in
+        # tests/test_cache_split.py require per-round content to stay out of
+        # here, and this varies with nothing but the configured user name.
+        f"- Room voice labels: when other people are in the room with {user}, a spoken "
+        "turn's bracket may name who spoke it, e.g. \"[Alex (in the room) · <timestamp>]: "
+        "...\". Those labels come from a voice-matching pass over the audio; you receive "
+        "only the TEXT labels, never any audio - you cannot hear anyone, so never claim "
+        "you can tell who is speaking by their voice, accent or tone. If asked how you "
+        "know who spoke, the honest answer is the label on the turn. A turn attributed "
+        "to an \"unidentified speaker\" means the app does NOT know who spoke: never "
+        f"assume it was {user}, and never guess a name. A note under a turn saying two "
+        "voices spoke at once means people talked over each other and the transcript may "
+        "have lost or merged the quieter person's words - if the missing words matter, "
+        "ask that person to repeat what they said. A best-effort split by voice under "
+        "such a turn is the app's reconstruction from a second listen, useful but not "
+        "verbatim certainty.",
         f"- HIGH-STAKES personal facts about {user} - their current location, employer or "
         "job status, family, health, money/finances, and legal situation - are trust-"
         "critical and must NEVER be invented. State any of these as current fact ONLY when "
@@ -554,6 +572,32 @@ _VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
 UNIDENTIFIED_SPEAKER = "unidentified speaker"
 IN_ROOM_SUFFIX = " (in the room)"
 
+# Crosstalk in the projection (#28 phase 4). The batch pass marks a turn
+# whose utterance carried two or more voices; the projection passes that on
+# so the seats can do the human thing - ask the quieter person to repeat -
+# instead of trusting a transcript that may have silently dropped words.
+# Appended AFTER the turn's body, never inside it: message content stays
+# byte-identical, and an unmarked turn renders exactly as it always has.
+CROSSTALK_NOTE = (
+    "(two voices at once in this turn - the transcript may be missing or "
+    "merging the quieter person's words; if the missing words matter, ask "
+    "that person to repeat what they said)"
+)
+MAX_PROJECTED_SEGMENTS = 12
+
+
+def _voice_meta(msg):
+    """The parsed voice_labels dict for a message, or None. Anything
+    malformed reads as unlabelled - the shared degradation rule."""
+    raw = msg.get("voice_labels")
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
 
 def _clean_head(label):
     """A label as attribution-head text: the frame's own delimiters may not
@@ -567,14 +611,8 @@ def _user_turn_head(msg, cfg):
     Malformed label data degrades to the owner - exactly what an unlabelled
     turn means today."""
     owner = cfg["user_name"]
-    raw = msg.get("voice_labels")
-    if not raw or not isinstance(raw, str):
-        return owner
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return owner
-    if not isinstance(data, dict):
+    data = _voice_meta(msg)
+    if data is None:
         return owner
     labels = [l for l in (data.get("labels") if isinstance(data.get("labels"), list) else [])
               if isinstance(l, str) and _clean_head(l)]
@@ -597,6 +635,41 @@ def _user_turn_head(msg, cfg):
     return head + IN_ROOM_SUFFIX
 
 
+def _crosstalk_tail(msg, cfg):
+    """The app-assembled note under a crosstalk-marked user turn: the marker,
+    plus the best-effort split when one was persisted. Same one-directional
+    honesty as the head: an uncertain (or ordinal) segment label renders as
+    the unidentified speaker, never as the guessed name and never as the
+    owner. Malformed data renders nothing - the turn is then exactly a
+    plain labelled turn."""
+    data = _voice_meta(msg)
+    if data is None or data.get("crosstalk") is not True:
+        return ""
+    parts = []
+    raw_segments = data.get("segments")
+    for seg in (raw_segments if isinstance(raw_segments, list) else []):
+        if not isinstance(seg, dict):
+            continue
+        label, text = seg.get("label"), seg.get("text")
+        if not isinstance(label, str) or not isinstance(text, str):
+            continue
+        text = " ".join(text.replace('"', "'").split())[:400]
+        if not text:
+            continue
+        if seg.get("uncertain") or _VOICE_ORDINAL_RE.match(label) \
+                or not _clean_head(label):
+            shown = UNIDENTIFIED_SPEAKER
+        else:
+            shown = _clean_head(label)
+        parts.append(f'{shown}: "{text}"')
+        if len(parts) >= MAX_PROJECTED_SEGMENTS:
+            break
+    tail = CROSSTALK_NOTE
+    if parts:
+        tail += "\n(best-effort split by voice: " + " / ".join(parts) + ")"
+    return tail
+
+
 def _labelled_text(msg, names, cfg):
     label = _user_turn_head(msg, cfg) if msg["speaker"] == "user" \
         else names.get(msg["speaker"], msg["speaker"])
@@ -605,7 +678,12 @@ def _labelled_text(msg, names, cfg):
     body = msg["content"].strip()
     if not body and msg.get("attachments"):
         body = "(sent the attached file(s))"
-    return f"[{head}]: {body}"
+    text = f"[{head}]: {body}"
+    if msg["speaker"] == "user":
+        tail = _crosstalk_tail(msg, cfg)
+        if tail:
+            text += "\n" + tail
+    return text
 
 
 CONTINUE_NUDGE = (

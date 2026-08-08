@@ -285,8 +285,14 @@ def test_committed_transcript_returns_while_diarization_is_wedged_open(
             gate.set()  # let the pass finish; labels catch up out of band
             labels = _wait_for(lambda: _message_labels(msg["id"]))
             ws.send_json({"done": True})
+    # Phase 4 grew this payload: a two-cluster utterance is crosstalk by
+    # definition, so the marker rides the same write. The phase-1 halves
+    # (clusters + ordinals) are unchanged; the LATENCY pin above - the
+    # transcript arriving while the pass is wedged - is what this test
+    # exists for, and it held.
     assert json.loads(labels) == {"clusters": ["speaker_0", "speaker_1"],
-                                  "labels": ["Voice 1", "Voice 2"]}
+                                  "labels": ["Voice 1", "Voice 2"],
+                                  "crosstalk": True, "overlap": False}
     # The latency instrumentation: an INFO line with the pass duration,
     # content-free - stage timings and counts, never transcript text.
     lines = [r.getMessage() for r in caplog.records

@@ -201,7 +201,17 @@ export default function App() {
   function refreshRoom(chatId) {
     if (!chatId) return
     api.roster(chatId).then((r) => {
-      if (chatId === activeChatIdRef.current) setRoomInfo(r)
+      if (chatId === activeChatIdRef.current) {
+        setRoomInfo(r)
+        // A spoken introduction flips room mode ON server-side; adopt it on
+        // the client too (#28 phase 4) so the session's capture profile and
+        // the toggle both reflect what is actually running - the parallel
+        // pass fires on the server flag regardless of this. One-directional:
+        // only the explicit override (roomModeOff) turns the mode off.
+        if (r.room_mode && voiceRef.current?.active && !voiceRef.current.roomMode) {
+          changeRoomMode(true)
+        }
+      }
     }).catch(() => {})
     api.voicePeople().then((d) => setVoicePeople(d.people || [])).catch(() => {})
   }
@@ -333,10 +343,16 @@ export default function App() {
       voiceRef.current.setManualMode(pttMode)
       voiceRef.current.setSilenceMs(silenceSecs * 1000)
       voiceRef.current.setPlaybackRate(voiceRate)
-      // Room mode is per-session and defaults OFF - reset both halves so a
-      // previous session's choice never silently doubles this one's spend.
-      setRoomMode(false)
-      voiceRef.current.setRoomMode(false)
+      // The client toggle seeds from the CHAT's durable room mode: a chat an
+      // introduction flipped on runs the parallel pass server-side whatever
+      // this flag says, so starting "off" would only lie about it - and
+      // (#28 phase 4) the capture profile must match from the first
+      // utterance. A chat without room mode still starts OFF, exactly as
+      // before, so a previous session's toggle never silently doubles a
+      // fresh chat's spend.
+      const chatRoomOn = !!roomInfo?.room_mode
+      setRoomMode(chatRoomOn)
+      voiceRef.current.setRoomMode(chatRoomOn)
       await voiceRef.current.start()
     } catch (e) {
       setBanner(`Voice failed to start: ${e.message}`)
@@ -572,7 +588,7 @@ export default function App() {
 
   // Room mode (#28 phase 2) derivations - all decision logic in roomState.js.
   const rosterText = rosterChipText(roomInfo?.roster)
-  const rosterHint = rosterTitle(roomInfo?.roster)
+  const rosterHint = rosterTitle(roomInfo?.roster, roomInfo?.sufficient_seconds)
   const openAsk = askFlag(roomInfo?.flags)
   const mismatchFlags = mismatchByMessage(roomInfo?.flags)
 

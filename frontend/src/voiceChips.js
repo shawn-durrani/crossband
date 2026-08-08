@@ -90,6 +90,64 @@ export const CHIP_EXPLAINER =
   'Labelled by a second listen that tells voices apart. Best effort: '
   + 'labels can be wrong, and voices are not named yet.'
 
+// ---- crosstalk (#28 phase 4) ----
+//
+// The second listen can tell when two voices shared one utterance. On a
+// single microphone the quieter voice's overlapped words are often simply
+// gone from the transcript, so the honest render is a plain-English marker -
+// and, when the words alternated cleanly enough to split, a best-effort
+// per-voice attribution as metadata under the turn. Message text itself is
+// never rewritten.
+
+export const CROSSTALK_NOTE = 'Two voices at once - some words may be missing.'
+
+const MAX_SEGMENTS_SHOWN = 8
+const MAX_SEGMENT_CHARS = 200
+
+function labelData(msg) {
+  if (!msg || msg.speaker !== 'user' || !msg.voice_labels) return null
+  let data
+  try {
+    data = JSON.parse(msg.voice_labels)
+  } catch {
+    return null
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  return data
+}
+
+// The plain-English marker for a crosstalk-marked user turn; '' otherwise.
+// Same defensive posture as the chips: junk renders nothing.
+export function crosstalkNote(msg) {
+  const data = labelData(msg)
+  return data && data.crosstalk === true ? CROSSTALK_NOTE : ''
+}
+
+// Best-effort attributed sub-segments for a crosstalk turn, bounded and
+// sanitised for display: [{label, text, uncertain}]. Empty when the turn is
+// not crosstalk-marked, carries no split, or the data is junk. An uncertain
+// segment keeps its uncertainty (the UI shows "label?"), and a phase-1
+// ordinal counts as uncertain by construction.
+export function crosstalkSegments(msg) {
+  const data = labelData(msg)
+  if (!data || data.crosstalk !== true || !Array.isArray(data.segments)) return []
+  const out = []
+  for (const seg of data.segments) {
+    if (!seg || typeof seg !== 'object' || Array.isArray(seg)) continue
+    if (typeof seg.label !== 'string' || typeof seg.text !== 'string') continue
+    const label = seg.label.trim().slice(0, MAX_LABEL_CHARS)
+    const text = seg.text.trim().slice(0, MAX_SEGMENT_CHARS)
+    if (!label || !text) continue
+    out.push({
+      label,
+      text,
+      uncertain: seg.uncertain === true || /^Voice \d+$/.test(label),
+    })
+    if (out.length >= MAX_SEGMENTS_SHOWN) break
+  }
+  return out
+}
+
 // Per-chip explainers for the named phase: how much to trust this exact
 // label, and that tapping it corrects it.
 export function chipTitle(chip) {

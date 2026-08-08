@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   assignVoiceOrdinals, chipData, chipsForMessage, chipTitle, CHIP_EXPLAINER,
+  CROSSTALK_NOTE, crosstalkNote, crosstalkSegments,
 } from './voiceChips.js'
 
 const labelled = (labels, clusters = ['s0', 's1'], speaker = 'user') => ({
@@ -130,4 +131,59 @@ test('chip titles state trust plainly, per state', () => {
   assert.equal(chipTitle({ label: 'Voice 2', uncertain: false, corrected: false }),
     CHIP_EXPLAINER)
   assert.equal(chipTitle(null), '')
+})
+
+// ── crosstalk (#28 phase 4) ─────────────────────────────────────────────────
+
+const crosstalked = (extra = {}, speaker = 'user') => ({
+  id: 9, speaker, content: 'hi',
+  voice_labels: JSON.stringify({
+    clusters: ['s0', 's1'], labels: ['Shawn', 'Alex'], uncertain: [],
+    crosstalk: true, ...extra,
+  }),
+})
+
+test('the crosstalk note appears only on a marked user turn', () => {
+  assert.equal(crosstalkNote(crosstalked()), CROSSTALK_NOTE)
+  // plain labelled turn: no note
+  assert.equal(crosstalkNote(labelled(['Voice 1', 'Voice 2'])), '')
+  // AI turns, junk marker values, junk JSON, absent field: nothing, no crash
+  assert.equal(crosstalkNote(crosstalked({}, 'claude')), '')
+  assert.equal(crosstalkNote({ id: 1, speaker: 'user', content: 'hi',
+    voice_labels: JSON.stringify({ crosstalk: 'yes' }) }), '')
+  assert.equal(crosstalkNote({ id: 1, speaker: 'user', content: 'hi',
+    voice_labels: '{broken' }), '')
+  assert.equal(crosstalkNote(null), '')
+})
+
+test('crosstalk segments render bounded, sanitised, with uncertainty kept', () => {
+  const msg = crosstalked({ segments: [
+    { label: 'Shawn', text: '  pass the salt  ', uncertain: false },
+    { label: 'Voice 2', text: 'and pepper' },     // ordinal: uncertain by construction
+    { label: 'Alex', text: 'sure', uncertain: true },
+  ] })
+  assert.deepEqual(crosstalkSegments(msg), [
+    { label: 'Shawn', text: 'pass the salt', uncertain: false },
+    { label: 'Voice 2', text: 'and pepper', uncertain: true },
+    { label: 'Alex', text: 'sure', uncertain: true },
+  ])
+})
+
+test('crosstalk segments refuse junk and stay bounded', () => {
+  // junk entries skipped, never crashed on
+  assert.deepEqual(crosstalkSegments(crosstalked({ segments: [
+    null, 42, 'x', [], { label: 3, text: 'y' }, { label: 'A' },
+    { label: '  ', text: 'y' }, { label: 'A', text: '   ' },
+  ] })), [])
+  // segments without the marker render nothing (the marker is the license)
+  assert.deepEqual(crosstalkSegments({ id: 1, speaker: 'user', content: 'hi',
+    voice_labels: JSON.stringify({ labels: ['A'], segments: [
+      { label: 'A', text: 'hello' }] }) }), [])
+  // count and length bounds hold
+  const many = crosstalked({ segments: Array.from({ length: 20 }, (_, i) => (
+    { label: `P${i}`, text: 'z'.repeat(500) })) })
+  const out = crosstalkSegments(many)
+  assert.equal(out.length, 8)
+  assert.ok(out.every((s) => s.text.length <= 200))
+  assert.deepEqual(crosstalkSegments(null), [])
 })

@@ -761,7 +761,7 @@ def get_message_by_voice_turn(con, chat_id, voice_turn_id):
     if not voice_turn_id:
         return None
     row = con.execute(
-        "SELECT id, voice_labels, created_at FROM messages "
+        "SELECT id, voice_labels, created_at, content FROM messages "
         "WHERE chat_id=? AND speaker='user' AND voice_turn_id=? "
         "ORDER BY id LIMIT 1",
         (chat_id, voice_turn_id)).fetchone()
@@ -773,7 +773,7 @@ def get_voice_label_candidates(con, chat_id, since_ts):
     created after the utterance's commit instant, id-ordered so the caller's
     pick_target takes the OLDEST unlabelled match first."""
     return [dict(r) for r in con.execute(
-        "SELECT id, voice_labels, created_at FROM messages "
+        "SELECT id, voice_labels, created_at, content FROM messages "
         "WHERE chat_id=? AND speaker='user' AND created_at>=? ORDER BY id",
         (chat_id, since_ts))]
 

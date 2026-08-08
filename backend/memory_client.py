@@ -57,24 +57,24 @@ _VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
 
 
 def _parse_voice_labels(raw):
-    """(labels, uncertain) out of a persisted voice_labels JSON string.
-    Anything malformed reads as unlabelled - the same degradation as the
-    transcript projection's."""
+    """(labels, uncertain, crosstalk) out of a persisted voice_labels JSON
+    string. Anything malformed reads as unlabelled - the same degradation as
+    the transcript projection's."""
     if not raw or not isinstance(raw, str):
-        return [], set()
+        return [], set(), False
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return [], set()
+        return [], set(), False
     if not isinstance(data, dict):
-        return [], set()
+        return [], set(), False
     labels = [l for l in (data.get("labels")
                           if isinstance(data.get("labels"), list) else [])
               if isinstance(l, str) and l.strip()]
     uncertain = {u for u in (data.get("uncertain")
                              if isinstance(data.get("uncertain"), list) else [])
                  if isinstance(u, str)}
-    return labels, uncertain
+    return labels, uncertain, data.get("crosstalk") is True
 
 
 def _wire_name(name: str) -> str:
@@ -92,6 +92,13 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
       alone: "user", exactly as it has always been sent;
     - an OPEN attribution flag on the turn means the attribution is doubted:
       "guest:unknown", even if the label itself reads confident;
+    - a CROSSTALK-marked turn (#28 phase 4): two voices shared the
+      utterance and the text may be missing or merging the quieter one's
+      words, so the words cannot be trusted as any one person's -
+      "guest:unknown", unconditionally, even when every label reads
+      confident and even when one of the voices is the owner's, and a
+      later human correction of WHO spoke does not repair WHAT the
+      transcript may have lost;
     - any uncertain or ordinal label: "guest:unknown" - never the owner,
       never the guessed name;
     - confident labels that are all the owner: "user";
@@ -105,7 +112,9 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
         return speaker
     if msg.get("id") in (open_flag_ids or frozenset()):
         return GUEST_UNKNOWN
-    labels, uncertain = _parse_voice_labels(msg.get("voice_labels"))
+    labels, uncertain, crosstalk = _parse_voice_labels(msg.get("voice_labels"))
+    if crosstalk:
+        return GUEST_UNKNOWN
     if not labels:
         return "user"
     if any(l in uncertain or _VOICE_ORDINAL_RE.match(l) for l in labels):
