@@ -213,7 +213,7 @@ def test_committed_transcript_arrives_while_the_sniff_is_wedged_open(
         app, relay, batch_stt):
     """The core law: the live path completes while the sniff's batch call is
     still blocked. Only after the gate opens does room mode arm."""
-    _remember("Kat")
+    _remember("Sam")
     batch_stt["gate"] = threading.Event()
     batch_stt["responses"] = [_resp(("speaker_0", 0.4, 0.9),
                                     ("speaker_0", PREFIX_1 + 0.5,
@@ -236,7 +236,7 @@ def test_committed_transcript_arrives_while_the_sniff_is_wedged_open(
 def test_remembered_voice_arms_room_mode_seeds_roster_and_labels(
         app, relay, batch_stt, caplog):
     import logging as _logging
-    pid = _remember("Kat")
+    pid = _remember("Sam")
     batch_stt["responses"] = [_resp(("speaker_0", 0.4, 0.9),
                                     ("speaker_0", PREFIX_1 + 0.5,
                                      PREFIX_1 + 0.9))]
@@ -258,10 +258,10 @@ def test_remembered_voice_arms_room_mode_seeds_roster_and_labels(
     assert diarize.room_enabled(chat["id"]) is True
     # the roster seeded with the matched person, linked to their anchors
     roster = _roster(chat["id"])
-    assert [(p["name"], p["person_id"]) for p in roster] == [("Kat", pid)]
+    assert [(p["name"], p["person_id"]) for p in roster] == [("Sam", pid)]
     # the turn labelled with the remembered name, confidently
     assert json.loads(labels) == {"clusters": ["speaker_0"],
-                                  "labels": ["Kat"], "uncertain": []}
+                                  "labels": ["Sam"], "uncertain": []}
     # the request was the existing pass machinery: anchor prefix + hint
     call = batch_stt["calls"][0]
     assert call["data"]["num_speakers"] == "2"   # 1 sufficient person + 1
@@ -274,11 +274,11 @@ def test_remembered_voice_arms_room_mode_seeds_roster_and_labels(
 
 def test_negative_first_pass_then_match_on_the_second_arms(
         app, relay, batch_stt):
-    pid = _remember("Kat")
+    pid = _remember("Sam")
     batch_stt["responses"] = [
         _resp(("speaker_7", PREFIX_1 + 0.3, PREFIX_1 + 0.7)),   # stranger? no
         _resp(("speaker_0", 0.4, 0.9),
-              ("speaker_0", PREFIX_1 + 0.5, PREFIX_1 + 0.9)),   # Kat
+              ("speaker_0", PREFIX_1 + 0.5, PREFIX_1 + 0.9)),   # Sam
     ]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
@@ -298,7 +298,7 @@ def test_negative_first_pass_then_match_on_the_second_arms(
 # ── 3. bounded: two calls, then the sniff ends ──────────────────────────────
 
 def test_two_negative_passes_end_the_sniff(app, relay, batch_stt):
-    _remember("Kat")
+    _remember("Sam")
     batch_stt["responses"] = [
         _resp(("speaker_7", PREFIX_1 + 0.3, PREFIX_1 + 0.7)),
         _resp(("speaker_7", PREFIX_1 + 0.3, PREFIX_1 + 0.7)),
@@ -352,14 +352,14 @@ def test_sniff_pinned_off_when_only_the_owner_is_remembered(
 
 def test_sniff_eligibility_rules():
     person = lambda name, ok: {"name": name, "sufficient": ok}
-    assert diarize.sniff_eligible([person("Kat", True)], "Alex") is True
+    assert diarize.sniff_eligible([person("Sam", True)], "Alex") is True
     assert diarize.sniff_eligible([person("Alex", True)], "Alex") is False
     assert diarize.sniff_eligible([person("alex", True)], "Alex") is False
-    assert diarize.sniff_eligible([person("Kat", False)], "Alex") is False
+    assert diarize.sniff_eligible([person("Sam", False)], "Alex") is False
     assert diarize.sniff_eligible([], "Alex") is False
     assert diarize.sniff_eligible(None, "Alex") is False
     assert diarize.sniff_eligible(
-        [person("Alex", True), person("Kat", True)], "Alex") is True
+        [person("Alex", True), person("Sam", True)], "Alex") is True
 
 
 # ── 5. owner match alone never arms; two clusters always do ─────────────────
@@ -369,7 +369,7 @@ def test_owner_match_alone_does_not_arm(app, relay, batch_stt):
     case, and it must stay exactly what it always was: no room mode, no
     roster, no labels."""
     _remember("Alex")                        # owner, created first
-    _remember("Kat")                         # the reason the sniff runs
+    _remember("Sam")                         # the reason the sniff runs
     two = 2 * PREFIX_1
     batch_stt["responses"] = [_resp(
         ("speaker_0", 0.4, 0.9),             # Alex's anchor segment
@@ -393,7 +393,7 @@ def test_two_clusters_arm_with_ordinals_but_seed_and_ask_nothing(
     room mode arms - but with no anchor match nobody is guessed onto the
     roster and no ask is raised; the room-mode pass machinery (which does
     ask) owns every utterance from here."""
-    _remember("Kat")
+    _remember("Sam")
     batch_stt["responses"] = [_resp(
         ("speaker_5", PREFIX_1 + 0.1, PREFIX_1 + 0.4),
         ("speaker_6", PREFIX_1 + 0.5, PREFIX_1 + 0.9))]

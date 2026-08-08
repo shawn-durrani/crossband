@@ -402,7 +402,7 @@ def test_owner_alias_is_dropped_but_the_real_guest_still_joins(app):
 
 # ── naming hygiene: a relationship noun is never a name (#28 phase 4) ───────
 #
-# Second-field-test defect 1: "this is me, Kat, [the owner]'s wife" minted a
+# Second-field-test defect 1: "this is me, Sam, [the owner]'s wife" minted a
 # roster person named "Wife", and the retest greeted "Wife?". The parser must
 # prefer the proper name in the verdict, resolve a relationship-only
 # introduction against REMEMBERED people, and otherwise ask - never mint a
@@ -421,7 +421,7 @@ def test_relationship_noun_truth_table():
            "Dad", "Brother", "Sister", "Friend", "Mate", "Colleague", "Boss",
            "Neighbour", "Neighbor", "The Kids", "his wife", "Grandma",
            "Kids", "Flatmate"]
-    no = ["Kat", "Alex", "Mary Rose", "Dave", "", None, "Sister Act",
+    no = ["Sam", "Alex", "Mary Rose", "Dave", "", None, "Sister Act",
           "Mateo",       # 'Mate' with a suffix is a real name
           "Bossman"]
     for n in yes:
@@ -431,27 +431,27 @@ def test_relationship_noun_truth_table():
 
 
 def test_field_test_pin_kat_never_wife(app, utility):
-    """THE pinned case, end to end through /send: 'this is me, Kat, Shawn's
-    wife' must yield a person named Kat - never Wife - whatever mix the
+    """THE pinned case, end to end through /send: 'this is me, Sam, Shawn's
+    wife' must yield a person named Sam - never Wife - whatever mix the
     utility model returns."""
-    utility["verdict"] = {"introductions": ["Kat", "Wife"], "departures": []}
+    utility["verdict"] = {"introductions": ["Sam", "Wife"], "departures": []}
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        _send(c, chat["id"], "this is me, Kat, Shawn's wife")
+        _send(c, chat["id"], "this is me, Sam, Shawn's wife")
         assert _wait_for(lambda: _chat_room_mode(chat["id"]))
         roster = _wait_for(lambda: _roster(chat["id"]))
-        assert [p["name"] for p in roster] == ["Kat"]
+        assert [p["name"] for p in roster] == ["Sam"]
         # and no surface anywhere holds a person called Wife
         assert anchors.store().find_by_name("Wife") is None
         assert _flags(chat["id"]) == []  # a named introduction asks nothing
 
 
 def test_relationship_only_reidentifies_a_remembered_person(app):
-    """'Kat's here with us - my wife' where the verdict carried only 'Wife':
+    """'Sam's here with us - my wife' where the verdict carried only 'Wife':
     the utterance names a REMEMBERED person, so she is re-identified - no
     placeholder, no interruption."""
     store = anchors.store()
-    pid = store.ensure_person("Kat")
+    pid = store.ensure_person("Sam")
     for _ in range(3):
         assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
     with TestClient(app, base_url="http://127.0.0.1") as c:
@@ -459,9 +459,9 @@ def test_relationship_only_reidentifies_a_remembered_person(app):
         introductions.apply_scan(
             chat["id"], {"introductions": ["Wife"], "departures": []},
             {"user_name": "Shawn", "room_roster_max": 6},
-            text="Kat's here with us - my wife")
+            text="Sam's here with us - my wife")
         roster = _roster(chat["id"])
-        assert [p["name"] for p in roster] == ["Kat"]
+        assert [p["name"] for p in roster] == ["Sam"]
         assert roster[0]["person_id"] == pid  # remembered voice linked
         assert _flags(chat["id"]) == []
 
@@ -487,28 +487,28 @@ def test_relationship_only_with_no_match_asks_instead_of_minting(app):
         assert len(_flags(chat["id"])) == 1
         # the eventual name answers the ask and joins the roster
         introductions.apply_scan(
-            chat["id"], {"introductions": ["Kat"], "departures": []},
-            cfg, text="her name is Kat")
-        assert [p["name"] for p in _roster(chat["id"])] == ["Kat"]
+            chat["id"], {"introductions": ["Sam"], "departures": []},
+            cfg, text="her name is Sam")
+        assert [p["name"] for p in _roster(chat["id"])] == ["Sam"]
         assert _flags(chat["id"]) == []
 
 
 def test_match_remembered_name_rules():
-    known = ["Kat", "Dave", "Mateo"]
+    known = ["Sam", "Dave", "Mateo"]
     # word-bounded, case-insensitive
     assert introductions.match_remembered_name(
-        "kat is here, my wife", known) == "Kat"
+        "sam is here, my wife", known) == "Sam"
     # a substring inside another word is not a mention
     assert introductions.match_remembered_name(
         "the catalogue arrived", known) == ""
     # excluded names (owner, already present) never match
     assert introductions.match_remembered_name(
-        "Kat is here", known, exclude={"kat"}) == ""
+        "Sam is here", known, exclude={"sam"}) == ""
     # two remembered names in one breath is ambiguous - the ask decides
     assert introductions.match_remembered_name(
-        "Kat and Dave are here", known) == ""
+        "Sam and Dave are here", known) == ""
     assert introductions.match_remembered_name("", known) == ""
-    assert introductions.match_remembered_name("Kat is here", []) == ""
+    assert introductions.match_remembered_name("Sam is here", []) == ""
 
 
 # ── the third field test (#28): two phrasings that silently never armed ─────
@@ -522,7 +522,7 @@ def test_match_remembered_name_rules():
 
 FIELD_HANDOVER = ("I'm gonna stop talking, and then I'm gonna hand over "
                   "to a guest")
-FIELD_SELF_INTRO = "I'm here too. I'm Katrina, Alex's wife, also known as Kat"
+FIELD_SELF_INTRO = "I'm here too. I'm Samantha, Alex's wife, also known as Sam"
 
 
 def test_field_phrasings_pass_the_prefilter():
@@ -534,14 +534,14 @@ def test_field_phrasings_pass_the_prefilter():
 
 def test_more_prefilter_shapes_for_handover_and_self_introduction():
     yes = [
-        "I'll hand over to Kat now",
+        "I'll hand over to Sam now",
         "handing it over to my wife",
         "someone else wants to say hi",
-        "Kat wants to say hello",
-        "I'm Katrina, nice to meet you all",   # capitalised self-intro
+        "Sam wants to say hello",
+        "I'm Samantha, nice to meet you all",   # capitalised self-intro
         "hi, I am Dave",
-        "my name is Katrina",
-        "call me Kat",
+        "my name is Samantha",
+        "call me Sam",
         "Alex's wife is here",                 # possessive relationship
     ]
     no = [
@@ -577,7 +577,7 @@ def test_field_handover_naming_a_remembered_person_reidentifies(app):
     """A handover that names a remembered person in the same breath
     re-identifies them - matched before any ask, per the phase-4 rule."""
     store = anchors.store()
-    pid = store.ensure_person("Kat")
+    pid = store.ensure_person("Sam")
     for _ in range(3):
         assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
     with TestClient(app, base_url="http://127.0.0.1") as c:
@@ -585,9 +585,9 @@ def test_field_handover_naming_a_remembered_person_reidentifies(app):
         introductions.apply_scan(
             chat["id"], {"introductions": ["Guest"], "departures": []},
             {"user_name": "Alex", "room_roster_max": 6},
-            text="I'll hand over to our guest now - Kat, you there?")
+            text="I'll hand over to our guest now - Sam, you there?")
         roster = _roster(chat["id"])
-        assert [p["name"] for p in roster] == ["Kat"]
+        assert [p["name"] for p in roster] == ["Sam"]
         assert roster[0]["person_id"] == pid
         assert _flags(chat["id"]) == []
 
@@ -596,18 +596,18 @@ def test_field_self_introduction_adds_the_person_with_their_alias(
         app, utility):
     """Phrasing 2 end to end: a guest introducing THEMSELVES with a proper
     name arms room mode, joins the roster under that name, and 'also known
-    as Kat' becomes their preferred display name at creation."""
-    utility["verdict"] = {"introductions": ["Katrina"], "departures": [],
-                          "aliases": {"Katrina": "Kat"}}
+    as Sam' becomes their preferred display name at creation."""
+    utility["verdict"] = {"introductions": ["Samantha"], "departures": [],
+                          "aliases": {"Samantha": "Sam"}}
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         _send(c, chat["id"], FIELD_SELF_INTRO)
         assert _wait_for(lambda: _chat_room_mode(chat["id"]))
         roster = _wait_for(lambda: _roster(chat["id"]))
-        assert [p["name"] for p in roster] == ["Katrina"]
-        person = anchors.store().find_by_name("Katrina")
+        assert [p["name"] for p in roster] == ["Samantha"]
+        person = anchors.store().find_by_name("Samantha")
         assert person is not None
-        assert person["preferred_name"] == "Kat"
+        assert person["preferred_name"] == "Sam"
         assert roster[0]["person_id"] == person["person_id"]
         assert _flags(chat["id"]) == []      # a named introduction asks nothing
 
@@ -616,16 +616,16 @@ def test_field_self_introduction_adds_the_person_with_their_alias(
 
 def test_parse_verdict_aliases_are_cleaned_and_bounded():
     v = introductions.parse_verdict(json.dumps({
-        "introductions": ["Katrina", "Dave"],
+        "introductions": ["Samantha", "Dave"],
         "departures": [],
-        "aliases": {"Katrina": "Kat",
+        "aliases": {"Samantha": "Sam",
                     "Dave": "Wife",       # a relationship noun is no alias
                     "Nobody": "Nob",      # alias for a non-introduced name
                     "dave": "dave"},      # alias equal to the name says nothing
     }))
-    assert v["aliases"] == {"Katrina": "Kat"}
+    assert v["aliases"] == {"Samantha": "Sam"}
     # a junk aliases value degrades to empty, never raises
-    for bad in ('{"introductions": ["A"], "aliases": "Kat"}',
+    for bad in ('{"introductions": ["A"], "aliases": "Sam"}',
                 '{"introductions": ["A"], "aliases": [1, 2]}',
                 '{"introductions": ["A"], "aliases": {"A": 42}}'):
         assert introductions.parse_verdict(bad)["aliases"] == {}, bad
@@ -639,17 +639,17 @@ def test_call_me_alias_applies_at_creation_only(app):
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         cfg = {"user_name": "Alex", "room_roster_max": 6}
         introductions.apply_scan(
-            chat["id"], {"introductions": ["Katrina"], "departures": [],
-                         "aliases": {"Katrina": "Kat"}},
-            cfg, text="I'm Katrina, call me Kat")
-        person = anchors.store().find_by_name("Katrina")
-        assert person["preferred_name"] == "Kat"
+            chat["id"], {"introductions": ["Samantha"], "departures": [],
+                         "aliases": {"Samantha": "Sam"}},
+            cfg, text="I'm Samantha, call me Sam")
+        person = anchors.store().find_by_name("Samantha")
+        assert person["preferred_name"] == "Sam"
         introductions.apply_scan(
-            chat["id"], {"introductions": ["Katrina"], "departures": [],
-                         "aliases": {"Katrina": "Katie"}},
-            cfg, text="I'm Katrina, call me Katie")
-        person = anchors.store().find_by_name("Katrina")
-        assert person["preferred_name"] == "Kat"   # first capture stands
+            chat["id"], {"introductions": ["Samantha"], "departures": [],
+                         "aliases": {"Samantha": "Katie"}},
+            cfg, text="I'm Samantha, call me Katie")
+        person = anchors.store().find_by_name("Samantha")
+        assert person["preferred_name"] == "Sam"   # first capture stands
 
 
 def test_prompt_documents_self_introductions_handover_and_aliases():
@@ -690,8 +690,8 @@ def test_every_scan_logs_one_allowlisted_verdict_line(app, utility, caplog):
             assert _wait_for(lambda: any(
                 "outcome=model_rejected" in m for m in _verdict_lines(caplog)))
             # 3. a named introduction arms: armed.
-            utility["verdict"] = {"introductions": ["Katrina"], "departures": []}
-            _send(c, chat["id"], "say hi to Katrina, she's here with me")
+            utility["verdict"] = {"introductions": ["Samantha"], "departures": []}
+            _send(c, chat["id"], "say hi to Samantha, she's here with me")
             assert _wait_for(lambda: any(
                 "outcome=armed" in m for m in _verdict_lines(caplog)))
             # 4. a second named introduction while already armed: roster_grew.
@@ -709,7 +709,7 @@ def test_every_scan_logs_one_allowlisted_verdict_line(app, utility, caplog):
     for m in _verdict_lines(caplog):
         outcome = m.split("outcome=")[1].split()[0]
         assert outcome in introductions.SCAN_OUTCOMES, m
-        for leak in ("Katrina", "Dave", "weekend", "story"):
+        for leak in ("Samantha", "Dave", "weekend", "story"):
             assert leak not in m, m
 
 

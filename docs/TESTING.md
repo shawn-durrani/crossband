@@ -111,8 +111,8 @@ while the upstream byte stream stays byte-for-byte identical. A
 relationship noun (wife, mate, boss) is never stored as a person's name:
 the proper name in the same verdict wins, a relationship-only
 introduction re-identifies a remembered person named in the utterance or
-raises the ask-fallback, and the field-test case - "this is me, Kat,
-the owner's wife" - is pinned to yield Kat, never Wife.
+raises the ask-fallback, and the field-test case - "this is me, Sam,
+the owner's wife" - is pinned to yield Sam, never Wife.
 
 **Arming and the session-start sniff (third field test).** Room mode
 must be reachable by every spoken door, and its failures must be

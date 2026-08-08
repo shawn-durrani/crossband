@@ -43,8 +43,8 @@ MAX_NAMES_PER_TURN = 6  # a "whole family" introduction, bounded
 # whether a human was actually introduced. Departure phrases are narrower.
 #
 # THE THIRD FIELD TEST (#28, 2026-08-08 evening) is why several of these
-# exist: "I'm gonna hand over to a guest" and "I'm here too. I'm Katrina,
-# [the owner]'s wife, also known as Kat" both died HERE - no pattern matched,
+# exist: "I'm gonna hand over to a guest" and "I'm here too. I'm Samantha,
+# [the owner]'s wife, also known as Sam" both died HERE - no pattern matched,
 # so the scan was never scheduled and room mode silently never armed. The
 # handover shapes, the possessive relationship ("X's wife"), the alias
 # phrases and the capitalised self-introduction below close that gap.
@@ -78,7 +78,7 @@ _INTRO_PATTERNS = [
     r"\balso known as \w+",
     r"\bcall me \w+",
 ]
-# A guest introducing themselves: "I'm Katrina", "I am Dave". Compiled
+# A guest introducing themselves: "I'm Samantha", "I am Dave". Compiled
 # case-SENSITIVELY, unlike everything above: the capital letter is what
 # separates a name from "I'm gonna" / "I'm here" - transcripts capitalise
 # names and little else mid-sentence. Over-inclusive is fine (the model
@@ -127,7 +127,7 @@ def parse_verdict(text) -> dict:
     not the documented shape degrades to 'nothing found' rather than raising.
     Returns {"introductions": [names], "departures": [names],
     "aliases": {name: preferred}} with cleaned, de-duplicated, bounded name
-    lists. An alias ("also known as Kat", "call me Kat") survives only when
+    lists. An alias ("also known as Sam", "call me Sam") survives only when
     it points at an introduced name, is a plausible name itself (never a
     relationship noun), and actually differs from the name."""
     out = {"introductions": [], "departures": [], "aliases": {}}
@@ -180,7 +180,7 @@ def build_prompt(text: str, user_name: str, roster_names: list) -> str:
         "owner introducing someone ('my wife Alex is here', 'say hi to "
         "Dave', 'the whole family is here: Ana, Ben and Cass'); a guest "
         "introducing THEMSELVES on the shared microphone ('I'm here too. "
-        "I'm Kat, his wife'); and a handover that only announces someone is "
+        "I'm Sam, his wife'); and a handover that only announces someone is "
         "about to speak ('I'll hand over to a guest now', 'someone else "
         "wants to say hi'). Mentioning a person who is NOT in the room "
         "(talking ABOUT someone, a phone call, a story) is none of these.\n"
@@ -189,13 +189,13 @@ def build_prompt(text: str, user_name: str, roster_names: list) -> str:
         "Reply with ONLY JSON: {\"introductions\": [names...], "
         "\"departures\": [names...], \"aliases\": {name: preferred}}. Use "
         "the person's PROPER NAME as spoken; when the message gives both a "
-        "name and a relationship ('this is Kat, my wife'), return only the "
+        "name and a relationship ('this is Sam, my wife'), return only the "
         "name, never the relationship word. If someone is introduced or "
         "handed over to by relationship alone ('my wife is here', 'hand "
         "over to a guest') with no name anywhere in the message, return the "
         "relationship word itself (e.g. 'Wife', 'Guest') - the app resolves "
         "it rather than treating it as a name. When the message states a "
-        "preferred short form ('also known as Kat', 'call me Kat'), add it "
+        "preferred short form ('also known as Sam', 'call me Sam'), add it "
         "to \"aliases\" keyed by that person's name. Empty lists "
         "when the message is neither. Never invent a name that is not in "
         f"the message, and never return {user_name} themselves - the "
@@ -213,7 +213,7 @@ def cap_allows(present_count: int, adding: int, cap: int) -> int:
 
 # ---- naming hygiene (#28 phase 4, second-field-test defect 1) ----
 #
-# "This is me, Kat, [the owner]'s wife" minted a roster person named "Wife".
+# "This is me, Sam, [the owner]'s wife" minted a roster person named "Wife".
 # A relationship word is HOW someone relates to the owner, never WHO they
 # are: it must not become a person's name, a voice-label, a memory speaker
 # class, or a keyterm. The rule lives here, at the single point where
@@ -408,8 +408,8 @@ def apply_scan(chat_id, verdict, cfg, text=""):
       relationship-only introduction first tries to re-identify a REMEMBERED
       person named in the utterance, and otherwise raises the ask-fallback -
       room mode still flips on either way, because someone IS present.
-    - alias capture (#28, third field test): "also known as Kat" / "call me
-      Kat" sets a NEW person's preferred display name at creation. An
+    - alias capture (#28, third field test): "also known as Sam" / "call me
+      Sam" sets a NEW person's preferred display name at creation. An
       existing person's preferred name is never overwritten - it may have
       been corrected by hand.
     - departures: mark the named people left (the cap frees).
@@ -437,7 +437,7 @@ def apply_scan(chat_id, verdict, cfg, text=""):
         if len(intros) < len(raw_intros):
             log.info("owner-alias introduction dropped: chat=%s n=%d",
                      chat_id, len(raw_intros) - len(intros))
-        # Naming hygiene (#28 phase 4): strip relationship nouns. "Kat" and
+        # Naming hygiene (#28 phase 4): strip relationship nouns. "Sam" and
         # "Wife" in one verdict is the proper name plus its echo; "Wife"
         # alone is an unnamed introduction, resolved below.
         named = [n for n in intros if not relationship_noun(n)]
