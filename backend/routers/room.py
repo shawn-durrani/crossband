@@ -39,6 +39,11 @@ def get_roster(chat_id: int, request: Request):
     for row in roster:
         person = by_id.get(row["person_id"])
         row["sufficient"] = bool(person and person["sufficient"])
+        # The correctable display name (#28 phase 3): a remembered person is
+        # shown under their preferred name; an anchor-pending person under
+        # the name they were introduced as. `name` stays the identity key
+        # the voice labels are written with.
+        row["display_name"] = (person or {}).get("preferred_name") or row["name"]
     return {"room_mode": bool(chat["room_mode"]),
             "cap": int(request.app.state.settings.room_roster_max),
             "roster": roster, "flags": flags}
@@ -50,6 +55,24 @@ def get_people():
     No audio and no transcript text ever leaves this endpoint."""
     return {"people": anchors.store().people(),
             "sufficient_seconds": anchors.SUFFICIENT_SECONDS}
+
+
+@router.post("/api/voice/people/{person_id}/name")
+def rename_person(person_id: str, body: dict = Body(...)):
+    """Set a remembered person's preferred display name (#28 phase 3) - the
+    correctable spelling the roster chip, memory ingest and STT keyterms use.
+    The introduced name stays as the identity key, so existing voice labels
+    and roster rows keep matching."""
+    name = (body.get("name") or "").strip()[:anchors.MAX_PREFERRED_CHARS]
+    store = anchors.store()
+    if not any(p["person_id"] == person_id for p in store.people()):
+        raise HTTPException(404, "no such remembered voice")
+    if not store.set_preferred_name(person_id, name):
+        raise HTTPException(400, "a preferred name needs at least one letter")
+    from .. import events
+    events.notify_room_update()
+    log.info("voice renamed: person=%s", person_id)
+    return {"ok": True}
 
 
 @router.delete("/api/voice/people/{person_id}")

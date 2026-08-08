@@ -105,6 +105,39 @@ def test_rejected_clips_write_nothing(store):
     assert [f for f in os.listdir(store.root) if f.endswith(".wav")] == []
 
 
+# ── the store: preferred display names (#28 phase 3) ────────────────────────
+
+def test_preferred_name_defaults_to_the_introduced_name(store):
+    store.ensure_person("Lex")
+    person = store.people()[0]
+    assert person["preferred_name"] == "Lex"
+
+
+def test_set_preferred_name_persists_and_keeps_identity(store):
+    pid = store.ensure_person("Lex")
+    assert store.set_preferred_name(pid, "  Alex  ")
+    person = store.people()[0]
+    assert person["preferred_name"] == "Alex"   # trimmed, persisted
+    assert person["name"] == "Lex"              # identity key untouched
+    # survives a fresh store over the same directory (it's on disk)
+    fresh = anchors.AnchorStore(store.root)
+    assert fresh.people()[0]["preferred_name"] == "Alex"
+    # find_by_name still keys on the identity name
+    assert fresh.find_by_name("Lex")["person_id"] == pid
+
+
+def test_set_preferred_name_guards_its_inputs(store):
+    pid = store.ensure_person("Lex")
+    assert not store.set_preferred_name(pid, "")
+    assert not store.set_preferred_name(pid, "   ")
+    assert not store.set_preferred_name(pid, "!!!")   # no letters, no name
+    assert not store.set_preferred_name("nope", "Alex")
+    assert store.people()[0]["preferred_name"] == "Lex"  # nothing changed
+    long = "A" * 100
+    assert store.set_preferred_name(pid, long)
+    assert len(store.people()[0]["preferred_name"]) <= anchors.MAX_PREFERRED_CHARS
+
+
 # ── the store: sufficiency + refresh ────────────────────────────────────────
 
 def test_accumulation_reaches_sufficiency_across_utterances(store):

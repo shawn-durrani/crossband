@@ -141,7 +141,9 @@ def build_prompt(text: str, user_name: str, roster_names: list) -> str:
         "Reply with ONLY JSON: {\"introductions\": [names...], "
         "\"departures\": [names...]}. Use the name as spoken; empty lists "
         "when the message is neither. Never invent a name that is not in "
-        "the message.\n\n"
+        f"the message, and never return {user_name} themselves - the "
+        "speaker is already known, including when the transcript spells "
+        "their name slightly differently.\n\n"
         f"Message: {text[:1200]}"
     )
 
@@ -150,6 +152,53 @@ def cap_allows(present_count: int, adding: int, cap: int) -> int:
     """How many of `adding` new people fit under the cap. The cap counts
     PRESENT people; it frees as people leave."""
     return max(0, min(adding, cap - present_count))
+
+
+def _letters(name: str) -> str:
+    return re.sub(r"[^a-z]", "", (name or "").casefold())
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """Levenshtein distance <= 1, the cheap special case (one insert, delete
+    or substitute). Enough for a transcriber's phonetic slip; anything
+    further apart is honestly a different name."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = j = edits = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(a) == len(b):
+            i += 1  # substitution
+        j += 1      # insertion into the longer string
+    return edits + (len(b) - j) + (len(a) - i) <= 1
+
+
+def owner_alias(name: str, owner: str) -> bool:
+    """Is `name` plausibly the OWNER's own name as the transcriber spelt it?
+    The owner's roster identity comes from the `user_name` setting, never
+    from audio (#28 phase 3, field-test defect 3): a self-introduction
+    transcribed as 'Shaun' must not mint a second roster person beside
+    'Shawn'. Conservative on purpose - exact match (ignoring case and
+    punctuation), or names at least three letters long within one edit of
+    each other. A genuinely distinct guest wrongly caught here still
+    surfaces later through the unknown-voice ask, which is the honest
+    fallback; a phantom owner-double on the roster has no such correction."""
+    a, b = _letters(name), _letters(owner)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return len(a) >= 3 and len(b) >= 3 and _within_one_edit(a, b)
 
 
 # ---------- the fire-and-forget scan ----------
@@ -209,7 +258,17 @@ def apply_scan(chat_id, verdict, cfg):
                            (chat_id,)).fetchone()
         if not chat:
             return
-        intros = verdict.get("introductions") or []
+        owner = cfg.get("user_name", "User")
+        # The owner's roster identity is the `user_name` SETTING (#28 phase
+        # 3): a transcription of the owner's own name - however it was spelt
+        # by ear - never mints a roster person. _seed_owner_anchor below adds
+        # the owner under user_name; this filter is what keeps a phonetic
+        # 'Shaun' from standing beside them.
+        raw_intros = verdict.get("introductions") or []
+        intros = [n for n in raw_intros if not owner_alias(n, owner)]
+        if len(intros) < len(raw_intros):
+            log.info("owner-alias introduction dropped: chat=%s n=%d",
+                     chat_id, len(raw_intros) - len(intros))
         departs = verdict.get("departures") or []
         if intros:
             if not chat["room_mode"]:

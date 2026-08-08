@@ -533,8 +533,73 @@ def _iso(ts):
         return ""
 
 
+# ---- room-mode voice labels in the projection (#28 phase 3) ----
+#
+# The model-facing half of multi-human attribution: when the diarization pass
+# has confidently NAMED who spoke a user turn, that turn is projected as that
+# person - "[Alex (in the room) · ts]:" - so "who said that?" is answerable.
+# The rules are deliberately asymmetric in what they may claim:
+#
+# - NO labels (the overwhelmingly common case, and every chat from before
+#   room mode existed): the turn renders EXACTLY as it always has, as the
+#   owner. Pinned byte-for-byte by tests/test_projection.py.
+# - Confident named labels: the named person (or people - one utterance can
+#   confidently hold two voices), marked "(in the room)" so a human guest is
+#   never mistaken for an AI seat.
+# - Uncertain labels (ordinals, still-learning voices, elimination guesses):
+#   "unidentified speaker" - NEVER the owner, and never the guessed name.
+#   The chips may show "probably Alex"; the models must not be told Alex.
+
+_VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
+UNIDENTIFIED_SPEAKER = "unidentified speaker"
+IN_ROOM_SUFFIX = " (in the room)"
+
+
+def _clean_head(label):
+    """A label as attribution-head text: the frame's own delimiters may not
+    appear inside it, runs of whitespace collapse, and it stays short."""
+    return " ".join(re.sub(r"[\[\]·\n]", "", label).split())[:60].strip()
+
+
+def _user_turn_head(msg, cfg):
+    """The attribution head for a user-speaker turn. cfg['user_name'] unless
+    the turn carries voice labels that honestly say otherwise (see above).
+    Malformed label data degrades to the owner - exactly what an unlabelled
+    turn means today."""
+    owner = cfg["user_name"]
+    raw = msg.get("voice_labels")
+    if not raw or not isinstance(raw, str):
+        return owner
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return owner
+    if not isinstance(data, dict):
+        return owner
+    labels = [l for l in (data.get("labels") if isinstance(data.get("labels"), list) else [])
+              if isinstance(l, str) and _clean_head(l)]
+    if not labels:
+        return owner
+    uncertain = {u for u in (data.get("uncertain") if isinstance(data.get("uncertain"), list) else [])
+                 if isinstance(u, str)}
+    named, any_unidentified = [], False
+    for label in labels:
+        if label in uncertain or _VOICE_ORDINAL_RE.match(label):
+            any_unidentified = True
+        elif _clean_head(label) not in named:
+            named.append(_clean_head(label))
+    if not any_unidentified and [n.casefold() for n in named] == [owner.casefold()]:
+        return owner  # confidently the owner alone: today's rendering exactly
+    parts = named + ([UNIDENTIFIED_SPEAKER] if any_unidentified else [])
+    head = " + ".join(parts)
+    if head == UNIDENTIFIED_SPEAKER:
+        head = head[0].upper() + head[1:]
+    return head + IN_ROOM_SUFFIX
+
+
 def _labelled_text(msg, names, cfg):
-    label = cfg["user_name"] if msg["speaker"] == "user" else names.get(msg["speaker"], msg["speaker"])
+    label = _user_turn_head(msg, cfg) if msg["speaker"] == "user" \
+        else names.get(msg["speaker"], msg["speaker"])
     ts = _iso(msg.get("created_at"))
     head = f"{label} · {ts}" if ts else label
     body = msg["content"].strip()

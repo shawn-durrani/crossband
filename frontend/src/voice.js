@@ -722,7 +722,10 @@ export default class VoiceController {
     this.speechStart = 0
     this.lastVoice = 0
     // End-of-speech: open a fresh latency trace (speech_end backdated above).
-    this._trace.begin(undefined, endedAgoMs)
+    // The turn id it mints correlates EVERYTHING about this turn: the trace
+    // stages, the /send that persists the message, and (via the commit frame
+    // below) the diarization pass that labels who spoke it.
+    const turnId = this._trace.begin(undefined, endedAgoMs)
     if (this.sttRealtime && this.sttWs) {
       // Realtime path: close the utterance with a commit; the transcript comes
       // back asynchronously on the socket (onmessage -> sendText).
@@ -741,7 +744,13 @@ export default class VoiceController {
         return
       }
       this._dropCommit = speechMs < MIN_SPEECH_MS
-      this._sttSend({ commit: true })
+      // turn_id rides the commit frame (#28 phase 3) so the server's
+      // diarization pass can label the EXACT message this utterance becomes
+      // (the /send carries the same id). Server-only correlation data - the
+      // relay never forwards it upstream. A dropped short utterance still
+      // commits with its id; since no /send follows, its labels attach
+      // nowhere instead of smearing onto a neighbouring turn.
+      this._sttSend({ commit: true, turn_id: turnId })
       if (!this._dropCommit) {
         this._state('transcribing')
         clearTimeout(this._sttCommitTimer)

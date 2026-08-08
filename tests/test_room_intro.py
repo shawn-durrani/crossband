@@ -342,3 +342,58 @@ def test_parse_verdict_cleans_and_bounds_names():
                for n in v["introductions"])
     assert len(v["introductions"]) <= introductions.MAX_NAMES_PER_TURN
     assert v["departures"] == []                    # no letters, no name
+
+
+# ── the owner's roster identity is the user_name SETTING (#28 phase 3) ──────
+#
+# Field-test defect 3: the transcriber wrote the owner's name phonetically
+# wrong, and a self-introduction ("I'm Shaun, my wife Alex is here") minted
+# a phantom second person beside the real owner row. owner_alias is the
+# filter: an introduction name that is plausibly the owner's own name - as
+# the transcriber spelt it - never reaches the roster.
+
+def test_owner_alias_truth_table():
+    yes = [
+        ("Shawn", "Shawn"),    # exact
+        ("shawn", "Shawn"),    # case
+        ("Shaun", "Shawn"),    # the field-test misspelling (one edit)
+        ("Sean", "Seán"),      # punctuation/diacritic-adjacent forms
+        ("Shawn.", "Shawn"),   # trailing punctuation
+    ]
+    no = [
+        ("Alex", "Shawn"),
+        ("Dawn", "Shawn"),     # two edits away - a real different name
+        ("Jo", "Mo"),          # too short to fuzzy-match: exact only
+        ("", "Shawn"),
+        ("Alex", ""),
+    ]
+    for name, owner in yes:
+        assert introductions.owner_alias(name, owner), (name, owner)
+    for name, owner in no:
+        assert not introductions.owner_alias(name, owner), (name, owner)
+
+
+def test_self_introduction_never_mints_a_roster_person(app):
+    """The model returning the owner's own (misspelt) name as an introduction
+    changes NOTHING: no roster row, and room mode stays off."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        introductions.apply_scan(chat["id"],
+                                 {"introductions": ["Shaun"], "departures": []},
+                                 {"user_name": "Shawn", "room_roster_max": 6})
+        assert _chat_room_mode(chat["id"]) is False
+        assert _roster(chat["id"]) == []
+
+
+def test_owner_alias_is_dropped_but_the_real_guest_still_joins(app):
+    """'I'm Shaun, and my wife Alex is here': Alex joins under her own name,
+    the owner-alias is dropped, and no roster row ever carries a name
+    transcribed by ear for the owner."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        introductions.apply_scan(
+            chat["id"],
+            {"introductions": ["Shaun", "Alex"], "departures": []},
+            {"user_name": "Shawn", "room_roster_max": 6})
+        assert _chat_room_mode(chat["id"]) is True
+        assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]

@@ -67,6 +67,26 @@ unmatched voice raises the ask-fallback instead of guessing, and the
 LLM mismatch cross-check can only ever raise a flag - there is no code
 path from it to a label write.
 
+**Attribution downstream (phase 3).** Label writes key on the exact
+turn: the commit frame carries the client's turn id, the same id the
+/send persists on the message, so a diarization pass may only ever
+label the message its utterance actually became - a dropped short
+interjection labels nothing rather than a neighbour, and the id never
+reaches the upstream byte stream. Confidently named turns enter the
+model-facing transcript projection as that person "(in the room)";
+uncertain turns enter as an unidentified speaker, never the owner and
+never the guessed name; and a chat with no labels at all renders
+byte-identically to what the builders always produced. The owner's
+roster identity is the `user_name` setting - an introduction name that
+is plausibly the owner's own transcribed name is dropped rather than
+minting a phantom person - and roster display names ride the realtime
+STT connection's keyterms parameter (bounded to the documented caps)
+so spellings stop drifting. On the memory handoff, each turn's speaker
+class is resolved on the way out: owner turns stay `user` exactly as
+always, one confident guest ingests as `guest:<preferred name>`, and
+uncertain or open-flagged turns ingest as `guest:unknown` - with
+`SOURCE_APP` pinned to its permanent historical value.
+
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
 backfilled; an unknown model id stays unpriced instead of inheriting a
@@ -142,12 +162,13 @@ week when it was maintained by hand.
 - (`test_mcp_client.py`) MCP client layer
 - (`test_mcp_servers_api.py`) Connections-page MCP management
 - (`test_mcp_servers_auth.py`) Host-level routes stay on the host
+- (`test_memory_attribution.py`) Guest speaker classes on memory ingest (#28 phase 3): owner turns stay `user`, confident guests go `guest:<preferred name>`, uncertain and open-flagged turns go `guest:unknown`, `SOURCE_APP` untouched
 - (`test_memory_client.py`) Memory client degradation
 - (`test_models_status.py`) GET /api/models/status
 - (`test_openai_client.py`) Keyless-local edge for the OpenAI-compatible adapter
 - (`test_prewarm.py`) Ambient recall fires at speech-end, the round adopts it only on a match
 - (`test_pricing_api.py`) Operator-editable rate cards
-- (`test_projection.py`) Characterization tests for the transcript projection, covering the load-bearing invariants
+- (`test_projection.py`) Characterization tests for the transcript projection, covering the load-bearing invariants, including room-mode voice labels (#28 phase 3) and the unlabelled-chat byte-identity gate
 - (`test_prompt_guardrail.py`) High-salience personal-claim guardrail
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
 - (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N refresh, the sufficiency bar, forget-deletes-audio, the prefix builder, the tap-to-correct audio cache
@@ -188,7 +209,7 @@ week when it was maintained by hand.
 - (`messageCost.test.js`) Tests for the chat surface's cost labelling: it must not present
 - (`modelReadout.test.js`) Tests for the per-seat model-status readout: it must not misread on a narrow
 - (`rateCards.test.js`) Tests for owner-entered rate cards: an owner must be able to price a model
-- (`roomState.test.js`) Room-mode roster/flag state (#28 phase 2): the "In the room" chip names exactly the present people, ask/mismatch copy never claims a label changed, the correction menu's options, remembered-voice summaries
+- (`roomState.test.js`) Room-mode roster/flag state (#28 phase 2): the "In the room" chip names exactly the present people, ask/mismatch copy never claims a label changed, the correction menu's options, remembered-voice summaries, preferred display names (#28 phase 3)
 - (`runningState.test.js`) Tests for per-chat running-task state
 - (`spendView.test.js`) Tests for the Spend page: it must lead with an honest answer, not a table
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard

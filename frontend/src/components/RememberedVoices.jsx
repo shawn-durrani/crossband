@@ -6,10 +6,10 @@
 // audio from disk. All wording and derivations live in ../roomState.js
 // (pure, unit-tested); this file is markup and wiring only.
 import { useEffect, useState } from 'react'
-import { AudioLines, ChevronDown, ChevronRight, Trash2 } from 'lucide-react'
+import { AudioLines, ChevronDown, ChevronRight, Pencil, Trash2 } from 'lucide-react'
 
 import { api } from '../api.js'
-import { FORGET_EXPLAINER, personSummary } from '../roomState.js'
+import { cleanPreferredName, FORGET_EXPLAINER, personSummary } from '../roomState.js'
 
 export default function RememberedVoices() {
   const [open, setOpen] = useState(false)
@@ -17,6 +17,8 @@ export default function RememberedVoices() {
   const [sufficientSecs, setSufficientSecs] = useState(6)
   const [error, setError] = useState(null)
   const [confirming, setConfirming] = useState(null)  // person_id pending confirm
+  const [editing, setEditing] = useState(null)        // person_id being renamed
+  const [draft, setDraft] = useState('')
 
   async function load() {
     try {
@@ -38,6 +40,19 @@ export default function RememberedVoices() {
       await load()
     } catch (e) {
       setError(`Could not forget: ${e.message}`)
+    }
+  }
+
+  async function rename(personId) {
+    const name = cleanPreferredName(draft)
+    if (!name) return
+    setEditing(null)
+    setDraft('')
+    try {
+      await api.renameVoice(personId, name)
+      await load()
+    } catch (e) {
+      setError(`Could not rename: ${e.message}`)
     }
   }
 
@@ -71,10 +86,45 @@ export default function RememberedVoices() {
               <div key={p.person_id}
                    className="flex items-start gap-2 border border-edge2 rounded-lg px-3 py-2">
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-ink flex items-baseline gap-2">
-                    {s.name}
-                    <span className="text-[11px] text-ink-faint">{s.detail}</span>
-                  </div>
+                  {editing === p.person_id ? (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        className="bg-transparent border border-edge rounded px-2 py-1 text-sm text-ink w-40"
+                        value={draft}
+                        maxLength={40}
+                        autoFocus
+                        placeholder="Preferred name"
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') rename(p.person_id) }}
+                      />
+                      <button
+                        className="text-xs text-ink-dim hover:text-ink border border-edge rounded px-2 py-1 disabled:opacity-40"
+                        disabled={!cleanPreferredName(draft)}
+                        onClick={() => rename(p.person_id)}
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="text-xs text-ink-dim hover:text-ink px-1"
+                        onClick={() => { setEditing(null); setDraft('') }}
+                      >
+                        cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-ink flex items-baseline gap-2">
+                      {s.name}
+                      <button
+                        className="text-ink-faint hover:text-ink"
+                        title="Set the preferred spelling of this person's name - it fixes the roster, memory records and future transcripts"
+                        onClick={() => { setEditing(p.person_id); setDraft(s.name) }}
+                      >
+                        <Pencil size={11} />
+                      </button>
+                      {s.alias && <span className="text-[11px] text-ink-faint">{s.alias}</span>}
+                      <span className="text-[11px] text-ink-faint">{s.detail}</span>
+                    </div>
+                  )}
                   <div className="text-xs text-ink-dim mt-0.5">{s.status}</div>
                 </div>
                 {confirming === p.person_id ? (

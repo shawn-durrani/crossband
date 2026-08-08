@@ -52,11 +52,20 @@ MAX_UTTERANCE_SECONDS = 120
 # How long the pass keeps looking for the user message to label. The message
 # is inserted by the client's own /send a moment after commit, so the match
 # normally lands on the first probe; the window only bounds the give-up.
-# No backward slack on the match: the utterance's message is ALWAYS stamped
-# after its commit instant (the client dispatches only once the committed
-# transcript returns, and both timestamps come from this process's clock), and
-# reaching back before the commit could grab the PREVIOUS turn's unlabelled
-# message when utterances arrive quickly.
+#
+# #28 phase 3: when the commit frame carried the client's voice-trace turn id,
+# the match is EXACT - the pass labels the one message whose persisted
+# voice_turn_id equals it, and nothing else. A dropped short interjection
+# (transcript discarded client-side, so no /send, so no row) then labels
+# NOTHING instead of smearing onto a neighbouring turn - the field-test
+# defect. The time-window rules below survive only as the fallback for a
+# commit frame with no turn id (an older client), where they behave exactly
+# as phases 1-2:
+# No backward slack on the window match: the utterance's message is ALWAYS
+# stamped after its commit instant (the client dispatches only once the
+# committed transcript returns, and both timestamps come from this process's
+# clock), and reaching back before the commit could grab the PREVIOUS turn's
+# unlabelled message when utterances arrive quickly.
 MATCH_WINDOW_SECS = 8.0
 MATCH_PROBE_SECS = 0.5
 
@@ -324,21 +333,27 @@ class RoomSession:
 
 # ---------- the fire-and-forget pass ----------
 
-def schedule_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
+def schedule_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                  turn_id=None):
     """Fire the diarization pass for one committed utterance and return
     IMMEDIATELY. The caller (the realtime relay) never awaits the task; a
     strong reference is kept so the loop cannot garbage-collect it mid-run,
-    and run_pass itself swallows every failure."""
+    and run_pass itself swallows every failure. `turn_id` is the client's
+    voice-trace correlation id from the commit frame - with it the label
+    write targets the exact message (#28 phase 3); without it the
+    time-window fallback applies."""
     if not pcm:
         return None
     task = asyncio.get_running_loop().create_task(
-        run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg))
+        run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                 turn_id=turn_id))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return task
 
 
-async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
+async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                   turn_id=None):
     """One utterance's parallel pass: batch STT with diarize=true, then label
     reconciliation. Every blocking step runs on a worker thread; every
     failure ends here (log only - the live path must never notice).
@@ -377,7 +392,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
             await _room_label_pass(chat_id, pcm, sample_rate, commit_ts,
                                    session, cfg, result, segments, pending,
                                    len(prefix_pcm) / 2 / (sample_rate or 16000),
-                                   duration_ms)
+                                   duration_ms, turn_id=turn_id)
             return
         clusters = utterance_clusters(result.get("words"))
         # EVERY cluster the session sees claims its ordinal, labelled or not:
@@ -397,19 +412,24 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg):
         if not labels:
             return
         payload = {"clusters": clusters, "labels": labels}
-        await _attach_until_deadline(chat_id, commit_ts, payload, session)
+        await _attach_until_deadline(chat_id, commit_ts, payload, session,
+                                     turn_id=turn_id)
     except Exception:
         log.info("diarize labelling failed: chat=%s", chat_id)
         log.debug("diarize labelling failure detail", exc_info=True)
 
 
-async def _attach_until_deadline(chat_id, commit_ts, payload, session):
+async def _attach_until_deadline(chat_id, commit_ts, payload, session,
+                                 turn_id=None):
     """Probe for the utterance's user message until it appears or the window
-    closes. Returns the labelled message id, or None."""
+    closes. Returns the labelled message id, or None. With a turn id the
+    probe is an exact voice_turn_id match and NOTHING else may be labelled;
+    the probing itself remains (the /send that inserts the row races this
+    pass and normally loses by a moment)."""
     deadline = time.monotonic() + MATCH_WINDOW_SECS
     while True:
         target_id = await asyncio.to_thread(
-            _attach_labels, chat_id, commit_ts, payload, session)
+            _attach_labels, chat_id, commit_ts, payload, session, turn_id)
         if target_id or time.monotonic() >= deadline:
             return target_id
         await asyncio.sleep(MATCH_PROBE_SECS)
@@ -447,7 +467,7 @@ def _room_plan(chat_id, sample_rate):
 
 async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                            result, segments, pending, prefix_seconds,
-                           duration_ms):
+                           duration_ms, turn_id=None):
     """Roster-mode labelling for one utterance: prefix clusters -> names,
     utterance clusters -> labels via resolve_room_labels, anchor
     accumulation, the ask-fallback flag, and the mismatch cross-check."""
@@ -472,7 +492,7 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     payload = {"clusters": clusters, "labels": resolved["labels"],
                "uncertain": resolved["uncertain"]}
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session)
+                                             session, turn_id=turn_id)
     if resolved["ask"]:
         # Someone the anchors don't know and elimination can't name: surface
         # the ask-fallback. The turn keeps its uncertain ordinal meanwhile.
@@ -552,17 +572,28 @@ def _meter(chat_id, pcm, sample_rate, cfg):
         con.close()
 
 
-def _attach_labels(chat_id, commit_ts, payload, session):
+def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
     """One synchronous probe (runs on a worker thread): find the utterance's
     user message and persist the labels through the single update path, which
     also rings the live-events bell. Returns the labelled id, or None to let
-    the async loop probe again until the window closes."""
+    the async loop probe again until the window closes.
+
+    With a turn id (#28 phase 3) the probe is EXACT: only the message whose
+    persisted voice_turn_id matches may be labelled, and the time-window
+    guesswork never runs - so a pass whose utterance produced no message
+    (a dropped interjection) labels nothing, ever."""
     con = db.connect()
     try:
-        rows = db.get_voice_label_candidates(con, chat_id, commit_ts)
-        target = pick_target(rows, session.labelled_ids)
-        if not target:
-            return None
+        if turn_id:
+            target = db.get_message_by_voice_turn(con, chat_id, turn_id)
+            if not target or target["id"] in session.labelled_ids \
+                    or target.get("voice_labels"):
+                return None
+        else:
+            rows = db.get_voice_label_candidates(con, chat_id, commit_ts)
+            target = pick_target(rows, session.labelled_ids)
+            if not target:
+                return None
         db.set_message_voice_labels(con, target["id"], payload)
         session.labelled_ids.add(target["id"])
         return target["id"]

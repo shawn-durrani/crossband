@@ -167,10 +167,11 @@ def _stt_usage_rows():
         con.close()
 
 
-def _insert_user_message(chat_id, text="hello world"):
+def _insert_user_message(chat_id, text="hello world", voice_turn_id=""):
     con = db.connect()
     try:
-        return db.insert_message(con, chat_id, "user", text)
+        return db.insert_message(con, chat_id, "user", text,
+                                 voice_turn_id=voice_turn_id)
     finally:
         con.close()
 
@@ -452,6 +453,71 @@ def test_labelled_row_travels_on_the_per_chat_fetch(tmp_path):
         assert [m["id"] for m in rows] == [msg["id"]]
         assert json.loads(rows[0]["voice_labels"])["labels"] == [
             "Voice 1", "Voice 2"]
+
+
+# ── 6. exact label targeting via the commit frame's turn id (#28 phase 3) ───
+
+def test_labels_key_to_the_exact_message_by_turn_id(app, relay, batch_stt):
+    """The field-test smear, fixed: a NEIGHBOURING user turn is the oldest
+    unlabelled row in the time window (the old matcher's pick), but the
+    commit frame carried the client's turn id - so the labels land on the
+    message persisted WITH that id and the neighbour stays untouched."""
+    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({**_frame(commit=True), "turn_id": "turn-exact"})
+            assert ws.receive_json() == {"final": "hello world"}
+            # The decoy lands FIRST - the old window matcher would take it.
+            decoy = _insert_user_message(chat["id"], "a neighbouring turn")
+            target = _insert_user_message(chat["id"], "the utterance's turn",
+                                          voice_turn_id="turn-exact")
+            labels = _wait_for(lambda: _message_labels(target["id"]))
+            ws.send_json({"done": True})
+        assert json.loads(labels)["labels"] == ["Voice 1", "Voice 2"]
+        assert _message_labels(decoy["id"]) == ""
+
+
+def test_dropped_interjection_never_smears_onto_a_neighbour(
+        app, relay, batch_stt, monkeypatch):
+    """A too-short interjection commits WITH its turn id, but the client
+    drops the transcript and never /sends - no row ever carries that id.
+    The pass must give up labelling NOTHING, even though a neighbouring
+    user turn sits squarely in the old time window."""
+    monkeypatch.setattr(diarize, "MATCH_WINDOW_SECS", 0.8)
+    monkeypatch.setattr(diarize, "MATCH_PROBE_SECS", 0.05)
+    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({**_frame(commit=True), "turn_id": "turn-dropped"})
+            assert ws.receive_json() == {"final": "hello world"}
+            neighbour = _insert_user_message(chat["id"], "someone else's turn")
+            # the pass runs, probes to its deadline, and gives up
+            assert _wait_for(lambda: _stt_usage_rows() == 1)
+            time.sleep(1.2)  # past the (shrunk) match window
+            ws.send_json({"done": True})
+        assert _message_labels(neighbour["id"]) == ""
+        assert diarize._TASKS == set()  # the pass ended; nothing lingers
+
+
+def test_commit_turn_id_never_leaks_upstream(app, relay, batch_stt):
+    """The correlation id is ours alone: frames reaching ElevenLabs are
+    byte-for-byte what they always were, turn id or not."""
+    frames = [_frame(b"\x01\x02" * 100), _frame(b"\x03\x04" * 100, commit=True)]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json(frames[0])
+            assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json({**frames[1], "turn_id": "turn-private"})
+            assert ws.receive_json() == {"final": "hello world"}
+            ws.send_json({"done": True})
+        assert relay.sent == [_upstream(f) for f in frames]
+        assert "turn-private" not in json.dumps(relay.sent)
 
 
 # ── pure rules (no I/O) ─────────────────────────────────────────────────────
