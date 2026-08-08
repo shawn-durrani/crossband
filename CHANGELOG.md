@@ -8,7 +8,7 @@ House convention: user-visible change, one line each, newest first.
   triggers that silently did nothing now work: a handover with no name
   ("I'm going to hand over to a guest") switches room mode on and asks
   who the guest is - never inventing a name - and a guest introducing
-  themselves ("I'm Katrina, Alex's wife, also known as Kat") switches
+  themselves ("I'm Samantha, Alex's wife, also known as Sam") switches
   it on and adds them under their proper name, keeping the short form
   ("also known as", "call me") as their preferred display name. Every
   introduction check now leaves one plain log line saying what it
@@ -33,8 +33,8 @@ House convention: user-visible change, one line each, newest first.
   never rewritten). The models are also told plainly what a voice label
   is - text produced by a second listen, not audio they can hear - so a
   seat can no longer claim it "can tell from the voice". Introductions
-  stop storing relationship words as names: "this is me, Kat, Shawn's
-  wife" now yields a person named Kat, never "Wife" - a
+  stop storing relationship words as names: "this is me, Sam, Shawn's
+  wife" now yields a person named Sam, never "Wife" - a
   relationship-only introduction matches a remembered person if the
   sentence names one, and otherwise the app just asks who it is. A
   still-learning voice now shows its progress (seconds heard toward the
