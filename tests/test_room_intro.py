@@ -323,11 +323,12 @@ def test_prefilter_truth_table():
 def test_parse_verdict_is_defensive():
     ok = introductions.parse_verdict(
         'Sure! {"introductions": ["Alex", "alex", "Dave"], "departures": []}')
-    assert ok == {"introductions": ["Alex", "Dave"], "departures": []}
+    assert ok == {"introductions": ["Alex", "Dave"], "departures": [],
+                  "aliases": {}}
     for bad in (None, "", "not json", "{}", '{"introductions": "Alex"}',
                 '{"introductions": [42, null]}', "[1,2]"):
         v = introductions.parse_verdict(bad)
-        assert v == {"introductions": [], "departures": []}, bad
+        assert v == {"introductions": [], "departures": [], "aliases": {}}, bad
 
 
 def test_parse_verdict_cleans_and_bounds_names():
@@ -508,3 +509,225 @@ def test_match_remembered_name_rules():
         "Kat and Dave are here", known) == ""
     assert introductions.match_remembered_name("", known) == ""
     assert introductions.match_remembered_name("Kat is here", []) == ""
+
+
+# ── the third field test (#28): two phrasings that silently never armed ─────
+#
+# 2026-08-08 evening, a fresh chat: room mode never armed for the whole
+# session and the log showed NO introduction-scan activity at all. Both
+# spoken triggers died at the lexical prefilter - the scan was never even
+# scheduled, so there was no utility call, no warning, and nothing to
+# distinguish "rejected" from "never ran". These are the exact phrasings
+# (synthetic names), pinned end to end.
+
+FIELD_HANDOVER = ("I'm gonna stop talking, and then I'm gonna hand over "
+                  "to a guest")
+FIELD_SELF_INTRO = "I'm here too. I'm Katrina, Alex's wife, also known as Kat"
+
+
+def test_field_phrasings_pass_the_prefilter():
+    """The root-cause pin: both field phrasings must be worth one utility
+    call. Neither matched any pattern before this fix."""
+    assert introductions.prefilter(FIELD_HANDOVER)
+    assert introductions.prefilter(FIELD_SELF_INTRO)
+
+
+def test_more_prefilter_shapes_for_handover_and_self_introduction():
+    yes = [
+        "I'll hand over to Kat now",
+        "handing it over to my wife",
+        "someone else wants to say hi",
+        "Kat wants to say hello",
+        "I'm Katrina, nice to meet you all",   # capitalised self-intro
+        "hi, I am Dave",
+        "my name is Katrina",
+        "call me Kat",
+        "Alex's wife is here",                 # possessive relationship
+    ]
+    no = [
+        "I'm gonna grab a coffee",             # I'm + lowercase = not a name
+        "I'm here to help with the plan",
+        "let's plan the weekend",
+        "what do you both think about the plan?",
+    ]
+    for t in yes:
+        assert introductions.prefilter(t), t
+    for t in no:
+        assert not introductions.prefilter(t), t
+
+
+def test_field_handover_arms_room_mode_and_asks_never_minting_guest(
+        app, utility):
+    """Phrasing 1 end to end: a relationship-only handover confirms as
+    'Guest', which arms room mode, adds NO placeholder person, and raises
+    the ask-fallback - the phase-4 rule, now reachable from the prefilter."""
+    utility["verdict"] = {"introductions": ["Guest"], "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], FIELD_HANDOVER)
+        assert _wait_for(lambda: _chat_room_mode(chat["id"]))
+        assert utility["calls"]                      # the scan actually ran
+        assert _roster(chat["id"]) == []             # no person named Guest
+        assert anchors.store().find_by_name("Guest") is None
+        flags = _wait_for(lambda: _flags(chat["id"]))
+        assert [f["kind"] for f in flags] == ["unknown_voice"]
+
+
+def test_field_handover_naming_a_remembered_person_reidentifies(app):
+    """A handover that names a remembered person in the same breath
+    re-identifies them - matched before any ask, per the phase-4 rule."""
+    store = anchors.store()
+    pid = store.ensure_person("Kat")
+    for _ in range(3):
+        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Guest"], "departures": []},
+            {"user_name": "Alex", "room_roster_max": 6},
+            text="I'll hand over to our guest now - Kat, you there?")
+        roster = _roster(chat["id"])
+        assert [p["name"] for p in roster] == ["Kat"]
+        assert roster[0]["person_id"] == pid
+        assert _flags(chat["id"]) == []
+
+
+def test_field_self_introduction_adds_the_person_with_their_alias(
+        app, utility):
+    """Phrasing 2 end to end: a guest introducing THEMSELVES with a proper
+    name arms room mode, joins the roster under that name, and 'also known
+    as Kat' becomes their preferred display name at creation."""
+    utility["verdict"] = {"introductions": ["Katrina"], "departures": [],
+                          "aliases": {"Katrina": "Kat"}}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], FIELD_SELF_INTRO)
+        assert _wait_for(lambda: _chat_room_mode(chat["id"]))
+        roster = _wait_for(lambda: _roster(chat["id"]))
+        assert [p["name"] for p in roster] == ["Katrina"]
+        person = anchors.store().find_by_name("Katrina")
+        assert person is not None
+        assert person["preferred_name"] == "Kat"
+        assert roster[0]["person_id"] == person["person_id"]
+        assert _flags(chat["id"]) == []      # a named introduction asks nothing
+
+
+# ── alias capture rules ─────────────────────────────────────────────────────
+
+def test_parse_verdict_aliases_are_cleaned_and_bounded():
+    v = introductions.parse_verdict(json.dumps({
+        "introductions": ["Katrina", "Dave"],
+        "departures": [],
+        "aliases": {"Katrina": "Kat",
+                    "Dave": "Wife",       # a relationship noun is no alias
+                    "Nobody": "Nob",      # alias for a non-introduced name
+                    "dave": "dave"},      # alias equal to the name says nothing
+    }))
+    assert v["aliases"] == {"Katrina": "Kat"}
+    # a junk aliases value degrades to empty, never raises
+    for bad in ('{"introductions": ["A"], "aliases": "Kat"}',
+                '{"introductions": ["A"], "aliases": [1, 2]}',
+                '{"introductions": ["A"], "aliases": {"A": 42}}'):
+        assert introductions.parse_verdict(bad)["aliases"] == {}, bad
+
+
+def test_call_me_alias_applies_at_creation_only(app):
+    """An alias sets the preferred name when the person is CREATED; a later
+    re-introduction with a different short form does not overwrite what may
+    since have been corrected by hand."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        cfg = {"user_name": "Alex", "room_roster_max": 6}
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Katrina"], "departures": [],
+                         "aliases": {"Katrina": "Kat"}},
+            cfg, text="I'm Katrina, call me Kat")
+        person = anchors.store().find_by_name("Katrina")
+        assert person["preferred_name"] == "Kat"
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Katrina"], "departures": [],
+                         "aliases": {"Katrina": "Katie"}},
+            cfg, text="I'm Katrina, call me Katie")
+        person = anchors.store().find_by_name("Katrina")
+        assert person["preferred_name"] == "Kat"   # first capture stands
+
+
+def test_prompt_documents_self_introductions_handover_and_aliases():
+    """The confirmation prompt was a suspected regression surface: it must
+    tell the model that guests introduce themselves on the shared mic, that
+    an unnamed handover confirms as the relationship word, and that short
+    forms belong in the aliases key."""
+    p = introductions.build_prompt("hello", "Alex", [])
+    assert "aliases" in p
+    assert "THEMSELVES" in p
+    assert "hand over" in p
+
+
+# ── the per-scan verdict line (#28 third field test, observability) ─────────
+#
+# Tonight's failure was INVISIBLE: no scan activity in the log, and nothing
+# to say whether the scan rejected the turn or never ran. Every scan now
+# ends in exactly one content-free INFO line with an allowlisted outcome.
+
+def _verdict_lines(caplog):
+    return [r.getMessage() for r in caplog.records
+            if "introduction scan verdict" in r.getMessage()]
+
+
+def test_every_scan_logs_one_allowlisted_verdict_line(app, utility, caplog):
+    import logging as _logging
+    with caplog.at_level(_logging.INFO, logger="crossband.introductions"):
+        with TestClient(app, base_url="http://127.0.0.1") as c:
+            chat = c.post("/api/chats", json={"participant_ids": []}).json()
+            # 1. not introduction-shaped: the scan is not scheduled, and the
+            #    verdict line SAYS so instead of leaving silence.
+            _send(c, chat["id"], "let's plan the weekend")
+            assert _wait_for(lambda: any(
+                "outcome=no_prefilter_match" in m for m in _verdict_lines(caplog)))
+            # 2. prefilter hit, model says no: model_rejected.
+            utility["verdict"] = {"introductions": [], "departures": []}
+            _send(c, chat["id"], "say hi to nobody in this story I'm telling")
+            assert _wait_for(lambda: any(
+                "outcome=model_rejected" in m for m in _verdict_lines(caplog)))
+            # 3. a named introduction arms: armed.
+            utility["verdict"] = {"introductions": ["Katrina"], "departures": []}
+            _send(c, chat["id"], "say hi to Katrina, she's here with me")
+            assert _wait_for(lambda: any(
+                "outcome=armed" in m for m in _verdict_lines(caplog)))
+            # 4. a second named introduction while already armed: roster_grew.
+            utility["verdict"] = {"introductions": ["Dave"], "departures": []}
+            _send(c, chat["id"], "and say hi to Dave too")
+            assert _wait_for(lambda: any(
+                "outcome=roster_grew" in m for m in _verdict_lines(caplog)))
+            # 5. a departure: roster_shrank.
+            utility["verdict"] = {"introductions": [], "departures": ["Dave"]}
+            _send(c, chat["id"], "Dave has left the room")
+            assert _wait_for(lambda: any(
+                "outcome=roster_shrank" in m for m in _verdict_lines(caplog)))
+    # every emitted outcome is allowlisted, and no line carries transcript
+    # text or a person's name - content-free by construction
+    for m in _verdict_lines(caplog):
+        outcome = m.split("outcome=")[1].split()[0]
+        assert outcome in introductions.SCAN_OUTCOMES, m
+        for leak in ("Katrina", "Dave", "weekend", "story"):
+            assert leak not in m, m
+
+
+def test_relationship_only_scan_logs_ask_raised(app, utility, caplog):
+    import logging as _logging
+    with caplog.at_level(_logging.INFO, logger="crossband.introductions"):
+        with TestClient(app, base_url="http://127.0.0.1") as c:
+            chat = c.post("/api/chats", json={"participant_ids": []}).json()
+            utility["verdict"] = {"introductions": ["Guest"], "departures": []}
+            _send(c, chat["id"], FIELD_HANDOVER)
+            assert _wait_for(lambda: any(
+                "outcome=ask_raised" in m for m in _verdict_lines(caplog)))
+    assert "Guest" not in " ".join(_verdict_lines(caplog))
+
+
+def test_apply_scan_returns_its_outcome():
+    """The outcome the verdict line logs is apply_scan's return value - pin
+    the mapping on the pure-ish seam (no_change for an unknown chat)."""
+    assert introductions.apply_scan(
+        999999, {"introductions": ["Alex"], "departures": []},
+        {"user_name": "Shawn"}) == "no_change"

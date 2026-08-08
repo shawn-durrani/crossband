@@ -4,6 +4,22 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode arming fixes from the third field test (#28). Two spoken
+  triggers that silently did nothing now work: a handover with no name
+  ("I'm going to hand over to a guest") switches room mode on and asks
+  who the guest is - never inventing a name - and a guest introducing
+  themselves ("I'm Katrina, Alex's wife, also known as Kat") switches
+  it on and adds them under their proper name, keeping the short form
+  ("also known as", "call me") as their preferred display name. Every
+  introduction check now leaves one plain log line saying what it
+  decided, so a silent failure can no longer be mistaken for the check
+  not running. And remembered voices can now switch room mode on by
+  themselves: when a session starts with room mode off in a household
+  with remembered voices, the first couple of spoken turns are also
+  transcribed a second time, listening for a known voice or a second
+  speaker - stated plainly, those sessions transcribe their first
+  couple of utterances twice - and a recognised voice switches room
+  mode on and joins the roster with no introduction needed.
 - Room mode, phase 4 (#28): honesty about people talking over each
   other, and three fixes from the second field test. When two voices
   land in one spoken turn, the turn now says so - "Two voices at once -

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import {
   askFlag, cleanPreferredName, displayName, flagCopy, FORGET_EXPLAINER,
   mismatchByMessage, personSummary, reassignOptions, rosterChipText,
-  rosterTitle, sufficiencyProgress,
+  rosterTitle, SNIFF_EXPLAINER, sufficiencyProgress,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -36,6 +36,16 @@ test('the roster hint states the cost and who is still being learned', () => {
   assert.match(t, /Still learning: Alex/)
   assert.match(t, /uncertain/)
   assert.doesNotMatch(rosterTitle([present('Shawn')]), /Still learning/)
+})
+
+test('the sniff explainer states the double transcription plainly', () => {
+  // Session-start sniff cost honesty (#28, third field test): a session in
+  // a household with remembered voices transcribes its first couple of
+  // utterances twice, and the copy must say so rather than hint at it.
+  assert.match(SNIFF_EXPLAINER, /remembered voices/)
+  assert.match(SNIFF_EXPLAINER, /first couple of spoken turns/)
+  assert.match(SNIFF_EXPLAINER, /transcribed twice/)
+  assert.match(SNIFF_EXPLAINER, /switches room mode on/)
 })
 
 test('askFlag returns the newest OPEN unknown-voice flag only', () => {

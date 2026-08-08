@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, Mic, MicOff, Users, X } from 'lucide-react'
 import { orbStateFor, statusFor, showInterruptHint, displayPartial } from '../voiceView'
+import { SNIFF_EXPLAINER } from '../roomState'
 
 // Full-screen mobile voice "call" overlay. Rendered by App only while a voice
 // session is live (voiceState !== 'off'). Mobile-only: the wrapper is `sm:hidden`
@@ -111,7 +112,7 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
             aria-label={roomMode ? 'Switch room mode off' : 'Switch room mode on'}
             title={roomMode
               ? 'Room mode is on: turns can carry a Voice label when another voice is heard. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. Tap to switch it off.'
-              : 'Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on.'}
+              : `Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. ${SNIFF_EXPLAINER}`}
             className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
               roomMode
                 ? 'border-sky-700 text-sky-300 bg-sky-950/40'

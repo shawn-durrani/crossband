@@ -41,12 +41,22 @@ MAX_NAMES_PER_TURN = 6  # a "whole family" introduction, bounded
 # Introduction-shaped phrases. Deliberately BROAD-ish: this only decides
 # whether to spend one cheap utility call, and the model is the judge of
 # whether a human was actually introduced. Departure phrases are narrower.
+#
+# THE THIRD FIELD TEST (#28, 2026-08-08 evening) is why several of these
+# exist: "I'm gonna hand over to a guest" and "I'm here too. I'm Katrina,
+# [the owner]'s wife, also known as Kat" both died HERE - no pattern matched,
+# so the scan was never scheduled and room mode silently never armed. The
+# handover shapes, the possessive relationship ("X's wife"), the alias
+# phrases and the capitalised self-introduction below close that gap.
+_RELATIONSHIP_WORDS = (
+    r"wife|husband|partner|friend|mate|guest|mum|mom|dad|father|mother|"
+    r"son|daughter|brother|sister|colleague|boss|neighbou?r|cousin|kids?")
 _INTRO_PATTERNS = [
     r"\bthis is \w+",
     r"\bmeet \w+",
     r"\bsay (?:hi|hello|g'day) to\b",
-    r"\bmy (?:wife|husband|partner|friend|mate|mum|mom|dad|father|mother|"
-    r"son|daughter|brother|sister|colleague|boss|neighbou?r|cousin|kids?)\b",
+    r"\bmy (?:" + _RELATIONSHIP_WORDS + r")\b",
+    r"\b\w+'s (?:" + _RELATIONSHIP_WORDS + r")\b",   # "Alex's wife"
     r"\bis here with (?:me|us)\b",
     r"\bare here with (?:me|us)\b",
     r"\b(?:is|are) joining (?:me|us)\b",
@@ -55,9 +65,25 @@ _INTRO_PATTERNS = [
     r"\bhere with me\b",
     r"\bwhole (?:family|team|crew|gang)\b",
     r"\bi'?m here with\b",
+    r"\bi'?m here too\b",
     r"\bwe have \w+ (?:here|with us)\b",
     r"\bthat(?:'s| was| is) \w+ (?:speaking|talking|asking)\b",
+    # handover shapes: someone is about to speak, named or not
+    r"\bhand(?:s|ing|ed)? (?:\w+ ){0,2}over\b",      # "hand(ing it) over to"
+    r"\b(?:pass|give) (?:\w+ ){0,2}(?:mic|phone|headset)\b",
+    r"\bsomeone else (?:wants?|is going|would like) to\b",
+    r"\bwants? to say (?:hi|hello|g'day)\b",
+    # self-introduction and alias shapes
+    r"\bmy name(?:'s| is)\b",
+    r"\balso known as \w+",
+    r"\bcall me \w+",
 ]
+# A guest introducing themselves: "I'm Katrina", "I am Dave". Compiled
+# case-SENSITIVELY, unlike everything above: the capital letter is what
+# separates a name from "I'm gonna" / "I'm here" - transcripts capitalise
+# names and little else mid-sentence. Over-inclusive is fine (the model
+# judges); missing the capital only costs falling back to the other shapes.
+_SELF_INTRO_RE = re.compile(r"\b(?:[Ii]'m|[Ii] am) [A-Z][a-z'’-]+\b")
 _DEPART_PATTERNS = [
     r"\bhas left\b",
     r"\bhave left\b",
@@ -81,7 +107,8 @@ def prefilter(text: str) -> bool:
     head = (text or "")[:600]
     if not head.strip():
         return False
-    return bool(_INTRO_RE.search(head) or _DEPART_RE.search(head))
+    return bool(_INTRO_RE.search(head) or _DEPART_RE.search(head)
+                or _SELF_INTRO_RE.search(head))
 
 
 def _clean_name(raw) -> str:
@@ -98,9 +125,12 @@ def _clean_name(raw) -> str:
 def parse_verdict(text) -> dict:
     """Parse the utility model's JSON verdict, defensively: anything that is
     not the documented shape degrades to 'nothing found' rather than raising.
-    Returns {"introductions": [names], "departures": [names]} with cleaned,
-    de-duplicated, bounded name lists."""
-    out = {"introductions": [], "departures": []}
+    Returns {"introductions": [names], "departures": [names],
+    "aliases": {name: preferred}} with cleaned, de-duplicated, bounded name
+    lists. An alias ("also known as Kat", "call me Kat") survives only when
+    it points at an introduced name, is a plausible name itself (never a
+    relationship noun), and actually differs from the name."""
+    out = {"introductions": [], "departures": [], "aliases": {}}
     if not text:
         return out
     m = re.search(r"\{.*\}", text, re.DOTALL)
@@ -122,6 +152,19 @@ def parse_verdict(text) -> dict:
             if len(seen) >= MAX_NAMES_PER_TURN:
                 break
         out[key] = seen
+    raw_aliases = data.get("aliases")
+    if isinstance(raw_aliases, dict):
+        intro_by_lower = {n.lower(): n for n in out["introductions"]}
+        for k, v in raw_aliases.items():
+            name, alias = _clean_name(k), _clean_name(v)
+            target = intro_by_lower.get(name.lower()) if name else None
+            if not target or not alias:
+                continue
+            if relationship_noun(alias) or alias.lower() == target.lower():
+                continue
+            out["aliases"][target] = alias
+            if len(out["aliases"]) >= MAX_NAMES_PER_TURN:
+                break
     return out
 
 
@@ -131,24 +174,32 @@ def build_prompt(text: str, user_name: str, roster_names: list) -> str:
     present = ", ".join(roster_names) if roster_names else "(nobody yet)"
     return (
         "You watch one message from a voice conversation and decide whether "
-        "it INTRODUCES another human who is physically present and may speak "
-        "(e.g. 'my wife Alex is here', 'say hi to Dave', 'the whole family "
-        "is here: Ana, Ben and Cass'), or ANNOUNCES that a present person "
-        "has left ('Dave has left', 'she had to go'). Mentioning a person "
-        "who is NOT in the room (talking ABOUT someone, a phone call, a "
-        "story) is neither.\n"
-        f"The speaker is {user_name}. People already known present: {present}.\n"
+        "it INTRODUCES another human who is physically present and may "
+        "speak, or ANNOUNCES that a present person has left ('Dave has "
+        "left', 'she had to go'). Introductions come in several shapes: the "
+        "owner introducing someone ('my wife Alex is here', 'say hi to "
+        "Dave', 'the whole family is here: Ana, Ben and Cass'); a guest "
+        "introducing THEMSELVES on the shared microphone ('I'm here too. "
+        "I'm Kat, his wife'); and a handover that only announces someone is "
+        "about to speak ('I'll hand over to a guest now', 'someone else "
+        "wants to say hi'). Mentioning a person who is NOT in the room "
+        "(talking ABOUT someone, a phone call, a story) is none of these.\n"
+        f"The device owner is {user_name}; guests speak through the same "
+        f"microphone. People already known present: {present}.\n"
         "Reply with ONLY JSON: {\"introductions\": [names...], "
-        "\"departures\": [names...]}. Use the person's PROPER NAME as "
-        "spoken; when the message gives both a name and a relationship "
-        "('this is Kat, my wife'), return only the name, never the "
-        "relationship word. If someone is introduced by relationship alone "
-        "('my wife is here') with no name anywhere in the message, return "
-        "the relationship word itself (e.g. 'Wife') - the app resolves it "
-        "rather than treating it as a name. Empty lists "
+        "\"departures\": [names...], \"aliases\": {name: preferred}}. Use "
+        "the person's PROPER NAME as spoken; when the message gives both a "
+        "name and a relationship ('this is Kat, my wife'), return only the "
+        "name, never the relationship word. If someone is introduced or "
+        "handed over to by relationship alone ('my wife is here', 'hand "
+        "over to a guest') with no name anywhere in the message, return the "
+        "relationship word itself (e.g. 'Wife', 'Guest') - the app resolves "
+        "it rather than treating it as a name. When the message states a "
+        "preferred short form ('also known as Kat', 'call me Kat'), add it "
+        "to \"aliases\" keyed by that person's name. Empty lists "
         "when the message is neither. Never invent a name that is not in "
         f"the message, and never return {user_name} themselves - the "
-        "speaker is already known, including when the transcript spells "
+        "owner is already known, including when the transcript spells "
         "their name slightly differently.\n\n"
         f"Message: {text[:1200]}"
     )
@@ -276,11 +327,37 @@ def owner_alias(name: str, owner: str) -> bool:
 
 # ---------- the fire-and-forget scan ----------
 
+# The per-scan verdict line (#28, third field test). That night's failure
+# mode was SILENCE: both spoken triggers died at the prefilter, so the log
+# showed no scan activity at all, and "rejected" was indistinguishable from
+# "never ran". Every scan now ends in exactly ONE content-free INFO line,
+# "introduction scan verdict: chat=<id> outcome=<value>", with the outcome
+# drawn from this allowlist and nothing else - never transcript text, never
+# a name. ask_raised and armed both imply room mode is on after the scan.
+SCAN_OUTCOMES = (
+    "no_prefilter_match",   # not introduction-shaped; no utility call made
+    "model_rejected",       # prefilter hit, but the model found nobody
+    "armed",                # room mode flipped ON by this scan
+    "ask_raised",           # relationship-only, no remembered match: asking
+    "roster_grew",          # already armed; people were added
+    "roster_shrank",        # a departure freed roster slots
+    "no_change",            # a confirmed verdict that changed nothing
+    "scan_error",           # the scan itself failed (detail logged below it)
+)
+
+
+def _log_verdict(chat_id, outcome):
+    if outcome not in SCAN_OUTCOMES:      # belt and braces: stay content-free
+        outcome = "scan_error"
+    log.info("introduction scan verdict: chat=%s outcome=%s", chat_id, outcome)
+
+
 def schedule_scan(chat_id, message_id, text, cfg):
     """Fire the introduction scan for one persisted user turn and return
     IMMEDIATELY - the caller (POST /send) never awaits it, and a failure to
     even schedule must not break the send."""
     if not prefilter(text):
+        _log_verdict(chat_id, "no_prefilter_match")
         return None
     task = asyncio.get_running_loop().create_task(
         scan_user_turn(chat_id, message_id, text, cfg))
@@ -298,9 +375,13 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
         reply = await llm_util.utility_complete(prompt, cfg, max_tokens=200)
         verdict = parse_verdict(reply)
         if not verdict["introductions"] and not verdict["departures"]:
+            _log_verdict(chat_id, "model_rejected")
             return
-        await asyncio.to_thread(apply_scan, chat_id, verdict, cfg, text)
+        outcome = await asyncio.to_thread(apply_scan, chat_id, verdict, cfg,
+                                          text)
+        _log_verdict(chat_id, outcome)
     except Exception:
+        _log_verdict(chat_id, "scan_error")
         log.info("introduction scan failed: chat=%s", chat_id)
         log.debug("introduction scan failure detail", exc_info=True)
 
@@ -327,17 +408,24 @@ def apply_scan(chat_id, verdict, cfg, text=""):
       relationship-only introduction first tries to re-identify a REMEMBERED
       person named in the utterance, and otherwise raises the ask-fallback -
       room mode still flips on either way, because someone IS present.
+    - alias capture (#28, third field test): "also known as Kat" / "call me
+      Kat" sets a NEW person's preferred display name at creation. An
+      existing person's preferred name is never overwritten - it may have
+      been corrected by hand.
     - departures: mark the named people left (the cap frees).
 
-    `text` is the utterance (for the remembered-name match only - nothing
-    from it is persisted or logged). Content-free logging throughout:
-    counts, never names or text."""
+    Returns the scan's outcome, one of SCAN_OUTCOMES - the verdict line the
+    caller logs. `text` is the utterance (for the remembered-name match only
+    - nothing from it is persisted or logged). Content-free logging
+    throughout: counts, never names or text."""
+    flipped = ask = False
+    added = departed = 0
     con = db.connect()
     try:
         chat = con.execute("SELECT * FROM chats WHERE id=?",
                            (chat_id,)).fetchone()
         if not chat:
-            return
+            return "no_change"
         owner = cfg.get("user_name", "User")
         # The owner's roster identity is the `user_name` SETTING (#28 phase
         # 3): a transcription of the owner's own name - however it was spelt
@@ -357,10 +445,13 @@ def apply_scan(chat_id, verdict, cfg, text=""):
             log.info("relationship-noun introduction dropped: chat=%s n=%d",
                      chat_id, len(intros) - len(named))
         departs = verdict.get("departures") or []
+        aliases = verdict.get("aliases")
+        aliases = aliases if isinstance(aliases, dict) else {}
         if intros:
             if not chat["room_mode"]:
                 db.set_chat_room_mode(con, chat_id, True)
                 diarize.set_room_enabled(chat_id, True)
+                flipped = True
                 log.info("room mode ON via introduction: chat=%s", chat_id)
             present = db.get_room_roster(con, chat_id, present_only=True)
             present_names = {p["name"].lower() for p in present}
@@ -377,6 +468,7 @@ def apply_scan(chat_id, verdict, cfg, text=""):
                     log.info("relationship-only introduction matched a "
                              "remembered person: chat=%s", chat_id)
                 else:
+                    ask = True
                     _raise_unnamed_intro_ask(con, chat_id)
                     log.info("relationship-only introduction with no match: "
                              "chat=%s ask raised", chat_id)
@@ -389,9 +481,20 @@ def apply_scan(chat_id, verdict, cfg, text=""):
             for name in new[:allowed]:
                 known = anchors.store().find_by_name(name)
                 pid = known["person_id"] if (known and known["sufficient"]) else ""
+                alias = aliases.get(name)
+                if alias and known is None:
+                    # Alias capture at CREATION only: mint the store entry so
+                    # the preferred name has somewhere durable to live, and
+                    # link the roster row to it. Anchor audio arrives later,
+                    # exactly as for any pending person.
+                    store = anchors.store()
+                    pid = store.ensure_person(name)
+                    if store.set_preferred_name(pid, alias):
+                        log.info("alias captured at introduction: chat=%s",
+                                 chat_id)
                 db.add_room_person(con, chat_id, name, person_id=pid)
-            log.info("roster grew: chat=%s added=%d", chat_id,
-                     min(allowed, len(new)))
+            added = min(allowed, len(new))
+            log.info("roster grew: chat=%s added=%d", chat_id, added)
             if named:
                 # An introduction is also the ANSWER to an open "someone new
                 # is speaking - who?" ask: naming them closes it. The next
@@ -403,9 +506,22 @@ def apply_scan(chat_id, verdict, cfg, text=""):
             _seed_owner_anchor(chat_id, cfg)
         for name in departs:
             if db.mark_room_person_left(con, chat_id, name):
+                departed += 1
                 log.info("roster departure: chat=%s", chat_id)
     finally:
         con.close()
+    # One outcome per scan, most informative first: an ask implies room mode
+    # is on; armed reports the flip; the roster outcomes report change while
+    # already armed.
+    if ask:
+        return "ask_raised"
+    if flipped:
+        return "armed"
+    if added:
+        return "roster_grew"
+    if departed:
+        return "roster_shrank"
+    return "no_change"
 
 
 def _raise_unnamed_intro_ask(con, chat_id):

@@ -1,4 +1,5 @@
 import { Hand, Timer, Square, X, CornerDownLeft, SlidersHorizontal, ChevronDown, Users } from 'lucide-react'
+import { SNIFF_EXPLAINER } from '../roomState'
 
 // The in-session voice controls, docked bottom-right of the thread.
 //
@@ -76,11 +77,13 @@ export default function VoiceDock({
           </button>
           {/* Room mode (#28 phase 1): session-only, default off. The copy
               states the cost plainly - a second transcription pass runs, so
-              voice minutes roughly double while it is on. */}
+              voice minutes roughly double while it is on. The off-state copy
+              also carries the session-start sniff's cost note (#28): with
+              remembered voices, the first couple of turns transcribe twice. */}
           <button
             title={roomMode
               ? 'Room mode is on: turns can carry a Voice label when another voice is heard. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. Click to switch it off.'
-              : 'Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on.'}
+              : `Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. ${SNIFF_EXPLAINER}`}
             aria-pressed={!!roomMode}
             className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
               roomMode

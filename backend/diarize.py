@@ -96,6 +96,37 @@ INTRO_STASH_TTL_S = 180.0
 
 MISMATCH_MIN_WORDS = 4  # don't cross-check a grunt
 
+# ---- session-start sniff (#28, third field test) ----
+#
+# The structural gap: in a fresh chat, REMEMBERED voices could not arm room
+# mode - this pass only ran once room mode was on, and only an introduction
+# or the toggle turned it on, so a known person with sufficient anchors was
+# undetectable by construction. The sniff closes it: when a voice session
+# starts with room mode OFF but sufficient remembered NON-OWNER voices
+# exist, the first SNIFF_UTTERANCES committed utterances also run this
+# module's existing pass machinery (anchor prefix, batch call, label
+# plumbing - nothing new). A pass that matches a remembered non-owner voice,
+# or finds two clusters, arms room mode server-side (the phase-2 plumbing),
+# seeds the roster with the matched people, and labels that turn; otherwise
+# the sniff simply ends. Bounded and stated honestly: at most
+# SNIFF_UTTERANCES extra batch calls per session, each metered as real
+# spend like any other pass. Same never-awaited discipline as every pass;
+# with no remembered non-owner voices the relay never schedules a sniff at
+# all, so the common no-household case costs nothing.
+SNIFF_UTTERANCES = 2
+
+
+def sniff_eligible(people, owner_name) -> bool:
+    """Should a session in a room-mode-off chat sniff at all? Only when a
+    SUFFICIENT remembered person other than the owner exists. Owner-only
+    anchors buy nothing: there is nobody else to re-identify, and a
+    genuinely new second voice still has the introduction and ask paths."""
+    owner = (owner_name or "").strip().casefold()
+    return any(
+        p.get("sufficient")
+        and (p.get("name") or "").strip().casefold() != owner
+        for p in people or [])
+
 
 def set_room_enabled(chat_id, on: bool):
     if chat_id is None:
@@ -403,6 +434,11 @@ class RoomSession:
         self.ordinals = {}          # cluster id -> "Voice N"
         self.prev_clusters = None   # None = no diarized utterance yet
         self.labelled_ids = set()
+        # Session-start sniff budget (#28): how many more committed
+        # utterances may run a sniff pass. The relay sets it to
+        # SNIFF_UTTERANCES at session open when the chat is eligible; it
+        # only ever counts down, and an armed sniff zeroes it.
+        self.sniff_remaining = 0
 
     def set_enabled(self, on: bool):
         """Toggle mid-session. Either edge clears the buffer: audio captured
@@ -676,6 +712,140 @@ def _accumulate_anchor(chat_id, pcm, sample_rate, cluster, resolved):
             db.link_room_person(con, chat_id, name, pid)
         finally:
             con.close()
+
+
+# ---------- the session-start sniff pass (#28, third field test) ----------
+
+def schedule_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                   turn_id=None):
+    """Fire one sniff pass and return IMMEDIATELY - the relay never awaits
+    it, exactly the schedule_pass contract. The relay has already spent one
+    unit of session.sniff_remaining before calling."""
+    if not pcm:
+        return None
+    task = asyncio.get_running_loop().create_task(
+        run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                  turn_id=turn_id))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    return task
+
+
+async def run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                    turn_id=None):
+    """One utterance's sniff: the existing anchored pass run while room mode
+    is OFF, listening for a remembered non-owner voice or a second cluster.
+    Either arms room mode, seeds the roster with the matched people, and
+    labels this turn; anything else - including every failure - ends here
+    with room mode untouched."""
+    t0 = time.perf_counter()
+    try:
+        plan = await asyncio.to_thread(_sniff_plan, chat_id, sample_rate, cfg)
+        if plan is None:
+            return
+        prefix_pcm, segments, num_speakers = plan
+        request_pcm = prefix_pcm + pcm
+        result = await asyncio.to_thread(
+            voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),
+            "audio/wav", cfg, num_speakers=num_speakers)
+        # Real, metered spend - the sniff is the "first couple of utterances
+        # transcribed twice" the changelog and UI copy warn about.
+        await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate, cfg)
+        prefix_seconds = len(prefix_pcm) / 2 / (sample_rate or 16000)
+        prefix_words, utter_words = split_words_at(result.get("words"),
+                                                   prefix_seconds)
+        cmap = prefix_cluster_map(prefix_words, segments)
+        clusters = utterance_clusters(utter_words)
+        owner = (cfg.get("user_name") or "User").casefold()
+        matched = {c: cmap[c] for c in clusters if c in cmap}
+        non_owner = [n for n in matched.values() if n.casefold() != owner]
+        armed = bool(non_owner) or len(clusters) >= 2
+        # The sniff marker: content-free, and distinguishable from the
+        # room-mode pass's own line at a grep.
+        log.info("diarize pass (sniff): chat=%s ms=%.0f clusters=%d "
+                 "matched=%d armed=%d", chat_id,
+                 (time.perf_counter() - t0) * 1000, len(clusters),
+                 len(matched), 1 if armed else 0)
+        if not armed:
+            return
+        session.sniff_remaining = 0     # job done; no second sniff needed
+        await asyncio.to_thread(_arm_from_sniff, chat_id, matched, cfg)
+        if clusters:
+            session.prev_clusters = clusters
+        # Label this turn through the same naming rules as any roster pass:
+        # matched clusters carry the person's name, anything else a session
+        # ordinal (uncertain). No pending people exist yet and the sniff
+        # itself never raises an ask - from the next commit the armed
+        # room-mode pass owns identification, asks included.
+        resolved = resolve_room_labels(clusters, cmap, [], session)
+        if not resolved["labels"]:
+            return
+        payload = {"clusters": clusters, "labels": resolved["labels"],
+                   "uncertain": resolved["uncertain"]}
+        target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                                 session, turn_id=turn_id)
+        if target_id:
+            from . import anchors
+            anchors.remember_audio(target_id, pcm, sample_rate, len(clusters))
+    except Exception:
+        log.info("sniff pass failed: chat=%s", chat_id)
+        log.debug("sniff pass failure detail", exc_info=True)
+
+
+def _sniff_plan(chat_id, sample_rate, cfg):
+    """Sniff snapshot for one pass (worker thread): None unless the sniff
+    should still run - the chat's durable room mode must be OFF (another
+    path may have armed it since session open) and sufficient remembered
+    non-owner people must exist. The prefix carries EVERY sufficient person,
+    the owner included when remembered: telling owner from guest is the
+    whole question."""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT room_mode FROM chats WHERE id=?",
+                          (chat_id,)).fetchone()
+    finally:
+        con.close()
+    if not row or row["room_mode"]:
+        return None
+    from . import anchors
+    store = anchors.store()
+    people = store.people()
+    if not sniff_eligible(people, cfg.get("user_name")):
+        return None
+    sufficient_ids = [p["person_id"] for p in people if p["sufficient"]]
+    prefix_pcm, segments = store.build_prefix(sufficient_ids, sample_rate)
+    if not prefix_pcm:
+        return None
+    num_speakers = min(32, len(segments) + 1)
+    return prefix_pcm, segments, num_speakers
+
+
+def _arm_from_sniff(chat_id, matched, cfg):
+    """The arm itself (worker thread): the durable flip plus the live mirror
+    - the same phase-2 control plumbing an introduction uses - and one
+    linked roster row per matched remembered person. Idempotent: a second
+    sniff pass racing this one re-runs the same writes harmlessly."""
+    con = db.connect()
+    try:
+        db.set_chat_room_mode(con, chat_id, True)
+        set_room_enabled(chat_id, True)
+        log.info("room mode ON via sniff: chat=%s matched=%d",
+                 chat_id, len(matched))
+        present = {p["name"].lower()
+                   for p in db.get_room_roster(con, chat_id,
+                                               present_only=True)}
+        cap = int(cfg.get("room_roster_max") or 6)
+        from . import anchors
+        store = anchors.store()
+        for name in dict.fromkeys(matched.values()):
+            if name.lower() in present or len(present) >= cap:
+                continue
+            person = store.find_by_name(name)
+            pid = person["person_id"] if person else ""
+            db.add_room_person(con, chat_id, name, person_id=pid)
+            present.add(name.lower())
+    finally:
+        con.close()
 
 
 def _raise_unknown_voice(chat_id, message_id):
