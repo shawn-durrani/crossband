@@ -654,7 +654,7 @@ def test_later_seats_see_identity_resolved_mid_round(app, monkeypatch):
             ).fetchone()
             db.set_message_voice_labels(
                 con, row["id"],
-                {"clusters": ["s0"], "labels": ["Kat"], "uncertain": []})
+                {"clusters": ["s0"], "labels": ["Sam"], "uncertain": []})
             con.close()
         yield ("text", f"reply from {participant['slug']}")
         yield ("usage", {"input": 1, "cache_read": 0, "cache_creation": 0,
@@ -675,7 +675,7 @@ def test_later_seats_see_identity_resolved_mid_round(app, monkeypatch):
     assert heads["claude"].startswith(
         f"[{providers.PENDING_IDENTITY_HEAD} · ")
     # Seat 2 read after: the resolved name, with no second full read.
-    assert heads["gpt"].startswith("[Kat (in the room) · ")
+    assert heads["gpt"].startswith("[Sam (in the room) · ")
     assert counts["full"] == 1
 
 
