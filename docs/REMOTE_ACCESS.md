@@ -63,7 +63,8 @@ from one step.
   **loopback**. The `Host` header still carries your tailnet name, which is exactly
   why step 4 is needed.
 - Only devices signed into **your** tailnet can resolve or reach the tailnet name at
-  all, so the VPN is the authentication boundary.
+  all, so the VPN is the reachability boundary; authentication itself is the browser
+  gate (owner password, passkey once enrolled) at the lock screen inside it.
 - The app still refuses any Host it doesn't recognise, so a stray request with a
   different Host is rejected even if it reaches the port.
 - That same Host check is applied to the **voice websockets**, not just to plain
