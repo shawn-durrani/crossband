@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import McpServersPanel from './McpServersPanel.jsx'
+import PasskeysPanel from './PasskeysPanel.jsx'
 import {
   X, RefreshCw, Check, AlertTriangle, KeyRound, SlidersHorizontal, Plug,
   ExternalLink, Loader2, Menu, ChevronRight, ChevronDown,
@@ -430,6 +431,8 @@ export default function IntegrationsConsole({
         ))}
 
         <McpServersPanel />
+
+        <PasskeysPanel />
       </div>
     </div>
   )

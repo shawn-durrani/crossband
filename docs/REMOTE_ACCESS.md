@@ -8,22 +8,23 @@ public.
 
 ## What you are agreeing to
 
-Doing this makes **your tailnet the app's authentication boundary.** There is no
-login on this app, so anything that can reach it can read every conversation, spend
-your API credits, and (if the coding guest is configured) act on your
-repositories. That is fine, and by design, *as long as only your own devices are
-on the tailnet*.
+Doing this makes **your tailnet the app's outer boundary.** A device on the
+tailnet reaches the lock screen; the browser gate (owner password, passkey once
+one is enrolled) stands between that and your conversations, your API credits,
+and (if the coding guest is configured) your repositories. Before you have
+enrolled a password, a tailnet caller gets the lock screen and nothing else.
 
-Two rules follow, and they are the whole security model:
+Two rules still apply, because the gate is a layer, not a licence:
 
 - **Only your devices on that tailnet.** If you would not hand someone your
   unlocked laptop, do not add their device.
 - **`serve`, never `funnel`.** `tailscale funnel` is the public-internet form of
   the same command and would put this app on the open web, where it has no
-  business being: no auth, no rate limiting, no audit. Verify at any time with
-  `tailscale serve status`: it must say **"tailnet only"**.
+  business being: no rate limiting, no audit, and a login page facing the whole
+  internet. Verify at any time with `tailscale serve status`: it must say
+  **"tailnet only"**.
 
-This app is not built to be exposed publicly, and adding a login would not change
+This app is not built to be exposed publicly, and having a login does not change
 that. Beyond the tailnet, you are on your own.
 
 ## Why HTTPS is required (not optional)

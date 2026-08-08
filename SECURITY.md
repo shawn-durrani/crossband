@@ -9,19 +9,35 @@ within a few days.
 
 ## The trust boundary
 
-**Crossband has no authentication.** Anything that can reach the port
-can use the app: read every transcript, spend your API keys, and summon
-a coding agent. So the security model is entirely about who can reach
-the port.
+Who can reach the port is the outer boundary; a browser gate stands
+inside it. The everyday unlock is a passkey (WebAuthn platform
+authenticator; only the credential's public key is stored, per origin)
+once one is enrolled, with a durable owner password (scrypt verifier in
+the local store) as the fallback, and an out-of-band recovery secret
+(`CROSSBAND_RECOVERY_SECRET`, or a per-start random value shown only
+before enrolment) gating enrolment and reset. Sessions are opaque,
+expiring, server-revocable ids in httpOnly SameSite=Strict cookies.
+Passkey enrolment requires an already-unlocked session, never the lock
+screen.
+
+The gate is **enrolment-activated**: until an owner password is set,
+the loopback API keeps its historical open posture (the startup banner
+says so on every start), while a trusted non-loopback host is held to
+the lock screen regardless. Once enrolled, every `/api` route outside
+the login surface requires a session, loopback included. Stated
+plainly: an install whose owner never enrols keeps the old
+anything-on-loopback model.
 
 - **Loopback by default.** The server binds `127.0.0.1` and refuses to
   bind anywhere else.
 - **Tailnet only, if you widen it.** `tailscale serve` puts the UI on
   your own tailnet devices, and `CROSSBAND_TRUSTED_HOSTS` lists which
-  non-loopback hosts may be served at all. The procedure is manual and
-  written out in [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md); this
-  repository ships no script for it. Never expose the port to the
-  internet, and never use Tailscale Funnel.
+  non-loopback hosts may be served at all. An anonymous caller on a
+  trusted host reaches the lock screen and nothing else. The procedure
+  is manual and written out in
+  [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md); this repository ships
+  no script for it. Never expose the port to the internet, and never
+  use Tailscale Funnel.
 - **Cross-site requests to `/api/*` are rejected** when the browser
   stamps them, and websocket routes check `Origin` as well as `Host`,
   since websockets are exempt from CORS and would otherwise let any page

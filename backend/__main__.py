@@ -29,8 +29,10 @@ def main():
     app = create_app(settings)
     if settings.host not in ("127.0.0.1", "localhost", "::1"):
         raise SystemExit(
-            f"refusing to bind {settings.host}: this app has no authentication and "
-            "holds your chats and API-key-backed tools - it is localhost-only by design")
+            f"refusing to bind {settings.host}: this app is localhost-only by "
+            "design - the browser gate (#25) protects the UI, but wider reach "
+            "goes through a tailnet proxy (tailscale serve) plus "
+            "CROSSBAND_TRUSTED_HOSTS, never a direct bind")
     # timeout_graceful_shutdown is the backstop under _Server above: cooperating
     # streams end at once, and anything still open after this many seconds (a
     # chat round mid-generation, a live voice call) is cancelled so the process

@@ -149,6 +149,12 @@ class Settings(BaseModel):
     # docs/COST_TELEMETRY.md), then unset it again. This only changes what's
     # written to the log - never what gets cached, priced, or billed.
     log_level: str = ""
+    # Recovery secret for the browser gate (#25): gates first-run password
+    # enrolment and reset, never the everyday login. Set
+    # CROSSBAND_RECOVERY_SECRET in .env for a durable one; empty (default)
+    # mints a fresh random secret each start, shown in startup output ONLY
+    # while no password is enrolled yet.
+    recovery_secret: str = ""
     # Seconds a graceful stop may spend waiting on connections that are still
     # open (a chat round mid-generation, a live voice call) before they are
     # cancelled and the process exits anyway. The live-events watcher streams

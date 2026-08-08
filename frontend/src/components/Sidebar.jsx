@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ChevronRight, ChevronDown, Folder, Settings, Plus, X, Upload, Download, PanelLeftClose, Users, Archive, ArchiveRestore, BarChart3, Plug } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder, Settings, Plus, X, Upload, Download, PanelLeftClose, Users, Archive, ArchiveRestore, BarChart3, Plug, Lock } from 'lucide-react'
+import { api } from '../api'
 import { isChatRunning } from '../runningState'
 
 function ChatRow({ chat, active, running, unread, onSelect, onDelete, onArchive }) {
@@ -275,6 +276,14 @@ export default function Sidebar({
             onClick={onOpenExport}
           >
             <Download size={16} />
+          </button>
+          <button
+            className="text-ink-mid hover:text-ink rounded-lg px-2 py-1.5 hover:bg-panel"
+            title="Lock this browser - you'll unlock with your passkey or password (set one under Connections)"
+            aria-label="Lock this browser"
+            onClick={async () => { try { await api.authLogout() } finally { location.reload() } }}
+          >
+            <Lock size={16} />
           </button>
           <select
             className="ml-auto text-xs bg-app text-ink-mid border border-edge rounded-lg px-2 py-1.5 hover:border-edge2 cursor-pointer"

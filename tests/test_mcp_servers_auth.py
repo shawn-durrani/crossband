@@ -1,10 +1,11 @@
 """Host-level routes stay on the host.
 
-The app has no authentication, and the documented remote path (tailscale
-serve) proxies through loopback, so the non-loopback bind guard never fires
-for it. Spawning a command from a request body, or persisting one to be
-spawned at every startup, therefore has to be gated on the request's own
-host rather than on the process bind.
+The documented remote path (tailscale serve) proxies through loopback, so
+the non-loopback bind guard never fires for it, and the browser gate (#25)
+authenticates a PERSON, not a location. Spawning a command from a request
+body, or persisting one to be spawned at every startup, therefore has to be
+gated on the request's own host - a session held by a phone on the tailnet
+is still not a licence to spawn processes on the Mac.
 """
 
 import pytest

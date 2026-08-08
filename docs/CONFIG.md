@@ -35,6 +35,7 @@ supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 | `port` | `8902` | The one port everything is served on. |
 | `data_dir` | `""` | Where SQLite + backups + logs live. Empty → `<repo>/data`. |
 | `trusted_hosts` | `""` | Extra Host headers to accept (comma-separated), for Tailscale serve: `my-mac.my-tailnet.ts.net`. Empty = loopback only. [REMOTE_ACCESS.md](REMOTE_ACCESS.md). |
+| `recovery_secret` | `""` | Recovery secret for the browser gate: gates first-run password enrolment and reset, never the everyday login. Empty mints a fresh random secret each start, shown in startup output only while no password is enrolled. Set it in `.env` (`CROSSBAND_RECOVERY_SECRET`) so enrolment and reset work without terminal access. [SECURITY.md](../SECURITY.md). |
 | `log_level` | `""` | Verbosity for the app's own `crossband.*` loggers. Empty = WARNING+. Set `INFO` for a deliberate cache-telemetry sampling session ([COST_TELEMETRY.md](COST_TELEMETRY.md)), then unset. |
 | `shutdown_timeout_s` | `15` | Seconds a stop may wait on work still in flight (a reply mid-generation, a live voice call) before cancelling it and exiting anyway. The live-events watcher connections end at once regardless. Raise it so long rounds always finish, lower it for a snappier deploy loop ([OPERATIONS.md](OPERATIONS.md)). |
 
