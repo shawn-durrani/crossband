@@ -355,14 +355,25 @@ async def stt_stream_relay(ws: WebSocket):
                 finally:
                     con.close()
                 from .. import anchors
+                people = anchors.store().people()
                 preferred = {p["name"].lower(): p["preferred_name"]
-                             for p in anchors.store().people()}
+                             for p in people}
                 names = [preferred.get(r["name"].lower(), r["name"])
                          for r in roster]
-                return bool(row and row["room_mode"]), names
-            enabled, roster_names = await asyncio.to_thread(_session_open_reads)
+                on = bool(row and row["room_mode"])
+                # Session-start sniff eligibility (#28, third field test):
+                # room mode off but sufficient remembered non-owner voices
+                # exist. Decided here, once, off the audio path - the same
+                # people read the keyterms already needed.
+                sniff = (not on) and diarize.sniff_eligible(
+                    people, cfg.get("user_name"))
+                return on, names, sniff
+            enabled, roster_names, sniff_ok = await asyncio.to_thread(
+                _session_open_reads)
             diarize.set_room_enabled(chat_id, enabled)
             keyterm_names += roster_names
+            room.sniff_remaining = (diarize.SNIFF_UTTERANCES if sniff_ok
+                                    else 0)
         except Exception:
             log.warning("room-mode seed failed; session continues", exc_info=True)
     try:
@@ -465,6 +476,20 @@ async def stt_stream_relay(ws: WebSocket):
                                                       turn_id=commit_turn_id)
                             else:
                                 diarize.stash_utterance(chat_id, pcm, pcm_sr)
+                                # Session-start sniff (#28): with room mode
+                                # off but remembered voices in the house,
+                                # the first couple of committed utterances
+                                # ALSO run the diarization pass, listening
+                                # for a known non-owner voice or a second
+                                # cluster - which arms room mode without an
+                                # introduction. create_task only, same as
+                                # the pass above: NEVER awaited here, and
+                                # the upstream byte stream is untouched.
+                                if room.sniff_remaining > 0:
+                                    room.sniff_remaining -= 1
+                                    diarize.schedule_sniff(
+                                        chat_id, pcm, pcm_sr, db.now(),
+                                        room, cfg, turn_id=commit_turn_id)
                         except Exception:
                             log.warning("diarize scheduling failed; live "
                                         "transcription continues", exc_info=True)

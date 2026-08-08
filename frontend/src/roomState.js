@@ -172,6 +172,17 @@ export function personSummary(person, sufficientSeconds) {
   }
 }
 
+// Session-start sniff cost honesty (#28, third field test). When the
+// household has remembered voices, every session that starts with room mode
+// off listens to its first couple of spoken turns twice, so a known voice
+// can switch room mode on without an introduction. That is real extra
+// transcription spend and the copy says so plainly - the same posture as
+// the room-mode toggle's own "roughly double" line.
+export const SNIFF_EXPLAINER =
+  'With remembered voices in the house, the first couple of spoken turns '
+  + 'of each session are transcribed twice, listening for a known voice - '
+  + 'a recognised voice switches room mode on by itself.'
+
 // What forgetting means, stated before the click - deletion copy lives with
 // the logic so every surface says the same true thing.
 export const FORGET_EXPLAINER =

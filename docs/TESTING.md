@@ -114,6 +114,29 @@ introduction re-identifies a remembered person named in the utterance or
 raises the ask-fallback, and the field-test case - "this is me, Kat,
 the owner's wife" - is pinned to yield Kat, never Wife.
 
+**Arming and the session-start sniff (third field test).** Room mode
+must be reachable by every spoken door, and its failures must be
+visible. The two field phrasings that silently never armed - an unnamed
+handover ("hand over to a guest") and a guest's self-introduction with
+a proper name and a short form - are pinned end to end: the first arms
+room mode and raises the ask-fallback without ever minting a
+placeholder person, the second arms it, adds the person under their
+proper name, and keeps the spoken short form ("also known as", "call
+me") as their preferred display name at creation only - a later
+re-introduction never overwrites what may have been corrected by hand.
+Every introduction scan now ends in exactly one content-free INFO
+verdict line with an allowlisted outcome, so "the model said no" can
+never again be confused with "the scan never ran". The session-start
+sniff closes the structural gap that remembered voices could not arm a
+fresh chat: with room mode off and sufficient remembered non-owner
+voices, the first two committed utterances also run the existing
+diarization pass - the committed transcript is pinned to arrive while
+the sniff's batch call is wedged open, a match arms room mode and seeds
+the roster linked to the matched anchors, two anchorless clusters arm
+with ordinals but seed and ask nothing, two negative passes end the
+sniff at exactly two metered batch calls, and the sniff is pinned off
+when nobody (or only the owner) is remembered.
+
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
 backfilled; an unknown model id stays unpriced instead of inheriting a
@@ -201,8 +224,9 @@ week when it was maintained by hand.
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
 - (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N refresh, the sufficiency bar, forget-deletes-audio, the prefix builder, the tap-to-correct audio cache
 - (`test_room_identify.py`) Anchored identification (#28 phase 2): anchor-prefix requests with the roster+1 hint, name labels, cross-session re-identification, elimination and anchor accumulation, the unknown-voice ask-fallback, the mismatch flag that never mutates a label, tap-to-correct, roster/flag live events
-- (`test_room_intro.py`) Introduction detection (#28 phase 2): the send-never-waits pin, the lexical prefilter gating utility spend, confirmed introductions/departures driving room mode and the roster, the cap, owner-anchor seeding
+- (`test_room_intro.py`) Introduction detection (#28 phase 2): the send-never-waits pin, the lexical prefilter gating utility spend, confirmed introductions/departures driving room mode and the roster, the cap, owner-anchor seeding, the third-field-test arming phrasings, alias capture, the per-scan verdict line
 - (`test_room_mode.py`) Room mode's parallel diarization (#28 phase 1): toggle-off byte-for-byte identity on the realtime relay, the commit-boundary tee, the never-awaited pass, retro labels and their live-events push
+- (`test_room_sniff.py`) Session-start sniff (#28, third field test): a remembered voice arms a fresh chat, bounded at two never-awaited metered passes, pinned off without remembered non-owner voices
 - (`test_rounds.py`) Detached rounds
 - (`test_secret_scan.py`) Guardrail for scripts/secret-scan.sh, the ONE scanner that runs both as the local pre-commit hook and, through this test, in CI
 - (`test_setup.py`) Setup router
