@@ -97,6 +97,7 @@ week when it was maintained by hand.
 - (`test_app.py`) Boot smoke test
 - (`test_attribution_audit.py`) The non-blocking DIAGNOSTIC half of the source-provenance fix
 - (`test_auth_gate.py`) The browser gate: enrolment-activated sessions, recovery-gated setup/reset, websocket guard
+- (`test_passkeys.py`) Passkey unlock: per-origin enrolment, discoverable-credential ceremonies, replay/clone refusal
 - (`test_boundary.py`) Localhost trust boundary
 - (`test_cache_split.py`) Claude-chat prompt-cache layout
 - (`test_chat_memory.py`) Auto-title refresh triggers
@@ -159,6 +160,8 @@ week when it was maintained by hand.
 - (`headerView.test.js`) Tests for the chat header's derivations (extracted from App.jsx)
 - (`integrationsView.test.js`) Tests for the Integrations console's pure presentation layer. These pin the
 - (`lifecycle.test.js`) Tests for the Participants UI: it must SHOW trial vs onboarded, make a trial
+- (`lockState.test.js`) The gate's view rule: which lock-screen face shows for which session state
+- (`webauthnCodec.test.js`) WebAuthn wire plumbing: base64url round-trips, option decoding, credential serialisation, cancellation copy
 - (`mcpServersView.test.js`) Tests for the MCP panel's derivations
 - (`messageCost.test.js`) Tests for the chat surface's cost labelling: it must not present
 - (`modelReadout.test.js`) Tests for the per-seat model-status readout: it must not misread on a narrow

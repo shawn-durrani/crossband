@@ -1,8 +1,12 @@
 import { useState } from 'react'
 import { api } from '../api'
 import { setupProblem } from '../lockState'
+import {
+  ceremonyErrorCopy, decodeRequestOptions, serialiseAssertion,
+} from '../webauthnCodec'
 
-/* The lock screen (#25): password unlock, first-run enrolment, and
+/* The lock screen (#25): passkey-first unlock once one is enrolled for this
+   origin, password one click behind it, first-run enrolment, and
    recovery-secret reset. Rendered by AuthGate INSTEAD of the app (locked),
    or over it as an overlay (enrolment nudge on an unenrolled install).
    Deliberately minimal: nothing here fetches anything but the auth surface,
@@ -15,9 +19,13 @@ const buttonCls = 'w-full rounded-lg px-3 py-2 text-sm font-medium ' +
 const linkCls = 'text-sm text-ink-mid hover:text-ink-hi underline-offset-2 hover:underline'
 
 export default function LockScreen({ session, mode: initialMode, onUnlocked, onDismiss }) {
-  // modes: 'login' | 'setup' | 'reset' - setup and reset share the form,
-  // differing only in endpoint and copy (both are recovery-gated server-side).
-  const [mode, setMode] = useState(initialMode || (session?.enrolled ? 'login' : 'setup'))
+  // modes: 'passkey' | 'login' | 'setup' | 'reset' - setup and reset share
+  // the form, differing only in endpoint and copy (both recovery-gated
+  // server-side). Passkey leads only when this origin has one AND the
+  // browser can do WebAuthn.
+  const [mode, setMode] = useState(initialMode || (
+    !session?.enrolled ? 'setup'
+      : session?.passkey && window.PublicKeyCredential ? 'passkey' : 'login'))
   const [password, setPassword] = useState('')
   const [recovery, setRecovery] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -32,6 +40,21 @@ export default function LockScreen({ session, mode: initialMode, onUnlocked, onD
       onUnlocked()
     } catch (ex) {
       setErr(ex.message === 'wrong password' ? 'Wrong password.' : ex.message)
+      setBusy(false)
+    }
+  }
+
+  async function passkeyUnlock() {
+    setBusy(true); setErr('')
+    try {
+      const o = await api.webauthnLoginOptions()
+      const cred = await navigator.credentials.get(
+        { publicKey: decodeRequestOptions(o.publicKey) })
+      await api.webauthnLogin({ cid: o.cid, credential: serialiseAssertion(cred) })
+      onUnlocked()
+    } catch (ex) {
+      setErr(ceremonyErrorCopy(ex, 'login'))
+      setMode('login')
       setBusy(false)
     }
   }
@@ -59,13 +82,23 @@ export default function LockScreen({ session, mode: initialMode, onUnlocked, onD
         <div>
           <h1 className="text-xl font-semibold">crossband</h1>
           <p className="text-sm text-ink-mid mt-1">
+            {mode === 'passkey' && 'Locked. Unlock with your passkey.'}
             {mode === 'login' && 'Locked. Your conversations live behind this password.'}
             {mode === 'setup' && 'Set the password that will protect this app. Prove it’s you with the recovery secret from .env (CROSSBAND_RECOVERY_SECRET) or the server’s startup output.'}
             {mode === 'reset' && 'Reset your password with the recovery secret. Every signed-in browser is signed out.'}
           </p>
         </div>
 
-        {setupish ? (
+        {mode === 'passkey' ? (
+          <div className="space-y-3">
+            <button onClick={passkeyUnlock} disabled={busy} autoFocus className={buttonCls}>
+              Unlock with passkey
+            </button>
+            <button className={linkCls} onClick={() => { setMode('login'); setErr('') }}>
+              Use your password instead
+            </button>
+          </div>
+        ) : setupish ? (
           <form onSubmit={submitSetup} className="space-y-3">
             <label className="block">
               <span className="text-sm text-ink-mid">Recovery secret</span>

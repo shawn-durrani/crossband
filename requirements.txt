@@ -11,4 +11,9 @@ pillow-heif       # accept iPhone HEIC and convert it to JPEG
 websockets
 youtube-transcript-api
 claude-agent-sdk  # summon_claude_code guest (needs the Claude Code CLI at runtime)
+# Passkey (WebAuthn) verification for the browser gate (#25): vetted parsing
+# and verification of authenticator responses; pulls in cryptography + cbor2.
+# Capped at <3: verification semantics are security-load-bearing, so a major
+# bump is its own reviewed change. Same pin as the membro/spendglass siblings.
+webauthn>=2.2,<3
 pytest

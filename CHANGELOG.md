@@ -11,6 +11,12 @@ House convention: user-visible change, one line each, newest first.
   tailnet caller only ever sees the lock screen. Set
   `CROSSBAND_RECOVERY_SECRET` in `.env` so enrolment and reset work
   without terminal access.
+- Passkey unlock (#25): enrol a Touch ID / Face ID passkey from the
+  Integrations console and the lock screen offers it first, password
+  one click behind. Passkeys are per web address (`localhost` and the
+  tailnet name enrol separately; an IP address cannot hold one, so
+  `127.0.0.1` keeps the password form), and the tailnet passkey syncs
+  to your other devices via your keychain.
 
 ## v0.2.0 (2026-08-07)
 

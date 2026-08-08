@@ -266,6 +266,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.recovery_secret = recovery_secret
     app.state.auth_sessions = {}
     app.state.auth_enrolled = auth_enrolled
+    app.state.webauthn_pending = {}  # in-flight passkey ceremonies (#25 slice 2)
 
     @app.middleware("http")
     async def _host_allowlist(request, call_next):

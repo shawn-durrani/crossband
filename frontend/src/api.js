@@ -29,6 +29,18 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
   }).then(json),
   authLogout: () => fetch('/api/auth/logout', { method: 'POST' }).then(json),
+  webauthnLoginOptions: () => fetch('/api/webauthn/login/options', { method: 'POST' }).then(json),
+  webauthnLogin: (body) => fetch('/api/webauthn/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then(json),
+  webauthnRegisterOptions: () => fetch('/api/webauthn/register/options', { method: 'POST' }).then(json),
+  webauthnRegister: (body) => fetch('/api/webauthn/register', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then(json),
+  webauthnCredentials: () => fetch('/api/webauthn/credentials').then(json),
+  webauthnRemove: (id) => fetch('/api/webauthn/credentials/remove', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+  }).then(json),
   state: () => fetch('/api/state').then(json),
   createProject: (body) => fetch('/api/projects', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
