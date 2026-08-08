@@ -49,6 +49,14 @@ SDK boundary, so what is asserted is which rules are handed to Claude
 Code, not that the CLI refuses a read; the allow-versus-deny precedence
 is mirrored by a helper in the test file rather than exercised.
 
+**The room-mode tee.** The parallel diarization pass may never cost the
+live voice path anything: with the toggle off the realtime relay sends
+byte-for-byte the frames it always sent and makes no second call; with
+it on, the tee slices on the same commit boundaries, the pass runs as a
+never-awaited background task (pinned by wedging the batch call open
+and watching the committed transcript arrive anyway), and a failed pass
+leaves the turn unlabelled with everything else working.
+
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
 backfilled; an unknown model id stays unpriced instead of inheriting a
@@ -132,6 +140,7 @@ week when it was maintained by hand.
 - (`test_projection.py`) Characterization tests for the transcript projection, covering the load-bearing invariants
 - (`test_prompt_guardrail.py`) High-salience personal-claim guardrail
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
+- (`test_room_mode.py`) Room mode's parallel diarization (#28 phase 1): toggle-off byte-for-byte identity on the realtime relay, the commit-boundary tee, the never-awaited pass, retro labels and their live-events push
 - (`test_rounds.py`) Detached rounds
 - (`test_secret_scan.py`) Guardrail for scripts/secret-scan.sh, the ONE scanner that runs both as the local pre-commit hook and, through this test, in CI
 - (`test_setup.py`) Setup router
@@ -170,6 +179,7 @@ week when it was maintained by hand.
 - (`spendView.test.js`) Tests for the Spend page: it must lead with an honest answer, not a table
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard
 - (`textQueue.test.js`) Invariant tests for per-chat text batching + pre-ingestion cancel
+- (`voiceChips.test.js`) Room-mode "Voice N" chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery
 - (`voiceGate.test.js`) Pure-function tests for the voice playback gate (a regression guard)
 - (`voiceRecovery.test.js`) Tests for voice session recovery: a session must repair itself when the tab

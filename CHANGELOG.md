@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode, phase 1 (#28): a per-session toggle in the voice controls
+  for when more than one person is in the room. While on, each spoken
+  turn also goes through a second, diarising transcription pass in the
+  background; turns where another voice appears get small unnamed
+  "Voice 1" / "Voice 2" chips a moment later. The live conversation is
+  untouched - nothing waits on the pass, and with the toggle off the
+  voice pipeline is exactly what it was. Stated plainly: telling voices
+  apart transcribes the audio twice, so voice minutes roughly double
+  while the toggle is on. Labels are best effort for now; naming the
+  voices is the next phase.
 - A browser gate (#25): an owner password (scrypt verifier, recovery
   secret for enrolment/reset, opaque revocable sessions) now protects
   the UI and API. Enrolment-activated: nothing changes until you set a

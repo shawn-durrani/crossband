@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   mergeMessagesById, highestId, hydrateCursor, nextBackoffDelay, INITIAL_BACKOFF_MS,
-  shouldHydrateActiveChat, shouldVoiceAttach,
+  shouldHydrateActiveChat, shouldVoiceAttach, voiceAttachEligible,
   shouldDeferEvent, queuePendingEvent, drainPendingQueue,
 } from './eventStream.js'
 
@@ -111,6 +111,28 @@ test('voice-attach fires only for the open chat, in voice, while idle', () => {
   // A different chat's activity never pulls audio into the open one.
   assert.equal(shouldVoiceAttach(5, 7, { streaming: false, voiceActive: true }), false)
   assert.equal(shouldVoiceAttach(null, 5, { streaming: false, voiceActive: true }), false)
+})
+
+test('only a NEW message may voice-attach - a label update never does', () => {
+  // A message_update (room-mode "Voice N" labels retro-attached to an
+  // existing turn, #28) re-renders content; there is no new round behind it,
+  // so poking the voice pipeline would attach to nothing (or worse, re-tail
+  // a finished round). Same merge path, no audio side effects.
+  assert.equal(voiceAttachEligible('new_message'), true)
+  assert.equal(voiceAttachEligible('message_update'), false)
+  assert.equal(voiceAttachEligible('guest_job'), false)
+  assert.equal(voiceAttachEligible(undefined), false)
+})
+
+test('a label update hydrates through the same merge, replacing the row by id', () => {
+  // The re-render mechanics: the client refetches from just below the updated
+  // id and merges - the fresh row (now carrying voice_labels) REPLACES the
+  // stale one instead of double-appending.
+  const local = [{ id: 7, content: 'hi', voice_labels: '' }, { id: 8 }]
+  const fresh = [{ id: 7, content: 'hi', voice_labels: '{"labels":["Voice 1","Voice 2"]}' }]
+  const merged = mergeMessagesById(local, fresh)
+  assert.deepEqual(merged.map((m) => m.id), [7, 8])
+  assert.match(merged[0].voice_labels, /Voice 2/)
 })
 
 // --- Deferred hydration queue ---------------------------------------------

@@ -1,4 +1,4 @@
-import { Hand, Timer, Square, X, CornerDownLeft, SlidersHorizontal, ChevronDown } from 'lucide-react'
+import { Hand, Timer, Square, X, CornerDownLeft, SlidersHorizontal, ChevronDown, Users } from 'lucide-react'
 
 // The in-session voice controls, docked bottom-right of the thread.
 //
@@ -15,9 +15,9 @@ import { Hand, Timer, Square, X, CornerDownLeft, SlidersHorizontal, ChevronDown 
 // keep that: in a status cluster, variable-length text never displaces the
 // stable element.
 export default function VoiceDock({
-  voiceState, pttMode, silenceSecs, voiceRate, dockOpen,
+  voiceState, pttMode, silenceSecs, voiceRate, dockOpen, roomMode,
   onPttModeChange, onSilenceSecsChange, onVoiceRateChange, onDockOpenChange,
-  onFinalizeNow, onInterrupt, onStop,
+  onRoomModeChange, onFinalizeNow, onInterrupt, onStop,
 }) {
   if (voiceState === 'off') return null
   return (
@@ -50,6 +50,23 @@ export default function VoiceDock({
             onClick={() => onPttModeChange(!pttMode)}
           >
             {pttMode ? <><Hand size={13} /> manual</> : <><Timer size={13} /> auto</>}
+          </button>
+          {/* Room mode (#28 phase 1): session-only, default off. The copy
+              states the cost plainly - a second transcription pass runs, so
+              voice minutes roughly double while it is on. */}
+          <button
+            title={roomMode
+              ? 'Room mode is on: turns can carry a Voice label when another voice is heard. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. Click to switch it off.'
+              : 'Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on.'}
+            aria-pressed={!!roomMode}
+            className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
+              roomMode
+                ? 'border-sky-700 text-sky-300 bg-sky-950/40'
+                : 'border-edge2 text-ink-dim hover:text-ink-mid'
+            }`}
+            onClick={() => onRoomModeChange(!roomMode)}
+          >
+            <Users size={13} /> room
           </button>
           {!pttMode && (
             <span

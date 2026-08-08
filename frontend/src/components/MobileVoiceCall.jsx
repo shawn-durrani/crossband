@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Mic, MicOff, X } from 'lucide-react'
+import { ChevronDown, Mic, MicOff, Users, X } from 'lucide-react'
 import { orbStateFor, statusFor, showInterruptHint, displayPartial } from '../voiceView'
 
 // Full-screen mobile voice "call" overlay. Rendered by App only while a voice
@@ -15,7 +15,8 @@ import { orbStateFor, statusFor, showInterruptHint, displayPartial } from '../vo
 export default function MobileVoiceCall({ voiceState, held = 0, participants, roster = [],
                                           activeIds = [], onToggleParticipant, captions,
                                           captionHistory = [], speakingSlug, onEnd, voice,
-                                          partial = null, banner = null, onDismissBanner }) {
+                                          partial = null, banner = null, onDismissBanner,
+                                          roomMode = false, onRoomModeChange }) {
   const [muted, setMuted] = useState(false)
   // Transcript browsing: faded captions aren't gone - swipe up (or tap the
   // hint) to scroll back through everything said this session.
@@ -99,7 +100,27 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
             )
           })}
         </div>
-        <span className="mvc-lock">🔒 private</span>
+        <div className="flex items-center gap-2">
+          {/* Room mode (#28 phase 1) - the phone-on-the-table case. Same
+              session toggle as the desktop dock, same plain cost note. */}
+          <button
+            type="button"
+            aria-pressed={!!roomMode}
+            aria-label={roomMode ? 'Switch room mode off' : 'Switch room mode on'}
+            title={roomMode
+              ? 'Room mode is on: turns can carry a Voice label when another voice is heard. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. Tap to switch it off.'
+              : 'Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on.'}
+            className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
+              roomMode
+                ? 'border-sky-700 text-sky-300 bg-sky-950/40'
+                : 'border-edge2 text-ink-dim'
+            }`}
+            onClick={() => onRoomModeChange?.(!roomMode)}
+          >
+            <Users size={13} /> room{roomMode ? ' on' : ''}
+          </button>
+          <span className="mvc-lock">🔒 private</span>
+        </div>
       </div>
 
       {/* Caption zone - transient flash / drift / fade; swipe up to browse

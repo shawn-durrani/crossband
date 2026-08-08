@@ -73,6 +73,26 @@ def transcribe(audio_bytes, mime, cfg):
     raise RuntimeError(f"Speech-to-text failed ({r.status_code}: {r.text[:200]})")
 
 
+def transcribe_diarized(audio_bytes, mime, cfg):
+    """The room-mode second pass (#28 phase 1): batch Scribe v2 with
+    diarize=true, returning the FULL response (per-word speaker_id clusters),
+    not just the text. Batch is the only place diarization exists - the
+    realtime model trades it away for latency - which is why room mode runs
+    this in parallel rather than touching the live relay's stream. No
+    num_speakers hint in phase 1 (the roster arrives with phase 2)."""
+    model_id = cfg.get("stt_model") or "scribe_v2"
+    r = httpx.post(
+        f"{ELEVEN_BASE}/v1/speech-to-text",
+        headers=_headers(),
+        data={"model_id": model_id, "diarize": "true"},
+        files={"file": ("utterance.wav", audio_bytes, mime or "audio/wav")},
+        timeout=60,
+    )
+    if r.status_code < 400:
+        return r.json()
+    raise RuntimeError(f"Diarized speech-to-text failed ({r.status_code}: {r.text[:200]})")
+
+
 def tts_init_message(cfg):
     """First message on the ElevenLabs TTS websocket: auth + adaptive chunking.
     Small first chunk for fast time-to-first-audio, larger after for prosody."""
