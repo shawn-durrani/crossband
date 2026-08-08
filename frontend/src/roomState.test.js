@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import {
   askFlag, cleanPreferredName, displayName, flagCopy, FORGET_EXPLAINER,
   mismatchByMessage, personSummary, reassignOptions, rosterChipText,
-  rosterTitle,
+  rosterTitle, sufficiencyProgress,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -144,4 +144,41 @@ test('person summary shows the preferred name and stays honest about the heard o
     { name: 'Alex', seconds: 7.5, clip_count: 4, sufficient: true }, 6)
   assert.equal(plain.name, 'Alex')
   assert.equal(plain.alias, '')
+})
+
+// ── learning progress toward the sufficiency bar (#28 phase 4) ──────────────
+
+test('sufficiencyProgress reports seconds toward the bar, clamped', () => {
+  const p = sufficiencyProgress({ seconds: 4.5, sufficient: false }, 6)
+  assert.equal(p.done, false)
+  assert.equal(p.fraction, 0.75)
+  assert.equal(p.label, '4.5s of 6s of clear speech heard')
+  // never past 1, never negative
+  assert.equal(sufficiencyProgress({ seconds: 99, sufficient: false }, 6).fraction, 1)
+  assert.equal(sufficiencyProgress({ seconds: -2, sufficient: false }, 6).fraction, 0)
+})
+
+test('sufficiencyProgress is done for a remembered voice and defensive about junk', () => {
+  const done = sufficiencyProgress({ seconds: 7.5, sufficient: true }, 6)
+  assert.equal(done.done, true)
+  assert.equal(done.fraction, 1)
+  assert.equal(done.label, 'voice remembered')
+  assert.equal(sufficiencyProgress(null, 6), null)
+  // a junk/absent target falls back to the default bar (6s)
+  assert.equal(sufficiencyProgress({ seconds: 3, sufficient: false }, 0).fraction, 0.5)
+  assert.equal(sufficiencyProgress({ seconds: 3, sufficient: false }, 'x').fraction, 0.5)
+  // roster rows carry anchor_seconds instead of seconds - both read
+  assert.equal(
+    sufficiencyProgress({ anchor_seconds: 3, sufficient: false }, 6).fraction, 0.5)
+})
+
+test('the roster hint shows each learner\'s progress when the snapshot carries it', () => {
+  const roster = [present('Shawn'),
+    { id: 2, name: 'Alex', person_id: 'p2', status: 'present',
+      sufficient: false, anchor_seconds: 4.5 }]
+  const t = rosterTitle(roster, 6)
+  assert.match(t, /Still learning: Alex \(4\.5s of 6s of clear speech heard\)/)
+  // rows without the field (older snapshots) keep the bare name
+  assert.match(rosterTitle([present('Shawn'), present('Alex', false)], 6),
+    /Still learning: Alex -/)
 })

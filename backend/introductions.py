@@ -139,7 +139,13 @@ def build_prompt(text: str, user_name: str, roster_names: list) -> str:
         "story) is neither.\n"
         f"The speaker is {user_name}. People already known present: {present}.\n"
         "Reply with ONLY JSON: {\"introductions\": [names...], "
-        "\"departures\": [names...]}. Use the name as spoken; empty lists "
+        "\"departures\": [names...]}. Use the person's PROPER NAME as "
+        "spoken; when the message gives both a name and a relationship "
+        "('this is Kat, my wife'), return only the name, never the "
+        "relationship word. If someone is introduced by relationship alone "
+        "('my wife is here') with no name anywhere in the message, return "
+        "the relationship word itself (e.g. 'Wife') - the app resolves it "
+        "rather than treating it as a name. Empty lists "
         "when the message is neither. Never invent a name that is not in "
         f"the message, and never return {user_name} themselves - the "
         "speaker is already known, including when the transcript spells "
@@ -152,6 +158,73 @@ def cap_allows(present_count: int, adding: int, cap: int) -> int:
     """How many of `adding` new people fit under the cap. The cap counts
     PRESENT people; it frees as people leave."""
     return max(0, min(adding, cap - present_count))
+
+
+# ---- naming hygiene (#28 phase 4, second-field-test defect 1) ----
+#
+# "This is me, Kat, [the owner]'s wife" minted a roster person named "Wife".
+# A relationship word is HOW someone relates to the owner, never WHO they
+# are: it must not become a person's name, a voice-label, a memory speaker
+# class, or a keyterm. The rule lives here, at the single point where
+# introduction names enter the system.
+
+_RELATIONSHIP_NOUNS = {
+    "wife", "husband", "partner", "spouse", "fiance", "fiancee",
+    "girlfriend", "boyfriend",
+    "mum", "mom", "mother", "dad", "father", "parent",
+    "son", "daughter", "child", "kid", "baby",
+    "brother", "sister", "sibling", "cousin",
+    "grandma", "grandmother", "nan", "nanna", "granny",
+    "grandpa", "grandfather", "pop", "poppy",
+    "aunt", "aunty", "auntie", "uncle", "niece", "nephew",
+    "friend", "mate", "buddy", "bestie",
+    "colleague", "workmate", "coworker",
+    "boss", "manager", "assistant",
+    "neighbour", "neighbor", "roommate", "flatmate", "housemate",
+    "guest", "visitor",
+}
+_RELATIONSHIP_LEADING = ("my", "our", "his", "her", "their", "the", "a", "an")
+
+
+def relationship_noun(name: str) -> bool:
+    """Is `name` a relationship word rather than a person's name? Checks the
+    whole (cleaned) name: leading possessives drop ("my wife" -> "wife"), a
+    trailing plural 's' drops ("kids" -> "kid"). Multi-word real names
+    ('Mary Rose') never match - only a bare relationship phrase does."""
+    words = [w for w in re.sub(r"[^a-z' ]", " ", (name or "").casefold()).split()
+             if w]
+    while words and words[0] in _RELATIONSHIP_LEADING:
+        words = words[1:]
+    if len(words) != 1:
+        return False
+    word = words[0].rstrip("'").strip()
+    if word in _RELATIONSHIP_NOUNS:
+        return True
+    return word.endswith("s") and word[:-1] in _RELATIONSHIP_NOUNS
+
+
+def match_remembered_name(text, known_names, exclude=frozenset()) -> str:
+    """When an introduction gave only a relationship ('my wife is here'), the
+    utterance may still contain a proper name the roster verdict missed - and
+    if that name is one we already REMEMBER, re-identifying them beats both a
+    placeholder and an interruption. Returns the single remembered name that
+    appears (word-bounded, case-insensitive) in `text` and is not excluded
+    (owner, already present); '' when none or more than one match -
+    ambiguity is the ask-fallback's job, not a coin flip's."""
+    head = (text or "")[:600]
+    if not head:
+        return ""
+    excluded = {e.casefold() for e in exclude or ()}
+    hits = []
+    for name in known_names or []:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if name.casefold() in excluded or relationship_noun(name):
+            continue
+        if re.search(r"\b" + re.escape(name) + r"\b", head, re.IGNORECASE):
+            if name.casefold() not in {h.casefold() for h in hits}:
+                hits.append(name)
+    return hits[0] if len(hits) == 1 else ""
 
 
 def _letters(name: str) -> str:
@@ -226,7 +299,7 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
         verdict = parse_verdict(reply)
         if not verdict["introductions"] and not verdict["departures"]:
             return
-        await asyncio.to_thread(apply_scan, chat_id, verdict, cfg)
+        await asyncio.to_thread(apply_scan, chat_id, verdict, cfg, text)
     except Exception:
         log.info("introduction scan failed: chat=%s", chat_id)
         log.debug("introduction scan failure detail", exc_info=True)
@@ -241,7 +314,7 @@ def _present_names(chat_id) -> list:
         con.close()
 
 
-def apply_scan(chat_id, verdict, cfg):
+def apply_scan(chat_id, verdict, cfg, text=""):
     """Apply a confirmed verdict (synchronous; runs on a worker thread):
 
     - introductions: flip room mode on (durably AND in diarize's in-process
@@ -249,9 +322,16 @@ def apply_scan(chat_id, verdict, cfg):
       to the roster up to the cap, link a REMEMBERED person's anchors
       immediately (that is re-identification), and seed the owner's anchor
       from the introduction utterance the relay stashed.
+    - naming hygiene (#28 phase 4): a relationship word is never stored as a
+      person's name. Proper names in the same verdict win; a
+      relationship-only introduction first tries to re-identify a REMEMBERED
+      person named in the utterance, and otherwise raises the ask-fallback -
+      room mode still flips on either way, because someone IS present.
     - departures: mark the named people left (the cap frees).
 
-    Content-free logging throughout: counts, never names or text."""
+    `text` is the utterance (for the remembered-name match only - nothing
+    from it is persisted or logged). Content-free logging throughout:
+    counts, never names or text."""
     con = db.connect()
     try:
         chat = con.execute("SELECT * FROM chats WHERE id=?",
@@ -269,6 +349,13 @@ def apply_scan(chat_id, verdict, cfg):
         if len(intros) < len(raw_intros):
             log.info("owner-alias introduction dropped: chat=%s n=%d",
                      chat_id, len(raw_intros) - len(intros))
+        # Naming hygiene (#28 phase 4): strip relationship nouns. "Kat" and
+        # "Wife" in one verdict is the proper name plus its echo; "Wife"
+        # alone is an unnamed introduction, resolved below.
+        named = [n for n in intros if not relationship_noun(n)]
+        if len(named) < len(intros):
+            log.info("relationship-noun introduction dropped: chat=%s n=%d",
+                     chat_id, len(intros) - len(named))
         departs = verdict.get("departures") or []
         if intros:
             if not chat["room_mode"]:
@@ -277,7 +364,23 @@ def apply_scan(chat_id, verdict, cfg):
                 log.info("room mode ON via introduction: chat=%s", chat_id)
             present = db.get_room_roster(con, chat_id, present_only=True)
             present_names = {p["name"].lower() for p in present}
-            new = [n for n in intros if n.lower() not in present_names]
+            if not named:
+                # Only a relationship was given ("my wife is here"). Try the
+                # utterance against REMEMBERED people before interrupting:
+                # a known name in the same breath is a re-identification.
+                known_names = [p["name"] for p in anchors.store().people()]
+                match = match_remembered_name(
+                    text, known_names,
+                    exclude=present_names | {owner.casefold()})
+                if match:
+                    named = [match]
+                    log.info("relationship-only introduction matched a "
+                             "remembered person: chat=%s", chat_id)
+                else:
+                    _raise_unnamed_intro_ask(con, chat_id)
+                    log.info("relationship-only introduction with no match: "
+                             "chat=%s ask raised", chat_id)
+            new = [n for n in named if n.lower() not in present_names]
             cap = int(cfg.get("room_roster_max") or 6)
             allowed = cap_allows(len(present), len(new), cap)
             if allowed < len(new):
@@ -289,17 +392,31 @@ def apply_scan(chat_id, verdict, cfg):
                 db.add_room_person(con, chat_id, name, person_id=pid)
             log.info("roster grew: chat=%s added=%d", chat_id,
                      min(allowed, len(new)))
-            # An introduction is also the ANSWER to an open "someone new is
-            # speaking - who?" ask: naming them closes it. The next utterance
-            # then resolves by elimination (one pending name, one unmatched
-            # cluster) or asks again if genuinely still ambiguous.
-            db.resolve_room_flags(con, chat_id, kind="unknown_voice")
+            if named:
+                # An introduction is also the ANSWER to an open "someone new
+                # is speaking - who?" ask: naming them closes it. The next
+                # utterance then resolves by elimination (one pending name,
+                # one unmatched cluster) or asks again if genuinely still
+                # ambiguous. An UNNAMED introduction resolves nothing - the
+                # ask it just raised must stand.
+                db.resolve_room_flags(con, chat_id, kind="unknown_voice")
             _seed_owner_anchor(chat_id, cfg)
         for name in departs:
             if db.mark_room_person_left(con, chat_id, name):
                 log.info("roster departure: chat=%s", chat_id)
     finally:
         con.close()
+
+
+def _raise_unnamed_intro_ask(con, chat_id):
+    """The ask-fallback for a relationship-only introduction: one OPEN
+    'unknown_voice' ask per chat, same discipline as the diarization pass's -
+    an unanswered ask must not stack while the same unnamed person keeps
+    being mentioned."""
+    open_asks = [f for f in db.get_room_flags(con, chat_id)
+                 if f["kind"] == "unknown_voice"]
+    if not open_asks:
+        db.insert_room_flag(con, chat_id, "unknown_voice")
 
 
 def _seed_owner_anchor(chat_id, cfg):

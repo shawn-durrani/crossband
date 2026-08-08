@@ -55,6 +55,19 @@ log = logging.getLogger("crossband.voice")
 
 PREFERRED_VOICES = ["Adam", "Rachel", "Antoni", "Bella", "Josh", "Domi", "Elli", "Sam"]
 
+# The two mic capture profiles a client may report (#28 phase 4, the
+# crosstalk capture experiment - see frontend/src/captureProfile.js).
+# Allowlisted so the log line stays content-free by construction: anything
+# else a client sends is simply not logged.
+CAPTURE_PROFILES = {"solo-tuned", "room-open"}
+
+
+def capture_profile(msg) -> str:
+    """The client-reported capture profile out of an init or control frame,
+    or '' when absent/unrecognised."""
+    p = (msg or {}).get("capture_profile")
+    return p if p in CAPTURE_PROFILES else ""
+
 
 @router.get("/api/voice/status")
 def voice_status(request: Request):
@@ -296,6 +309,14 @@ async def stt_stream_relay(ws: WebSocket):
     except WebSocketDisconnect:
         return
     chat_id = init.get("chat_id")
+    # Capture experiment (#28 phase 4): record which mic profile this session
+    # captured with, so field tests can compare crosstalk label rates between
+    # suppression-on and suppression-off capture. INFO and content-free
+    # (an allowlisted profile name, never audio or text); older clients send
+    # nothing and nothing is logged.
+    profile = capture_profile(init)
+    if profile:
+        log.info("stt capture profile: chat=%s profile=%s", chat_id, profile)
     seconds = 0.0
     up = down = None
     last_partial = ""  # freshest partial transcript - the prewarm query
@@ -361,8 +382,15 @@ async def stt_stream_relay(ws: WebSocket):
                     if "room_mode" in msg and "audio" not in msg:
                         # Control frame, ours alone: toggle the tee and send
                         # NOTHING upstream - the ElevenLabs byte stream stays
-                        # identical to a session that never toggled.
+                        # identical to a session that never toggled. A
+                        # mid-session capture-profile change (#28 phase 4)
+                        # rides the same frame and is logged the same
+                        # content-free way as the init's.
                         room.set_enabled(msg.get("room_mode"))
+                        p = capture_profile(msg)
+                        if p:
+                            log.info("stt capture profile: chat=%s profile=%s",
+                                     chat_id, p)
                         continue
                     audio = msg.get("audio") or ""
                     sr = int(msg.get("sample_rate", 16000))

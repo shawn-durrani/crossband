@@ -39,6 +39,10 @@ def get_roster(chat_id: int, request: Request):
     for row in roster:
         person = by_id.get(row["person_id"])
         row["sufficient"] = bool(person and person["sufficient"])
+        # Learning progress (#28 phase 4): accepted anchor seconds, so a
+        # still-learning voice can show how far along it is instead of a
+        # bare "uncertain". Content-free numbers only, same as /voice/people.
+        row["anchor_seconds"] = float((person or {}).get("seconds") or 0.0)
         # The correctable display name (#28 phase 3): a remembered person is
         # shown under their preferred name; an anchor-pending person under
         # the name they were introduced as. `name` stays the identity key
@@ -46,6 +50,7 @@ def get_roster(chat_id: int, request: Request):
         row["display_name"] = (person or {}).get("preferred_name") or row["name"]
     return {"room_mode": bool(chat["room_mode"]),
             "cap": int(request.app.state.settings.room_roster_max),
+            "sufficient_seconds": anchors.SUFFICIENT_SECONDS,
             "roster": roster, "flags": flags}
 
 
@@ -144,6 +149,15 @@ def reassign_speaker(chat_id: int, message_id: int, body: dict = Body(...)):
             old = {}
         payload = {"clusters": old.get("clusters") or [],
                    "labels": [name], "uncertain": [], "corrected": True}
+        if old.get("crosstalk") is True:
+            # A correction answers WHO spoke, not WHAT was lost: the turn's
+            # audio still held two voices, so the crosstalk marker survives
+            # (and keeps the turn quarantine-safe on memory ingest). The
+            # best-effort split is dropped - its per-voice labels no longer
+            # match the corrected attribution.
+            payload["crosstalk"] = True
+            if "overlap" in old:
+                payload["overlap"] = bool(old.get("overlap"))
         db.set_message_voice_labels(con, message_id, payload)
         db.resolve_room_flags(con, chat_id, message_id=message_id)
 

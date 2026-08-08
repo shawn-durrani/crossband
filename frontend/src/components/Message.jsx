@@ -5,7 +5,7 @@ import { Copy, Check, FileText, Search, Globe, MessagesSquare, Wrench, AlertTria
   ArrowUp, ArrowDown, Loader2, ChevronRight } from 'lucide-react'
 import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
-import { chipData, chipTitle } from '../voiceChips'
+import { chipData, chipTitle, crosstalkNote, crosstalkSegments } from '../voiceChips'
 import { flagCopy, reassignOptions } from '../roomState'
 
 // Same-speaker messages closer than this group into one visual run
@@ -275,6 +275,11 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
     const reassignNames = onReassign
       ? reassignOptions(roomRoster, voicePeople, voiceChips.map((c) => c.label))
       : []
+    // Crosstalk (#28 phase 4): the plain-English marker, and the best-effort
+    // per-voice split when one was salvageable. Decision logic in
+    // voiceChips.js; this only renders what it returns.
+    const ctNote = crosstalkNote(msg)
+    const ctSegments = crosstalkSegments(msg)
     return (
       <div className={`group flex items-center justify-end gap-2 ${gapClass}`}>
         {msg.content && (
@@ -323,6 +328,23 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                   </button>
                 </div>
               )}
+            </div>
+          )}
+          {ctNote && (
+            <div className="text-[11px] text-amber-200/80 text-right max-w-[46ch]">
+              {ctNote}
+            </div>
+          )}
+          {ctSegments.length > 0 && (
+            <div className="text-[11px] text-ink-dim text-right max-w-[46ch]"
+                 title="Best-effort split by voice from the second listen - not verbatim certainty.">
+              {ctSegments.map((s, i) => (
+                <span key={i}>
+                  {i > 0 ? ' / ' : ''}
+                  <span className="font-medium">{s.label}{s.uncertain ? '?' : ''}:</span>
+                  {' '}&ldquo;{s.text}&rdquo;
+                </span>
+              ))}
             </div>
           )}
           {mismatchFlag && (

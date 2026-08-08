@@ -9,7 +9,8 @@ import { useEffect, useState } from 'react'
 import { AudioLines, ChevronDown, ChevronRight, Pencil, Trash2 } from 'lucide-react'
 
 import { api } from '../api.js'
-import { cleanPreferredName, FORGET_EXPLAINER, personSummary } from '../roomState.js'
+import { cleanPreferredName, FORGET_EXPLAINER, personSummary,
+         sufficiencyProgress } from '../roomState.js'
 
 export default function RememberedVoices() {
   const [open, setOpen] = useState(false)
@@ -82,6 +83,10 @@ export default function RememberedVoices() {
           )}
           {(people || []).map((p) => {
             const s = personSummary(p, sufficientSecs)
+            // Learning progress (#28 phase 4): a still-learning voice shows
+            // how far toward the bar it is, so patience is an informed
+            // choice. Derivation lives in roomState.js (pure, node --test).
+            const prog = sufficiencyProgress(p, sufficientSecs)
             return (
               <div key={p.person_id}
                    className="flex items-start gap-2 border border-edge2 rounded-lg px-3 py-2">
@@ -126,6 +131,22 @@ export default function RememberedVoices() {
                     </div>
                   )}
                   <div className="text-xs text-ink-dim mt-0.5">{s.status}</div>
+                  {prog && !prog.done && (
+                    <div
+                      className="mt-1 h-1 w-40 rounded-full bg-panel2 overflow-hidden"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(prog.fraction * 100)}
+                      aria-label={`Voice learning progress: ${prog.label}`}
+                      title={prog.label}
+                    >
+                      <div
+                        className="h-full rounded-full bg-sky-700"
+                        style={{ width: `${Math.round(prog.fraction * 100)}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
                 {confirming === p.person_id ? (
                   <span className="shrink-0 flex items-center gap-1.5 text-xs">

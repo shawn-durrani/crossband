@@ -17,6 +17,10 @@ THE FOUR CASES:
 4. a turn carrying an OPEN attribution flag goes as "guest:unknown" even if
    its label reads confident.
 
+Phase 4 adds one more road to "guest:unknown": a CROSSTALK-marked turn (two
+voices in one utterance) is never any single person's words, whatever its
+labels claim - pinned below alongside the original four cases.
+
 SOURCE_APP stays the permanent historical wire value throughout - membro
 keys conversation identity on it. An older membro treats the guest:* classes
 as unrecognised (untrusted), so none of this waits on the membro-side build.
@@ -106,6 +110,34 @@ def test_wire_name_is_single_line_and_colon_free():
     assert ":" not in body and "\n" not in body
 
 
+def test_crosstalk_turn_always_ingests_as_guest_unknown():
+    """#28 phase 4: a crosstalk-marked turn's TEXT may be missing or merging
+    the quieter voice's words, so it is never any one person's words - not
+    the confident guest's, not the owner's (even when every voice matched
+    the owner), and not even after a human corrected WHO spoke, because the
+    correction cannot restore WHAT was lost."""
+    def ct(mid, labels, uncertain, **extra):
+        return _msg(mid, "user", voice_labels=json.dumps(
+            {"clusters": ["s0", "s1"], "labels": labels,
+             "uncertain": uncertain, "crosstalk": True, **extra}))
+    # a confident named guest sharing the turn: still unknown
+    assert ingest_speaker(ct(1, ["Lex", "Shawn"], []), set(),
+                          "Shawn") == GUEST_UNKNOWN
+    # every label confidently the owner: still unknown, never "user"
+    assert ingest_speaker(ct(2, ["Shawn", "Shawn"], []), set(),
+                          "Shawn") == GUEST_UNKNOWN
+    # exactly one confident guest label: still unknown
+    assert ingest_speaker(ct(3, ["Lex"], []), set(), "Shawn") == GUEST_UNKNOWN
+    # corrected by tap-to-correct, marker preserved: still unknown
+    assert ingest_speaker(ct(4, ["Alex"], [], corrected=True), set(),
+                          "Shawn") == GUEST_UNKNOWN
+    # junk crosstalk values read as unmarked - the shared degradation rule
+    m = _msg(5, "user", voice_labels=json.dumps(
+        {"clusters": ["s0"], "labels": ["Lex"], "uncertain": [],
+         "crosstalk": "yes"}))
+    assert ingest_speaker(m, set(), "Shawn") == "guest:Lex"
+
+
 # ── the leave-hook handoff, end to end ──────────────────────────────────────
 
 class _FakeResp:
@@ -164,6 +196,11 @@ def test_handoff_resolves_speakers_and_source_app_is_untouched(app):
                                 {"clusters": ["s1"], "labels": ["Lex"],
                                  "uncertain": []})
     db.insert_room_flag(con, chat_id, "mismatch", message_id=m_flagged["id"])
+    m_crosstalk = db.insert_message(con, chat_id, "user", "two at once")
+    db.set_message_voice_labels(con, m_crosstalk["id"],
+                                {"clusters": ["s0", "s1"],
+                                 "labels": ["Shawn", "Lex"], "uncertain": [],
+                                 "crosstalk": True, "overlap": True})
     m_model = db.insert_message(con, chat_id, "claude", "a reply")
     con.close()
     # Lex's correctable display name is Alex - the ingest must use it
@@ -185,6 +222,7 @@ def test_handoff_resolves_speakers_and_source_app_is_untouched(app):
     assert speakers[m_guest["id"]] == "guest:Alex"
     assert speakers[m_uncertain["id"]] == GUEST_UNKNOWN
     assert speakers[m_flagged["id"]] == GUEST_UNKNOWN
+    assert speakers[m_crosstalk["id"]] == GUEST_UNKNOWN
     assert speakers[m_model["id"]] == "claude"
     # the durable rows themselves are untouched - attribution is resolved on
     # the way OUT, not rewritten in the transcript

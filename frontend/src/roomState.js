@@ -48,12 +48,44 @@ export function rosterChipText(roster) {
   return `In the room: ${names.join(', ')}`
 }
 
+// Learning progress toward the sufficiency bar (#28 phase 4, second field
+// test: a remembered-but-under-the-bar voice was indistinguishable from a
+// failing one). Content-free numbers only - accepted seconds vs the target.
+// Works for remembered-voice people ({seconds, sufficient}) and roster rows
+// ({anchor_seconds, sufficient}) alike. Null when there is nothing to say.
+export function sufficiencyProgress(person, sufficientSeconds) {
+  if (!person) return null
+  const target = Number(sufficientSeconds) > 0 ? Number(sufficientSeconds) : 6
+  const raw = person.seconds ?? person.anchor_seconds
+  const secs = Math.max(0, Number(raw) || 0)
+  if (person.sufficient) {
+    return { fraction: 1, done: true, label: 'voice remembered' }
+  }
+  const shownTarget = Number.isInteger(target) ? String(target) : target.toFixed(1)
+  return {
+    fraction: Math.min(1, secs / target),
+    done: false,
+    label: `${secs.toFixed(1)}s of ${shownTarget}s of clear speech heard`,
+  }
+}
+
 // Hover/long-press detail for the chip: what the mode costs, plus honesty
-// about whose voice is still being learned.
-export function rosterTitle(roster) {
+// about whose voice is still being learned - with each learner's progress
+// toward the bar when the snapshot carries it, so patience is an informed
+// choice rather than a guess.
+export function rosterTitle(roster, sufficientSeconds) {
   const learning = (roster || [])
     .filter((p) => p && p.status !== 'left' && !p.sufficient)
-    .map((p) => displayName(p) || p.name)
+    .map((p) => {
+      const name = displayName(p) || p.name
+      const secs = Number(p.anchor_seconds)
+      if (Number.isFinite(secs) && secs > 0) {
+        const prog = sufficiencyProgress(
+          { seconds: secs, sufficient: false }, sufficientSeconds)
+        return `${name} (${prog.label})`
+      }
+      return name
+    })
   const base =
     'Room mode is on: turns are attributed by voice, and audio is '
     + 'transcribed twice while it is on (roughly double voice spend). '

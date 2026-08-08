@@ -4,6 +4,30 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode, phase 4 (#28): honesty about people talking over each
+  other, and three fixes from the second field test. When two voices
+  land in one spoken turn, the turn now says so - "Two voices at once -
+  some words may be missing" - because on a single microphone the
+  quieter person's overlapped words are often simply gone; the models
+  see the same note so they can ask the quieter person to repeat, and
+  such turns are never saved to memory as any one person's words. When
+  the two voices took turns cleanly rather than overlapping, a
+  best-effort split shows who said which words (shown only when the
+  second listen agrees with the live transcript; your message text is
+  never rewritten). The models are also told plainly what a voice label
+  is - text produced by a second listen, not audio they can hear - so a
+  seat can no longer claim it "can tell from the voice". Introductions
+  stop storing relationship words as names: "this is me, Kat, Shawn's
+  wife" now yields a person named Kat, never "Wife" - a
+  relationship-only introduction matches a remembered person if the
+  sentence names one, and otherwise the app just asks who it is. A
+  still-learning voice now shows its progress (seconds heard toward the
+  bar) in the remembered-voices panel and the room chip, so waiting is
+  an informed choice. And room-mode sessions now capture the mic with
+  the browser's single-voice noise tuning switched off (it can muffle
+  the second speaker); solo sessions are untouched, and each session's
+  capture profile is logged so the experiment can be judged on field
+  data.
 - Room mode, phase 3 (#28): attribution lands everywhere it matters.
   Voice labels now attach to exactly the turn that was spoken (a quick
   interjection can no longer be labelled onto a neighbouring turn), and

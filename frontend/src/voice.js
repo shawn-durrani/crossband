@@ -1,3 +1,4 @@
+import { captureConstraints, captureProfileName } from './captureProfile.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
@@ -255,12 +256,21 @@ export default class VoiceController {
   // Room mode toggle: remember the choice for (re)opened STT sockets and tell
   // a live one via a control frame (no audio key, so the server treats it as
   // ours alone and sends nothing upstream). Works mid-session both ways.
+  // The capture experiment (#28 phase 4) rides the same edge: room mode
+  // re-asks the live mic track for the room profile (noise suppression and
+  // auto gain off, so the quieter second voice stops being "cleaned" away),
+  // solo mode re-asks for the tuned solo profile. Best-effort by design - a
+  // browser that refuses applyConstraints keeps the profile it has, and
+  // capture never breaks over it.
   setRoomMode(on) {
     on = !!on
     if (on === this.roomMode) return
     this.roomMode = on
+    this.stream?.getAudioTracks().forEach((t) => {
+      try { t.applyConstraints?.(captureConstraints(on))?.catch(() => {}) } catch { /* */ }
+    })
     if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
-      this._sttSend({ room_mode: on })
+      this._sttSend({ room_mode: on, capture_profile: captureProfileName(on) })
     }
   }
   setSilenceMs(ms) { this.silenceMs = Math.max(400, Math.min(6000, ms || DEFAULT_SILENCE_MS)) }
@@ -290,7 +300,11 @@ export default class VoiceController {
     ws.onopen = () => {
       try {
         ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: 16000,
-                                 room_mode: this.roomMode }))
+                                 room_mode: this.roomMode,
+                                 // Which mic profile this session captures
+                                 // with (#28 phase 4) - the relay logs it
+                                 // content-free for field comparisons.
+                                 capture_profile: captureProfileName(this.roomMode) }))
       } catch { /* */ }
     }
     ws.onmessage = (e) => {
@@ -458,8 +472,12 @@ export default class VoiceController {
     this._primeAudio()
     this._unlockHandler = () => { this._primeAudio(); this._resumeCtx() }
     window.addEventListener('pointerdown', this._unlockHandler)
+    // Capture profile (#28 phase 4): solo sessions ask for exactly what they
+    // always did; a session starting IN room mode asks with noise
+    // suppression and auto gain off, so single-voice tuning cannot muffle
+    // the second speaker. The decision table lives in captureProfile.js.
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: captureConstraints(this.roomMode),
     })
     this.audioCtx = new AudioContext()
     // Resume the context we just built. _primeAudio ran BEFORE it existed (it

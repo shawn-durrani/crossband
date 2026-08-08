@@ -87,6 +87,33 @@ always, one confident guest ingests as `guest:<preferred name>`, and
 uncertain or open-flagged turns ingest as `guest:unknown` - with
 `SOURCE_APP` pinned to its permanent historical value.
 
+**Crosstalk (phase 4).** People talking over each other is marked, never
+papered over: the batch pass's per-word speaker map is kept instead of
+being reduced away, a turn whose words carry two or more voices gets a
+crosstalk marker in its label metadata (message content is never
+rewritten), and the marker follows the turn everywhere - a plain-English
+note in the UI, an appended note in the model-facing projection so a
+seat can ask the quieter person to repeat, and an unconditional
+`guest:unknown` on memory ingest, surviving even a human correction of
+who spoke. The best-effort split attributes cleanly-alternating words
+per voice, but only persists when the batch words align with the
+realtime transcript the message actually carries; simultaneous speech
+(overlapping word intervals), misalignment, or missing labels all fall
+back to the marker alone, and an uncertain voice's segment renders as an
+unidentified speaker, never as the guessed name. The seat-facing
+room-labels explainer (labels are text, seats hear no audio, uncertain
+means unknown) is pinned to the STABLE prompt block, and the cache
+layout pins prove it cannot bust the prefix. The capture experiment is
+pinned at both ends: the pure module asks the mic for the untouched solo
+constraints outside room mode and drops noise suppression and auto gain
+inside it, and the relay logs an allowlisted profile name (nothing else)
+while the upstream byte stream stays byte-for-byte identical. A
+relationship noun (wife, mate, boss) is never stored as a person's name:
+the proper name in the same verdict wins, a relationship-only
+introduction re-identifies a remembered person named in the utterance or
+raises the ask-fallback, and the field-test case - "this is me, Kat,
+the owner's wife" - is pinned to yield Kat, never Wife.
+
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
 backfilled; an unknown model id stays unpriced instead of inheriting a
@@ -142,6 +169,7 @@ week when it was maintained by hand.
 - (`test_config.py`) Config layering
 - (`test_context_provenance.py`) A live incident where a participant treated a legitimate Crossband context-refresh block (including the voice-mode delivery constraints) as untrusted/injected content, refused to follow it, and later denied being in a live voice call at all
 - (`test_context_weight.py`) Conversation weight counts attachments, not just text
+- (`test_crosstalk.py`) Crosstalk detect-and-mark, the alignment-gated best-effort split, and the capture-profile log (#28 phase 4)
 - (`test_delegation.py`) Explicit shared delegation/claim state for specialist actions
 - (`test_diag_mcp.py`) get_diagnostic
 - (`test_diagnostics_tool.py`) get_diagnostic on the NATIVE tool-calling surface
@@ -197,6 +225,7 @@ week when it was maintained by hand.
 **Frontend** (`frontend/src/`)
 
 - (`cacheHealth.test.js`) Tests for the Spend page's cache-health block: it must surface a per-seat
+- (`captureProfile.test.js`) The mic capture-profile decision (#28 phase 4): solo constraints untouched, room mode drops the single-voice tuning, profile names match the relay's log allowlist
 - (`eventStream.test.js`) Pure-function tests for the global live-events stream
 - (`guestJobs.test.js`) Pure-function tests for the guest job status chip
 - (`headerState.test.js`) Tests for the header title/badge: it must track the active chat_id, so the

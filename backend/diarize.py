@@ -37,6 +37,7 @@ everything else untouched. No retry ever feeds back into the live path.
 
 import asyncio
 import logging
+import re
 import struct
 import time
 
@@ -168,6 +169,113 @@ def utterance_clusters(words) -> list:
         if sid and sid not in seen:
             seen.append(sid)
     return seen
+
+
+# ---- crosstalk rules (#28 phase 4; pure, unit-tested) ----
+#
+# The batch pass's word list carries a per-word speaker map and timestamps.
+# Reducing it straight to a cluster list (utterance_clusters) throws away the
+# only evidence of people speaking OVER each other - and on a single
+# microphone, the quieter voice's overlapped words are often unrecoverable
+# from the audio, so the honest move is to SAY SO rather than present the
+# transcript as complete. These rules read the word map before it is reduced:
+# a turn whose words carry two or more speakers is marked as crosstalk, and
+# when the words alternate cleanly (no overlapping intervals) a best-effort
+# attributed split is offered as METADATA - message content itself is never
+# rewritten. Absence of interleaved words never proves absence of overlap;
+# the marker's wording stays honest about that.
+
+_OVERLAP_EPS = 0.02   # seconds; timestamps straddling by less are not overlap
+MAX_SEGMENTS = 12     # more alternations than this in one utterance is noise
+MAX_SEGMENT_CHARS = 400
+
+
+def _timed_words(words) -> list:
+    """Real word entries with a speaker and usable timestamps, in time order."""
+    out = []
+    for w in words or []:
+        if not isinstance(w, dict) or w.get("type") not in (None, "word"):
+            continue
+        if not w.get("speaker_id") or w.get("start") is None:
+            continue
+        out.append(w)
+    return sorted(out, key=lambda w: w["start"])
+
+
+def words_overlap(words) -> bool:
+    """Do word intervals from DIFFERENT speakers overlap in time - i.e. was
+    there simultaneous speech, as opposed to rapid alternation? One sweep in
+    start order, tracking each speaker's furthest end."""
+    last_end: dict = {}
+    for w in _timed_words(words):
+        start = w["start"]
+        for sid, end in last_end.items():
+            if sid != w["speaker_id"] and end > start + _OVERLAP_EPS:
+                return True
+        sid = w["speaker_id"]
+        end = w.get("end", start)
+        if end is None:
+            end = start
+        last_end[sid] = max(last_end.get(sid, 0.0), end)
+    return False
+
+
+def crosstalk_info(words):
+    """{"crosstalk": True, "overlap": bool} when two or more speakers share
+    one utterance's words, else None. `overlap` distinguishes simultaneous
+    speech (unsalvageable on one microphone) from clean alternation (which
+    split_segments may be able to attribute)."""
+    if len(utterance_clusters(words)) < 2:
+        return None
+    return {"crosstalk": True, "overlap": words_overlap(words)}
+
+
+def split_segments(words, label_of, uncertain_labels=()):
+    """Best-effort attributed sub-segments for a cleanly-alternating
+    multi-voice utterance: consecutive same-speaker words group into
+    [{"label", "text", "uncertain"}, ...] in time order. Returns [] whenever
+    the split would be dishonest: any different-speaker overlap (simultaneous
+    speech cannot be split from one channel), a cluster with no label, empty
+    word text, or more alternations than MAX_SEGMENTS (noise, not dialogue).
+    `label_of` maps cluster id -> display label; labels in `uncertain_labels`
+    mark their segments uncertain."""
+    timed = _timed_words(words)
+    if len(utterance_clusters(timed)) < 2 or words_overlap(timed):
+        return []
+    segments = []
+    for w in timed:
+        text = (w.get("text") or "").strip()
+        if not text:
+            continue
+        label = label_of.get(w["speaker_id"])
+        if not label:
+            return []
+        if segments and segments[-1]["label"] == label:
+            segments[-1]["text"] = (segments[-1]["text"] + " " + text)[:MAX_SEGMENT_CHARS]
+        else:
+            segments.append({"label": label, "text": text[:MAX_SEGMENT_CHARS],
+                             "uncertain": label in uncertain_labels})
+        if len(segments) > MAX_SEGMENTS:
+            return []
+    return segments if len(segments) >= 2 else []
+
+
+def _norm_text(text) -> str:
+    return re.sub(r"\s+", " ",
+                  re.sub(r"[^a-z0-9]+", " ", (text or "").casefold())).strip()
+
+
+def segments_align(segments, content) -> bool:
+    """May the split be SHOWN against this message? Only when the batch
+    pass's words, joined in order, read as the same text the realtime path
+    committed (case, punctuation and spacing aside). The two transcribers
+    heard the same audio but are different models; where they disagree on the
+    words, an attributed split of the batch text would contradict the message
+    it annotates - the marker alone is the honest fallback."""
+    if not segments:
+        return False
+    joined = _norm_text(" ".join(s.get("text") or "" for s in segments))
+    return bool(joined) and joined == _norm_text(content)
 
 
 def should_label(clusters, prev_clusters) -> bool:
@@ -394,7 +502,8 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                    len(prefix_pcm) / 2 / (sample_rate or 16000),
                                    duration_ms, turn_id=turn_id)
             return
-        clusters = utterance_clusters(result.get("words"))
+        words = result.get("words")
+        clusters = utterance_clusters(words)
         # EVERY cluster the session sees claims its ordinal, labelled or not:
         # the session's first voice is "Voice 1" even while it goes unlabelled
         # (the common lone-speaker case), so the first DIFFERENT voice
@@ -412,6 +521,17 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if not labels:
             return
         payload = {"clusters": clusters, "labels": labels}
+        # Crosstalk (#28 phase 4): two voices in one utterance get the marker,
+        # and - when the words alternate cleanly - a best-effort attributed
+        # split. Phase-1 labels are session ordinals, uncertain by
+        # construction, so every segment is marked uncertain too.
+        ct = crosstalk_info(words)
+        if ct:
+            payload.update(ct)
+            segs = split_segments(words, dict(zip(clusters, mapped)),
+                                  uncertain_labels=set(mapped))
+            if segs:
+                payload["segments"] = segs
         await _attach_until_deadline(chat_id, commit_ts, payload, session,
                                      turn_id=turn_id)
     except Exception:
@@ -478,19 +598,33 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     resolved = resolve_room_labels(clusters, cmap, pending, session)
     if clusters:
         session.prev_clusters = clusters
+    ct = crosstalk_info(utter_words)
     log.info("diarize pass (room): chat=%s ms=%.0f clusters=%d matched=%d "
-             "ask=%d", chat_id, duration_ms, len(clusters),
-             len(resolved["matched"]), len(resolved["ask"]))
+             "ask=%d crosstalk=%d", chat_id, duration_ms, len(clusters),
+             len(resolved["matched"]), len(resolved["ask"]), 1 if ct else 0)
     if len(clusters) == 1:
         # A clean single-speaker utterance is anchor food: it refreshes a
         # matched person's clips, and it is the ONLY thing that can build a
-        # pending (just-introduced) person's anchors at all.
+        # pending (just-introduced) person's anchors at all. A crosstalk
+        # utterance never lands here - two voices are ground truth for
+        # neither.
         await asyncio.to_thread(_accumulate_anchor, chat_id, pcm, sample_rate,
                                 clusters[0], resolved)
     if not resolved["labels"]:
         return
     payload = {"clusters": clusters, "labels": resolved["labels"],
                "uncertain": resolved["uncertain"]}
+    if ct:
+        # Crosstalk (#28 phase 4): the marker, plus the best-effort split
+        # when the word map alternates cleanly. Segment labels reuse the
+        # resolved labels, so an unmatched voice splits as its uncertain
+        # ordinal, never as a guessed name.
+        payload.update(ct)
+        segs = split_segments(utter_words,
+                              dict(zip(clusters, resolved["labels"])),
+                              uncertain_labels=set(resolved["uncertain"]))
+        if segs:
+            payload["segments"] = segs
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
                                              session, turn_id=turn_id)
     if resolved["ask"]:
@@ -581,7 +715,13 @@ def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
     With a turn id (#28 phase 3) the probe is EXACT: only the message whose
     persisted voice_turn_id matches may be labelled, and the time-window
     guesswork never runs - so a pass whose utterance produced no message
-    (a dropped interjection) labels nothing, ever."""
+    (a dropped interjection) labels nothing, ever.
+
+    Crosstalk segments (#28 phase 4) are gated HERE, where the message text
+    is finally in hand: the best-effort split persists only when the batch
+    words align with the realtime transcript the message actually carries
+    (segments_align). Where the two transcribers disagree, the split is
+    dropped and the crosstalk marker stands alone."""
     con = db.connect()
     try:
         if turn_id:
@@ -594,6 +734,9 @@ def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
             target = pick_target(rows, session.labelled_ids)
             if not target:
                 return None
+        if payload.get("segments") and not segments_align(
+                payload["segments"], target.get("content")):
+            payload = {k: v for k, v in payload.items() if k != "segments"}
         db.set_message_voice_labels(con, target["id"], payload)
         session.labelled_ids.add(target["id"])
         return target["id"]

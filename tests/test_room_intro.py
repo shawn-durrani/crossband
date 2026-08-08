@@ -397,3 +397,114 @@ def test_owner_alias_is_dropped_but_the_real_guest_still_joins(app):
             {"user_name": "Shawn", "room_roster_max": 6})
         assert _chat_room_mode(chat["id"]) is True
         assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]
+
+
+# ── naming hygiene: a relationship noun is never a name (#28 phase 4) ───────
+#
+# Second-field-test defect 1: "this is me, Kat, [the owner]'s wife" minted a
+# roster person named "Wife", and the retest greeted "Wife?". The parser must
+# prefer the proper name in the verdict, resolve a relationship-only
+# introduction against REMEMBERED people, and otherwise ask - never mint a
+# placeholder noun as somebody's identity.
+
+def _flags(chat_id):
+    con = db.connect()
+    try:
+        return db.get_room_flags(con, chat_id, open_only=True)
+    finally:
+        con.close()
+
+
+def test_relationship_noun_truth_table():
+    yes = ["Wife", "wife", "My Wife", "Husband", "Partner", "Mum", "Mom",
+           "Dad", "Brother", "Sister", "Friend", "Mate", "Colleague", "Boss",
+           "Neighbour", "Neighbor", "The Kids", "his wife", "Grandma",
+           "Kids", "Flatmate"]
+    no = ["Kat", "Alex", "Mary Rose", "Dave", "", None, "Sister Act",
+          "Mateo",       # 'Mate' with a suffix is a real name
+          "Bossman"]
+    for n in yes:
+        assert introductions.relationship_noun(n), n
+    for n in no:
+        assert not introductions.relationship_noun(n), n
+
+
+def test_field_test_pin_kat_never_wife(app, utility):
+    """THE pinned case, end to end through /send: 'this is me, Kat, Shawn's
+    wife' must yield a person named Kat - never Wife - whatever mix the
+    utility model returns."""
+    utility["verdict"] = {"introductions": ["Kat", "Wife"], "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "this is me, Kat, Shawn's wife")
+        assert _wait_for(lambda: _chat_room_mode(chat["id"]))
+        roster = _wait_for(lambda: _roster(chat["id"]))
+        assert [p["name"] for p in roster] == ["Kat"]
+        # and no surface anywhere holds a person called Wife
+        assert anchors.store().find_by_name("Wife") is None
+        assert _flags(chat["id"]) == []  # a named introduction asks nothing
+
+
+def test_relationship_only_reidentifies_a_remembered_person(app):
+    """'Kat's here with us - my wife' where the verdict carried only 'Wife':
+    the utterance names a REMEMBERED person, so she is re-identified - no
+    placeholder, no interruption."""
+    store = anchors.store()
+    pid = store.ensure_person("Kat")
+    for _ in range(3):
+        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Wife"], "departures": []},
+            {"user_name": "Shawn", "room_roster_max": 6},
+            text="Kat's here with us - my wife")
+        roster = _roster(chat["id"])
+        assert [p["name"] for p in roster] == ["Kat"]
+        assert roster[0]["person_id"] == pid  # remembered voice linked
+        assert _flags(chat["id"]) == []
+
+
+def test_relationship_only_with_no_match_asks_instead_of_minting(app):
+    """'My wife is here' with nobody rememberable: room mode still flips on
+    (someone IS present), but the roster gains NO placeholder - the
+    ask-fallback opens instead, once, and a later real name resolves it."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        cfg = {"user_name": "Shawn", "room_roster_max": 6}
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Wife"], "departures": []},
+            cfg, text="my wife is here with us")
+        assert _chat_room_mode(chat["id"]) is True
+        assert _roster(chat["id"]) == []           # no Wife, no placeholder
+        flags = _flags(chat["id"])
+        assert [f["kind"] for f in flags] == ["unknown_voice"]
+        # repeating the unnamed introduction does not stack a second ask
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Wife"], "departures": []},
+            cfg, text="I said my wife is here")
+        assert len(_flags(chat["id"])) == 1
+        # the eventual name answers the ask and joins the roster
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Kat"], "departures": []},
+            cfg, text="her name is Kat")
+        assert [p["name"] for p in _roster(chat["id"])] == ["Kat"]
+        assert _flags(chat["id"]) == []
+
+
+def test_match_remembered_name_rules():
+    known = ["Kat", "Dave", "Mateo"]
+    # word-bounded, case-insensitive
+    assert introductions.match_remembered_name(
+        "kat is here, my wife", known) == "Kat"
+    # a substring inside another word is not a mention
+    assert introductions.match_remembered_name(
+        "the catalogue arrived", known) == ""
+    # excluded names (owner, already present) never match
+    assert introductions.match_remembered_name(
+        "Kat is here", known, exclude={"kat"}) == ""
+    # two remembered names in one breath is ambiguous - the ask decides
+    assert introductions.match_remembered_name(
+        "Kat and Dave are here", known) == ""
+    assert introductions.match_remembered_name("", known) == ""
+    assert introductions.match_remembered_name("Kat is here", []) == ""
