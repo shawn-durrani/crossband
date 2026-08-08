@@ -730,7 +730,7 @@ export default function App() {
             </button>
             <div className="text-center space-y-3">
               <div className="text-4xl">🗣️</div>
-              <p className="text-lg text-ink-mid">Crossband</p>
+              <p className="text-lg text-ink-mid">cross<span className="text-accent">band</span></p>
               <p className="text-sm">You and your AI roster - one conversation.</p>
               <button
                 className="bg-btn text-btn-ink rounded-lg px-5 py-2 text-sm font-semibold hover:bg-btn-hover"
