@@ -87,3 +87,15 @@ guardrail in one mode, not a guarantee in either. See
 - Treat `data/` as sensitive in its entirety: transcripts, attachments,
   snapshots and logs all live there.
 - Redact before pasting logs into an issue.
+
+## Voice identity (room mode, #28)
+
+- The stored voice **anchor clips** (`data/voice_anchors/`, dir `0o700`,
+  files `0o600`) are the sensitive store: they are short recordings of the
+  people in the room. `forget` deletes a person's clips from disk.
+- Speaker **embeddings are derived locally**, on-device, from those clips
+  and each utterance; they are never sent anywhere. The matcher's model
+  (`data/voice_models/`) is fetched **once** from a pinned public URL,
+  SHA-256-verified before use, and then runs **fully offline** - after that
+  first fetch, local identification makes no network calls. The model file
+  itself carries no personal data and is never committed.

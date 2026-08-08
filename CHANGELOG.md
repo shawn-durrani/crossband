@@ -4,6 +4,20 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode identifies known voices locally, part 2 (#28). When more
+  than one person is in the room, a known voice is now recognised
+  on-device in a fraction of a second - so the models see the right name
+  on the turn itself, instead of waiting a second or two for the second
+  listen and often reading the turn as you in the meantime. The common
+  case where one known person is speaking no longer needs a second
+  transcription at all; the second listen still runs whenever two voices
+  are present or the match is uncertain, so crosstalk and unknown-voice
+  handling are unchanged. The small speaker model (~38MB) is fetched once
+  to the data directory, verified, and then runs fully offline - nothing
+  about a voice ever leaves the machine. Purely additive: with the model
+  or its library absent, or with `CROSSBAND_VOICE_ID_ENABLED=false`, room
+  mode behaves exactly as before. Live voice latency is untouched -
+  everything here happens on the background pass.
 - Room mode label latency, part 1 (#28, night test 4). The name check
   runs a second or two behind the words, so the first AI to answer used
   to read a fresh spoken turn before its name existed and assume it was

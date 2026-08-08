@@ -41,7 +41,7 @@ import re
 import struct
 import time
 
-from . import db, voice
+from . import db, voice, voiceid
 
 log = logging.getLogger("crossband.diarize")
 
@@ -112,6 +112,10 @@ INTRO_STASH_SECONDS = 30
 INTRO_STASH_TTL_S = 180.0
 
 MISMATCH_MIN_WORDS = 4  # don't cross-check a grunt
+# Fast-path (#28 part 2) mismatch gate: with no batch words to count, use the
+# utterance duration as the "enough words to be worth cross-checking" proxy
+# (~4 words is roughly 1.5s of speech).
+FAST_MISMATCH_MIN_SECONDS = 1.5
 
 # ---- session-start sniff (#28, third field test) ----
 #
@@ -532,6 +536,30 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # dropped utterance.
         log.debug("room plan failed; running phase-1 pass", exc_info=True)
     prefix_pcm, segments, pending, num_speakers = plan or (b"", [], [], None)
+    # Fast local identity path (#28 part 2): with a roster, try to NAME a
+    # confident single known speaker locally and skip the ElevenLabs batch call
+    # for this turn - the label then lands ~100-300ms after commit instead of
+    # ~1-2s, usually before the round's first responder reads the turn. Only a
+    # confident single match takes this path; the matcher defers multi-voice,
+    # unknown, ambiguous and insufficient-anchor cases (and every disabled or
+    # no-model case) to the unchanged EL path below, so crosstalk word-splitting,
+    # ordinals and the ask-fallback are preserved exactly. Still inside the
+    # never-awaited task; the live path is untouched, and metering is skipped
+    # because no second transcription happened.
+    if plan is not None and voiceid.enabled(cfg):
+        candidates = [{"person_id": s["person_id"], "name": s["name"]}
+                      for s in segments]
+        verdict = await asyncio.to_thread(
+            voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+        if voiceid.matched(verdict):
+            log.info("diarize pass (voiceid): chat=%s ms=%.0f score=%.3f",
+                     chat_id, (time.perf_counter() - t0) * 1000,
+                     verdict["score"])
+            await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                                   session, cfg, verdict, turn_id=turn_id)
+            return
+        log.info("diarize pass (voiceid defer): chat=%s reason=%s",
+                 chat_id, verdict["reason"])
     request_pcm = prefix_pcm + pcm
     try:
         result = await asyncio.to_thread(
@@ -770,6 +798,78 @@ def _accumulate_anchor(chat_id, pcm, sample_rate, cluster, resolved):
             con.close()
 
 
+# ---------- the fast local-identity label pass (#28 part 2) ----------
+
+async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                           verdict, turn_id=None):
+    """Label a turn from a confident LOCAL single-speaker match, with NO
+    ElevenLabs batch call. Mirrors the roster path's post-label bookkeeping for
+    one matched voice: the name is attached FIRST (it is what the seats are
+    waiting on), then the single-speaker utterance refreshes that person's
+    anchors, is remembered for tap-to-correct, and gets the LLM mismatch
+    cross-check. With the batch pass skipped, that cross-check is now the sole
+    detector of an unannounced second voice the matcher took for one (owner
+    decision on the issue: the mismatch flag doubles as that detector)."""
+    name = verdict["name"]
+    # Payload shape matches the batch path's confident-named case: a single
+    # certain label projects as "<name> (in the room)" and chips as a matched
+    # voice. 'source' is content-free metadata; every consumer ignores unknown
+    # keys. No crosstalk marker - a confident single match is one voice.
+    payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
+               "source": "local"}
+    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                             session, turn_id=turn_id)
+    # Anchor food: a clean single-speaker utterance refreshes the matched
+    # person's clips. The batch room path does the same for a matched single
+    # cluster; on the fast path this is the ONLY thing that keeps the person's
+    # anchors fresh, since the batch pass no longer runs for them.
+    await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
+                            sample_rate)
+    if not target_id:
+        return
+    from . import anchors
+    anchors.remember_audio(target_id, pcm, sample_rate, 1)
+    seconds = len(pcm) / 2 / (sample_rate or 16000)
+    if seconds >= FAST_MISMATCH_MIN_SECONDS:
+        from . import mismatch
+        mismatch.schedule_check(chat_id, target_id, name, cfg)
+
+
+def _accumulate_fast_anchor(person_id, pcm, sample_rate):
+    """Refresh a fast-matched person's anchors (worker thread)."""
+    from . import anchors
+    anchors.store().add_clip(person_id, pcm, sample_rate, source="accumulated")
+
+
+async def _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                           verdict, t0, turn_id=None):
+    """The sniff decided locally (#28 part 2). A confident OWNER-only match ends
+    the sniff without arming (owner alone is not a household) and without a
+    batch call. A confident remembered NON-OWNER match arms room mode via the
+    same durable plumbing an introduction uses, seeds the roster, labels this
+    turn, and refreshes the person's anchors - all with no batch call and no
+    metering, since no second transcription happened."""
+    name = verdict["name"]
+    owner = (cfg.get("user_name") or "User").casefold()
+    if name.casefold() == owner:
+        log.info("diarize pass (sniff voiceid): chat=%s ms=%.0f armed=0",
+                 chat_id, (time.perf_counter() - t0) * 1000)
+        return
+    log.info("diarize pass (sniff voiceid): chat=%s ms=%.0f armed=1",
+             chat_id, (time.perf_counter() - t0) * 1000)
+    session.sniff_remaining = 0  # armed; no second sniff needed
+    await asyncio.to_thread(_arm_from_sniff, chat_id, {"local": name}, cfg)
+    payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
+               "source": "local"}
+    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                             session, turn_id=turn_id)
+    await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
+                            sample_rate)
+    if target_id:
+        from . import anchors
+        anchors.remember_audio(target_id, pcm, sample_rate, 1)
+
+
 # ---------- the session-start sniff pass (#28, third field test) ----------
 
 def schedule_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
@@ -800,6 +900,25 @@ async def run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if plan is None:
             return
         prefix_pcm, segments, num_speakers = plan
+        # Fast local identity (#28 part 2): decide the sniff locally when we can.
+        # A confident remembered NON-OWNER match arms room mode and labels the
+        # turn with no batch call; a confident OWNER-only match ends the sniff
+        # (owner alone never arms) with no batch call either - saving the doubled
+        # transcription on the common solo utterance. The matcher defers
+        # multi-voice, unknown and ambiguous cases to the EL sniff below, so a
+        # brand-new second voice (two clusters) still arms exactly as today.
+        if voiceid.enabled(cfg):
+            candidates = [{"person_id": s["person_id"], "name": s["name"]}
+                          for s in segments]
+            verdict = await asyncio.to_thread(
+                voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+            if voiceid.matched(verdict):
+                await _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts,
+                                       session, cfg, verdict, t0,
+                                       turn_id=turn_id)
+                return
+            log.info("diarize pass (sniff voiceid defer): chat=%s reason=%s",
+                     chat_id, verdict["reason"])
         request_pcm = prefix_pcm + pcm
         result = await asyncio.to_thread(
             voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),

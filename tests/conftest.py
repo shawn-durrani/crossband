@@ -10,6 +10,22 @@ if str(ROOT) not in sys.path:
 from backend.config import Settings  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _voiceid_offline(monkeypatch):
+    """Keep the local speaker matcher (#28 part 2) OFFLINE for the keyless
+    suite: stub the one-time background model fetch to a no-op and reset the
+    process-global state per test, so the matcher never downloads the 38MB
+    model, never becomes ready, and every room/sniff pass takes the unchanged
+    ElevenLabs path. Tests that exercise the matcher seed a fake (or the real)
+    extractor explicitly; this fixture just guarantees the default is 'absent'.
+    """
+    from backend import voiceid
+    voiceid._reset_for_tests()
+    monkeypatch.setattr(voiceid, "_spawn_fetch", lambda cfg: None)
+    yield
+    voiceid._reset_for_tests()
+
+
 @pytest.fixture
 def client_factory(tmp_path):
     """Build a TestClient against a fresh data dir, with a chosen base_url so

@@ -55,6 +55,7 @@ MIN_CLIP_RMS = 120         # int16 RMS floor - near-silence is not an anchor
 KEEP_CLIPS = 5             # best N clips per person, by quality score
 SUFFICIENT_SECONDS = 6.0   # accepted seconds needed before identification is trusted
 PREFIX_PERSON_SECONDS = 2.5  # roughly how much of each person rides the prefix
+ENROLL_CLIPS = 3           # best N clips averaged into a local voice-id embedding (#28 part 2)
 MAX_PREFERRED_CHARS = 40   # display-name bound, matching the roster's
 PREFIX_CACHE_MAX = 8       # built-prefix snapshots kept per store (#28)
 
@@ -406,6 +407,48 @@ class AnchorStore:
             while len(self._prefix_cache) > PREFIX_CACHE_MAX:
                 self._prefix_cache.popitem(last=False)
         return prefix, segments
+
+    def enrollment_clips(self, person_ids: list, sample_rate: int,
+                         max_clips: int = ENROLL_CLIPS) -> dict:
+        """Per-person clip PCM for the local voice-id matcher (#28 part 2):
+        the raw store data the offline matcher averages into one embedding per
+        person. Mirrors build_prefix's gates - only SUFFICIENT people, only
+        clips recorded at the requested sample rate, best clips first - but
+        keeps the clips SEPARATE (per-clip embeddings are L2-normalised and
+        averaged; a hard-cut concatenation would embed the seams, not the
+        voice) and reads at most `max_clips` per person.
+
+        Returns {person_id: {"name", "fingerprint", "pcms"}}. `fingerprint` is
+        the tuple of kept clip filenames: the matcher keys its embedding cache
+        on it, so identification re-embeds a person ONLY when their kept clip
+        set actually changes (anchor accumulation that displaces a clip), not
+        on every store save the way the coarse index fingerprint would - the
+        same 'invalidate only on real change' intent as build_prefix's cache,
+        one level finer. No audio leaves the process; this is read only."""
+        with self._lock:
+            data = self._load()
+        out = {}
+        for pid in person_ids:
+            person = data["people"].get(pid)
+            if not person:
+                continue
+            clips = [c for c in person.get("clips", [])
+                     if c.get("sample_rate") == sample_rate]
+            if not is_sufficient(clips):
+                continue
+            take = sorted(clips, key=lambda c: c["score"],
+                          reverse=True)[:max_clips]
+            pcms, files = [], []
+            for c in take:
+                try:
+                    pcms.append(self._read_clip_pcm(c["file"]))
+                    files.append(c["file"])
+                except OSError:
+                    log.warning("anchor clip unreadable: %s", c["file"])
+            if pcms:
+                out[pid] = {"name": person.get("name", pid),
+                            "fingerprint": tuple(files), "pcms": pcms}
+        return out
 
 
 _store: AnchorStore | None = None

@@ -21,6 +21,12 @@ APIs that only understand two-party conversations.
   pushes and opens a PR; it can never merge.
 - **Voice.** Speech in and out through the backend, so the key stays
   server-side. Works from a phone over your own tailnet.
+- **Room mode names known voices, locally and fast.** When more than one
+  person is in the room, a known voice is identified on-device in a
+  fraction of a second, so the models see who spoke on the turn itself -
+  and the common single-speaker turn no longer needs a second
+  transcription. The small speaker model (~38MB) is fetched once and then
+  runs fully offline; turn it off with `CROSSBAND_VOICE_ID_ENABLED=false`.
 - **Cost accounting that does not lie.** Metered spend, subscription-
   equivalent, and unknown are tracked separately and never summed. A
   model with no known price stays unpriced rather than inheriting a
