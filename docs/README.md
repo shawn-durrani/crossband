@@ -59,8 +59,9 @@ it appears.
 ## Safety, security, history
 
 - [SECURITY.md](../SECURITY.md): the trust boundary, stated plainly.
-  Loopback-bound, no auth by design, the tailnet is the authentication
-  boundary. Reporting instructions included.
+  Loopback-bound; who can reach the port is the outer boundary, with an
+  enrolment-activated browser gate (passkey-first, owner-password
+  fallback) standing inside it. Reporting instructions included.
 - [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md): the short version and the
   standard it adopts.
 - [CHANGELOG.md](../CHANGELOG.md): user-facing history, plain English.
