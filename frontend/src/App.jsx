@@ -91,6 +91,10 @@ export default function App() {
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('voice_rate')) || 1.0)
   const [voiceDockOpen, setVoiceDockOpen] = useState(() => localStorage.getItem('voice_dock_open') !== '0')
   useEffect(() => { localStorage.setItem('voice_dock_open', voiceDockOpen ? '1' : '0') }, [voiceDockOpen])
+  // Room mode (#28 phase 1): per-SESSION, deliberately NOT persisted - it
+  // roughly doubles voice spend while on, so every session starts off and the
+  // choice is made knowingly each time (startVoice resets it).
+  const [roomMode, setRoomMode] = useState(false)
   const [contRounds, setContRounds] = useState(1)
   const [atBottom, setAtBottom] = useState(true)
   const [newCount, setNewCount] = useState(0) // messages arrived while scrolled up
@@ -270,6 +274,10 @@ export default function App() {
       voiceRef.current.setManualMode(pttMode)
       voiceRef.current.setSilenceMs(silenceSecs * 1000)
       voiceRef.current.setPlaybackRate(voiceRate)
+      // Room mode is per-session and defaults OFF - reset both halves so a
+      // previous session's choice never silently doubles this one's spend.
+      setRoomMode(false)
+      voiceRef.current.setRoomMode(false)
       await voiceRef.current.start()
     } catch (e) {
       setBanner(`Voice failed to start: ${e.message}`)
@@ -279,6 +287,13 @@ export default function App() {
   function stopVoice() {
     setVoicePartial(null)
     voiceRef.current?.stop()
+  }
+
+  // One handler for both voice surfaces (dock and mobile call screen): keep
+  // the UI state and the controller's session flag in step.
+  function changeRoomMode(on) {
+    setRoomMode(!!on)
+    voiceRef.current?.setRoomMode(on)
   }
 
   // Pin-to-bottom only while the user is at the bottom; the moment they scroll
@@ -653,10 +668,12 @@ export default function App() {
                 silenceSecs={silenceSecs}
                 voiceRate={voiceRate}
                 dockOpen={voiceDockOpen}
+                roomMode={roomMode}
                 onPttModeChange={setPttMode}
                 onSilenceSecsChange={setSilenceSecs}
                 onVoiceRateChange={setVoiceRate}
                 onDockOpenChange={setVoiceDockOpen}
+                onRoomModeChange={changeRoomMode}
                 onFinalizeNow={() => voiceRef.current?.finalizeNow()}
                 onInterrupt={() => voiceRef.current?.interrupt()}
                 onStop={stopVoice}
@@ -760,6 +777,8 @@ export default function App() {
           partial={voicePartial}
           onEnd={stopVoice}
           voice={voiceRef.current}
+          roomMode={roomMode}
+          onRoomModeChange={changeRoomMode}
         />
       )}
       {projectModal !== null && (

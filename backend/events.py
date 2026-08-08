@@ -160,6 +160,16 @@ def guest_job_event(job: dict) -> dict:
             "status_at": job.get("status_at") or 0}
 
 
+def notify_message_update() -> None:
+    """Wake connected clients after an EXISTING message changed - today that
+    means a room-mode diarization pass retro-attached voice labels
+    (db.set_message_voice_labels, the only caller). Shares the SAME wake-up
+    machinery as notify_new_message, and the same correctness posture: the
+    DATABASE (messages.labels_updated_at, queried by cursor in stream()) is
+    the real catch-up buffer; this bell is a latency optimization only."""
+    notify_new_message()
+
+
 def notify_new_message() -> None:
     """Fire-and-forget wake-up call for ANY newly-committed message, from
     ANY insert site (see db.insert_message - the only caller). Safe to call
@@ -237,6 +247,11 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
     fetch. One channel, one mechanism, both modalities."""
     last = since
     job_cursor = db.now()
+    # Same connect-time cursor discipline for room-mode label updates
+    # (#28): only label writes AFTER connect push live; a (re)connecting
+    # client's chat fetch reads current labels straight off the message rows,
+    # exactly as it seeds guest-job state from its snapshot endpoint.
+    label_cursor = db.now()
     # `not _shutting_down`, not `True`: when the process is stopping, this
     # generator has to END, or uvicorn's connection drain waits on it forever
     # (begin_shutdown() above has the full story). Checked at the top of
@@ -248,6 +263,7 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
         try:
             rows = db.get_messages_after(con, last)
             jobs = db.get_guest_jobs_after(con, job_cursor)
+            label_rows = db.get_label_updates_after(con, label_cursor)
         finally:
             con.close()
         for r in rows:
@@ -256,6 +272,12 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
         for j in jobs:
             job_cursor = max(job_cursor, j["updated_at"])
             yield _sse(guest_job_event(j))
+        for u in label_rows:
+            # An EXISTING message changed (room-mode labels attached after the
+            # fact). id + chat_id only, like new_message - the client refetches
+            # the row, the stream still never carries content.
+            label_cursor = max(label_cursor, u["labels_updated_at"])
+            yield _sse({"type": "message_update", "chat_id": u["chat_id"], "id": u["id"]})
         if _generation != gen:
             # A notify() landed while (or just after) we queried - see THE
             # LOST-WAKEUP INVARIANT above. That read is stale by definition;

@@ -18,7 +18,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 12  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message)
+SCHEMA_VERSION = 13  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -89,8 +89,17 @@ CREATE TABLE IF NOT EXISTS messages(
   content TEXT NOT NULL DEFAULT '',
   usage_json TEXT,
   created_at REAL NOT NULL,
-  import_uuid TEXT                              -- provider-export idempotency
+  import_uuid TEXT,                             -- provider-export idempotency
+  -- Room mode (#28 phase 1): retro-attached diarization result for a user
+  -- turn - JSON {"clusters": [...], "labels": ["Voice 1", ...]}, written a
+  -- second or two AFTER insert by the parallel pass. Empty = unlabelled
+  -- (the normal case, and the silent result of any diarization failure).
+  -- The transcript's content itself stays immutable; this is audio metadata.
+  voice_labels TEXT NOT NULL DEFAULT '',
+  labels_updated_at REAL NOT NULL DEFAULT 0     -- live-events cursor, like guest_jobs.updated_at
 );
+CREATE INDEX IF NOT EXISTS idx_messages_labels_updated
+  ON messages(labels_updated_at);
 CREATE TABLE IF NOT EXISTS attachments(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
@@ -384,6 +393,16 @@ def init(settings=None):
                         "TEXT NOT NULL DEFAULT ''")
             con.execute("ALTER TABLE guest_jobs ADD COLUMN status_at "
                         "REAL NOT NULL DEFAULT 0")
+    if 1 <= version <= 12:  # v13: room-mode retro speaker labels (#28 phase 1)
+        # Both default-empty/zero, so every existing row is simply "unlabelled"
+        # - exactly what it was before the columns existed. The index the
+        # executescript adds backs the live-events stream's labels cursor.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='messages'").fetchone():
+            con.execute("ALTER TABLE messages ADD COLUMN voice_labels "
+                        "TEXT NOT NULL DEFAULT ''")
+            con.execute("ALTER TABLE messages ADD COLUMN labels_updated_at "
+                        "REAL NOT NULL DEFAULT 0")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -642,6 +661,45 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
         from . import events
         events.notify_new_message()
     return msg
+
+
+def set_message_voice_labels(con, message_id, payload):
+    """THE update path for room-mode speaker labels (#28 phase 1) - the
+    labels sibling of insert_message's insert monopoly. The parallel
+    diarization pass attaches its result here and nowhere else, so a label
+    write can never forget to wake connected clients.
+
+    Deliberately narrow: it may touch ONLY voice_labels (audio metadata
+    about who spoke) and its cursor column. Message content, speaker, cost
+    and provenance stay immutable - this is not a general message editor.
+
+    Same commit-before-notify discipline as insert_message: the row is
+    durable before any client is woken to fetch it."""
+    con.execute(
+        "UPDATE messages SET voice_labels=?, labels_updated_at=? WHERE id=?",
+        (_json_dumps(payload), now(), message_id))
+    con.commit()
+    from . import events  # lazy for the same circularity reason as insert_message
+    events.notify_message_update()
+
+
+def get_voice_label_candidates(con, chat_id, since_ts):
+    """User-turn rows a diarization pass may still label: user speaker,
+    created after the utterance's commit instant, id-ordered so the caller's
+    pick_target takes the OLDEST unlabelled match first."""
+    return [dict(r) for r in con.execute(
+        "SELECT id, voice_labels, created_at FROM messages "
+        "WHERE chat_id=? AND speaker='user' AND created_at>=? ORDER BY id",
+        (chat_id, since_ts))]
+
+
+def get_label_updates_after(con, ts):
+    """Label writes since `ts` - the live-events stream's catch-up query for
+    message_update pushes, mirroring get_guest_jobs_after: the DATABASE is
+    the buffer, the in-memory bell is only the wake-up."""
+    return [dict(r) for r in con.execute(
+        "SELECT id, chat_id, labels_updated_at FROM messages "
+        "WHERE labels_updated_at > ? ORDER BY labels_updated_at, id", (ts,))]
 
 
 def _json_dumps(obj):

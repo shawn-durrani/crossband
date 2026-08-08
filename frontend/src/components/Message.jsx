@@ -5,6 +5,7 @@ import { Copy, Check, FileText, Search, Globe, MessagesSquare, Wrench, AlertTria
   ArrowUp, ArrowDown, Loader2, ChevronRight } from 'lucide-react'
 import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
+import { chipsForMessage, CHIP_EXPLAINER } from '../voiceChips'
 
 // Same-speaker messages closer than this group into one visual run
 // (header suppressed, tight 4px rhythm - Discord cozy mode).
@@ -262,6 +263,10 @@ function Message({ msg, prev, participants }) {
 
   /* ---- User turn: compact right-aligned bubble --------------------------- */
   if (isUser) {
+    // Room-mode voice labels (#28 phase 1), attached a second or two after
+    // the turn by the parallel diarization pass. ALL decision logic lives in
+    // voiceChips.js (pure, node --test); this only renders what it returns.
+    const voiceChips = chipsForMessage(msg)
     return (
       <div className={`group flex items-center justify-end gap-2 ${gapClass}`}>
         {msg.content && (
@@ -269,6 +274,18 @@ function Message({ msg, prev, participants }) {
         )}
         <Stamp ts={msg.created_at} className="opacity-0 group-hover:opacity-100" />
         <div className="flex flex-col items-end gap-1.5 max-w-[75%] min-w-0">
+          {voiceChips.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1" title={CHIP_EXPLAINER}>
+              {voiceChips.map((label) => (
+                <span
+                  key={label}
+                  className="text-[11px] px-1.5 py-0.5 rounded-full border border-edge2 bg-panel2 text-ink-dim"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
           {msg.attachments?.length > 0 && (
             <div className="flex flex-wrap justify-end gap-2">
               {msg.attachments.map((a) => (
@@ -403,6 +420,7 @@ function propsEqual(prev, next) {
     a.created_at !== b.created_at ||
     a.error !== b.error ||
     a.usage_json !== b.usage_json ||
+    (a.voice_labels || '') !== (b.voice_labels || '') ||  // room-mode labels land AFTER insert
     (a.workStatus?.label || '') !== (b.workStatus?.label || '') ||
     !sameAttachments(a.attachments, b.attachments) ||
     !sameToolEvents(a.tool_events, b.tool_events)

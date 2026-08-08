@@ -47,7 +47,7 @@ import logging
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi import WebSocketDisconnect
 
-from .. import db, diagnostics, engine, voice, voice_trace
+from .. import db, diagnostics, diarize, engine, voice, voice_trace
 
 router = APIRouter(tags=["voice"])
 
@@ -271,7 +271,17 @@ async def stt_stream_relay(ws: WebSocket):
     streams base64 PCM-16 mono chunks; a frame with commit=true ends an utterance
     and the committed transcript streams back. Opt-in, parallel alternative to the
     batch /stt POST - the key stays server-side (xi-api-key header). One session
-    handles many utterances, so it stays open until the client closes."""
+    handles many utterances, so it stays open until the client closes.
+
+    Room mode (#28 phase 1): with `room_mode` set in the init message (or a
+    later control frame `{"room_mode": true/false}` with no audio), the relay
+    TEES each utterance's already-decoded PCM into a per-session buffer,
+    sliced on the same commit boundaries the realtime path produces, and on
+    each commit fires backend/diarize.py's fire-and-forget parallel pass.
+    THE INVARIANT, pinned by tests/test_room_mode.py: the frames sent
+    upstream to ElevenLabs are byte-for-byte identical with room mode on,
+    off, or never mentioned, and nothing in this handler ever awaits the
+    diarization task - the live path cannot be slowed or broken by it."""
     if not _ws_local(ws):
         await ws.close(code=4403)
         return
@@ -289,6 +299,10 @@ async def stt_stream_relay(ws: WebSocket):
     seconds = 0.0
     up = down = None
     last_partial = ""  # freshest partial transcript - the prewarm query
+    # Room-mode session state (utterance tee + label bookkeeping). Constructed
+    # unconditionally but INERT unless enabled: with the toggle off the only
+    # extra work on the audio path is one boolean check per frame.
+    room = diarize.RoomSession(enabled=bool(init.get("room_mode")))
     try:
         async with websockets.connect(
             voice.STT_WS_URL,
@@ -303,11 +317,23 @@ async def stt_stream_relay(ws: WebSocket):
                     msg = await ws.receive_json()
                     if msg.get("done"):
                         return
+                    if "room_mode" in msg and "audio" not in msg:
+                        # Control frame, ours alone: toggle the tee and send
+                        # NOTHING upstream - the ElevenLabs byte stream stays
+                        # identical to a session that never toggled.
+                        room.set_enabled(msg.get("room_mode"))
+                        continue
                     audio = msg.get("audio") or ""
                     sr = int(msg.get("sample_rate", 16000))
                     if audio:
                         try:
-                            seconds += len(base64.b64decode(audio)) / 2 / sr
+                            raw = base64.b64decode(audio)
+                            seconds += len(raw) / 2 / sr
+                            if room.enabled:
+                                # The tee: a local buffer append of bytes the
+                                # metering above already decoded. Nothing here
+                                # touches the upstream payload below.
+                                room.add_audio(raw, sr)
                         except Exception:
                             pass
                     payload = {
@@ -338,6 +364,20 @@ async def stt_stream_relay(ws: WebSocket):
                         except Exception:
                             log.warning("recall prewarm failed; transcription "
                                         "continues without it", exc_info=True)
+                    if payload["commit"] and room.enabled:
+                        # Commit boundary = utterance boundary: slice the teed
+                        # audio and fire the parallel diarization pass.
+                        # create_task only - NEVER awaited here; the commit
+                        # frame below goes upstream exactly as it always has,
+                        # and a failure to even schedule must not break live
+                        # transcription (same posture as the prewarm hook).
+                        try:
+                            pcm, pcm_sr = room.take_utterance()
+                            diarize.schedule_pass(chat_id, pcm, pcm_sr,
+                                                  db.now(), room, cfg)
+                        except Exception:
+                            log.warning("diarize scheduling failed; live "
+                                        "transcription continues", exc_info=True)
                     await eleven.send(json.dumps(payload))
 
             async def pump_down():

@@ -74,6 +74,14 @@ export function shouldHydrateActiveChat(eventChatId, activeChatId, streaming) {
   return eventChatId != null && eventChatId === activeChatId && !streaming
 }
 
+// Which live-event types may trigger a voice attach? Only a genuinely NEW
+// message can mean a round is generating. A `message_update` (a room-mode
+// label retro-attached to an EXISTING turn, #28) re-renders content and must
+// never poke the voice pipeline - there is no new round to attach to.
+export function voiceAttachEligible(eventType) {
+  return eventType === 'new_message'
+}
+
 // Should a live message for the open chat make the VOICE pipeline attach to the
 // round producing it? Only when: it's the open chat, voice is on, and we're not
 // already tailing a round (the round we started already feeds voice directly).

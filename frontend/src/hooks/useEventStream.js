@@ -3,7 +3,7 @@ import { api, streamSSE } from '../api'
 import {
   mergeMessagesById, highestId, hydrateCursor, nextBackoffDelay, INITIAL_BACKOFF_MS,
   shouldHydrateActiveChat, shouldVoiceAttach, shouldDeferEvent,
-  queuePendingEvent, drainPendingQueue,
+  voiceAttachEligible, queuePendingEvent, drainPendingQueue,
 } from '../eventStream'
 import { mergeGuestJob } from '../guestJobs'
 
@@ -44,11 +44,14 @@ export function useEventStream({
   // the deferred queue can replay events through the exact same logic once the
   // streaming suppression has lifted.
   function hydrateLiveEvent(ev) {
-    // Voice mode: a message on the open chat while we're idle means a round we
-    // didn't start is generating (a Claude Code hand-back). Attach to it so it's
-    // actually spoken, not delivered as a silent text-only message.
-    if (shouldVoiceAttach(ev.chat_id, activeChatIdRef.current,
-                          { streaming: streamingRef.current, voiceActive: voiceActiveRef.current })) {
+    // Voice mode: a NEW message on the open chat while we're idle means a round
+    // we didn't start is generating (a Claude Code hand-back). Attach to it so
+    // it's actually spoken, not delivered as a silent text-only message. A
+    // message_update (room-mode labels retro-attached, #28) is type-gated out:
+    // it re-renders an existing turn, there is no round behind it to attach to.
+    if (voiceAttachEligible(ev.type)
+        && shouldVoiceAttach(ev.chat_id, activeChatIdRef.current,
+                             { streaming: streamingRef.current, voiceActive: voiceActiveRef.current })) {
       cb.current.onVoiceAttach(ev.chat_id)
     }
     if (shouldHydrateActiveChat(ev.chat_id, activeChatIdRef.current, streamingRef.current)) {
@@ -64,7 +67,10 @@ export function useEventStream({
           if (d.messages.length) cb.current.onMessages((m) => mergeMessagesById(m, d.messages))
         })
         .catch(() => {}) // transient - the next live event or the fallback poll retries
-    } else if (ev.chat_id !== activeChatIdRef.current) {
+    } else if (ev.type === 'new_message' && ev.chat_id !== activeChatIdRef.current) {
+      // Only a NEW message dirty-marks another chat. A label update on a chat
+      // you're not looking at isn't new activity - its labels are simply there
+      // when that chat next opens (the fetch reads current rows).
       cb.current.onUnread((s) => (s.has(ev.chat_id) ? s : new Set(s).add(ev.chat_id)))
     }
   }
@@ -82,8 +88,13 @@ export function useEventStream({
       }
       return
     }
-    if (ev.type !== 'new_message') return
-    watermarkRef.current = Math.max(watermarkRef.current, ev.id)
+    if (ev.type !== 'new_message' && ev.type !== 'message_update') return
+    // Only a new message advances the replay watermark: a message_update
+    // carries an OLD id (room-mode labels landing on an existing turn), and
+    // its catch-up story is the row itself, not the since-cursor.
+    if (ev.type === 'new_message') {
+      watermarkRef.current = Math.max(watermarkRef.current, ev.id)
+    }
     // A message for the OPEN chat while a round is streaming is suppressed by
     // both paths below (the round's own SSE stream is authoritative while it
     // runs). But the watermark just advanced past this id, so no reconnect will

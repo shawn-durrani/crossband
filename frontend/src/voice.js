@@ -178,6 +178,13 @@ export default class VoiceController {
     this._ambient = 0
     // --- realtime STT (opt-in, parallel to the batch /stt POST) ---
     this.sttRealtime = true   // realtime by default; batch is the automatic fallback
+    // Room mode (#28 phase 1): per-session, default OFF (App resets it on
+    // every voice start). ON tells the server relay to tee utterance audio
+    // into a parallel diarization pass - a second transcription of the same
+    // audio, which is why the toggle's copy warns that voice minutes roughly
+    // double. Entirely server-side work: nothing about capture, VAD, commit
+    // timing or playback changes here whichever way this flag points.
+    this.roomMode = false
     this.sttWs = null
     this.sttProc = null
     this.sttStreaming = false // true while inside a user utterance (sending PCM)
@@ -244,6 +251,18 @@ export default class VoiceController {
   }
 
   setManualMode(on) { this.manualMode = !!on }
+
+  // Room mode toggle: remember the choice for (re)opened STT sockets and tell
+  // a live one via a control frame (no audio key, so the server treats it as
+  // ours alone and sends nothing upstream). Works mid-session both ways.
+  setRoomMode(on) {
+    on = !!on
+    if (on === this.roomMode) return
+    this.roomMode = on
+    if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
+      this._sttSend({ room_mode: on })
+    }
+  }
   setSilenceMs(ms) { this.silenceMs = Math.max(400, Math.min(6000, ms || DEFAULT_SILENCE_MS)) }
 
   setPlaybackRate(r) {
@@ -268,7 +287,12 @@ export default class VoiceController {
   _openSttStream() {
     if (this.sttWs || !this.audioCtx || !this.micSource) return
     const ws = new WebSocket(`${wsBase()}/api/voice/stt-stream`)
-    ws.onopen = () => { try { ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: 16000 })) } catch { /* */ } }
+    ws.onopen = () => {
+      try {
+        ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: 16000,
+                                 room_mode: this.roomMode }))
+      } catch { /* */ }
+    }
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data) } catch { return }
       if (msg.partial !== undefined) {
