@@ -787,6 +787,20 @@ def get_label_updates_after(con, ts):
         "WHERE labels_updated_at > ? ORDER BY labels_updated_at, id", (ts,))]
 
 
+def get_chat_label_updates_after(con, chat_id, ts):
+    """One chat's label writes since `ts`, labels included - the round loop's
+    per-seat refresh (#28, night test 4): a diarization pass often resolves a
+    turn's identity while the round is already replying, and the rows a later
+    seat holds were fetched before that write landed. Same cursor discipline
+    as get_label_updates_after (the DATABASE is the buffer); this variant
+    carries voice_labels because its caller folds them into already-fetched
+    rows rather than telling a client to refetch."""
+    return [dict(r) for r in con.execute(
+        "SELECT id, voice_labels, labels_updated_at FROM messages "
+        "WHERE chat_id=? AND labels_updated_at > ? "
+        "ORDER BY labels_updated_at, id", (chat_id, ts))]
+
+
 def _json_dumps(obj):
     import json
     return json.dumps(obj)

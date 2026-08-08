@@ -335,7 +335,10 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "you can tell who is speaking by their voice, accent or tone. If asked how you "
         "know who spoke, the honest answer is the label on the turn. A turn attributed "
         "to an \"unidentified speaker\" means the app does NOT know who spoke: never "
-        f"assume it was {user}, and never guess a name. A note under a turn saying two "
+        f"assume it was {user}, and never guess a name. A turn headed \"Identity "
+        "pending (in the room)\" means the name is still being worked out - the voice "
+        "check runs a moment behind the words - so treat that speaker as unknown for "
+        "now and do not guess who it was. A note under a turn saying two "
         "voices spoke at once means people talked over each other and the transcript may "
         "have lost or merged the quieter person's words - if the missing words matter, "
         "ask that person to repeat what they said. A best-effort split by voice under "
@@ -572,6 +575,19 @@ _VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
 UNIDENTIFIED_SPEAKER = "unidentified speaker"
 IN_ROOM_SUFFIX = " (in the room)"
 
+# Honest pending identity (#28, night test 4). The identity pass costs
+# commit + a batch round trip; the round's first responder reads the
+# transcript sooner than that, so the just-spoken turn's label does not
+# exist yet - and rendering that absence as the owner made seats guess.
+# A room-mode user turn that is still inside the identity race projects
+# this head instead, so a seat says "the name is still coming" rather
+# than misattributing the turn. The window is a beat longer than the
+# measured worst-case pass (commit + ~1.9s); past it, an unlabelled turn
+# means the pass found nothing to say (the common lone-owner case) or
+# failed, and today's owner rendering is the honest reading again.
+PENDING_IDENTITY_HEAD = "Identity pending" + IN_ROOM_SUFFIX
+PENDING_IDENTITY_SECS = 4.0
+
 # Crosstalk in the projection (#28 phase 4). The batch pass marks a turn
 # whose utterance carried two or more voices; the projection passes that on
 # so the seats can do the human thing - ask the quieter person to repeat -
@@ -605,14 +621,37 @@ def _clean_head(label):
     return " ".join(re.sub(r"[\[\]·\n]", "", label).split())[:60].strip()
 
 
-def _user_turn_head(msg, cfg):
+def _identity_pending(msg, cfg, now=None):
+    """Is this user turn still inside the identity race (#28, night test 4)?
+    True only when ALL of these hold: the chat is in room mode (cfg carries
+    the flag from the engine; any other caller reads as off), the turn was
+    committed with a voice turn id (so a diarization pass is genuinely
+    working on exactly this row), NO label write has landed yet (any write,
+    even malformed, ends the wait - the pass has spoken), and the turn is
+    younger than PENDING_IDENTITY_SECS at render time. Everything else -
+    text sends, solo-mode voice, older unlabelled turns, every chat from
+    before room mode existed - renders exactly as it always has."""
+    if not cfg.get("room_mode") or not msg.get("voice_turn_id") \
+            or msg.get("voice_labels"):
+        return False
+    created = msg.get("created_at")
+    if not isinstance(created, (int, float)):
+        return False
+    now = time.time() if now is None else now
+    return (now - created) < PENDING_IDENTITY_SECS
+
+
+def _user_turn_head(msg, cfg, now=None):
     """The attribution head for a user-speaker turn. cfg['user_name'] unless
-    the turn carries voice labels that honestly say otherwise (see above).
-    Malformed label data degrades to the owner - exactly what an unlabelled
-    turn means today."""
+    the turn carries voice labels that honestly say otherwise (see above),
+    or is a room-mode turn whose identity is still being worked out - that
+    projects the pending head, never the owner's name. Malformed label data
+    degrades to the owner - exactly what an unlabelled turn means today."""
     owner = cfg["user_name"]
     data = _voice_meta(msg)
     if data is None:
+        if _identity_pending(msg, cfg, now=now):
+            return PENDING_IDENTITY_HEAD
         return owner
     labels = [l for l in (data.get("labels") if isinstance(data.get("labels"), list) else [])
               if isinstance(l, str) and _clean_head(l)]

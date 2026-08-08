@@ -4,6 +4,19 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode label latency, part 1 (#28, night test 4). The name check
+  runs a second or two behind the words, so the first AI to answer used
+  to read a fresh spoken turn before its name existed and assume it was
+  you. A turn whose name is still on the way now reads honestly as
+  "Identity pending (in the room)" - the models are told the name is
+  still being worked out and not to guess - and any AI speaking later in
+  the same round picks up the resolved name the moment it lands. The
+  check itself lost its avoidable delays too: labels attach the instant
+  the second listen returns instead of on a half-second polling step,
+  spend bookkeeping happens after the labels rather than in front of
+  them, and the remembered-voice samples that preface every check are
+  cached instead of re-read from disk on every spoken turn. Live voice
+  latency is untouched - everything here happens on the background pass.
 - Room mode arming fixes from the third field test (#28). Two spoken
   triggers that silently did nothing now work: a handover with no name
   ("I'm going to hand over to a guest") switches room mode on and asks

@@ -56,6 +56,7 @@ KEEP_CLIPS = 5             # best N clips per person, by quality score
 SUFFICIENT_SECONDS = 6.0   # accepted seconds needed before identification is trusted
 PREFIX_PERSON_SECONDS = 2.5  # roughly how much of each person rides the prefix
 MAX_PREFERRED_CHARS = 40   # display-name bound, matching the roster's
+PREFIX_CACHE_MAX = 8       # built-prefix snapshots kept per store (#28)
 
 # Recent-utterance audio cache for tap-to-correct: message_id -> utterance
 # audio, IN MEMORY ONLY, bounded. A correction made while the session is warm
@@ -137,6 +138,15 @@ class AnchorStore:
     def __init__(self, root: Path):
         self.root = Path(root)
         self._lock = threading.Lock()
+        # Built-prefix cache (#28, night test 4): (person_ids, sample_rate)
+        # -> (index fingerprint at build time, (pcm, segments)). Guarded by
+        # _lock; a stale fingerprint simply misses, so correctness never
+        # depends on eviction.
+        self._prefix_cache: OrderedDict = OrderedDict()
+        # In-process mutation counter, bumped by every _save: the half of
+        # the fingerprint that never depends on filesystem timestamp
+        # granularity (the on-disk mtime/size half covers other processes).
+        self._gen = 0
 
     # -- filesystem plumbing --
 
@@ -168,6 +178,19 @@ class AnchorStore:
             json.dump(data, f, indent=1, sort_keys=True)
         os.chmod(tmp, 0o600)
         os.replace(tmp, self._index_path())
+        self._gen += 1  # every mutation invalidates the built-prefix cache
+
+    def _index_fingerprint(self):
+        """Cheap change detector for build_prefix's cache: the in-process
+        generation counter (bumped by every _save) plus the index file's
+        mtime_ns and size (which every atomic _save rewrites - so a mutation
+        by ANOTHER process misses too). One stat call, no file read."""
+        try:
+            st = os.stat(self._index_path())
+            disk = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            disk = None
+        return (self._gen, disk)
 
     def _write_clip(self, pcm: bytes, sample_rate: int, person_id: str) -> str:
         from .diarize import pcm16_wav
@@ -317,8 +340,24 @@ class AnchorStore:
         stay uncertain rather than guess off thin evidence), and only clips
         recorded at the requested sample rate (in practice everything is 16k;
         a mismatched clip is skipped rather than resampled badly). Per person,
-        best clips first up to ~PREFIX_PERSON_SECONDS."""
+        best clips first up to ~PREFIX_PERSON_SECONDS.
+
+        Cached per roster snapshot (#28, night test 4): every diarization
+        pass used to re-read the same clip files from disk. The built prefix
+        is now kept keyed on (person ids, sample rate) and validated against
+        the index fingerprint - a hit reads NO clip files, and any anchor
+        mutation (add, refresh, forget, rename - anything that rewrites the
+        index) or roster change misses and rebuilds. Bounded to
+        PREFIX_CACHE_MAX snapshots; segments are copied on the way in and
+        out, so callers can never corrupt a cached entry."""
+        key = (tuple(person_ids), sample_rate)
         with self._lock:
+            fingerprint = self._index_fingerprint()
+            hit = self._prefix_cache.get(key)
+            if hit and hit[0] == fingerprint:
+                self._prefix_cache.move_to_end(key)
+                pcm, segments = hit[1]
+                return pcm, [dict(s) for s in segments]
             data = self._load()
         pcm_parts = []
         segments = []
@@ -356,7 +395,17 @@ class AnchorStore:
                             "start": round(cursor, 3),
                             "end": round(cursor + seconds, 3)})
             cursor += seconds
-        return b"".join(pcm_parts), segments
+        prefix = b"".join(pcm_parts)
+        with self._lock:
+            # Stored under the PRE-BUILD fingerprint: a mutation that landed
+            # while we were reading clips changed the fingerprint, so this
+            # entry can never satisfy the next lookup - it just misses.
+            self._prefix_cache[key] = (fingerprint,
+                                       (prefix, [dict(s) for s in segments]))
+            self._prefix_cache.move_to_end(key)
+            while len(self._prefix_cache) > PREFIX_CACHE_MAX:
+                self._prefix_cache.popitem(last=False)
+        return prefix, segments
 
 
 _store: AnchorStore | None = None

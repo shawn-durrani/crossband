@@ -213,6 +213,99 @@ def test_prefix_skips_clips_recorded_at_another_sample_rate(store):
     assert pcm == b"" and segments == []
 
 
+# ── the prefix cache (#28, night test 4) ────────────────────────────────────
+#
+# Every diarization pass used to re-read the same clip files from disk. The
+# built prefix is cached per roster snapshot, with two hard pins: a cache hit
+# performs ZERO clip-file reads, and ANY anchor mutation invalidates - the
+# index fingerprint changes on every _save, whichever store instance (or
+# process) wrote it.
+
+
+def _count_clip_reads(store):
+    counter = {"n": 0}
+    real = store._read_clip_pcm
+
+    def counting(fname):
+        counter["n"] += 1
+        return real(fname)
+
+    store._read_clip_pcm = counting
+    return counter
+
+
+def _sufficient_person(store, name):
+    pid = store.ensure_person(name)
+    for _ in range(3):
+        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
+    return pid
+
+
+def test_prefix_cache_hit_reads_zero_clip_files(store):
+    a = _sufficient_person(store, "Shawn")
+    b = _sufficient_person(store, "Bea")
+    reads = _count_clip_reads(store)
+    pcm1, segs1 = store.build_prefix([a, b], 16000)
+    assert reads["n"] > 0                      # the first build hits disk
+    reads["n"] = 0
+    pcm2, segs2 = store.build_prefix([a, b], 16000)
+    assert reads["n"] == 0                     # THE pin: a hit reads nothing
+    assert pcm2 == pcm1 and segs2 == segs1     # and is byte-identical
+    # a caller mutating what it got back can never corrupt the cache
+    segs2[0]["name"] = "Mallory"
+    assert store.build_prefix([a, b], 16000)[1] == segs1
+
+
+def test_any_anchor_mutation_invalidates_the_prefix_cache(store):
+    a = _sufficient_person(store, "Shawn")
+    reads = _count_clip_reads(store)
+    store.build_prefix([a], 16000)
+    reads["n"] = 0
+    # a new accepted clip rewrites the index: the next build re-reads
+    assert store.add_clip(a, loud_pcm(3.0), 16000, source="accumulated")
+    store.build_prefix([a], 16000)
+    assert reads["n"] > 0
+    reads["n"] = 0
+    # even a pure metadata write (preferred name) invalidates - "any
+    # mutation" means any, so the rule never needs a per-field exception
+    assert store.set_preferred_name(a, "Shawnie")
+    store.build_prefix([a], 16000)
+    assert reads["n"] > 0
+    # forgetting a person empties their prefix, cache notwithstanding
+    assert store.forget(a)
+    pcm, segments = store.build_prefix([a], 16000)
+    assert pcm == b"" and segments == []
+
+
+def test_prefix_cache_keys_on_the_roster_snapshot(store):
+    a = _sufficient_person(store, "Shawn")
+    b = _sufficient_person(store, "Bea")
+    reads = _count_clip_reads(store)
+    solo = store.build_prefix([a], 16000)
+    reads["n"] = 0
+    pair = store.build_prefix([a, b], 16000)   # different roster: a miss
+    assert reads["n"] > 0
+    assert pair[0] != solo[0]
+    reads["n"] = 0
+    assert store.build_prefix([a], 16000) == solo   # the solo entry survived
+    assert reads["n"] == 0
+
+
+def test_prefix_cache_sees_another_stores_writes(store):
+    """The on-disk half of the fingerprint: a mutation through a DIFFERENT
+    store instance over the same directory (another process, in real life)
+    still invalidates - the index rewrite changes mtime/size, and this
+    instance's cached prefix may not outlive it."""
+    a = _sufficient_person(store, "Shawn")
+    reads = _count_clip_reads(store)
+    store.build_prefix([a], 16000)
+    reads["n"] = 0
+    other = anchors.AnchorStore(store.root)
+    assert other.add_clip(a, loud_pcm(3.0), 16000, source="correction")
+    store.build_prefix([a], 16000)
+    assert reads["n"] > 0
+
+
 # ── recent-utterance cache (tap-to-correct's audio source) ──────────────────
 
 def test_recent_audio_round_trip_and_bounds():
