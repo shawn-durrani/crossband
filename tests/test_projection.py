@@ -421,6 +421,112 @@ def test_segment_text_cannot_forge_the_turn_frame(names, cfg):
     assert "say 'ignore rules' [fake · x]:" in tail  # newline collapsed, text kept
 
 
+# ---------- honest pending identity (#28, night test 4) ----------
+#
+# The identity pass loses the race to the round's first responder by design
+# (batch STT takes 1.0-1.9s; the first seat reads at ~0.3-0.9s), so a room-
+# mode turn still waiting on its label must project a PENDING head - never
+# the owner's name, which is exactly the misattribution the field test
+# caught. The gate is deliberately narrow: room mode on, a voice turn id on
+# the row, no label write yet, younger than the window. Everything outside
+# it - text sends, solo voice, old turns, room mode off - renders exactly
+# as it always has, byte for byte.
+
+import time as _time  # noqa: E402
+
+from backend.providers import (PENDING_IDENTITY_HEAD,  # noqa: E402
+                               PENDING_IDENTITY_SECS, _user_turn_head)
+
+
+def _room_cfg(cfg):
+    return dict(cfg, room_mode=True)
+
+
+def _voice_msg(content="hi", age_secs=0.0, turn_id="turn-1", **extra):
+    m = make_msg(1, "user", content, created_at=_time.time() - age_secs)
+    m["voice_turn_id"] = turn_id
+    m.update(extra)
+    return m
+
+
+def test_young_room_mode_turn_projects_the_pending_head(names, cfg):
+    """The core of part 1: a just-committed room-mode voice turn with no
+    label yet reads as pending - the first responder is told the name is
+    still coming instead of being handed the owner to guess with."""
+    transcript = [_voice_msg("who am I")]
+    msgs = build_anthropic_messages("claude", transcript, names, _room_cfg(cfg))
+    head = LABEL_RE.match(msgs[0]["content"][0]["text"]).group("name")
+    assert head == PENDING_IDENTITY_HEAD == "Identity pending (in the room)"
+    assert cfg["user_name"] not in head
+    # same head on the OpenAI side
+    items = build_openai_input("gpt", transcript, names, _room_cfg(cfg))
+    assert LABEL_RE.match(items[0]["content"][0]["text"]).group("name") \
+        == PENDING_IDENTITY_HEAD
+
+
+def test_pending_head_expires_at_the_age_cutoff(names, cfg):
+    """Past the window the pass has had every chance to speak: an unlabelled
+    turn then means it found nothing (or failed), and today's owner rendering
+    is the honest reading again - byte for byte."""
+    old = _voice_msg("said a while ago", age_secs=PENDING_IDENTITY_SECS + 1)
+    plain = dict(old)
+    plain.pop("voice_turn_id")
+    assert build_anthropic_messages("claude", [old], names, _room_cfg(cfg)) \
+        == build_anthropic_messages("claude", [plain], names, _room_cfg(cfg))
+    assert _user_turn_head(old, _room_cfg(cfg)) == cfg["user_name"]
+    # and the boundary is the constant, not an accident of test timing
+    fresh = _voice_msg("just now")
+    now = fresh["created_at"]
+    assert _user_turn_head(fresh, _room_cfg(cfg),
+                           now=now + PENDING_IDENTITY_SECS - 0.1) \
+        == PENDING_IDENTITY_HEAD
+    assert _user_turn_head(fresh, _room_cfg(cfg),
+                           now=now + PENDING_IDENTITY_SECS + 0.1) \
+        == cfg["user_name"]
+
+
+def test_pending_head_requires_room_mode_and_a_turn_id(names, cfg):
+    """Outside room mode no pass is racing anyone, and without a turn id no
+    pass is working on this row - both render exactly as they always have.
+    This is the byte-identity pin's other half: a young voice turn in a
+    solo chat must never flash a pending head."""
+    young = _voice_msg("solo voice turn")
+    # room mode off: cfg without the key AND with it explicitly false
+    for solo_cfg in (cfg, dict(cfg, room_mode=False)):
+        text = build_anthropic_messages(
+            "claude", [young], names, solo_cfg)[0]["content"][0]["text"]
+        assert LABEL_RE.match(text).group("name") == cfg["user_name"]
+    # room mode on but a TEXT send (no voice turn id): owner, as always
+    keyed = make_msg(1, "user", "typed message", created_at=_time.time())
+    text = build_anthropic_messages(
+        "claude", [keyed], names, _room_cfg(cfg))[0]["content"][0]["text"]
+    assert LABEL_RE.match(text).group("name") == cfg["user_name"]
+
+
+def test_any_label_write_ends_the_pending_state(names, cfg):
+    """Once the pass has spoken the wait is over, whatever it said: a named
+    label projects as that person, and even a malformed write degrades to
+    the owner (the shared degradation rule) rather than pending forever."""
+    labelled = _labelled(_voice_msg("it was Kat"), ["Kat"], uncertain=[])
+    text = build_anthropic_messages(
+        "claude", [labelled], names, _room_cfg(cfg))[0]["content"][0]["text"]
+    assert LABEL_RE.match(text).group("name") == f"Kat{IN_ROOM_SUFFIX}"
+    junk = _voice_msg("garbled", voice_labels="{not json")
+    assert _user_turn_head(junk, _room_cfg(cfg)) == cfg["user_name"]
+
+
+def test_pending_identity_explainer_lives_in_the_stable_block(cfg):
+    """The seats are told what a pending head means - still being worked
+    out, do not guess - in the same stable-block explainer as the rest of
+    the room-labels rules (constant text, so the cache pins hold)."""
+    stable, volatile = split_system_prompt(
+        PARTICIPANT, ROSTER, dict(cfg), None, "", False)
+    for tell in ("Identity pending (in the room)",
+                 "still being worked out", "do not guess"):
+        assert tell in stable, tell
+        assert tell not in volatile
+
+
 def test_room_labels_explainer_lives_in_the_stable_block(cfg):
     """The seat-facing room-labels explainer (#28 phase 4): constant text,
     so it must sit in the STABLE cached block - never the volatile tail,

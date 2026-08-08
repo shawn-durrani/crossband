@@ -526,6 +526,91 @@ def test_commit_turn_id_never_leaks_upstream(app, relay, batch_stt):
         assert "turn-private" not in json.dumps(relay.sent)
 
 
+# ── 7. attach immediately, meter after (#28, night test 4) ──────────────────
+
+def test_exact_turn_id_attach_never_waits_on_the_probe_cadence(
+        app, relay, batch_stt, monkeypatch):
+    """With a turn id the attach is a direct lookup plus a FAST retry for the
+    /send race - the probe cadence may play no part. Pinned by making the
+    cadence pathological (30s): the target row lands ~0.15s after the batch
+    reply parsed, and the labels must still attach well inside a second -
+    under the old cadence-driven probing this test would time out."""
+    monkeypatch.setattr(diarize, "MATCH_PROBE_SECS", 30.0)
+    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({**_frame(commit=True), "turn_id": "turn-fast"})
+            assert ws.receive_json() == {"final": "hello world"}
+            # let the pass reach its first lookup and MISS (the /send race)
+            time.sleep(0.15)
+            target = _insert_user_message(chat["id"], "the racing turn",
+                                          voice_turn_id="turn-fast")
+            labels = _wait_for(lambda: _message_labels(target["id"]),
+                               timeout=1.0)
+            ws.send_json({"done": True})
+        assert labels, "labels did not attach ahead of the probe cadence"
+        assert json.loads(labels)["labels"] == ["Voice 1", "Voice 2"]
+
+
+def test_label_write_lands_before_the_meter_write(
+        app, relay, batch_stt, monkeypatch):
+    """Metering moved BEHIND the label attach: the spend is bookkeeping, the
+    label is what the round's seats are waiting on, so nothing may queue in
+    front of it. Pinned on call order, with both writes still landing."""
+    order = []
+    real_labels = db.set_message_voice_labels
+    real_meter = diarize._meter
+
+    def labels_spy(con, message_id, payload):
+        order.append("labels")
+        return real_labels(con, message_id, payload)
+
+    def meter_spy(chat_id, pcm, sample_rate, cfg):
+        order.append("meter")
+        return real_meter(chat_id, pcm, sample_rate, cfg)
+
+    monkeypatch.setattr(db, "set_message_voice_labels", labels_spy)
+    monkeypatch.setattr(diarize, "_meter", meter_spy)
+    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            target = _insert_user_message(chat["id"], "already persisted",
+                                          voice_turn_id="turn-order")
+            ws.send_json({**_frame(commit=True), "turn_id": "turn-order"})
+            assert ws.receive_json() == {"final": "hello world"}
+            assert _wait_for(lambda: _stt_usage_rows() == 1)  # pass finished
+            ws.send_json({"done": True})
+        assert order == ["labels", "meter"]
+        assert _message_labels(target["id"])  # and the labels really landed
+
+
+def test_labelling_failure_still_meters_the_spend(
+        app, relay, batch_stt, monkeypatch):
+    """The other half of moving the meter: the batch call's spend became real
+    the moment it returned, so a labelling crash must still book it - just
+    behind where the labels would have gone, never silently unbilled."""
+    def broken_labels(con, message_id, payload):
+        raise RuntimeError("label write exploded")
+
+    monkeypatch.setattr(db, "set_message_voice_labels", broken_labels)
+    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            msg = _insert_user_message(chat["id"], "turn that fails",
+                                       voice_turn_id="turn-boom")
+            ws.send_json({**_frame(commit=True), "turn_id": "turn-boom"})
+            assert ws.receive_json() == {"final": "hello world"}
+            assert _wait_for(lambda: _stt_usage_rows() == 1)  # metered anyway
+            ws.send_json({"done": True})
+        assert _message_labels(msg["id"]) == ""  # the label write did fail
+
+
 # ── pure rules (no I/O) ─────────────────────────────────────────────────────
 
 def test_utterance_clusters_orders_and_filters():

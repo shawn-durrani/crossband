@@ -612,6 +612,73 @@ def test_round_reads_transcript_once_then_deltas_nothing_missed(app, monkeypatch
     assert ("claude", "reply from claude") not in first  # ordering sanity
 
 
+def test_later_seats_see_identity_resolved_mid_round(app, monkeypatch):
+    """#28, night test 4: the diarization pass resolves the speaker's name
+    while the round's first seat is already replying. The first seat honestly
+    projects the pending head (the label did not exist at its read); every
+    LATER seat's boundary folds the label write into the rows it already
+    holds - so the second speaker projects the resolved name, at the cost of
+    one indexed SELECT inside the per-seat read that already happens, with no
+    extra full transcript read."""
+    from backend import providers
+
+    counts = {"full": 0}
+    real_full = db.get_chat_messages
+
+    def counting_full(con, chat_id):
+        counts["full"] += 1
+        return real_full(con, chat_id)
+
+    monkeypatch.setattr(engine.db, "get_chat_messages", counting_full)
+
+    async def no_reflect(chat_id, cfg):
+        return None  # silence the post-round job's own full read
+
+    monkeypatch.setattr(engine, "post_round_reflect_job", no_reflect)
+
+    heads = {}
+
+    async def labelling_stream(participant, roster, transcript, names, cfg,
+                               project, chat_summary, voice_mode,
+                               tools=None, memory=None):
+        # Record what THIS seat's real projection makes of the user turn.
+        msgs = providers.build_anthropic_messages(
+            participant["slug"], transcript, names, cfg)
+        heads[participant["slug"]] = msgs[0]["content"][0]["text"]
+        if participant["slug"] == "claude":
+            # The identity pass resolves while seat 1 is "generating" - the
+            # exact race the night test measured.
+            con = db.connect()
+            row = con.execute(
+                "SELECT id FROM messages WHERE voice_turn_id='turn-race'"
+            ).fetchone()
+            db.set_message_voice_labels(
+                con, row["id"],
+                {"clusters": ["s0"], "labels": ["Kat"], "uncertain": []})
+            con.close()
+        yield ("text", f"reply from {participant['slug']}")
+        yield ("usage", {"input": 1, "cache_read": 0, "cache_creation": 0,
+                         "output": 1})
+
+    monkeypatch.setattr(engine.providers, "stream_reply", labelling_stream)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        con = db.connect()
+        db.set_chat_room_mode(con, chat["id"], True)
+        con.close()
+        with c.stream("POST", f"/api/chats/{chat['id']}/send",
+                      json={"text": "who just spoke?",
+                            "turn_id": "turn-race"}) as r:
+            "".join(r.iter_text())
+
+    # Seat 1 read before the label existed: the pending head, never the owner.
+    assert heads["claude"].startswith(
+        f"[{providers.PENDING_IDENTITY_HEAD} · ")
+    # Seat 2 read after: the resolved name, with no second full read.
+    assert heads["gpt"].startswith("[Kat (in the room) · ")
+    assert counts["full"] == 1
+
+
 def test_guest_availability_checked_once_per_round(app, monkeypatch):
     """guest.available (a filesystem PATH scan) runs once per round,
     not once per speaker."""

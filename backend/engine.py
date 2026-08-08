@@ -128,13 +128,22 @@ async def _adopted_result(task):
         return []
 
 
-def _load_round_state(chat_id, messages, last_seen_id):
+def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0):
     """One speaker's DB reads, in one connection, on one worker thread: the
     cheap per-speaker row reads that deliberately stay per-speaker, plus the
     transcript delta. Returns None when the chat vanished mid-round. The
     connection opens and closes inside this function
     so it never crosses threads; the returned sqlite3.Row objects are plain
-    fetched data, safe to read after close."""
+    fetched data, safe to read after close.
+
+    `labels_cursor` (#28, night test 4): the newest labels_updated_at this
+    round has seen. The diarization pass resolves identities asynchronously,
+    so a label often lands AFTER the round's first seat fetched the rows -
+    on every later seat's boundary the label writes since the cursor are
+    folded into the rows already held, and the second and later speakers in
+    a round see the resolved name instead of replying to a stale projection.
+    One extra indexed SELECT inside the per-seat read that already runs on
+    this worker thread - nothing new blocks the dispatch path."""
     con = db.connect()
     try:
         chat = con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
@@ -150,11 +159,22 @@ def _load_round_state(chat_id, messages, last_seen_id):
         if messages is None:
             messages = db.get_chat_messages(con, chat_id)
         else:
+            updates = {u["id"]: u for u in db.get_chat_label_updates_after(
+                con, chat_id, labels_cursor)}
+            if updates:
+                for m in messages:
+                    upd = updates.get(m["id"])
+                    if upd:
+                        m["voice_labels"] = upd["voice_labels"]
+                        m["labels_updated_at"] = upd["labels_updated_at"]
             messages += db.get_messages_after(con, last_seen_id, chat_id=chat_id)
         if messages:
             last_seen_id = messages[-1]["id"]
+            labels_cursor = max([labels_cursor] + [
+                m.get("labels_updated_at") or 0.0 for m in messages])
         return {"chat": chat, "project": project, "roster": roster,
                 "names": names, "messages": messages, "last_seen_id": last_seen_id,
+                "labels_cursor": labels_cursor,
                 "shared_instructions": db.get_setting(con, "shared_instructions")}
     finally:
         con.close()
@@ -436,6 +456,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
     # call) are likewise resolved once per round, not once per speaker.
     messages = None
     last_seen_id = 0
+    labels_cursor = 0.0  # newest label write folded in so far (#28)
     guest_ok = None
     memory_up = None
     for idx, participant in enumerate(responders):
@@ -450,7 +471,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # must not pin the event loop that is simultaneously relaying live
         # voice websockets and SSE streams.
         state = await asyncio.to_thread(_load_round_state, chat_id, messages,
-                                        last_seen_id)
+                                        last_seen_id, labels_cursor)
         if state is None:
             break
         chat = state["chat"]
@@ -459,6 +480,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         names = state["names"]
         messages = state["messages"]
         last_seen_id = state["last_seen_id"]
+        labels_cursor = state["labels_cursor"]
         # Use the existing summary + un-folded recent transcript; the fold runs as a
         # background task after each round (prompt caching keeps the larger prefix
         # cheap), so a round never stalls mid-conversation waiting on a summary.
@@ -488,6 +510,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         round_cfg["shared_instructions"] = state["shared_instructions"]
         round_cfg["round_predecessors"] = list(spoken)  # dynamic, this round only
         round_cfg["chat_id"] = chat_id  # summon_claude_code queues per chat
+        # Room mode gates the pending-identity head (#28, night test 4): only
+        # a room-mode chat has a diarization pass racing the round, so only
+        # there may an unlabelled young turn honestly claim "name still
+        # coming". Read per seat, so a mid-round arm is seen immediately.
+        round_cfg["room_mode"] = bool(chat["room_mode"])
         memory_on = bool(chat["memory_enabled"])
         web_on = bool(chat["web_enabled"])
         code_on = bool(chat["code_enabled"])

@@ -70,6 +70,23 @@ MAX_UTTERANCE_SECONDS = 120
 MATCH_WINDOW_SECS = 8.0
 MATCH_PROBE_SECS = 0.5
 
+# Attach immediately on an exact turn id (#28, night test 4). With the id the
+# target row is a direct lookup, so the pass attaches the moment the batch
+# reply parses instead of riding a probe cadence. The only reason the row can
+# be missing is the /send race - the client dispatches once the committed
+# transcript returns (~0.3-0.9s after commit) while the batch reply takes
+# 1.0-1.9s, so the row is normally already there - and these two constants
+# bound a short fast retry for exactly that race. A row that never appears is
+# a dropped interjection, which must label nothing; giving up early is
+# correct there. The MATCH_PROBE_SECS cadence above survives ONLY for id-less
+# commits (older clients), where time-window matching genuinely has to wait.
+ID_ATTACH_RETRY_SECS = 0.05
+ID_ATTACH_WINDOW_SECS = 2.0
+
+# _attach_labels' "the row is not persisted yet - retry" verdict, distinct
+# from None ("nothing to label, stop"): only the /send race retries.
+_NO_ROW_YET = object()
+
 # Strong references to in-flight passes: asyncio only holds weak refs to
 # tasks, and a garbage-collected fire-and-forget task silently never runs.
 _TASKS: set = set()
@@ -527,61 +544,95 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         log.debug("diarize pass failure detail", exc_info=True)
         return
     duration_ms = (time.perf_counter() - t0) * 1000
+    # Labelling runs FIRST, metering after (#28, night test 4): from the
+    # moment the batch reply is parsed, every millisecond spent before the
+    # label write is identity latency the seats can observe, so nothing may
+    # queue in front of the attach. The metering moves to the finally below -
+    # the spend became real when the batch call returned, so a labelling
+    # failure still meters it, just no longer ahead of the labels.
     try:
-        # The second transcription pass is real, metered spend - the reason
-        # the room-mode toggle warns that voice minutes roughly double. The
-        # anchor prefix is transcribed audio too, so it is metered with it.
-        await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate, cfg)
         if plan is not None:
             await _room_label_pass(chat_id, pcm, sample_rate, commit_ts,
                                    session, cfg, result, segments, pending,
                                    len(prefix_pcm) / 2 / (sample_rate or 16000),
                                    duration_ms, turn_id=turn_id)
-            return
-        words = result.get("words")
-        clusters = utterance_clusters(words)
-        # EVERY cluster the session sees claims its ordinal, labelled or not:
-        # the session's first voice is "Voice 1" even while it goes unlabelled
-        # (the common lone-speaker case), so the first DIFFERENT voice
-        # correctly surfaces as "Voice 2", not as a misleading "Voice 1".
-        mapped = session.assign(clusters)
-        labels = mapped if should_label(clusters, session.prev_clusters) else []
-        if clusters:
-            session.prev_clusters = clusters
-        # The latency record for the parallel pass. INFO and content-free:
-        # durations and counts only, never transcript text. The live path's
-        # own latency is measured elsewhere (voice_trace) and must show no
-        # dependence on this number - pinned by tests/test_room_mode.py.
-        log.info("diarize pass: chat=%s ms=%.0f clusters=%d labels=%d",
-                 chat_id, duration_ms, len(clusters), len(labels))
-        if not labels:
-            return
-        payload = {"clusters": clusters, "labels": labels}
-        # Crosstalk (#28 phase 4): two voices in one utterance get the marker,
-        # and - when the words alternate cleanly - a best-effort attributed
-        # split. Phase-1 labels are session ordinals, uncertain by
-        # construction, so every segment is marked uncertain too.
-        ct = crosstalk_info(words)
-        if ct:
-            payload.update(ct)
-            segs = split_segments(words, dict(zip(clusters, mapped)),
-                                  uncertain_labels=set(mapped))
-            if segs:
-                payload["segments"] = segs
-        await _attach_until_deadline(chat_id, commit_ts, payload, session,
-                                     turn_id=turn_id)
+        else:
+            words = result.get("words")
+            clusters = utterance_clusters(words)
+            # EVERY cluster the session sees claims its ordinal, labelled or
+            # not: the session's first voice is "Voice 1" even while it goes
+            # unlabelled (the common lone-speaker case), so the first
+            # DIFFERENT voice correctly surfaces as "Voice 2", not as a
+            # misleading "Voice 1".
+            mapped = session.assign(clusters)
+            labels = mapped if should_label(clusters,
+                                            session.prev_clusters) else []
+            if clusters:
+                session.prev_clusters = clusters
+            # The latency record for the parallel pass. INFO and content-free:
+            # durations and counts only, never transcript text. The live
+            # path's own latency is measured elsewhere (voice_trace) and must
+            # show no dependence on this number - pinned by
+            # tests/test_room_mode.py.
+            log.info("diarize pass: chat=%s ms=%.0f clusters=%d labels=%d",
+                     chat_id, duration_ms, len(clusters), len(labels))
+            if labels:
+                payload = {"clusters": clusters, "labels": labels}
+                # Crosstalk (#28 phase 4): two voices in one utterance get the
+                # marker, and - when the words alternate cleanly - a
+                # best-effort attributed split. Phase-1 labels are session
+                # ordinals, uncertain by construction, so every segment is
+                # marked uncertain too.
+                ct = crosstalk_info(words)
+                if ct:
+                    payload.update(ct)
+                    segs = split_segments(words, dict(zip(clusters, mapped)),
+                                          uncertain_labels=set(mapped))
+                    if segs:
+                        payload["segments"] = segs
+                await _attach_until_deadline(chat_id, commit_ts, payload,
+                                             session, turn_id=turn_id)
     except Exception:
         log.info("diarize labelling failed: chat=%s", chat_id)
         log.debug("diarize labelling failure detail", exc_info=True)
+    finally:
+        try:
+            # The second transcription pass is real, metered spend - the
+            # reason the room-mode toggle warns that voice minutes roughly
+            # double. The anchor prefix is transcribed audio too, so it is
+            # metered with it.
+            await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate,
+                                    cfg)
+        except Exception:
+            log.info("diarize metering failed: chat=%s", chat_id)
+            log.debug("diarize metering failure detail", exc_info=True)
 
 
 async def _attach_until_deadline(chat_id, commit_ts, payload, session,
                                  turn_id=None):
-    """Probe for the utterance's user message until it appears or the window
-    closes. Returns the labelled message id, or None. With a turn id the
-    probe is an exact voice_turn_id match and NOTHING else may be labelled;
-    the probing itself remains (the /send that inserts the row races this
-    pass and normally loses by a moment)."""
+    """Attach the labels to the utterance's user message. Returns the
+    labelled message id, or None.
+
+    With a turn id (#28, night test 4) the target is a direct lookup and the
+    attach happens on the FIRST call - no cadence. The only wait left is a
+    short fast retry for the /send race (the row not persisted yet); a row
+    that exists but may not be labelled ends the attempt immediately, and the
+    retry window never outlives the overall match window.
+
+    Without a turn id (an older client) the original probe cadence stands:
+    time-window matching has no way to tell "not yet" from "never", so it
+    genuinely has to keep looking until the window closes."""
+    if turn_id:
+        deadline = time.monotonic() + min(ID_ATTACH_WINDOW_SECS,
+                                          MATCH_WINDOW_SECS)
+        while True:
+            outcome = await asyncio.to_thread(
+                _attach_labels, chat_id, commit_ts, payload, session, turn_id)
+            if outcome is not _NO_ROW_YET:
+                return outcome
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(ID_ATTACH_RETRY_SECS)
     deadline = time.monotonic() + MATCH_WINDOW_SECS
     while True:
         target_id = await asyncio.to_thread(
@@ -638,6 +689,26 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     log.info("diarize pass (room): chat=%s ms=%.0f clusters=%d matched=%d "
              "ask=%d crosstalk=%d", chat_id, duration_ms, len(clusters),
              len(resolved["matched"]), len(resolved["ask"]), 1 if ct else 0)
+    target_id = None
+    if resolved["labels"]:
+        payload = {"clusters": clusters, "labels": resolved["labels"],
+                   "uncertain": resolved["uncertain"]}
+        if ct:
+            # Crosstalk (#28 phase 4): the marker, plus the best-effort split
+            # when the word map alternates cleanly. Segment labels reuse the
+            # resolved labels, so an unmatched voice splits as its uncertain
+            # ordinal, never as a guessed name.
+            payload.update(ct)
+            segs = split_segments(utter_words,
+                                  dict(zip(clusters, resolved["labels"])),
+                                  uncertain_labels=set(resolved["uncertain"]))
+            if segs:
+                payload["segments"] = segs
+        # The attach comes FIRST (#28, night test 4): the label write is the
+        # thing the seats are waiting on, so the anchor bookkeeping below -
+        # file writes on a worker thread - may not queue in front of it.
+        target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                                 session, turn_id=turn_id)
     if len(clusters) == 1:
         # A clean single-speaker utterance is anchor food: it refreshes a
         # matched person's clips, and it is the ONLY thing that can build a
@@ -648,21 +719,6 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                 clusters[0], resolved)
     if not resolved["labels"]:
         return
-    payload = {"clusters": clusters, "labels": resolved["labels"],
-               "uncertain": resolved["uncertain"]}
-    if ct:
-        # Crosstalk (#28 phase 4): the marker, plus the best-effort split
-        # when the word map alternates cleanly. Segment labels reuse the
-        # resolved labels, so an unmatched voice splits as its uncertain
-        # ordinal, never as a guessed name.
-        payload.update(ct)
-        segs = split_segments(utter_words,
-                              dict(zip(clusters, resolved["labels"])),
-                              uncertain_labels=set(resolved["uncertain"]))
-        if segs:
-            payload["segments"] = segs
-    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
     if resolved["ask"]:
         # Someone the anchors don't know and elimination can't name: surface
         # the ask-fallback. The turn keeps its uncertain ordinal meanwhile.
@@ -748,45 +804,54 @@ async def run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         result = await asyncio.to_thread(
             voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),
             "audio/wav", cfg, num_speakers=num_speakers)
-        # Real, metered spend - the sniff is the "first couple of utterances
-        # transcribed twice" the changelog and UI copy warn about.
-        await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate, cfg)
-        prefix_seconds = len(prefix_pcm) / 2 / (sample_rate or 16000)
-        prefix_words, utter_words = split_words_at(result.get("words"),
-                                                   prefix_seconds)
-        cmap = prefix_cluster_map(prefix_words, segments)
-        clusters = utterance_clusters(utter_words)
-        owner = (cfg.get("user_name") or "User").casefold()
-        matched = {c: cmap[c] for c in clusters if c in cmap}
-        non_owner = [n for n in matched.values() if n.casefold() != owner]
-        armed = bool(non_owner) or len(clusters) >= 2
-        # The sniff marker: content-free, and distinguishable from the
-        # room-mode pass's own line at a grep.
-        log.info("diarize pass (sniff): chat=%s ms=%.0f clusters=%d "
-                 "matched=%d armed=%d", chat_id,
-                 (time.perf_counter() - t0) * 1000, len(clusters),
-                 len(matched), 1 if armed else 0)
-        if not armed:
-            return
-        session.sniff_remaining = 0     # job done; no second sniff needed
-        await asyncio.to_thread(_arm_from_sniff, chat_id, matched, cfg)
-        if clusters:
-            session.prev_clusters = clusters
-        # Label this turn through the same naming rules as any roster pass:
-        # matched clusters carry the person's name, anything else a session
-        # ordinal (uncertain). No pending people exist yet and the sniff
-        # itself never raises an ask - from the next commit the armed
-        # room-mode pass owns identification, asks included.
-        resolved = resolve_room_labels(clusters, cmap, [], session)
-        if not resolved["labels"]:
-            return
-        payload = {"clusters": clusters, "labels": resolved["labels"],
-                   "uncertain": resolved["uncertain"]}
-        target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                                 session, turn_id=turn_id)
-        if target_id:
-            from . import anchors
-            anchors.remember_audio(target_id, pcm, sample_rate, len(clusters))
+        try:
+            prefix_seconds = len(prefix_pcm) / 2 / (sample_rate or 16000)
+            prefix_words, utter_words = split_words_at(result.get("words"),
+                                                       prefix_seconds)
+            cmap = prefix_cluster_map(prefix_words, segments)
+            clusters = utterance_clusters(utter_words)
+            owner = (cfg.get("user_name") or "User").casefold()
+            matched = {c: cmap[c] for c in clusters if c in cmap}
+            non_owner = [n for n in matched.values() if n.casefold() != owner]
+            armed = bool(non_owner) or len(clusters) >= 2
+            # The sniff marker: content-free, and distinguishable from the
+            # room-mode pass's own line at a grep.
+            log.info("diarize pass (sniff): chat=%s ms=%.0f clusters=%d "
+                     "matched=%d armed=%d", chat_id,
+                     (time.perf_counter() - t0) * 1000, len(clusters),
+                     len(matched), 1 if armed else 0)
+            if not armed:
+                return
+            session.sniff_remaining = 0  # job done; no second sniff needed
+            await asyncio.to_thread(_arm_from_sniff, chat_id, matched, cfg)
+            if clusters:
+                session.prev_clusters = clusters
+            # Label this turn through the same naming rules as any roster
+            # pass: matched clusters carry the person's name, anything else a
+            # session ordinal (uncertain). No pending people exist yet and
+            # the sniff itself never raises an ask - from the next commit the
+            # armed room-mode pass owns identification, asks included.
+            resolved = resolve_room_labels(clusters, cmap, [], session)
+            if not resolved["labels"]:
+                return
+            payload = {"clusters": clusters, "labels": resolved["labels"],
+                       "uncertain": resolved["uncertain"]}
+            target_id = await _attach_until_deadline(chat_id, commit_ts,
+                                                     payload, session,
+                                                     turn_id=turn_id)
+            if target_id:
+                from . import anchors
+                anchors.remember_audio(target_id, pcm, sample_rate,
+                                       len(clusters))
+        finally:
+            # Real, metered spend - the sniff is the "first couple of
+            # utterances transcribed twice" the changelog and UI copy warn
+            # about. Metered AFTER the labels (#28, night test 4), same as
+            # every pass: the spend became real when the batch call returned,
+            # so it still books on any labelling outcome - just never in
+            # front of the label write.
+            await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate,
+                                    cfg)
     except Exception:
         log.info("sniff pass failed: chat=%s", chat_id)
         log.debug("sniff pass failure detail", exc_info=True)
@@ -877,12 +942,14 @@ def _meter(chat_id, pcm, sample_rate, cfg):
 
 
 def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
-    """One synchronous probe (runs on a worker thread): find the utterance's
-    user message and persist the labels through the single update path, which
-    also rings the live-events bell. Returns the labelled id, or None to let
-    the async loop probe again until the window closes.
+    """One synchronous attempt (runs on a worker thread): find the
+    utterance's user message and persist the labels through the single update
+    path, which also rings the live-events bell. Returns the labelled id,
+    None for "nothing to label" (id-less callers retry that until their
+    window closes), or _NO_ROW_YET when an exact-id target simply is not
+    persisted yet - the one case the id path retries.
 
-    With a turn id (#28 phase 3) the probe is EXACT: only the message whose
+    With a turn id (#28 phase 3) the lookup is EXACT: only the message whose
     persisted voice_turn_id matches may be labelled, and the time-window
     guesswork never runs - so a pass whose utterance produced no message
     (a dropped interjection) labels nothing, ever.
@@ -896,9 +963,11 @@ def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
     try:
         if turn_id:
             target = db.get_message_by_voice_turn(con, chat_id, turn_id)
-            if not target or target["id"] in session.labelled_ids \
+            if not target:
+                return _NO_ROW_YET  # the /send race - worth a fast retry
+            if target["id"] in session.labelled_ids \
                     or target.get("voice_labels"):
-                return None
+                return None  # exists but already labelled: nothing to do
         else:
             rows = db.get_voice_label_candidates(con, chat_id, commit_ts)
             target = pick_target(rows, session.labelled_ids)

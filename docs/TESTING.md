@@ -137,6 +137,27 @@ with ordinals but seed and ask nothing, two negative passes end the
 sniff at exactly two metered batch calls, and the sniff is pinned off
 when nobody (or only the owner) is remembered.
 
+**Label latency, part 1 (night test 4).** The identity pass loses the
+race to the round's first responder by arithmetic (the batch reply takes
+1.0-1.9s; the first seat reads at roughly commit plus 0.3-0.9s), so this
+phase is honesty plus free trims, and both halves are pinned. Honesty: a
+room-mode user turn committed with a voice turn id and still unlabelled
+projects "Identity pending (in the room)" while younger than the pending
+window - never the owner's name - and outside that narrow gate (past the
+window, solo chats, text sends, any label write landing, room mode off)
+the historical rendering returns byte for byte; the stable-block
+explainer tells seats a pending name is still being worked out and must
+not be guessed. Each later seat's boundary folds label writes since the
+round's cursor into the rows it already holds, so the second and later
+speakers project the resolved name with no extra full transcript read.
+Trims: with an exact turn id the labels attach by direct lookup the
+moment the batch reply parses - a short fast retry covers only the
+row-not-yet-persisted /send race, and the probe cadence survives only
+for id-less commits - the meter write books after the label write and
+still books when labelling fails, and the anchor prefix is cached per
+roster snapshot with two hard pins: a cache hit reads zero clip files,
+and any anchor mutation invalidates, whichever store instance wrote it.
+
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
 backfilled; an unknown model id stays unpriced instead of inheriting a
