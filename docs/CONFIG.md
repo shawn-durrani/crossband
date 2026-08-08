@@ -74,6 +74,7 @@ supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 | `tts_speed` | `1.0` | Speaking speed, 0.7–1.2. (Playback speed also has a live slider in the voice dock.) |
 | `stt_model` | `scribe_v2` | Transcription model; realtime variant is used automatically when available. |
 | `voice_pricing` | built-in | ElevenLabs rate card used to price TTS/STT usage. |
+| `room_roster_max` | `6` | Room mode: how many people the roster may hold at once (the cap frees as people leave). A product choice, not a technical limit. |
 
 ## Memory (companion service)
 

@@ -16,12 +16,35 @@ import { Hand, Timer, Square, X, CornerDownLeft, SlidersHorizontal, ChevronDown,
 // stable element.
 export default function VoiceDock({
   voiceState, pttMode, silenceSecs, voiceRate, dockOpen, roomMode,
+  rosterText, rosterHint, onRoomModeOff,
   onPttModeChange, onSilenceSecsChange, onVoiceRateChange, onDockOpenChange,
   onRoomModeChange, onFinalizeNow, onInterrupt, onStop,
 }) {
   if (voiceState === 'off') return null
   return (
     <div className="absolute bottom-3 right-3 sm:right-5 voice-dock">
+      {/* The roster chip (#28 phase 2): who the app is telling apart right
+          now - which doubles as the transparency cue that multi-voice
+          processing is on. The × is the durable override off. */}
+      {rosterText && (
+        <div
+          className="inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border border-sky-800 text-sky-200 bg-sky-950/50"
+          title={rosterHint}
+        >
+          <Users size={13} />
+          <span className="max-w-64 truncate">{rosterText}</span>
+          {onRoomModeOff && (
+            <button
+              className="text-sky-400 hover:text-sky-100"
+              title="Switch room mode off for this chat (turns stop being attributed by voice)"
+              aria-label="Switch room mode off"
+              onClick={onRoomModeOff}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      )}
       {/* Collapsible - the capsule tucks into a small sliders button, because
           during a call the orb and its status matter and the knobs mostly
           don't. */}

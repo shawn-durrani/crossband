@@ -170,6 +170,14 @@ def notify_message_update() -> None:
     notify_new_message()
 
 
+def notify_room_update() -> None:
+    """Wake connected clients after a room-mode roster or flag row changed
+    (#28 phase 2). Same shared machinery, same posture: the DATABASE
+    (room_roster/room_flags updated_at, queried by cursor in stream()) is the
+    real catch-up buffer; this bell is a latency optimization only."""
+    notify_new_message()
+
+
 def notify_new_message() -> None:
     """Fire-and-forget wake-up call for ANY newly-committed message, from
     ANY insert site (see db.insert_message - the only caller). Safe to call
@@ -252,6 +260,13 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
     # client's chat fetch reads current labels straight off the message rows,
     # exactly as it seeds guest-job state from its snapshot endpoint.
     label_cursor = db.now()
+    # Room-mode roster/flag changes (#28 phase 2) ride the same stream, each
+    # table on its OWN connect-time cursor (one shared cursor could advance
+    # past an unseen row in the other table when the two queries race a
+    # write); a (re)connecting client seeds from GET /api/chats/{id}/roster,
+    # exactly as guest jobs seed from theirs.
+    roster_cursor = db.now()
+    flag_cursor = db.now()
     # `not _shutting_down`, not `True`: when the process is stopping, this
     # generator has to END, or uvicorn's connection drain waits on it forever
     # (begin_shutdown() above has the full story). Checked at the top of
@@ -264,6 +279,8 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
             rows = db.get_messages_after(con, last)
             jobs = db.get_guest_jobs_after(con, job_cursor)
             label_rows = db.get_label_updates_after(con, label_cursor)
+            roster_rows, flag_rows = db.get_room_updates_after(
+                con, roster_cursor, flag_cursor)
         finally:
             con.close()
         for r in rows:
@@ -278,6 +295,21 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
             # the row, the stream still never carries content.
             label_cursor = max(label_cursor, u["labels_updated_at"])
             yield _sse({"type": "message_update", "chat_id": u["chat_id"], "id": u["id"]})
+        for r in roster_rows:
+            # Roster changed (someone introduced/left, or an anchor attached).
+            # chat_id only - the client refetches the roster snapshot; the
+            # stream never carries names, matching its content-free posture.
+            roster_cursor = max(roster_cursor, r["updated_at"])
+            yield _sse({"type": "room_roster", "chat_id": r["chat_id"]})
+        for f in flag_rows:
+            # An attribution doubt opened or closed. ids + kind only - the
+            # copy ("someone new is speaking - who?") is the client's; the
+            # names live in the snapshot the client refetches.
+            flag_cursor = max(flag_cursor, f["updated_at"])
+            yield _sse({"type": "room_flag", "chat_id": f["chat_id"],
+                        "id": f["id"], "message_id": f["message_id"],
+                        "kind": f["kind"],
+                        "resolved": f["resolved_at"] is not None})
         if _generation != gen:
             # A notify() landed while (or just after) we queried - see THE
             # LOST-WAKEUP INVARIANT above. That read is stale by definition;

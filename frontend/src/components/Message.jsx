@@ -5,7 +5,8 @@ import { Copy, Check, FileText, Search, Globe, MessagesSquare, Wrench, AlertTria
   ArrowUp, ArrowDown, Loader2, ChevronRight } from 'lucide-react'
 import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
-import { chipsForMessage, CHIP_EXPLAINER } from '../voiceChips'
+import { chipData, chipTitle } from '../voiceChips'
+import { flagCopy, reassignOptions } from '../roomState'
 
 // Same-speaker messages closer than this group into one visual run
 // (header suppressed, tight 4px rhythm - Discord cozy mode).
@@ -201,9 +202,12 @@ function UsageFooter({ usageJson, speaker }) {
   )
 }
 
-function Message({ msg, prev, participants }) {
+function Message({ msg, prev, participants, mismatchFlag, roomRoster,
+                   voicePeople, onReassign }) {
   const info = participantInfo(msg.speaker, participants)
   const isUser = info.isUser
+  // Tap-to-correct menu on a labelled user turn (#28 phase 2).
+  const [chipMenuOpen, setChipMenuOpen] = useState(false)
   // How many characters of this message the PREVIOUS render already showed -
   // fadeWords animates only beyond this, so re-parses can't re-flash old text.
   const seenChars = useRef(0)
@@ -263,10 +267,14 @@ function Message({ msg, prev, participants }) {
 
   /* ---- User turn: compact right-aligned bubble --------------------------- */
   if (isUser) {
-    // Room-mode voice labels (#28 phase 1), attached a second or two after
-    // the turn by the parallel diarization pass. ALL decision logic lives in
-    // voiceChips.js (pure, node --test); this only renders what it returns.
-    const voiceChips = chipsForMessage(msg)
+    // Room-mode voice labels (#28), attached a second or two after the turn
+    // by the parallel diarization pass. ALL decision logic lives in
+    // voiceChips.js / roomState.js (pure, node --test); this only renders
+    // what they return. Tapping a chip opens the correction menu.
+    const voiceChips = chipData(msg)
+    const reassignNames = onReassign
+      ? reassignOptions(roomRoster, voicePeople, voiceChips.map((c) => c.label))
+      : []
     return (
       <div className={`group flex items-center justify-end gap-2 ${gapClass}`}>
         {msg.content && (
@@ -275,15 +283,51 @@ function Message({ msg, prev, participants }) {
         <Stamp ts={msg.created_at} className="opacity-0 group-hover:opacity-100" />
         <div className="flex flex-col items-end gap-1.5 max-w-[75%] min-w-0">
           {voiceChips.length > 0 && (
-            <div className="flex flex-wrap justify-end gap-1" title={CHIP_EXPLAINER}>
-              {voiceChips.map((label) => (
-                <span
-                  key={label}
-                  className="text-[11px] px-1.5 py-0.5 rounded-full border border-edge2 bg-panel2 text-ink-dim"
+            <div className="relative flex flex-wrap justify-end gap-1">
+              {voiceChips.map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  title={chipTitle(chip)}
+                  aria-label={`Spoken by ${chip.label}${chip.uncertain ? ' (uncertain)' : ''}${reassignNames.length ? ' - tap to correct' : ''}`}
+                  className={`text-[11px] px-1.5 py-0.5 rounded-full border bg-panel2 ${
+                    chip.uncertain
+                      ? 'border-dashed border-amber-700/70 text-amber-200/90'
+                      : 'border-edge2 text-ink-dim'
+                  } ${reassignNames.length ? 'hover:text-ink cursor-pointer' : 'cursor-default'}`}
+                  onClick={() => reassignNames.length && setChipMenuOpen((o) => !o)}
                 >
-                  {label}
-                </span>
+                  {chip.label}{chip.uncertain ? '?' : ''}
+                </button>
               ))}
+              {chipMenuOpen && reassignNames.length > 0 && (
+                <div className="absolute top-full right-0 mt-1 z-10 min-w-32 bg-panel border border-edge rounded-lg p-1 flex flex-col"
+                     style={{ boxShadow: 'var(--shadow-pop)' }}>
+                  <span className="text-[10px] px-2 py-0.5 text-ink-faint">Who spoke this?</span>
+                  {reassignNames.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className="text-left text-xs px-2 py-1 rounded text-ink-mid hover:text-ink hover:bg-panel2"
+                      onClick={() => { setChipMenuOpen(false); onReassign?.(msg.id, n) }}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="text-left text-[11px] px-2 py-1 rounded text-ink-faint hover:text-ink-mid"
+                    onClick={() => setChipMenuOpen(false)}
+                  >
+                    cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {mismatchFlag && (
+            <div className="text-[11px] text-amber-300/90 text-right max-w-[46ch]">
+              {flagCopy(mismatchFlag)}
             </div>
           )}
           {msg.attachments?.length > 0 && (
@@ -410,6 +454,18 @@ function propsEqual(prev, next) {
   // participantInfo/model lookup depend on the roster; it's a stable reference
   // across message-only updates, so identity comparison is correct and cheap.
   if (prev.participants !== next.participants) return false
+
+  // Room-mode props (#28 phase 2). roomRoster/voicePeople are state
+  // references that only change when the room snapshot refetches - identity
+  // comparison is right. The mismatch flag compares by id + resolution.
+  // onReassign is deliberately NOT compared: App re-creates the handler each
+  // render, and it reads only live refs - comparing it would defeat the memo.
+  if (prev.roomRoster !== next.roomRoster) return false
+  if (prev.voicePeople !== next.voicePeople) return false
+  if ((prev.mismatchFlag?.id ?? null) !== (next.mismatchFlag?.id ?? null)
+      || (prev.mismatchFlag?.resolved_at ?? null) !== (next.mismatchFlag?.resolved_at ?? null)) {
+    return false
+  }
 
   const a = prev.msg, b = next.msg
   if (

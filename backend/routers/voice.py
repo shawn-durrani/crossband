@@ -300,9 +300,31 @@ async def stt_stream_relay(ws: WebSocket):
     up = down = None
     last_partial = ""  # freshest partial transcript - the prewarm query
     # Room-mode session state (utterance tee + label bookkeeping). Constructed
-    # unconditionally but INERT unless enabled: with the toggle off the only
-    # extra work on the audio path is one boolean check per frame.
+    # unconditionally. Phase 2 (#28): the tee itself now runs on EVERY
+    # session - a bounded local buffer append per frame, still nothing on the
+    # upstream byte path - because the spoken introduction that flips room
+    # mode on arrives BEFORE the mode is on, and the introduction utterance's
+    # own audio is the owner's first voice anchor. With the mode off the
+    # buffer is only ever stashed locally at each commit; no batch call, no
+    # task, no label - the phase-1 pins in tests/test_room_mode.py still hold.
     room = diarize.RoomSession(enabled=bool(init.get("room_mode")))
+    # Seed the server-side room-mode mirror from the chat row (one read, at
+    # session OPEN - never on the audio path). A chat whose room mode was
+    # flipped durably in an earlier session diarizes from the first utterance
+    # of this one: that is what "voices are remembered" means end to end.
+    if chat_id:
+        try:
+            def _read_room_mode():
+                con = db.connect()
+                try:
+                    row = con.execute("SELECT room_mode FROM chats WHERE id=?",
+                                      (chat_id,)).fetchone()
+                    return bool(row and row["room_mode"])
+                finally:
+                    con.close()
+            diarize.set_room_enabled(chat_id, await asyncio.to_thread(_read_room_mode))
+        except Exception:
+            log.warning("room-mode seed failed; session continues", exc_info=True)
     try:
         async with websockets.connect(
             voice.STT_WS_URL,
@@ -329,11 +351,13 @@ async def stt_stream_relay(ws: WebSocket):
                         try:
                             raw = base64.b64decode(audio)
                             seconds += len(raw) / 2 / sr
-                            if room.enabled:
-                                # The tee: a local buffer append of bytes the
-                                # metering above already decoded. Nothing here
-                                # touches the upstream payload below.
-                                room.add_audio(raw, sr)
+                            # The tee: a local buffer append of bytes the
+                            # metering above already decoded. Nothing here
+                            # touches the upstream payload below. Always on
+                            # (phase 2) so the introduction utterance itself
+                            # can seed the owner's anchor - see the RoomSession
+                            # comment above for why that is safe.
+                            room.add_audio(raw, sr)
                         except Exception:
                             pass
                     payload = {
@@ -364,17 +388,25 @@ async def stt_stream_relay(ws: WebSocket):
                         except Exception:
                             log.warning("recall prewarm failed; transcription "
                                         "continues without it", exc_info=True)
-                    if payload["commit"] and room.enabled:
+                    if payload["commit"]:
                         # Commit boundary = utterance boundary: slice the teed
-                        # audio and fire the parallel diarization pass.
-                        # create_task only - NEVER awaited here; the commit
-                        # frame below goes upstream exactly as it always has,
-                        # and a failure to even schedule must not break live
-                        # transcription (same posture as the prewarm hook).
+                        # audio. With room mode effective (the client's toggle
+                        # OR the server-side flag an introduction flipped -
+                        # diarize.room_enabled is a dict lookup, no I/O), fire
+                        # the parallel diarization pass; otherwise stash the
+                        # utterance locally so a confirmed introduction can
+                        # claim it as the owner's anchor. create_task only -
+                        # NEVER awaited here; the commit frame below goes
+                        # upstream exactly as it always has, and a failure to
+                        # even schedule must not break live transcription
+                        # (same posture as the prewarm hook).
                         try:
                             pcm, pcm_sr = room.take_utterance()
-                            diarize.schedule_pass(chat_id, pcm, pcm_sr,
-                                                  db.now(), room, cfg)
+                            if room.enabled or diarize.room_enabled(chat_id):
+                                diarize.schedule_pass(chat_id, pcm, pcm_sr,
+                                                      db.now(), room, cfg)
+                            else:
+                                diarize.stash_utterance(chat_id, pcm, pcm_sr)
                         except Exception:
                             log.warning("diarize scheduling failed; live "
                                         "transcription continues", exc_info=True)

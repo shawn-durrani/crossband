@@ -15,6 +15,7 @@ import Message from './Message'
 // effect, all of which are app state rather than presentation.
 export default function ThreadView({
   messages, participants, chatParticipants, examplePrompts,
+  mismatchFlags = {}, roomRoster = [], voicePeople = [], onReassign,
   streaming, roundProgress, canContinue, contRounds,
   atBottom, newCount, scrollRef,
   onScroll, onJumpToBottom, onContinue, onContRoundsChange, onPickPrompt,
@@ -73,7 +74,16 @@ export default function ThreadView({
             </div>
           )}
           {messages.map((m, i) => (
-            <Message key={m.id} msg={m} prev={messages[i - 1]} participants={participants} />
+            <Message
+              key={m.id}
+              msg={m}
+              prev={messages[i - 1]}
+              participants={participants}
+              mismatchFlag={mismatchFlags[m.id]}
+              roomRoster={roomRoster}
+              voicePeople={voicePeople}
+              onReassign={onReassign}
+            />
           ))}
           {streaming && roundProgress && (
             <div className="flex justify-center pt-6">

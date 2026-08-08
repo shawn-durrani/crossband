@@ -24,6 +24,8 @@ import { contextGauge } from './headerView'
 import { useEventStream } from './hooks/useEventStream'
 import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
+import { askFlag, flagCopy, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
+import { mergeMessagesById } from './eventStream'
 import GuestStatusChip from './components/GuestStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
 
@@ -95,6 +97,11 @@ export default function App() {
   // roughly doubles voice spend while on, so every session starts off and the
   // choice is made knowingly each time (startVoice resets it).
   const [roomMode, setRoomMode] = useState(false)
+  // Room-mode roster/flags snapshot for the OPEN chat (#28 phase 2), plus
+  // the remembered-voices list the correction menu offers. Seeded on chat
+  // open, refetched on every content-free room_roster/room_flag live event.
+  const [roomInfo, setRoomInfo] = useState(null)
+  const [voicePeople, setVoicePeople] = useState([])
   const [contRounds, setContRounds] = useState(1)
   const [atBottom, setAtBottom] = useState(true)
   const [newCount, setNewCount] = useState(0) // messages arrived while scrolled up
@@ -184,8 +191,60 @@ export default function App() {
     onUnread: setUnreadChats,
     onVoiceAttach: voiceAttachRound,
     onError: setBanner,
+    onRoomEvent: (chatId) => refreshRoom(chatId),
   })
   drainRef.current = drainPendingLiveEvents
+
+  // Refetch the room snapshot (roster + open flags) and the remembered
+  // voices. Best-effort with the same cross-chat write-guard as every other
+  // async fetch: a late response must not paint another chat's roster.
+  function refreshRoom(chatId) {
+    if (!chatId) return
+    api.roster(chatId).then((r) => {
+      if (chatId === activeChatIdRef.current) setRoomInfo(r)
+    }).catch(() => {})
+    api.voicePeople().then((d) => setVoicePeople(d.people || [])).catch(() => {})
+  }
+
+  // Tap-to-correct on a labelled turn: reassign, then let the row's
+  // message_update event re-render it; refresh the room snapshot for the
+  // resolved flags and any roster change.
+  async function reassignSpeaker(messageId, name) {
+    const chatId = activeChatIdRef.current
+    if (!chatId) return
+    try {
+      await api.reassignSpeaker(chatId, messageId, name)
+      const d = await api.messagesAfter(chatId, messageId - 1)
+      if (chatId === activeChatIdRef.current && d.messages.length) {
+        setMessages((m) => mergeMessagesById(m, d.messages))
+      }
+      refreshRoom(chatId)
+    } catch (e) {
+      setBanner(`Could not reassign the turn: ${e.message}`)
+    }
+  }
+
+  async function dismissRoomFlag(flagId) {
+    const chatId = activeChatIdRef.current
+    if (!chatId) return
+    try {
+      await api.resolveRoomFlag(chatId, flagId)
+      refreshRoom(chatId)
+    } catch { /* the next live event re-syncs */ }
+  }
+
+  // Durable room-mode OFF (the explicit override on the roster chip): the
+  // server flag AND this session's client toggle both drop.
+  async function roomModeOff() {
+    if (!activeChat) return
+    try {
+      mergeChat(await api.updateChat(activeChat.id, { room_mode: false }))
+      changeRoomMode(false)
+      refreshRoom(activeChat.id)
+    } catch (e) {
+      setBanner(`Could not switch room mode off: ${e.message}`)
+    }
+  }
 
   // First run: no model key works yet → open the guided setup automatically
   // (once per load; it stays reachable from the sidebar footer any time).
@@ -381,6 +440,10 @@ export default function App() {
     api.guestJobs(id).then((d) => {
       if (id === activeChatIdRef.current) setGuestJobs(d.guest_jobs || [])
     }).catch(() => {})
+    // Seed the room-mode snapshot the same way; live room_roster/room_flag
+    // events then keep it fresh.
+    setRoomInfo(null)
+    refreshRoom(id)
   }
 
   async function newChat(projectId) {
@@ -392,6 +455,7 @@ export default function App() {
     setActiveChat(chat)
     setMessages([])
     setGuestJobs([])
+    setRoomInfo(null)
     restoreBatchFor(chat.id)
   }
 
@@ -505,6 +569,12 @@ export default function App() {
   const chatTotal = chatCostTotals(messages)
   // The bar above the composer; the header ring reads the same gauge.
   const composerGauge = contextGauge(activeChat?.context)
+
+  // Room mode (#28 phase 2) derivations - all decision logic in roomState.js.
+  const rosterText = rosterChipText(roomInfo?.roster)
+  const rosterHint = rosterTitle(roomInfo?.roster)
+  const openAsk = askFlag(roomInfo?.flags)
+  const mismatchFlags = mismatchByMessage(roomInfo?.flags)
 
   // Running-task badge: whether this chat has a round/agent working. It
   // keeps going if you switch away, so the badge is per-chat, not per-view.
@@ -648,6 +718,10 @@ export default function App() {
               messages={messages}
               participants={state.participants}
               chatParticipants={chatParticipants}
+              mismatchFlags={mismatchFlags}
+              roomRoster={roomInfo?.roster || []}
+              voicePeople={voicePeople}
+              onReassign={reassignSpeaker}
               examplePrompts={EXAMPLE_PROMPTS}
               streaming={streaming}
               roundProgress={roundProgress}
@@ -669,6 +743,9 @@ export default function App() {
                 voiceRate={voiceRate}
                 dockOpen={voiceDockOpen}
                 roomMode={roomMode}
+                rosterText={rosterText}
+                rosterHint={rosterHint}
+                onRoomModeOff={roomModeOff}
                 onPttModeChange={setPttMode}
                 onSilenceSecsChange={setSilenceSecs}
                 onVoiceRateChange={setVoiceRate}
@@ -700,9 +777,27 @@ export default function App() {
                 real air - aligned to the thread column, never touching the
                 composer. A floating version was tried first and rejected live:
                 it sat on top of the "Let them continue" controls. */}
-            {(hasVisibleJob(guestJobs, Date.now() / 1000) || pendingCount(activeBatch) > 0) && (
+            {(hasVisibleJob(guestJobs, Date.now() / 1000) || pendingCount(activeBatch) > 0
+              || openAsk) && (
               <div className="shrink-0 px-3 sm:px-4 py-2 space-y-2">
                 <GuestStatusChip jobs={guestJobs} />
+                {/* The ask-fallback (#28 phase 2): a voice matched nobody in
+                    the room. Answerable in chat - saying or typing the name IS
+                    the answer - so this strip only explains and can dismiss. */}
+                {openAsk && (
+                  <div className="mx-auto w-full max-w-[768px] flex items-center gap-2 text-xs bg-panel2 border border-edge2 rounded-lg px-3 py-1.5">
+                    <span className="inline-flex h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse shrink-0" aria-hidden="true" />
+                    <span className="text-ink-mid flex-1 min-w-0">{flagCopy(openAsk)}</span>
+                    <button
+                      className="inline-flex items-center gap-1 text-ink-dim hover:text-ink shrink-0"
+                      title="Dismiss - the voice stays unnamed"
+                      aria-label="Dismiss the unknown-voice question"
+                      onClick={() => dismissRoomFlag(openAsk.id)}
+                    >
+                      <X size={12} /> Dismiss
+                    </button>
+                  </div>
+                )}
                 {pendingCount(activeBatch) > 0 && (
                   <div className="mx-auto w-full max-w-[768px] flex items-center gap-2 text-xs bg-panel2 border border-edge2 rounded-lg px-3 py-1.5">
                     <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" aria-hidden="true" />
@@ -779,6 +874,9 @@ export default function App() {
           voice={voiceRef.current}
           roomMode={roomMode}
           onRoomModeChange={changeRoomMode}
+          rosterText={rosterText}
+          rosterHint={rosterHint}
+          askText={openAsk ? flagCopy(openAsk) : null}
         />
       )}
       {projectModal !== null && (

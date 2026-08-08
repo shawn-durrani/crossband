@@ -1,14 +1,17 @@
 import asyncio
 import datetime as datetime_module
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from .. import accounting, context_weight, db, engine, rounds
+from .. import accounting, context_weight, db, diarize, engine, introductions, rounds
 
 router = APIRouter(tags=["chats"])
+
+log = logging.getLogger("crossband.chats")
 
 
 class ChatIn(BaseModel):
@@ -18,6 +21,10 @@ class ChatIn(BaseModel):
     web_enabled: bool | None = None
     memory_enabled: bool | None = None
     code_enabled: bool | None = None  # summon_claude_code guest (opt-in)
+    room_mode: bool | None = None  # multi-human room mode (#28 phase 2): the
+                                   # explicit override - off, or on without an
+                                   # introduction; introductions flip it on
+                                   # server-side themselves
     archived: bool | None = None  # hide from the sidebar; nothing is deleted
     participant_ids: list[int] | None = None
 
@@ -141,6 +148,8 @@ def update_chat(chat_id: int, body: ChatIn):
         updates["memory_enabled"] = int(body.memory_enabled)
     if body.code_enabled is not None:
         updates["code_enabled"] = int(body.code_enabled)
+    if body.room_mode is not None:
+        updates["room_mode"] = int(body.room_mode)
     if body.archived is not None:
         updates["archived_at"] = db.now() if body.archived else None
     if updates:
@@ -155,6 +164,11 @@ def update_chat(chat_id: int, body: ChatIn):
             con.execute("INSERT OR IGNORE INTO chat_participants(chat_id, participant_id) VALUES(?,?)",
                         (chat_id, pid))
     con.commit()
+    if body.room_mode is not None:
+        # Mirror AFTER the durable write committed: the STT relay reads this
+        # dict at commit boundaries (no I/O on the audio path), and the DB
+        # row above is what re-seeds it on restart or session open.
+        diarize.set_room_enabled(chat_id, bool(body.room_mode))
     chat = _chat_payload(con, chat_id)
     con.close()
     return chat
@@ -252,6 +266,19 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
             yield engine.sse({"type": "user_saved", "message": user_msg})
             yield engine.sse({"type": "done"})
         return StreamingResponse(slash_gen(), media_type="text/event-stream")
+
+    # Introduction detection (#28 phase 2): a cheap lexical prefilter decides
+    # whether this turn is worth one utility-model confirmation; a hit runs as
+    # a fire-and-forget task AFTER the user message is durable. schedule_scan
+    # returns immediately and NOTHING below awaits it - the round dispatches
+    # exactly as if this line did not exist, and a failure to even schedule
+    # must not break the send.
+    try:
+        introductions.schedule_scan(chat_id, user_msg["id"], body.text,
+                                    request.app.state.settings.as_cfg())
+    except Exception:
+        log.warning("introduction scan scheduling failed; send continues",
+                    exc_info=True)
 
     responders, next_first = engine.pick_responders(body.text, dict(chat), roster)
     settings = request.app.state.settings

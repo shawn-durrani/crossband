@@ -4,6 +4,24 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode, phase 2 (#28): voices get names, and the introduction is
+  the trigger. Saying "my wife Alex is here" (no toggle needed) flips
+  room mode on for the chat, adds Alex to the roster, and starts
+  learning her voice; "Alex has left" removes her. Voices are
+  remembered: a few seconds of each person's clear speech is stored on
+  this computer (owner-only files, deletable from Models -> Remembered
+  voices with a Forget button that deletes the audio), so a known
+  person is recognised in later sessions with no introduction. Turns
+  are labelled with names; below the learning bar a label stays marked
+  uncertain, an unrecognised voice raises a "someone new is speaking -
+  who?" prompt you answer by just saying the name, and a background
+  cross-check can flag a turn whose content reads like someone else -
+  it never changes the label; tap the name on a turn to correct it
+  (which also teaches the right voice). An "In the room" chip shows who
+  the app is telling apart, which is also the cue that multi-voice
+  processing (double transcription spend) is on. The live conversation
+  still waits on none of this. Roster size is capped (default 6,
+  `CROSSBAND_ROOM_ROSTER_MAX`).
 - Room mode, phase 1 (#28): a per-session toggle in the voice controls
   for when more than one person is in the room. While on, each spoken
   turn also goes through a second, diarising transcription pass in the

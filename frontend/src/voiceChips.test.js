@@ -8,7 +8,9 @@
 // backend's session assignment follows.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assignVoiceOrdinals, chipsForMessage, CHIP_EXPLAINER } from './voiceChips.js'
+import {
+  assignVoiceOrdinals, chipData, chipsForMessage, chipTitle, CHIP_EXPLAINER,
+} from './voiceChips.js'
 
 const labelled = (labels, clusters = ['s0', 's1'], speaker = 'user') => ({
   id: 1, speaker, content: 'hi',
@@ -78,4 +80,54 @@ test('ordinal assignment skips junk cluster ids', () => {
 test('the explainer is plain English and honest about best-effort', () => {
   assert.match(CHIP_EXPLAINER, /Best effort/)
   assert.match(CHIP_EXPLAINER, /not named yet/)
+})
+
+// ── phase 2 (#28): named chips with per-label uncertainty ──────────────────
+
+const named = (labels, uncertain = [], extra = {}) => ({
+  id: 1, speaker: 'user', content: 'hi',
+  voice_labels: JSON.stringify({ clusters: ['s0'], labels, uncertain, ...extra }),
+})
+
+test('chipData carries per-label uncertainty from the phase-2 payload', () => {
+  assert.deepEqual(chipData(named(['Shawn'], [])), [
+    { label: 'Shawn', uncertain: false, corrected: false }])
+  assert.deepEqual(chipData(named(['Alex'], ['Alex'])), [
+    { label: 'Alex', uncertain: true, corrected: false }])
+})
+
+test('chipData marks a corrected turn', () => {
+  assert.deepEqual(chipData(named(['Alex'], [], { corrected: true })), [
+    { label: 'Alex', uncertain: false, corrected: true }])
+})
+
+test('chipData on a phase-1 payload degrades to certain ordinals', () => {
+  const msg = { id: 1, speaker: 'user',
+    voice_labels: JSON.stringify({ clusters: ['a', 'b'],
+                                   labels: ['Voice 1', 'Voice 2'] }) }
+  assert.deepEqual(chipData(msg).map((c) => [c.label, c.uncertain]),
+    [['Voice 1', false], ['Voice 2', false]])
+})
+
+test('chipData is as defensive as chipsForMessage', () => {
+  assert.deepEqual(chipData({ speaker: 'user', voice_labels: 'junk' }), [])
+  assert.deepEqual(chipData({ speaker: 'claude',
+    voice_labels: JSON.stringify({ labels: ['Shawn'] }) }), [])
+  assert.deepEqual(chipData(null), [])
+  // junk uncertain entries are ignored, not crashed on
+  assert.deepEqual(chipData(named(['Shawn'], [42, null])), [
+    { label: 'Shawn', uncertain: false, corrected: false }])
+})
+
+test('chip titles state trust plainly, per state', () => {
+  assert.match(chipTitle({ label: 'Shawn', uncertain: false, corrected: false }),
+    /Matched to Shawn's remembered voice/)
+  assert.match(chipTitle({ label: 'Alex', uncertain: true, corrected: false }),
+    /still being learned/)
+  assert.match(chipTitle({ label: 'Alex', uncertain: false, corrected: true }),
+    /Corrected by you/)
+  // a bare ordinal keeps the phase-1 explainer
+  assert.equal(chipTitle({ label: 'Voice 2', uncertain: false, corrected: false }),
+    CHIP_EXPLAINER)
+  assert.equal(chipTitle(null), '')
 })
