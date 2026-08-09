@@ -114,7 +114,7 @@ _DEPART_RE = re.compile("|".join(_DEPART_PATTERNS), re.IGNORECASE)
 # whether the turn is command-shaped, one cheap utility call confirms it is
 # a command (not talk ABOUT the mode) and reads the direction, and a
 # confirmed command flips the chat's durable room mode through exactly the
-# control plumbing the introduction, sniff and PATCH paths already share.
+# control plumbing the introduction, ambient-arm and PATCH paths share.
 # Typed and spoken turns take the identical path - both arrive via /send.
 #
 # The arm/disarm split below is about SHAPES, not direction: "room mode
@@ -1094,6 +1094,9 @@ def _seed_owner_anchor(chat_id, cfg):
     pid = store.ensure_person(owner)
     if store.add_clip(pid, pcm, sample_rate, source="introduction"):
         log.info("owner anchor seeded from introduction: chat=%s", chat_id)
+        # Every bank change re-runs the pairwise hygiene audit (#28 PR-B).
+        from . import voiceid
+        voiceid.audit_banks_if_changed(cfg)
     con = db.connect()
     try:
         # The owner rides the roster too - the "In the room" chip should show

@@ -16,6 +16,7 @@ export default function RememberedVoices() {
   const [open, setOpen] = useState(false)
   const [people, setPeople] = useState(null)     // null = not loaded yet
   const [sufficientSecs, setSufficientSecs] = useState(6)
+  const [minShortClips, setMinShortClips] = useState(0)
   const [error, setError] = useState(null)
   const [confirming, setConfirming] = useState(null)  // person_id pending confirm
   const [editing, setEditing] = useState(null)        // person_id being renamed
@@ -30,6 +31,7 @@ export default function RememberedVoices() {
       const d = await api.voicePeople()
       setPeople(d.people || [])
       setSufficientSecs(d.sufficient_seconds || 6)
+      setMinShortClips(d.min_short_clips || 0)
       setError(null)
     } catch (e) {
       setError(`Could not load remembered voices: ${e.message}`)
@@ -128,11 +130,11 @@ export default function RememberedVoices() {
             </p>
           )}
           {(people || []).map((p) => {
-            const s = personSummary(p, sufficientSecs)
+            const s = personSummary(p, sufficientSecs, minShortClips)
             // Learning progress (#28 phase 4): a still-learning voice shows
             // how far toward the bar it is, so patience is an informed
             // choice. Derivation lives in roomState.js (pure, node --test).
-            const prog = sufficiencyProgress(p, sufficientSecs)
+            const prog = sufficiencyProgress(p, sufficientSecs, minShortClips)
             return (
               <div key={p.person_id}
                    className="flex items-start gap-2 border border-edge2 rounded-lg px-3 py-2">
@@ -177,6 +179,11 @@ export default function RememberedVoices() {
                     </div>
                   )}
                   <div className="text-xs text-ink-dim mt-0.5">{s.status}</div>
+                  {/* The hygiene guard's surfacing (#28 PR-B): clips set
+                      aside because they matched another voice better. */}
+                  {s.setAside && (
+                    <div className="text-[11px] text-amber-300/90 mt-0.5">{s.setAside}</div>
+                  )}
                   {prog && !prog.done && (
                     <div
                       className="mt-1 h-1 w-40 rounded-full bg-panel2 overflow-hidden"

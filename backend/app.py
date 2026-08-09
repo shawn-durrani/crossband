@@ -167,6 +167,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  mirror_dir=settings.backup_mirror_dir,
                  mirror_keep=settings.backup_mirror_keep)
     db.init(settings)
+    # The anchor sufficiency knobs (#28 PR-B): applied once here so the
+    # store's pure rules read the operator's bar without threading cfg
+    # through every call site.
+    from . import anchors as _anchors
+    _anchors.configure_sufficiency(settings.voice_id_sufficient_seconds,
+                                   settings.voice_id_min_short_clips)
     # Stamp the voice-trace measurement epoch at deploy time, so the
     # diagnostic's exclusion boundary is "when this build first ran", not
     # "when someone first asked".

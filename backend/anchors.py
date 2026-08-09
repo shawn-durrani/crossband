@@ -52,12 +52,44 @@ INDEX_NAME = "index.json"
 MIN_CLIP_SECONDS = 1.0     # shorter than this carries too little voice to help
 MAX_CLIP_SECONDS = 10.0    # longer clips are trimmed to their first 10s
 MIN_CLIP_RMS = 120         # int16 RMS floor - near-silence is not an anchor
-KEEP_CLIPS = 5             # best N clips per person, by quality score
+# Clip LENGTH CLASSES (#28 PR-B, eighth field test): the banks were built
+# from long utterances only, so a second-long interjection had nothing like
+# itself to match against and stayed perpetually below threshold. Clips at or
+# under SHORT_CLIP_MAX_SECONDS are the "short" class; keep-best-N applies PER
+# CLASS (a short clip's quality score is inherently lower - seconds times
+# loudness - so a single shared pool would always evict every short clip),
+# and sufficiency requires BOTH the seconds bar AND a minimum number of short
+# clips, so short utterances become identifiable rather than unmatchable.
+SHORT_CLIP_MAX_SECONDS = 2.0
+KEEP_CLIPS = 5             # best N LONG clips per person, by quality score
+KEEP_SHORT_CLIPS = 3       # best N SHORT clips per person, kept separately
+MIN_SHORT_CLIPS = 2        # short clips needed for sufficiency (configurable)
 SUFFICIENT_SECONDS = 6.0   # accepted seconds needed before identification is trusted
 PREFIX_PERSON_SECONDS = 2.5  # roughly how much of each person rides the prefix
 ENROLL_CLIPS = 3           # best N clips averaged into a local voice-id embedding (#28 part 2)
 MAX_PREFERRED_CHARS = 40   # display-name bound, matching the roster's
 PREFIX_CACHE_MAX = 8       # built-prefix snapshots kept per store (#28)
+# Quarantined clips (#28 PR-B, the hygiene guard): clips the pairwise audit
+# set aside are KEPT ON DISK but excluded from matching. Bounded per person;
+# past the cap the oldest set-aside clip is deleted for real.
+QUARANTINE_MAX = 8
+
+
+def configure_sufficiency(sufficient_seconds=None, min_short_clips=None):
+    """Apply the operator's sufficiency knobs (#28 PR-B; settings
+    voice_id_sufficient_seconds / voice_id_min_short_clips). Called once at
+    app creation; None or invalid values keep the current defaults."""
+    global SUFFICIENT_SECONDS, MIN_SHORT_CLIPS
+    try:
+        if sufficient_seconds is not None and float(sufficient_seconds) > 0:
+            SUFFICIENT_SECONDS = float(sufficient_seconds)
+    except (TypeError, ValueError):
+        pass
+    try:
+        if min_short_clips is not None and int(min_short_clips) >= 0:
+            MIN_SHORT_CLIPS = int(min_short_clips)
+    except (TypeError, ValueError):
+        pass
 
 # Recent-utterance audio cache for tap-to-correct: message_id -> utterance
 # audio, IN MEMORY ONLY, bounded. A correction made while the session is warm
@@ -101,17 +133,43 @@ def accepts_clip(quality: dict) -> bool:
             and quality["rms"] >= MIN_CLIP_RMS)
 
 
+def is_short(clip: dict) -> bool:
+    """Does a clip fall in the SHORT length class (#28 PR-B)?"""
+    return clip["seconds"] <= SHORT_CLIP_MAX_SECONDS
+
+
+def active_clips(clips: list) -> list:
+    """The clips that actually take part in matching: everything the hygiene
+    guard (#28 PR-B) has not set aside. Every gate - sufficiency, the prefix,
+    enrolment, the UI's seconds - counts these and only these."""
+    return [c for c in clips or [] if not c.get("quarantined")]
+
+
 def select_keep(clips: list) -> list:
-    """Keep the best KEEP_CLIPS by score (ties: newest wins) - the refresh
-    policy that lets better speech displace an early mediocre clip."""
+    """Keep the best clips by score (ties: newest wins) - the refresh policy
+    that lets better speech displace an early mediocre clip. Applied PER
+    LENGTH CLASS (#28 PR-B): the best KEEP_CLIPS long clips AND the best
+    KEEP_SHORT_CLIPS short ones, because scores scale with seconds and a
+    single shared pool starved the short class that interjection matching
+    needs. Callers pass ACTIVE clips; quarantined clips are not ranked here
+    (they are set aside, not competing)."""
     ranked = sorted(clips, key=lambda c: (c["score"], c.get("added_at", 0)),
                     reverse=True)
-    return ranked[:KEEP_CLIPS]
+    longs = [c for c in ranked if not is_short(c)][:KEEP_CLIPS]
+    shorts = [c for c in ranked if is_short(c)][:KEEP_SHORT_CLIPS]
+    return [c for c in ranked if c in longs or c in shorts]
 
 
 def is_sufficient(clips: list) -> bool:
-    """The hard requirement: enough accepted audio to trust identification."""
-    return sum(c["seconds"] for c in clips) >= SUFFICIENT_SECONDS
+    """The hard requirement: enough accepted audio to trust identification.
+    Two-part since #28 PR-B (eighth field test): the seconds bar AND at
+    least MIN_SHORT_CLIPS short clips, so a person is only 'sufficient' once
+    second-long interjections have something like themselves to match.
+    Quarantined clips count for neither part."""
+    live = active_clips(clips)
+    if sum(c["seconds"] for c in live) < SUFFICIENT_SECONDS:
+        return False
+    return sum(1 for c in live if is_short(c)) >= MIN_SHORT_CLIPS
 
 
 def trim_clip(pcm: bytes, sample_rate: int) -> bytes:
@@ -217,10 +275,16 @@ class AnchorStore:
         counts and seconds only."""
         with self._lock:
             data = self._load()
+        close = {}
+        for pair in data.get("close_pairs") or []:
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+                close.setdefault(pair[0], []).append(pair[1])
+                close.setdefault(pair[1], []).append(pair[0])
         out = []
         for pid, p in sorted(data["people"].items(),
                              key=lambda kv: kv[1].get("created_at", 0)):
-            clips = p.get("clips", [])
+            all_clips = p.get("clips", [])
+            clips = active_clips(all_clips)
             name = p.get("name", pid)
             out.append({
                 "person_id": pid,
@@ -241,7 +305,16 @@ class AnchorStore:
                 "created_at": p.get("created_at", 0),
                 "clip_count": len(clips),
                 "seconds": round(sum(c["seconds"] for c in clips), 1),
-                "sufficient": is_sufficient(clips),
+                # Short-clip progress (#28 PR-B): the second half of the
+                # two-part sufficiency bar, so the UI can say honestly which
+                # part is still missing.
+                "short_clips": sum(1 for c in clips if is_short(c)),
+                # Hygiene guard surfacing (#28 PR-B): clips the pairwise
+                # audit set aside (kept on disk, excluded from matching),
+                # and which other people this person's voice sits close to.
+                "quarantined_count": len(all_clips) - len(clips),
+                "close_to": list(close.get(pid, [])),
+                "sufficient": is_sufficient(all_clips),
             })
         return out
 
@@ -329,8 +402,16 @@ class AnchorStore:
             survivor = data["people"][survivor_id]
             gone = data["people"].pop(gone_id)
             merged = list(survivor.get("clips", [])) + list(gone.get("clips", []))
-            kept = select_keep(merged)
+            # Quarantined clips ride along set-aside (#28 PR-B): the merged
+            # bank is new evidence, so the next hygiene audit re-judges them.
+            quarantined = [c for c in merged
+                           if c.get("quarantined")][:QUARANTINE_MAX]
+            kept = select_keep(active_clips(merged)) + quarantined
             survivor["clips"] = kept
+            # close-pair records naming the forgotten id are stale
+            data["close_pairs"] = [
+                p for p in (data.get("close_pairs") or [])
+                if gone_id not in p[:2]]
             names = list(survivor.get("merged_names") or [])
             for extra in [gone.get("name", gone_id)] + list(
                     gone.get("merged_names") or []):
@@ -370,10 +451,15 @@ class AnchorStore:
                           "rms": q["rms"], "score": q["score"],
                           "sample_rate": sample_rate, "source": source,
                           "added_at": time.time()})
-            kept = select_keep(clips)
-            person["clips"] = kept
+            # Keep-best-N ranks ACTIVE clips only (#28 PR-B): quarantined
+            # clips are set aside, not competing, and the keep policy may
+            # neither evict them nor be crowded out by them.
+            quarantined = [c for c in clips if c.get("quarantined")]
+            kept = select_keep(active_clips(clips))
+            person["clips"] = kept + quarantined
             self._save(data)
-            kept_files = {c["file"] for c in kept}
+            kept_files = {c["file"] for c in kept} | {c["file"]
+                                                      for c in quarantined}
             for c in clips:
                 if c["file"] not in kept_files:
                     self._delete_file(c["file"])
@@ -388,6 +474,8 @@ class AnchorStore:
             person = data["people"].pop(person_id, None)
             if person is None:
                 return False
+            data["close_pairs"] = [p for p in (data.get("close_pairs") or [])
+                                   if person_id not in p[:2]]
             self._save(data)
             for c in person.get("clips", []):
                 self._delete_file(c["file"])
@@ -436,7 +524,10 @@ class AnchorStore:
             person = data["people"].get(pid)
             if not person:
                 continue
-            clips = [c for c in person.get("clips", [])
+            # Quarantined clips never ride the prefix (#28 PR-B): a clip the
+            # hygiene audit judged closer to someone else's voice would seed
+            # exactly the cross-matching it was set aside to prevent.
+            clips = [c for c in active_clips(person.get("clips", []))
                      if c.get("sample_rate") == sample_rate]
             if not is_sufficient(clips):
                 continue
@@ -501,12 +592,22 @@ class AnchorStore:
             person = data["people"].get(pid)
             if not person:
                 continue
-            clips = [c for c in person.get("clips", [])
+            # Quarantined clips are excluded from enrolment too (#28 PR-B) -
+            # they are the contamination the hygiene audit found.
+            clips = [c for c in active_clips(person.get("clips", []))
                      if c.get("sample_rate") == sample_rate]
             if not is_sufficient(clips):
                 continue
             take = sorted(clips, key=lambda c: c["score"],
                           reverse=True)[:max_clips]
+            # A short clip joins the enrolment mix when one exists (#28
+            # PR-B): the averaged embedding then carries what a one-second
+            # interjection actually sounds like, not only long-form speech.
+            if not any(is_short(c) for c in take):
+                shorts = sorted((c for c in clips if is_short(c)),
+                                key=lambda c: c["score"], reverse=True)
+                if shorts:
+                    take = take[:max_clips - 1] + [shorts[0]]
             pcms, files = [], []
             for c in take:
                 try:
@@ -518,6 +619,84 @@ class AnchorStore:
                 out[pid] = {"name": person.get("name", pid),
                             "fingerprint": tuple(files), "pcms": pcms}
         return out
+
+    # -- the pairwise hygiene guard's storage (#28 PR-B) --
+    #
+    # The AUDIT itself lives in voiceid.py (it needs the embedding model);
+    # this store only holds its verdicts: a per-clip `quarantined` flag
+    # (set-aside clips stay on disk but take part in nothing) and the
+    # store-level `close_pairs` list of enrolled voices whose centroids sit
+    # suspiciously close (the matcher widens its margin for those pairs).
+
+    def bank_clips(self, sample_rate: int) -> dict:
+        """EVERY clip per person for the hygiene audit - quarantined ones
+        included, so a clip set aside under an old bank shape can be
+        reinstated when the evidence changes. {pid: {"name",
+        "clips": [(fname, pcm), ...]}}; unreadable files are skipped."""
+        with self._lock:
+            data = self._load()
+        out = {}
+        for pid, person in data["people"].items():
+            clips = []
+            for c in person.get("clips", []):
+                if c.get("sample_rate") != sample_rate:
+                    continue
+                try:
+                    clips.append((c["file"], self._read_clip_pcm(c["file"])))
+                except OSError:
+                    log.warning("anchor clip unreadable: %s", c["file"])
+            if clips:
+                out[pid] = {"name": person.get("name", pid), "clips": clips}
+        return out
+
+    def clip_fingerprint(self):
+        """Change detector for the audit: the full clip-file sets, per
+        person, sorted. Quarantine flags do NOT enter it - the audit WRITES
+        those, and a fingerprint that moved on every audit would re-audit
+        forever."""
+        with self._lock:
+            data = self._load()
+        return tuple(sorted(
+            (pid, tuple(sorted(c["file"] for c in p.get("clips", []))))
+            for pid, p in data["people"].items()))
+
+    def set_hygiene(self, quarantine: dict, close_pairs: list):
+        """Persist one audit's verdicts. `quarantine`: {pid: iterable of
+        clip filenames to set aside} - every clip not named is reinstated,
+        so the audit's output IS the quarantine state. `close_pairs`:
+        [(pid_a, pid_b, cosine), ...]. Set-aside clips past QUARANTINE_MAX
+        per person are deleted for real (oldest first) - set aside is not a
+        licence to hoard audio."""
+        quarantine = {pid: set(files or ()) for pid, files
+                      in (quarantine or {}).items()}
+        with self._lock:
+            data = self._load()
+            for pid, person in data["people"].items():
+                bad = quarantine.get(pid, set())
+                kept, evict = [], []
+                for c in person.get("clips", []):
+                    c["quarantined"] = c["file"] in bad
+                    kept.append(c)
+                q = [c for c in kept if c["quarantined"]]
+                if len(q) > QUARANTINE_MAX:
+                    q.sort(key=lambda c: c.get("added_at", 0))
+                    evict = q[:len(q) - QUARANTINE_MAX]
+                    gone = {c["file"] for c in evict}
+                    kept = [c for c in kept if c["file"] not in gone]
+                person["clips"] = kept
+                for c in evict:
+                    self._delete_file(c["file"])
+            data["close_pairs"] = [
+                [a, b, round(float(cos), 3)] for a, b, cos in close_pairs or []
+                if a in data["people"] and b in data["people"]]
+            self._save(data)
+
+    def close_pairs(self) -> list:
+        """The stored close-pair verdicts, as [(pid_a, pid_b, cosine)...]."""
+        with self._lock:
+            data = self._load()
+        return [tuple(p) for p in data.get("close_pairs") or []
+                if isinstance(p, (list, tuple)) and len(p) >= 2]
 
 
 _store: AnchorStore | None = None

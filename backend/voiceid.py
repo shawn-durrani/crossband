@@ -1,39 +1,43 @@
-"""Offline local speaker identification (#28 part 2): the FAST identity path.
+"""Offline local speaker identification (#28): THE identity path.
 
-The problem this solves, measured on the issue (night test 4): the ElevenLabs
-diarize batch call costs commit + 1.0-1.9s, but a round's first responder reads
-the transcript at commit + 0.3-0.9s - so the label loses the race and the seat
-reads the turn before its name exists. This module names a confident single
-speaker LOCALLY in roughly commit + 100-300ms (a 33-59ms embedding plus, only
-when two people could be present, a few short-window embeddings), so the label
-usually lands BEFORE the first responder and the pending-identity head (#28,
-night test 4) resolves to a real name on the current turn. It also ends room
-mode's doubled transcription cost: the batch call runs only when the local
-matcher sees more than one voice (crosstalk) or cannot decide.
+Since PR-B (#28, eighth field test) this module is not an accelerator in
+front of a cloud fallback - it is the only way a voice ever gets a name.
+The owner decision on the issue: identity is local or honestly uncertain,
+full stop. The matcher names a confident single enrolled speaker in roughly
+commit + 100-300ms (a 33-59ms embedding plus a few short-window embeddings);
+anything it cannot decide leaves the turn UNRESOLVED - the seats' honest
+"cannot determine" state - and NO ElevenLabs pass ever fires because the
+matcher deferred. The batch diarize call survives with exactly one job:
+per-word crosstalk splitting when this module's window analysis returns the
+"multi" verdict (genuinely overlapping speech), which is also room mode's
+only remaining cloud spend.
 
 THE CORE LAW, absolute: this adds ZERO latency to the live voice path. It runs
-ONLY inside diarize.py's already-never-awaited fire-and-forget pass; nothing a
-round dispatches on ever awaits it. Every embedding runs on a worker thread via
-the caller's asyncio.to_thread, exactly like the batch call it may replace.
+ONLY inside diarize.py's already-never-awaited fire-and-forget passes; nothing
+a round dispatches on ever awaits it. Every embedding runs on a worker thread
+via the caller's asyncio.to_thread.
 
-PURELY ADDITIVE, degrades to today's behaviour on any doubt. If sherpa-onnx is
-not installed, or the model has not been fetched yet, or the utterance is not a
-confident single known speaker, identify_utterance returns a DEFER verdict and
-the pass falls back to the unchanged ElevenLabs diarize path. The feature can
-never break voice: the worst case is the behaviour crossband already shipped.
+Degradation is HONEST, never wrong. If sherpa-onnx is not installed, or the
+model has not been fetched yet, identify_utterance defers and the turn simply
+stays unnamed - and automatic voice arming does not happen at all
+(introductions, spoken commands and the toggle still arm, so degraded means
+manual). A wrong name asserted by a cloud pass is structurally impossible;
+the worst case is uncertainty, stated as such.
 
 Privacy: embeddings are derived locally from the anchor clips crossband already
 stores (backend/anchors.py); nothing about a voice is sent anywhere. The model
 runs fully offline after a one-time fetch of the pinned public model file.
 
 Design map:
-  * Pure math seam (no third-party imports, no ONNX) - normalise/average/cosine
-    and the whole identify+open-set+multi-voice DECISION (classify_utterance).
-    This is what the keyless unit tests exercise with synthetic vectors, no
-    model present.
+  * Pure math seam (no third-party imports, no ONNX) - normalise/average/cosine,
+    the identify+open-set+multi-voice DECISION (classify_utterance), and the
+    pairwise hygiene rules (#28 PR-B: quarantine_verdicts /
+    close_centroid_pairs). This is what the keyless unit tests exercise with
+    synthetic vectors, no model present.
   * Impure edges (guarded) - the sherpa-onnx extractor wrapper, the pinned
-    model fetch-and-verify, and the enrolment cache. All degrade to "matcher
-    unavailable" rather than raising into the pass.
+    model fetch-and-verify, the enrolment cache, and the bank audit
+    (audit_banks). All degrade to "matcher unavailable" / no-op rather than
+    raising into the pass.
 """
 
 import hashlib
@@ -82,8 +86,9 @@ NUM_THREADS = 2  # embedding threads; off the live path, so tuned for a shared b
 DEFAULT_THRESHOLD = 0.5
 # The best enrolled match must beat the runner-up by this cosine margin to be
 # claimed. True single-speaker margins measured 0.32-0.55; a two-voice blend or
-# a stranger sits near the threshold with a small margin, so this rejects the
-# ambiguous cases to the batch path without ever rejecting a clean match.
+# a stranger sits near the threshold with a small margin, so this leaves the
+# ambiguous cases honestly unresolved without ever rejecting a clean match.
+# Overridable via CROSSBAND_VOICE_ID_MARGIN (#28 PR-B).
 MATCH_MARGIN = 0.12
 # Short-window multi-voice detection. A single speaker's 1.5s windows can be as
 # little as 0.19 cosine apart (calib.py), so raw window cohesion is NOT a usable
@@ -94,15 +99,33 @@ MATCH_MARGIN = 0.12
 WINDOW_SECONDS = 1.5
 WINDOW_HOP_SECONDS = 0.75
 MIN_STRONG_WINDOWS = 2
-MIN_IDENTIFY_SECONDS = 0.8       # shorter utterances carry too little voice; defer
+# Short-utterance floor (#28 PR-B): was 0.8s flat. Second-long interjections
+# are exactly what the two-part bank bar exists to identify, so utterances
+# down to 0.5s are now embedded WHERE QUALITY ALLOWS - below
+# SHORT_IDENTIFY_SECONDS the utterance must also clear an RMS floor, because
+# a faint half-second blip genuinely carries too little voice to judge.
+MIN_IDENTIFY_SECONDS = 0.5
+SHORT_IDENTIFY_SECONDS = 0.8
+MIN_SHORT_IDENTIFY_RMS = 500
 MIN_WINDOW_UTTERANCE_SECONDS = 2.25  # need >= 2 windows before a split is meaningful
 
-ENROLL_CACHE_MAX = 64  # per-person averaged embeddings kept, keyed by clip set
+# Pairwise hygiene (#28 PR-B, sixth/eighth field tests). Two enrolled
+# centroids whose cosine reaches CLOSE_PAIR_COSINE sound alike enough that
+# the audit flags the pair (locally the best impostor measured 0.12-0.31, so
+# 0.6 is far outside honest-stranger territory) and the matcher demands
+# CLOSE_PAIR_EXTRA_MARGIN more separation before naming either of them.
+CLOSE_PAIR_COSINE = 0.6
+CLOSE_PAIR_EXTRA_MARGIN = 0.10
 
-# A verdict's status. "match" means skip the batch call and name this turn;
-# "defer" means run today's ElevenLabs diarize path unchanged.
+ENROLL_CACHE_MAX = 64  # per-person averaged embeddings kept, keyed by clip set
+CLIP_EMB_CACHE_MAX = 256  # per-clip audit embeddings (clip files never change)
+
+# A verdict's status. "match" means name this turn locally; "defer" means the
+# turn stays unresolved - honestly uncertain - EXCEPT the "multi" reason,
+# which routes the one remaining ElevenLabs job (crosstalk word-splitting).
 MATCH = "match"
 DEFER = "defer"
+MULTI = "multi"  # the defer reason that is the batch pass's only trigger
 
 
 # ================= pure math seam (no numpy, no ONNX) =====================
@@ -186,33 +209,126 @@ def window_multi_voice(window_embs, enrolled, threshold,
 
 
 def classify_utterance(whole_emb, window_embs, enrolled, threshold=DEFAULT_THRESHOLD,
-                       margin=MATCH_MARGIN, min_strong=MIN_STRONG_WINDOWS):
+                       margin=MATCH_MARGIN, min_strong=MIN_STRONG_WINDOWS,
+                       close_pairs=()):
     """THE DECISION, pure and fully testable with synthetic vectors.
 
     - no enrolled candidates -> defer ("no_candidates")
+    - two enrolled voices across the windows -> defer ("multi"). Checked
+      FIRST since #28 PR-B: a two-voice blend's whole-utterance embedding
+      often resembles nobody (below threshold) or everybody (ambiguous), and
+      "multi" is now the ONLY door to the ElevenLabs crosstalk split - so
+      window evidence of two voices must outrank the blended whole verdict.
     - best match below the threshold -> defer ("below_threshold": a stranger,
       an insufficiently-anchored person, or a two-voice blend that resembles
       nobody). This is the open-set "none of the enrolled" verdict.
-    - best match too close to the runner-up -> defer ("ambiguous")
-    - two enrolled voices across the windows -> defer ("multi")
+    - best match too close to the runner-up -> defer ("ambiguous"). When the
+      best and runner-up are a flagged CLOSE PAIR (#28 PR-B: the hygiene
+      audit found their centroids suspiciously alike), the required margin
+      WIDENS by CLOSE_PAIR_EXTRA_MARGIN - similar-sounding households get
+      stricter matching, not confident mistakes.
     - otherwise -> a confident single match, named.
-    Every defer routes the pass to the unchanged ElevenLabs diarize path."""
+    Every defer leaves the turn honestly unresolved; "multi" alone routes
+    the batch crosstalk pass. `close_pairs` is an iterable of person-id
+    pairs, order-insensitive."""
     if not enrolled:
         return _defer("no_candidates")
     best_pid, best_score, second = best_two(whole_emb, enrolled)
+    if window_multi_voice(window_embs, enrolled, threshold, min_strong):
+        return _defer(MULTI, best_score)
     if best_score < threshold:
         return _defer("below_threshold", best_score)
-    if (best_score - second) < margin:
+    required = margin
+    if second >= 0.0:
+        second_pid, _, _ = best_two(whole_emb,
+                                    {p: e for p, e in enrolled.items()
+                                     if p != best_pid})
+        if _is_close_pair(best_pid, second_pid, close_pairs):
+            required = margin + CLOSE_PAIR_EXTRA_MARGIN
+    if (best_score - second) < required:
         return _defer("ambiguous", best_score)
-    if window_multi_voice(window_embs, enrolled, threshold, min_strong):
-        return _defer("multi", best_score)
     return {"status": MATCH, "person_id": best_pid,
             "name": enrolled[best_pid]["name"], "score": round(best_score, 4),
             "reason": "match"}
 
 
+def _is_close_pair(a, b, close_pairs) -> bool:
+    for pair in close_pairs or ():
+        if {pair[0], pair[1]} == {a, b}:
+            return True
+    return False
+
+
 def matched(verdict) -> bool:
     return bool(verdict) and verdict.get("status") == MATCH
+
+
+def is_multi(verdict) -> bool:
+    """The one verdict that may still spend ElevenLabs money (#28 PR-B):
+    the window analysis heard genuinely overlapping speech."""
+    return bool(verdict) and verdict.get("status") == DEFER \
+        and verdict.get("reason") == MULTI
+
+
+# ---- pairwise bank hygiene, the pure half (#28 PR-B) --------------------
+#
+# The sixth field test's serious defect: a guest's bank partly accumulated
+# from the owner's audio, so the two banks scored too close together and a
+# turn was confidently MIS-named. These rules audit the banks themselves:
+# a clip that sits closer to another person's centroid than to its own
+# people's is contamination and gets set aside; two people whose centroids
+# sit too close get flagged so the matcher demands a wider margin between
+# them. Pure functions over {person_id: [(clip_name, embedding), ...]} so
+# the keyless suite pins them with synthetic vectors.
+
+def bank_centroids(per_person) -> dict:
+    """{pid: centroid} - each person's clips averaged (normalised first)."""
+    out = {}
+    for pid, clips in (per_person or {}).items():
+        emb = average_embeddings([e for _, e in clips])
+        if emb is not None:
+            out[pid] = emb
+    return out
+
+
+def quarantine_verdicts(per_person) -> dict:
+    """Which clips are contaminated? A clip is quarantined when it sits
+    closer to ANOTHER person's centroid than to its own - own centroid
+    computed leave-one-out (the clip must not defend itself), or the clip
+    alone when it is the person's only one (then it cannot be judged and is
+    never quarantined). Returns {pid: [clip_name, ...]} with entries only
+    for people who have contaminated clips."""
+    cents = bank_centroids(per_person)
+    out = {}
+    for pid, clips in (per_person or {}).items():
+        if len(clips) < 2:
+            continue
+        bad = []
+        for name, emb in clips:
+            rest = average_embeddings([e for n, e in clips if n != name])
+            if rest is None:
+                continue
+            own = cosine(emb, rest)
+            for other_pid, cent in cents.items():
+                if other_pid != pid and cosine(emb, cent) > own:
+                    bad.append(name)
+                    break
+        if bad:
+            out[pid] = bad
+    return out
+
+
+def close_centroid_pairs(centroids, close=CLOSE_PAIR_COSINE) -> list:
+    """Enrolled pairs whose centroids sit suspiciously close:
+    [(pid_a, pid_b, cosine), ...], each pair once, order stable."""
+    out = []
+    pids = list((centroids or {}).keys())
+    for i, a in enumerate(pids):
+        for b in pids[i + 1:]:
+            cos = cosine(centroids[a], centroids[b])
+            if cos >= close:
+                out.append((a, b, round(cos, 4)))
+    return out
 
 
 # ================= config helpers =========================================
@@ -230,6 +346,16 @@ def _threshold(cfg) -> float:
     except (TypeError, ValueError):
         return DEFAULT_THRESHOLD
     return t if 0.0 < t < 1.0 else DEFAULT_THRESHOLD
+
+
+def _margin(cfg) -> float:
+    """The match margin knob (#28 PR-B; voice_id_margin). Same guard shape
+    as the threshold: out-of-range or unparseable keeps the default."""
+    try:
+        m = float((cfg or {}).get("voice_id_margin") or MATCH_MARGIN)
+    except (TypeError, ValueError):
+        return MATCH_MARGIN
+    return m if 0.0 < m < 1.0 else MATCH_MARGIN
 
 
 def _model_url(cfg) -> str:
@@ -491,13 +617,14 @@ def _enrolled_embeddings(candidates, sample_rate, ex):
 def identify_utterance(pcm, sample_rate, candidates, cfg):
     """Name a confident single enrolled speaker for one utterance, or defer.
 
-    `candidates`: [{"person_id", "name"}, ...] - the SUFFICIENT present people
-    the pass already computed (diarize._room_plan's prefix segments). Returns a
-    verdict dict {status, person_id, name, score, reason}; matched(verdict) is
-    the pass's branch. NEVER raises and NEVER blocks the live path: it runs on
-    the pass's worker thread, and any doubt or failure is a DEFER to today's
-    ElevenLabs path. The first call in a process kicks off the one-time model
-    fetch in the background and defers until it is ready."""
+    `candidates`: [{"person_id", "name"}, ...] - the SUFFICIENT people the
+    caller is prepared to name. Returns a verdict dict {status, person_id,
+    name, score, reason}; matched(verdict) is the naming branch, is_multi()
+    the crosstalk one, and every other defer leaves the turn honestly
+    unresolved (#28 PR-B: there is no cloud identity fallback to route to).
+    NEVER raises and NEVER blocks the live path: it runs on the pass's worker
+    thread. The first call in a process kicks off the one-time model fetch in
+    the background and defers until it is ready."""
     if not enabled(cfg):
         return _defer("disabled")
     if not candidates:
@@ -509,6 +636,12 @@ def identify_utterance(pcm, sample_rate, candidates, cfg):
     seconds = len(pcm) / 2 / sr
     if seconds < MIN_IDENTIFY_SECONDS:
         return _defer("too_short")
+    if seconds < SHORT_IDENTIFY_SECONDS:
+        # Sub-0.8s utterances are embedded only where quality allows (#28
+        # PR-B): a clearly-voiced interjection identifies; a faint blip is
+        # honestly too short to judge.
+        if anchors.pcm_rms(pcm) < MIN_SHORT_IDENTIFY_RMS:
+            return _defer("too_short")
     try:
         enrolled = _enrolled_embeddings(candidates, sr, ex)
     except Exception:
@@ -520,17 +653,103 @@ def identify_utterance(pcm, sample_rate, candidates, cfg):
     whole = _embed(ex, audio, sr)
     if whole is None:
         return _defer("unavailable")
-    threshold = _threshold(cfg)
-    # Cheap pre-check before spending window embeddings: only a confident,
-    # unambiguous whole-utterance match is worth the multi-voice split test.
-    _, best_score, second = best_two(whole, enrolled)
-    if best_score < threshold or (best_score - second) < MATCH_MARGIN:
-        return classify_utterance(whole, [], enrolled, threshold)
+    # Window embeddings run whenever a split is even possible (#28 PR-B).
+    # The old confident-match pre-check skipped them for below-threshold and
+    # ambiguous utterances - but a two-voice blend lands EXACTLY there, and
+    # the "multi" verdict is now the only door to the ElevenLabs crosstalk
+    # split, so the window analysis must see those utterances too. A few
+    # short embeddings, tens of milliseconds, on a worker thread.
     windows = []
     if len(enrolled) >= 2 and seconds >= MIN_WINDOW_UTTERANCE_SECONDS:
         windows = [e for e in (_embed(ex, w, sr) for w in _windows(audio, sr))
                    if e is not None]
-    return classify_utterance(whole, windows, enrolled, threshold)
+    close = []
+    try:
+        close = anchors.store().close_pairs()
+    except Exception:
+        log.debug("voiceid: close-pair read failed", exc_info=True)
+    return classify_utterance(whole, windows, enrolled, _threshold(cfg),
+                              margin=_margin(cfg), close_pairs=close)
+
+
+# ================= the bank audit (#28 PR-B, impure half) =================
+#
+# Runs the pure hygiene rules over real embeddings and persists the verdicts
+# in the anchor store. Called after every anchor-bank change, always from
+# worker threads inside never-awaited passes or owner endpoints - never from
+# the live voice path. With the extractor unavailable it is a silent no-op:
+# no quarantine is better than a guessed one, and the matcher is equally
+# unavailable so nothing can mis-match meanwhile.
+
+_audit_lock = threading.Lock()
+_audit_fingerprint = None
+_clip_emb_cache: dict = {}  # clip filename -> embedding (files are immutable)
+
+
+def audit_banks(cfg, sample_rate=16000):
+    """One pairwise hygiene audit (#28 PR-B): embed every stored clip
+    (cached per file - clip files never change once written), quarantine
+    clips sitting closer to another person's centroid than their own, flag
+    close centroid pairs, and persist both through the anchor store. Never
+    raises; returns True when an audit actually ran."""
+    try:
+        if not enabled(cfg):
+            return False
+        ex = _get_extractor(cfg)
+        if ex is None:
+            return False
+        store = anchors.store()
+        bank = store.bank_clips(sample_rate)
+        per_person = {}
+        for pid, info in bank.items():
+            clips = []
+            for fname, pcm in info["clips"]:
+                emb = _clip_emb_cache.get(fname)
+                if emb is None:
+                    emb = _embed(ex, _pcm_to_float(pcm), sample_rate)
+                    if emb is None:
+                        continue
+                    _clip_emb_cache[fname] = emb
+                    while len(_clip_emb_cache) > CLIP_EMB_CACHE_MAX:
+                        _clip_emb_cache.pop(next(iter(_clip_emb_cache)))
+                clips.append((fname, emb))
+            if clips:
+                per_person[pid] = clips
+        quarantine = quarantine_verdicts(per_person)
+        pairs = close_centroid_pairs(bank_centroids(
+            {pid: [(n, e) for n, e in clips
+                   if n not in set(quarantine.get(pid, ()))]
+             for pid, clips in per_person.items()}))
+        store.set_hygiene(quarantine, pairs)
+        if quarantine or pairs:
+            log.info("voiceid audit: quarantined=%d close_pairs=%d",
+                     sum(len(v) for v in quarantine.values()), len(pairs))
+        return True
+    except Exception:
+        log.warning("voiceid audit failed; banks left as they were",
+                    exc_info=True)
+        return False
+
+
+def audit_banks_if_changed(cfg):
+    """Run the audit only when the clip-file sets actually changed since the
+    last one - the 'on every anchor-bank change' trigger, made idempotent so
+    every add_clip call site can call it unconditionally. Serialised: two
+    passes finishing together audit once."""
+    global _audit_fingerprint
+    try:
+        fp = anchors.store().clip_fingerprint()
+    except Exception:
+        log.debug("voiceid audit fingerprint failed", exc_info=True)
+        return False
+    with _audit_lock:
+        if fp == _audit_fingerprint:
+            return False
+        ran = audit_banks(cfg)
+        # Remember the shape we audited (or verified we cannot audit) so an
+        # unavailable matcher does not busy-retry on every utterance.
+        _audit_fingerprint = fp
+        return ran
 
 
 # ---- test seam ----------------------------------------------------------
@@ -538,8 +757,10 @@ def identify_utterance(pcm, sample_rate, candidates, cfg):
 def _reset_for_tests():
     """Return the module to cold and clear caches. Used by the test harness so
     the process-global matcher never leaks a ready extractor between tests."""
-    global _extractor, _state
+    global _extractor, _state, _audit_fingerprint
     with _lock:
         _extractor = None
         _state = "cold"
     _enroll_cache.clear()
+    _clip_emb_cache.clear()
+    _audit_fingerprint = None

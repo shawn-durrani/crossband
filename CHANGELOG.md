@@ -4,6 +4,47 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The cloud no longer guesses who is speaking (#28). Voice
+  identification is now local or honestly uncertain, full stop: the
+  on-device matcher names a turn, or the turn stays unnamed - no cloud
+  pass ever assigns a name, so the field-tested failure where a solo
+  speaker was mis-named by the cloud fallback is structurally
+  impossible. The only cloud transcription left in room mode runs when
+  people talk over each other, to untangle who said what - so room
+  mode's cloud voice spend is now just that, instead of a second listen
+  per uncertain turn. If the local matcher is unavailable, turns simply
+  go unnamed and room mode switches on only by hand (introduction,
+  spoken command, or the toggle): degraded means manual, never wrong.
+- Quick interjections become recognisable (#28). A voice now counts as
+  learned only once its stored clips include a couple of SHORT ones
+  (a word or two), kept in their own best-N pool so long sentences can
+  no longer crowd them out - and the learning progress shown under
+  Remembered voices says which half is still missing. Matching also
+  accepts shorter utterances than before, where the audio is clearly
+  voiced.
+- Stored voices now audit themselves (#28). Whenever a voice bank
+  changes, every clip is checked against every person: a clip that
+  sounds more like someone else is set aside (kept on disk, shown as
+  "clips set aside", excluded from matching), and two people whose
+  stored voices sit close together are flagged in the voice health
+  strip ("Alex and Sam sound close - matching is stricter") with the
+  matcher automatically demanding a wider winning margin between
+  exactly those two. This is the guard against the field-tested
+  cross-contamination that once let one person's turns be confidently
+  labelled as another.
+- Names now arrive with the words, not after them (#28). The app
+  starts identifying a speaker the moment they pause - before the
+  transcript is even final - so in the common case the name is attached
+  by the time the turn appears, instead of a beat later. The head start
+  is a content-free hint; nothing extra is recorded or sent anywhere,
+  and a hint that turns out stale (the speaker kept going) is simply
+  discarded.
+- Voice identification's limits are now documented for strangers
+  (docs/VOICE_ID.md): where the trigger phrases were grown, the English
+  bias and what degrades, every tuning knob (threshold, margin, the
+  two-part sufficiency bar - all configurable now), similar-sounding
+  households, and the scale bounds (roster cap 6 by default,
+  single-owner by design).
 - Naming is law (#28). A name you set - by renaming a remembered voice
   or just saying it ("her name is spelt Samantha") - is now locked and
   wins everywhere a name appears: the labels on spoken turns, the "In

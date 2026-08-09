@@ -1,35 +1,37 @@
-"""Room mode (#28, phase 1): the parallel diarization pass.
+"""Room mode (#28): the never-awaited identity passes.
 
 THE CORE PRINCIPLE - zero added latency on the live voice path. The realtime
 STT relay (routers/voice.py) stays byte-for-byte identical upstream whether
 room mode is on or off; when it is on, the relay only TEES already-decoded
 utterance audio into a per-session buffer and, on each commit boundary, fires
 a fire-and-forget task from here. Nothing in the live path ever awaits that
-task, and every blocking step inside it (the ElevenLabs batch call, every
-database touch) runs on a worker thread via asyncio.to_thread, so even the
-shared event loop never stalls on it.
+task, and every blocking step inside it (any batch call, every database
+touch) runs on a worker thread via asyncio.to_thread, so even the shared
+event loop never stalls on it.
 
-What the pass does: the buffered utterance goes to batch Scribe v2 with
-diarize=true (the realtime model has no diarization - that asymmetry is the
-whole reason this module exists). When the answer arrives a second or two
-later, per-word speaker clusters are reduced to an utterance-level cluster
-list, and if the utterance holds more than one cluster - or a different
-cluster than the previous utterance - unnamed labels ("Voice 1", "Voice 2";
-first-seen order within this session) are attached to the matching user
-message and pushed over the live-events stream.
+Identity is LOCAL or honestly uncertain (#28 PR-B, owner decision after the
+eighth field test - the cloud identity fallback is retired). Each committed
+utterance runs the on-device matcher (backend/voiceid.py): a confident match
+names the turn in ~100-300ms; anything the matcher cannot decide leaves the
+turn UNRESOLVED - the projection's pending head simply never resolves and the
+turn renders as today's unlabelled/uncertain states. NO ElevenLabs call is
+ever fired because the matcher deferred. The batch Scribe v2 diarize call
+keeps exactly ONE trigger: the matcher's window analysis returning the
+"multi" verdict (genuinely overlapping speech), which routes the per-word
+crosstalk split - anchors prefix the request so its clusters read back into
+names, and the phase-4 marking/splitting machinery runs unchanged from
+there. That split is room mode's only remaining cloud voice spend.
 
-Honesty note, from the issue: batch diarization clusters are PER-REQUEST.
-speaker_0 in one utterance's call is not guaranteed to be the same person in
-the next call. Phase 2 (#28) fixes comparability with ANCHORS: when the chat
-has a roster, each request is prefixed with a couple of seconds of every
-remembered present person's stored voice (backend/anchors.py) and hinted with
-num_speakers = roster + 1. The diarizer's prefix clusters then read straight
-back into NAMES, an utterance cluster matching a prefix cluster is that
-person, and an unmatched cluster is genuinely someone new - resolved by
-elimination when exactly one introduced person still lacks an anchor, and
-surfaced as an 'unknown_voice' ask-fallback flag otherwise. With no roster
-the pass behaves exactly as phase 1 (ordinals, label-only-when-interesting),
-and the phase-1 byte-identity/latency pins all still hold.
+Arming is local too: the ambient check (below) notices remembered voices
+with no cloud help, and when the matcher is unavailable automatic arming
+simply does not happen - introductions, spoken commands and the toggle still
+arm, so degraded means manual, never wrong.
+
+The speculative head start (#28 PR-B): the client notices the silence gap
+before the commit frame and sends a content-free hint; the relay fires the
+local check on the buffered utterance THEN, so the verdict is usually cached
+by the time the commit arrives and the name attaches with the transcript
+instead of racing it.
 
 Failure posture: a failed or slow pass leaves the message unlabelled and
 everything else untouched. No retry ever feeds back into the live path.
@@ -117,41 +119,9 @@ MISMATCH_MIN_WORDS = 4  # don't cross-check a grunt
 # (~4 words is roughly 1.5s of speech).
 FAST_MISMATCH_MIN_SECONDS = 1.5
 
-# ---- session-start sniff (#28, third field test) ----
-#
-# The structural gap: in a fresh chat, REMEMBERED voices could not arm room
-# mode - this pass only ran once room mode was on, and only an introduction
-# or the toggle turned it on, so a known person with sufficient anchors was
-# undetectable by construction. The sniff closes it: when a voice session
-# starts with room mode OFF but sufficient remembered NON-OWNER voices
-# exist, the first SNIFF_UTTERANCES committed utterances also run this
-# module's existing pass machinery (anchor prefix, batch call, label
-# plumbing - nothing new). A pass that matches a remembered non-owner voice,
-# or finds two clusters, arms room mode server-side (the phase-2 plumbing),
-# seeds the roster with the matched people, and labels that turn; otherwise
-# the sniff simply ends. Bounded and stated honestly: at most
-# SNIFF_UTTERANCES extra batch calls per session, each metered as real
-# spend like any other pass. Same never-awaited discipline as every pass;
-# with no remembered non-owner voices the relay never schedules a sniff at
-# all, so the common no-household case costs nothing.
-SNIFF_UTTERANCES = 2
-
-
-def sniff_eligible(people, owner_name) -> bool:
-    """Should a session in a room-mode-off chat sniff at all? Only when a
-    SUFFICIENT remembered person other than the owner exists. Owner-only
-    anchors buy nothing: there is nobody else to re-identify, and a
-    genuinely new second voice still has the introduction and ask paths."""
-    owner = (owner_name or "").strip().casefold()
-    return any(
-        p.get("sufficient")
-        and (p.get("name") or "").strip().casefold() != owner
-        for p in people or [])
-
-
 # ---- ambient room detection (#28) ----
 #
-# The arming ceremony (introduction, command, or the bounded session-start
+# The arming ceremony (introduction, command, or the retired session-start
 # sniff) existed to gate a real cost: identity used to require a second cloud
 # transcription per utterance. The local matcher (voiceid.py) made identity
 # ~free - one on-device embed, ~33-59ms, offline - so the gate loses its
@@ -160,8 +130,10 @@ def sniff_eligible(people, owner_name) -> bool:
 # call): the owner's own voice is a no-op, a remembered non-owner arms room
 # mode automatically, and a clear voice that matches nobody (only decidable
 # when the owner is itself sufficiently enrolled) arms and raises the
-# ask-fallback. Anything the matcher cannot decide is left to the unchanged
-# bounded EL sniff / introduction paths.
+# ask-fallback. Anything the matcher cannot decide defers - room mode stays
+# off and only the introduction/command/toggle doors remain (#28 PR-B: the
+# bounded EL sniff that used to catch defers is retired with the rest of the
+# cloud identity path; ambient is now the ONLY automatic arming door).
 #
 # DISARM IS SACRED: after the owner says "solo mode", chats.ambient_off is set
 # and ambient never re-arms that chat until an explicit re-enable (a command,
@@ -579,16 +551,17 @@ class RoomSession:
         self.ordinals = {}          # cluster id -> "Voice N"
         self.prev_clusters = None   # None = no diarized utterance yet
         self.labelled_ids = set()
-        # Session-start sniff budget (#28): how many more committed
-        # utterances may run a sniff pass. The relay sets it to
-        # SNIFF_UTTERANCES at session open when the chat is eligible; it
-        # only ever counts down, and an armed sniff zeroes it.
-        self.sniff_remaining = 0
         # Ambient local check (#28): when true, every committed utterance runs
         # the local-only matcher while room mode is off. Seeded at session
         # open from ambient_eligible (matcher enabled + a sufficient remembered
         # voice exists); a plain bool so the per-commit path does no I/O.
         self.ambient_on = False
+        # Speculative identity (#28 PR-B): the in-flight silence-start check
+        # for the CURRENT utterance - {"len": buffered bytes at fire time,
+        # "task": the never-awaited local check}. Claimed synchronously at
+        # the commit boundary (take_speculative), so a hint can never leak
+        # onto the next utterance.
+        self.speculative = None
 
     def set_enabled(self, on: bool):
         """Toggle mid-session. Either edge clears the buffer: audio captured
@@ -614,6 +587,25 @@ class RoomSession:
         self.buffer.clear()
         return pcm, self.sample_rate
 
+    def peek_utterance(self):
+        """The buffered audio so far WITHOUT slicing (#28 PR-B): what the
+        speculative silence-start check embeds while the commit is still
+        seconds away."""
+        return bytes(self.buffer), self.sample_rate
+
+    def take_speculative(self, pcm_len):
+        """Claim the speculative entry for the utterance just taken (#28
+        PR-B). Called synchronously at the commit boundary (a dict pop, no
+        I/O), so an entry can never leak onto the next utterance. Only the
+        obviously-wrong case is rejected here - a hint covering MORE audio
+        than the utterance holds; the real staleness judgment (did speech
+        resume after the hint?) is a tail-RMS check that runs inside the
+        pass on a worker thread, never on the live path."""
+        entry, self.speculative = self.speculative, None
+        if entry and 0 < (entry.get("len") or 0) <= pcm_len:
+            return entry
+        return None
+
     def assign(self, clusters) -> list:
         """Per-session ordinal labels, first-seen order: the first cluster
         this session ever sees is "Voice 1", the next new one "Voice 2"."""
@@ -628,86 +620,92 @@ class RoomSession:
 # ---------- the fire-and-forget pass ----------
 
 def schedule_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                  turn_id=None):
-    """Fire the diarization pass for one committed utterance and return
+                  turn_id=None, speculative=None):
+    """Fire the identity pass for one committed utterance and return
     IMMEDIATELY. The caller (the realtime relay) never awaits the task; a
     strong reference is kept so the loop cannot garbage-collect it mid-run,
     and run_pass itself swallows every failure. `turn_id` is the client's
     voice-trace correlation id from the commit frame - with it the label
     write targets the exact message (#28 phase 3); without it the
-    time-window fallback applies."""
+    time-window fallback applies. `speculative` is the claimed silence-start
+    entry (#28 PR-B), if any."""
     if not pcm:
         return None
     task = asyncio.get_running_loop().create_task(
         run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                 turn_id=turn_id))
+                 turn_id=turn_id, speculative=speculative))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return task
 
 
 async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                   turn_id=None):
-    """One utterance's parallel pass: batch STT with diarize=true, then label
-    reconciliation. Every blocking step runs on a worker thread; every
-    failure ends here (log only - the live path must never notice).
+                   turn_id=None, speculative=None):
+    """One utterance's identity pass in an ARMED room (#28 PR-B shape).
 
-    With a roster (#28 phase 2) the request grows an anchor prefix and a
-    num_speakers hint, and labelling goes through the naming rules
-    (_room_label_pass); with no roster this is byte-for-byte the phase-1
-    request and the phase-1 ordinal rules."""
+    Identity is local or honestly uncertain (owner decision, eighth field
+    test - the cloud identity fallback is retired):
+
+    - the local matcher NAMES a confident single speaker -> fast label, no
+      ElevenLabs call;
+    - the matcher's window analysis hears OVERLAPPING speech (the "multi"
+      verdict) -> the one surviving ElevenLabs job runs: batch diarize with
+      the anchor prefix, for per-word crosstalk splitting (the phase-4
+      machinery, unchanged from there);
+    - ANY other defer -> the turn stays unresolved. No EL call fires because
+      the matcher deferred - a solo utterance can never trigger one, and a
+      wrong cloud-asserted name is structurally impossible;
+    - matcher disabled/unavailable -> same as a defer: unresolved, silent.
+
+    `speculative` is the silence-start head start's claimed entry (#28
+    PR-B): when fresh, its cached verdict is used and nothing re-embeds.
+    Every blocking step runs on a worker thread; every failure ends here
+    (log only - the live path must never notice)."""
     t0 = time.perf_counter()
     plan = None
     try:
         plan = await asyncio.to_thread(_room_plan, chat_id, sample_rate)
     except Exception:
-        # A broken roster read degrades to the phase-1 pass, never to a
-        # dropped utterance.
-        log.debug("room plan failed; running phase-1 pass", exc_info=True)
-    prefix_pcm, segments, pending, num_speakers = plan or (b"", [], [], None)
-    # Fast local identity path (#28 part 2): with a roster, try to NAME a
-    # confident single known speaker locally and skip the ElevenLabs batch call
-    # for this turn - the label then lands ~100-300ms after commit instead of
-    # ~1-2s, usually before the round's first responder reads the turn. Only a
-    # confident single match takes this path; the matcher defers multi-voice,
-    # unknown, ambiguous and insufficient-anchor cases (and every disabled or
-    # no-model case) to the unchanged EL path below, so crosstalk word-splitting,
-    # ordinals and the ask-fallback are preserved exactly. Still inside the
-    # never-awaited task; the live path is untouched, and metering is skipped
-    # because no second transcription happened.
-    if plan is not None and voiceid.enabled(cfg):
-        verdict = None
+        log.debug("room plan failed; utterance stays unresolved",
+                  exc_info=True)
+    if plan is None:
+        # No roster to identify against (a degenerate armed chat): nothing
+        # to do. The phase-1 no-roster ordinal pass retired with the rest of
+        # the cloud identity path (#28 PR-B).
+        return
+    prefix_pcm, segments, pending, num_speakers = plan
+    if not voiceid.enabled(cfg):
+        # The matcher is switched off: no local identity, and (#28 PR-B) no
+        # cloud identity either - turns stay unlabelled, room mode itself
+        # still works through its manual doors.
+        log.info("diarize pass (matcher off): chat=%s", chat_id)
+        return
+    candidates = [{"person_id": s["person_id"], "name": s["name"]}
+                  for s in segments]
+    verdict = await _utterance_verdict(chat_id, pcm, sample_rate, candidates,
+                                       cfg, speculative)
+    if voiceid.matched(verdict):
+        record_decision(chat_id, DECISION_LOCAL,
+                        (time.perf_counter() - t0) * 1000)
+        log.info("diarize pass (voiceid): chat=%s ms=%.0f score=%.3f",
+                 chat_id, (time.perf_counter() - t0) * 1000,
+                 verdict["score"])
         try:
-            candidates = [{"person_id": s["person_id"], "name": s["name"]}
-                          for s in segments]
-            verdict = await asyncio.to_thread(
-                voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+            await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                                   session, cfg, verdict, turn_id=turn_id)
         except Exception:
-            # The matcher must NEVER break voice: any failure here just falls
-            # through to the unchanged ElevenLabs path below.
-            log.info("voiceid identify failed; running the EL path: chat=%s",
-                     chat_id)
-            log.debug("voiceid identify failure detail", exc_info=True)
-        if voiceid.matched(verdict):
-            record_decision(chat_id, DECISION_LOCAL,
-                            (time.perf_counter() - t0) * 1000)
-            log.info("diarize pass (voiceid): chat=%s ms=%.0f score=%.3f",
-                     chat_id, (time.perf_counter() - t0) * 1000,
-                     verdict["score"])
-            try:
-                await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
-                                       session, cfg, verdict, turn_id=turn_id)
-            except Exception:
-                # We already committed to skipping the batch call; do NOT fall
-                # through to a second (EL) attempt on the same turn - that risks
-                # a double label. The turn stays unlabelled, exactly the failure
-                # posture of a failed batch pass.
-                log.info("voiceid fast-label failed: chat=%s", chat_id)
-                log.debug("voiceid fast-label failure detail", exc_info=True)
-            return
-        if verdict is not None:
-            log.info("diarize pass (voiceid defer): chat=%s reason=%s",
-                     chat_id, verdict["reason"])
+            log.info("voiceid fast-label failed: chat=%s", chat_id)
+            log.debug("voiceid fast-label failure detail", exc_info=True)
+        return
+    if not voiceid.is_multi(verdict):
+        # THE RETIREMENT PIN (#28 PR-B): a deferred verdict leaves the turn
+        # unresolved, full stop. The projection's pending head ages out into
+        # today's unlabelled rendering; no ElevenLabs call fires.
+        log.info("diarize pass (voiceid defer): chat=%s reason=%s", chat_id,
+                 (verdict or {}).get("reason", "error"))
+        return
+    log.info("diarize pass (crosstalk trigger): chat=%s score=%.3f",
+             chat_id, verdict.get("score", 0.0))
     request_pcm = prefix_pcm + pcm
     try:
         result = await asyncio.to_thread(
@@ -721,7 +719,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         return
     duration_ms = (time.perf_counter() - t0) * 1000
     # The health strip's live pulse (#28): this decision came from the cloud
-    # batch pass. One dict write, content-free, inside the background task.
+    # crosstalk pass. One dict write, content-free, inside the background task.
     record_decision(chat_id, DECISION_CLOUD, duration_ms)
     # Labelling runs FIRST, metering after (#28, night test 4): from the
     # moment the batch reply is parsed, every millisecond spent before the
@@ -730,61 +728,77 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # the spend became real when the batch call returned, so a labelling
     # failure still meters it, just no longer ahead of the labels.
     try:
-        if plan is not None:
-            await _room_label_pass(chat_id, pcm, sample_rate, commit_ts,
-                                   session, cfg, result, segments, pending,
-                                   len(prefix_pcm) / 2 / (sample_rate or 16000),
-                                   duration_ms, turn_id=turn_id)
-        else:
-            words = result.get("words")
-            clusters = utterance_clusters(words)
-            # EVERY cluster the session sees claims its ordinal, labelled or
-            # not: the session's first voice is "Voice 1" even while it goes
-            # unlabelled (the common lone-speaker case), so the first
-            # DIFFERENT voice correctly surfaces as "Voice 2", not as a
-            # misleading "Voice 1".
-            mapped = session.assign(clusters)
-            labels = mapped if should_label(clusters,
-                                            session.prev_clusters) else []
-            if clusters:
-                session.prev_clusters = clusters
-            # The latency record for the parallel pass. INFO and content-free:
-            # durations and counts only, never transcript text. The live
-            # path's own latency is measured elsewhere (voice_trace) and must
-            # show no dependence on this number - pinned by
-            # tests/test_room_mode.py.
-            log.info("diarize pass: chat=%s ms=%.0f clusters=%d labels=%d",
-                     chat_id, duration_ms, len(clusters), len(labels))
-            if labels:
-                payload = {"clusters": clusters, "labels": labels}
-                # Crosstalk (#28 phase 4): two voices in one utterance get the
-                # marker, and - when the words alternate cleanly - a
-                # best-effort attributed split. Phase-1 labels are session
-                # ordinals, uncertain by construction, so every segment is
-                # marked uncertain too.
-                ct = crosstalk_info(words)
-                if ct:
-                    payload.update(ct)
-                    segs = split_segments(words, dict(zip(clusters, mapped)),
-                                          uncertain_labels=set(mapped))
-                    if segs:
-                        payload["segments"] = segs
-                await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
+        await _room_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                               session, cfg, result, segments, pending,
+                               len(prefix_pcm) / 2 / (sample_rate or 16000),
+                               duration_ms, turn_id=turn_id)
     except Exception:
         log.info("diarize labelling failed: chat=%s", chat_id)
         log.debug("diarize labelling failure detail", exc_info=True)
     finally:
         try:
-            # The second transcription pass is real, metered spend - the
-            # reason the room-mode toggle warns that voice minutes roughly
-            # double. The anchor prefix is transcribed audio too, so it is
-            # metered with it.
+            # The crosstalk split is real, metered spend - room mode's only
+            # remaining cloud voice cost (#28 PR-B). The anchor prefix is
+            # transcribed audio too, so it is metered with it.
             await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate,
                                     cfg)
         except Exception:
             log.info("diarize metering failed: chat=%s", chat_id)
             log.debug("diarize metering failure detail", exc_info=True)
+
+
+async def _utterance_verdict(chat_id, pcm, sample_rate, candidates, cfg,
+                             speculative=None):
+    """The local matcher's verdict for one committed utterance, reusing the
+    speculative head start when it is fresh (#28 PR-B). Returns a verdict
+    dict, or None when the matcher itself failed (treated as a defer by
+    every caller). Never raises.
+
+    Freshness: the hint fired at silence-start, so the buffer has since
+    grown by TRAILING SILENCE only - the cached verdict stands when the
+    audio past the hinted length is near-silence. If real speech follows
+    the hint (a resumed sentence committed by hand), the cached verdict was
+    computed on different audio and the check runs fresh. A cached MATCH is
+    reused only when the matched person is among this pass's candidates; a
+    cached defer is conservative everywhere and reused as-is."""
+    if speculative is not None:
+        try:
+            verdict = await speculative["task"]
+        except Exception:
+            verdict = None
+        if verdict is not None and await asyncio.to_thread(
+                _speculative_fresh, speculative, pcm):
+            if not voiceid.matched(verdict):
+                return verdict
+            if verdict.get("person_id") in {c["person_id"]
+                                            for c in candidates}:
+                return verdict
+    try:
+        return await asyncio.to_thread(
+            voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+    except Exception:
+        log.info("voiceid identify failed: chat=%s", chat_id)
+        log.debug("voiceid identify failure detail", exc_info=True)
+        return None
+
+
+# Audio added between the speculative hint and the commit frame must be the
+# tail of the silence gap the hint fired on; louder than this int16 RMS means
+# speech resumed and the cached verdict is stale.
+SPECULATIVE_TAIL_RMS = 300
+
+
+def _speculative_fresh(entry, pcm) -> bool:
+    """Worker-thread staleness check for a claimed speculative entry (#28
+    PR-B) - see _utterance_verdict. Pure over its inputs."""
+    n = entry.get("len") or 0
+    if n <= 0 or n > len(pcm):
+        return False
+    tail = pcm[n:]
+    if not tail:
+        return True
+    from . import anchors
+    return anchors.pcm_rms(tail) < SPECULATIVE_TAIL_RMS
 
 
 async def _attach_until_deadline(chat_id, commit_ts, payload, session,
@@ -895,7 +909,7 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # utterance never lands here - two voices are ground truth for
         # neither.
         await asyncio.to_thread(_accumulate_anchor, chat_id, pcm, sample_rate,
-                                clusters[0], resolved)
+                                clusters[0], resolved, cfg)
     if not resolved["labels"]:
         return
     if resolved["ask"]:
@@ -923,25 +937,27 @@ def _primary_named_label(resolved) -> str | None:
     return None
 
 
-def _accumulate_anchor(chat_id, pcm, sample_rate, cluster, resolved):
+def _accumulate_anchor(chat_id, pcm, sample_rate, cluster, resolved, cfg=None):
     """Feed one single-speaker utterance to the right person's anchor set
     (worker thread). Matched person: a refresh candidate. Eliminated person:
     their first real anchor audio - link the roster row once accepted, so the
-    UI's 'anchor pending' honestly ends."""
+    UI's 'anchor pending' honestly ends. Every accepted clip re-runs the
+    pairwise hygiene audit (#28 PR-B)."""
     from . import anchors
     store = anchors.store()
     name = resolved["matched"].get(cluster)
     if name:
         person = store.find_by_name(name)
-        if person:
-            store.add_clip(person["person_id"], pcm, sample_rate,
-                           source="accumulated")
+        if person and store.add_clip(person["person_id"], pcm, sample_rate,
+                                     source="accumulated"):
+            voiceid.audit_banks_if_changed(cfg or {})
         return
     name = resolved["eliminated"].get(cluster)
     if not name:
         return
     pid = store.ensure_person(name)
     if store.add_clip(pid, pcm, sample_rate, source="accumulated"):
+        voiceid.audit_banks_if_changed(cfg or {})
         con = db.connect()
         try:
             db.link_room_person(con, chat_id, name, pid)
@@ -975,7 +991,7 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # cluster; on the fast path this is the ONLY thing that keeps the person's
     # anchors fresh, since the batch pass no longer runs for them.
     await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
-                            sample_rate)
+                            sample_rate, cfg)
     if not target_id:
         return
     from . import anchors
@@ -986,36 +1002,41 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         mismatch.schedule_check(chat_id, target_id, name, cfg)
 
 
-def _accumulate_fast_anchor(person_id, pcm, sample_rate):
-    """Refresh a fast-matched person's anchors (worker thread)."""
+def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None):
+    """Refresh a fast-matched person's anchors (worker thread). Confident-
+    match accumulation continues indefinitely (#28 PR-B) - keep-best-N per
+    length class bounds the bank - and every accepted clip re-runs the
+    pairwise hygiene audit."""
     from . import anchors
-    anchors.store().add_clip(person_id, pcm, sample_rate, source="accumulated")
+    if anchors.store().add_clip(person_id, pcm, sample_rate,
+                                source="accumulated"):
+        voiceid.audit_banks_if_changed(cfg or {})
 
 
-async def _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                           verdict, t0, turn_id=None):
-    """The sniff decided locally (#28 part 2). A confident OWNER-only match ends
-    the sniff without arming (owner alone is not a household) and without a
-    batch call. A confident remembered NON-OWNER match arms room mode via the
-    same durable plumbing an introduction uses, seeds the roster, labels this
-    turn, and refreshes the person's anchors - all with no batch call and no
+async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                          verdict, t0, turn_id=None):
+    """Ambient recognised a remembered NON-OWNER voice (#28; formerly the
+    sniff's local arm - the EL sniff itself retired in PR-B). A confident
+    OWNER-only match ends here without arming (owner alone is not a
+    household). A remembered non-owner arms room mode via the same durable
+    plumbing an introduction uses, seeds the roster, labels this turn, and
+    refreshes the person's anchors - locally, with no batch call and no
     metering, since no second transcription happened."""
     name = verdict["name"]
     owner = (cfg.get("user_name") or "User").casefold()
     if name.casefold() == owner:
-        log.info("diarize pass (sniff voiceid): chat=%s ms=%.0f armed=0",
+        log.info("diarize pass (ambient voiceid): chat=%s ms=%.0f armed=0",
                  chat_id, (time.perf_counter() - t0) * 1000)
         return
-    log.info("diarize pass (sniff voiceid): chat=%s ms=%.0f armed=1",
+    log.info("diarize pass (ambient voiceid): chat=%s ms=%.0f armed=1",
              chat_id, (time.perf_counter() - t0) * 1000)
-    session.sniff_remaining = 0  # armed; no second sniff needed
-    await asyncio.to_thread(_arm_from_sniff, chat_id, {"local": name}, cfg)
+    await asyncio.to_thread(_arm_known, chat_id, {"local": name}, cfg)
     payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
                "source": "local"}
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
                                              session, turn_id=turn_id)
     await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
-                            sample_rate)
+                            sample_rate, cfg)
     if target_id:
         from . import anchors
         anchors.remember_audio(target_id, pcm, sample_rate, 1)
@@ -1024,51 +1045,49 @@ async def _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
 # ---------- the ambient local check (#28) ----------
 
 def schedule_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                     turn_id=None):
+                     turn_id=None, speculative=None):
     """Fire one ambient local check and return IMMEDIATELY - the relay never
-    awaits it, exactly the schedule_pass/schedule_sniff contract. Local-only:
-    this path never makes an ElevenLabs call, so it is safe to run on every
-    committed utterance while room mode is off."""
+    awaits it, exactly the schedule_pass contract. Local-only: this path
+    never makes an ElevenLabs call, so it is safe to run on every committed
+    utterance while room mode is off."""
     if not pcm:
         return None
     task = asyncio.get_running_loop().create_task(
         run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                    turn_id=turn_id))
+                    turn_id=turn_id, speculative=speculative))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return task
 
 
 async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                      turn_id=None):
+                      turn_id=None, speculative=None):
     """The ambient local check for one committed utterance (room mode off).
     Runs the on-device matcher against every sufficient remembered voice and
     acts on the pure `ambient_decision`: owner's voice is a no-op (its anchor
     is topped up), a remembered non-owner arms room mode and is named, and a
     clear stranger - decidable only when the owner is itself enrolled - arms
-    and raises the ask-fallback. Anything undecidable is left to the bounded
-    EL sniff / introduction paths. Never an ElevenLabs call; every failure
-    ends here."""
+    and raises the ask-fallback. Anything undecidable defers: room mode
+    stays off and only the introduction/command/toggle doors remain (#28
+    PR-B - the bounded EL sniff retired, so ambient is the only automatic
+    door and it NEVER makes an ElevenLabs call). Reuses the speculative
+    silence-start verdict when fresh. Every failure ends here."""
     t0 = time.perf_counter()
     try:
         plan = await asyncio.to_thread(_ambient_plan, chat_id, sample_rate, cfg)
         if plan is None:
             return
         candidates, owner_ok = plan
-        try:
-            verdict = await asyncio.to_thread(
-                voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
-        except Exception:
-            log.info("ambient identify failed: chat=%s", chat_id)
-            log.debug("ambient identify failure detail", exc_info=True)
+        verdict = await _utterance_verdict(chat_id, pcm, sample_rate,
+                                           candidates, cfg, speculative)
+        if verdict is None:
             return
         decision = ambient_decision(verdict, cfg.get("user_name") or "User",
                                     owner_ok)
         if decision != "defer":
             # A local decision was actually made (owner confirmed, known
             # voice named, or a clear stranger detected): the health strip's
-            # pulse. A defer records nothing - the EL paths that follow
-            # record their own.
+            # pulse. A defer records nothing.
             record_decision(chat_id, DECISION_LOCAL,
                             (time.perf_counter() - t0) * 1000)
         log.info("ambient check: chat=%s ms=%.0f decision=%s", chat_id,
@@ -1076,15 +1095,14 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if decision == "noop_owner":
             if voiceid.matched(verdict):
                 await asyncio.to_thread(_accumulate_fast_anchor,
-                                        verdict["person_id"], pcm, sample_rate)
+                                        verdict["person_id"], pcm,
+                                        sample_rate, cfg)
             return
         if decision == "arm_known":
-            session.sniff_remaining = 0
-            await _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts,
-                                   session, cfg, verdict, t0, turn_id=turn_id)
+            await _arm_known_pass(chat_id, pcm, sample_rate, commit_ts,
+                                  session, cfg, verdict, t0, turn_id=turn_id)
             return
         if decision == "arm_unknown":
-            session.sniff_remaining = 0
             await asyncio.to_thread(_arm_ambient_unknown, chat_id, cfg)
             ordinal = session.assign(["ambient_unknown"])
             payload = {"clusters": ["ambient_unknown"], "labels": ordinal,
@@ -1094,8 +1112,8 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                                      turn_id=turn_id)
             if target_id:
                 await asyncio.to_thread(_raise_unknown_voice, chat_id, target_id)
-        # decision == "defer": nothing here; the bounded EL sniff and the
-        # introduction/command paths still cover what the matcher could not.
+        # decision == "defer": nothing here; the introduction/command/toggle
+        # doors still cover what the matcher could not (#28 PR-B).
     except Exception:
         log.info("ambient pass failed: chat=%s", chat_id)
         log.debug("ambient pass failure detail", exc_info=True)
@@ -1145,165 +1163,73 @@ def _arm_ambient_unknown(chat_id, cfg):
     introductions.roster_owner_only(chat_id, cfg)
 
 
-# ---------- the session-start sniff pass (#28, third field test) ----------
+# ---------- speculative identity at silence-start (#28 PR-B) ----------
+#
+# The client's VAD knows the utterance's audio is COMPLETE when the silence
+# gap begins - roughly two seconds before the commit frame at default
+# settings. It sends a content-free hint frame ({"speculative": true}, no
+# audio; the relay forwards NOTHING upstream for it), and the relay fires
+# the LOCAL-ONLY identity check on the buffered utterance right then. The
+# verdict caches on the RoomSession; the commit-time pass claims it and
+# attaches the name with no re-embed - so the label lands before or with
+# the committed transcript in the common case, closing the label-vs-first-
+# responder race structurally. Same never-awaited discipline as every pass;
+# a hint that goes stale (speech resumed) is simply discarded.
 
-def schedule_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                   turn_id=None):
-    """Fire one sniff pass and return IMMEDIATELY - the relay never awaits
-    it, exactly the schedule_pass contract. The relay has already spent one
-    unit of session.sniff_remaining before calling."""
+def schedule_speculative(chat_id, session, cfg):
+    """Fire the silence-start local check on the buffer as it stands and
+    return IMMEDIATELY. Never an ElevenLabs call, never awaited by the
+    relay; the entry parks on the session for the commit boundary to claim."""
+    pcm, sample_rate = session.peek_utterance()
     if not pcm:
         return None
     task = asyncio.get_running_loop().create_task(
-        run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                  turn_id=turn_id))
+        run_speculative(chat_id, pcm, sample_rate, cfg))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
+    session.speculative = {"len": len(pcm), "task": task}
     return task
 
 
-async def run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                    turn_id=None):
-    """One utterance's sniff: the existing anchored pass run while room mode
-    is OFF, listening for a remembered non-owner voice or a second cluster.
-    Either arms room mode, seeds the roster with the matched people, and
-    labels this turn; anything else - including every failure - ends here
-    with room mode untouched."""
-    t0 = time.perf_counter()
+async def run_speculative(chat_id, pcm, sample_rate, cfg):
+    """The speculative check itself: the on-device matcher over every
+    sufficient remembered voice. Returns the verdict (the task result IS the
+    cache); None on any failure. The commit-time consumer re-validates the
+    match against its own candidate set, so a broader speculative candidate
+    pool can never name someone the consuming pass would not."""
     try:
-        plan = await asyncio.to_thread(_sniff_plan, chat_id, sample_rate, cfg)
-        if plan is None:
-            return
-        prefix_pcm, segments, num_speakers = plan
-        # Fast local identity (#28 part 2): decide the sniff locally when we can.
-        # A confident remembered NON-OWNER match arms room mode and labels the
-        # turn with no batch call; a confident OWNER-only match ends the sniff
-        # (owner alone never arms) with no batch call either - saving the doubled
-        # transcription on the common solo utterance. The matcher defers
-        # multi-voice, unknown and ambiguous cases to the EL sniff below, so a
-        # brand-new second voice (two clusters) still arms exactly as today.
-        if voiceid.enabled(cfg):
-            verdict = None
-            try:
-                candidates = [{"person_id": s["person_id"], "name": s["name"]}
-                              for s in segments]
-                verdict = await asyncio.to_thread(
-                    voiceid.identify_utterance, pcm, sample_rate, candidates,
-                    cfg)
-            except Exception:
-                # Never break the sniff: a matcher failure falls through to the
-                # unchanged EL sniff below.
-                log.info("voiceid sniff identify failed; EL sniff: chat=%s",
-                         chat_id)
-                log.debug("voiceid sniff identify failure detail", exc_info=True)
-            if voiceid.matched(verdict):
-                record_decision(chat_id, DECISION_LOCAL,
-                                (time.perf_counter() - t0) * 1000)
-                await _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts,
-                                       session, cfg, verdict, t0,
-                                       turn_id=turn_id)
-                return
-            if verdict is not None:
-                log.info("diarize pass (sniff voiceid defer): chat=%s reason=%s",
-                         chat_id, verdict["reason"])
-        request_pcm = prefix_pcm + pcm
-        result = await asyncio.to_thread(
-            voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),
-            "audio/wav", cfg, num_speakers=num_speakers)
-        try:
-            prefix_seconds = len(prefix_pcm) / 2 / (sample_rate or 16000)
-            prefix_words, utter_words = split_words_at(result.get("words"),
-                                                       prefix_seconds)
-            cmap = prefix_cluster_map(prefix_words, segments)
-            clusters = utterance_clusters(utter_words)
-            owner = (cfg.get("user_name") or "User").casefold()
-            matched = {c: cmap[c] for c in clusters if c in cmap}
-            non_owner = [n for n in matched.values() if n.casefold() != owner]
-            armed = bool(non_owner) or len(clusters) >= 2
-            # The sniff marker: content-free, and distinguishable from the
-            # room-mode pass's own line at a grep.
-            record_decision(chat_id, DECISION_CLOUD,
-                            (time.perf_counter() - t0) * 1000)
-            log.info("diarize pass (sniff): chat=%s ms=%.0f clusters=%d "
-                     "matched=%d armed=%d", chat_id,
-                     (time.perf_counter() - t0) * 1000, len(clusters),
-                     len(matched), 1 if armed else 0)
-            if not armed:
-                return
-            session.sniff_remaining = 0  # job done; no second sniff needed
-            await asyncio.to_thread(_arm_from_sniff, chat_id, matched, cfg)
-            if clusters:
-                session.prev_clusters = clusters
-            # Label this turn through the same naming rules as any roster
-            # pass: matched clusters carry the person's name, anything else a
-            # session ordinal (uncertain). No pending people exist yet and
-            # the sniff itself never raises an ask - from the next commit the
-            # armed room-mode pass owns identification, asks included.
-            resolved = resolve_room_labels(clusters, cmap, [], session)
-            if not resolved["labels"]:
-                return
-            payload = {"clusters": clusters, "labels": resolved["labels"],
-                       "uncertain": resolved["uncertain"]}
-            target_id = await _attach_until_deadline(chat_id, commit_ts,
-                                                     payload, session,
-                                                     turn_id=turn_id)
-            if target_id:
-                from . import anchors
-                anchors.remember_audio(target_id, pcm, sample_rate,
-                                       len(clusters))
-        finally:
-            # Real, metered spend - the sniff is the "first couple of
-            # utterances transcribed twice" the changelog and UI copy warn
-            # about. Metered AFTER the labels (#28, night test 4), same as
-            # every pass: the spend became real when the batch call returned,
-            # so it still books on any labelling outcome - just never in
-            # front of the label write.
-            await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate,
-                                    cfg)
+        candidates = await asyncio.to_thread(_speculative_candidates)
+        if not candidates:
+            return None
+        verdict = await asyncio.to_thread(
+            voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+        log.info("speculative check: chat=%s status=%s", chat_id,
+                 (verdict or {}).get("status"))
+        return verdict
     except Exception:
-        log.info("sniff pass failed: chat=%s", chat_id)
-        log.debug("sniff pass failure detail", exc_info=True)
-
-
-def _sniff_plan(chat_id, sample_rate, cfg):
-    """Sniff snapshot for one pass (worker thread): None unless the sniff
-    should still run - the chat's durable room mode must be OFF (another
-    path may have armed it since session open) and sufficient remembered
-    non-owner people must exist. The prefix carries EVERY sufficient person,
-    the owner included when remembered: telling owner from guest is the
-    whole question."""
-    con = db.connect()
-    try:
-        row = con.execute("SELECT room_mode, ambient_off FROM chats WHERE id=?",
-                          (chat_id,)).fetchone()
-    finally:
-        con.close()
-    # room armed since, or the owner said "solo mode" meanwhile: stop.
-    if not row or row["room_mode"] or row["ambient_off"]:
+        log.info("speculative check failed: chat=%s", chat_id)
+        log.debug("speculative check failure detail", exc_info=True)
         return None
+
+
+def _speculative_candidates():
+    """Worker-thread snapshot: every sufficient remembered voice."""
     from . import anchors
-    store = anchors.store()
-    people = store.people()
-    if not sniff_eligible(people, cfg.get("user_name")):
-        return None
-    sufficient_ids = [p["person_id"] for p in people if p["sufficient"]]
-    prefix_pcm, segments = store.build_prefix(sufficient_ids, sample_rate)
-    if not prefix_pcm:
-        return None
-    num_speakers = min(32, len(segments) + 1)
-    return prefix_pcm, segments, num_speakers
+    return [{"person_id": p["person_id"], "name": p["name"]}
+            for p in anchors.store().people() if p.get("sufficient")]
 
 
-def _arm_from_sniff(chat_id, matched, cfg):
-    """The arm itself (worker thread): the durable flip plus the live mirror
-    - the same phase-2 control plumbing an introduction uses - and one
-    linked roster row per matched remembered person. Idempotent: a second
-    sniff pass racing this one re-runs the same writes harmlessly."""
+def _arm_known(chat_id, matched, cfg):
+    """The ambient arm itself (worker thread): the durable flip plus the
+    live mirror - the same phase-2 control plumbing an introduction uses -
+    and one linked roster row per matched remembered person. Idempotent:
+    two passes racing re-run the same writes harmlessly. (Formerly
+    _arm_from_sniff; the EL sniff retired in #28 PR-B.)"""
     con = db.connect()
     try:
         db.set_chat_room_mode(con, chat_id, True)
         set_room_enabled(chat_id, True)
-        log.info("room mode ON via sniff: chat=%s matched=%d",
+        log.info("room mode ON via ambient (known voice): chat=%s matched=%d",
                  chat_id, len(matched))
         present = {p["name"].lower()
                    for p in db.get_room_roster(con, chat_id,

@@ -53,7 +53,14 @@ export function rosterChipText(roster) {
 // failing one). Content-free numbers only - accepted seconds vs the target.
 // Works for remembered-voice people ({seconds, sufficient}) and roster rows
 // ({anchor_seconds, sufficient}) alike. Null when there is nothing to say.
-export function sufficiencyProgress(person, sufficientSeconds) {
+//
+// The bar is TWO-PART since #28 PR-B: the seconds target AND a minimum
+// number of short (~1-2s) clips, so quick interjections become identifiable.
+// When the snapshot carries the short-clip count (short_clips on people,
+// anchor_short_clips on roster rows) and a minShortClips target, the
+// progress says honestly which half is still missing; older callers without
+// those fields keep the seconds-only reading.
+export function sufficiencyProgress(person, sufficientSeconds, minShortClips) {
   if (!person) return null
   const target = Number(sufficientSeconds) > 0 ? Number(sufficientSeconds) : 6
   const raw = person.seconds ?? person.anchor_seconds
@@ -62,10 +69,33 @@ export function sufficiencyProgress(person, sufficientSeconds) {
     return { fraction: 1, done: true, label: 'voice remembered' }
   }
   const shownTarget = Number.isInteger(target) ? String(target) : target.toFixed(1)
+  const secondsFrac = Math.min(1, secs / target)
+  const secondsLabel = `${secs.toFixed(1)}s of ${shownTarget}s of clear speech heard`
+  const shortsRaw = person.short_clips ?? person.anchor_short_clips
+  const needShorts = Number(minShortClips) > 0 ? Number(minShortClips) : 0
+  if (needShorts > 0 && typeof shortsRaw === 'number') {
+    const shorts = Math.max(0, shortsRaw)
+    const shortsFrac = Math.min(1, shorts / needShorts)
+    if (secondsFrac >= 1 && shorts < needShorts) {
+      const missing = needShorts - shorts
+      return {
+        fraction: Math.min(1, (secondsFrac + shortsFrac) / 2),
+        done: false,
+        label: `enough long speech heard - needs ${missing} more short `
+          + `utterance${missing === 1 ? '' : 's'} (a word or two) so quick `
+          + 'interjections can be recognised',
+      }
+    }
+    return {
+      fraction: Math.min(1, (secondsFrac + shortsFrac) / 2),
+      done: false,
+      label: secondsLabel,
+    }
+  }
   return {
-    fraction: Math.min(1, secs / target),
+    fraction: secondsFrac,
     done: false,
-    label: `${secs.toFixed(1)}s of ${shownTarget}s of clear speech heard`,
+    label: secondsLabel,
   }
 }
 
@@ -73,23 +103,26 @@ export function sufficiencyProgress(person, sufficientSeconds) {
 // about whose voice is still being learned - with each learner's progress
 // toward the bar when the snapshot carries it, so patience is an informed
 // choice rather than a guess.
-export function rosterTitle(roster, sufficientSeconds) {
+export function rosterTitle(roster, sufficientSeconds, minShortClips) {
   const learning = (roster || [])
     .filter((p) => p && p.status !== 'left' && !p.sufficient)
     .map((p) => {
       const name = displayName(p) || p.name
       const secs = Number(p.anchor_seconds)
       if (Number.isFinite(secs) && secs > 0) {
-        const prog = sufficiencyProgress(
-          { seconds: secs, sufficient: false }, sufficientSeconds)
+        const prog = sufficiencyProgress(p, sufficientSeconds, minShortClips)
         return `${name} (${prog.label})`
       }
       return name
     })
+  // #28 PR-B: the cloud identity fallback is retired, so the cost story is
+  // simpler and the copy says so - overlap splitting is the ONLY second
+  // transcription left, and an unplaceable voice stays unnamed, never
+  // guessed and never sent to the cloud to be guessed at.
   const base =
-    'Room mode is on: turns are attributed by voice. Known voices are '
-    + 'identified on this device at no extra cost; a second transcription '
-    + 'runs only when voices overlap or a voice cannot be placed locally. '
+    'Room mode is on: turns are attributed by voice, on this device, at no '
+    + 'extra cost. A second transcription runs only when voices overlap, to '
+    + 'untangle who said what; a voice that cannot be placed stays unnamed. '
     + 'Say "X has left" to remove someone, or "solo mode" to switch off.'
   if (!learning.length) return base
   return `${base} Still learning: ${learning.join(', ')} - their turns stay `
@@ -200,15 +233,22 @@ export function reassignOptions(roster, people, currentLabels) {
 }
 
 // The remembered-voices panel's per-person line: honest about what is stored
-// and whether it is enough to identify them.
-export function personSummary(person, sufficientSeconds) {
+// and whether it is enough to identify them. `minShortClips` feeds the
+// two-part bar's copy (#28 PR-B); `setAside` surfaces clips the hygiene
+// audit quarantined - kept on disk, excluded from matching.
+export function personSummary(person, sufficientSeconds, minShortClips) {
   if (!person) return null
   const secs = Number(person.seconds) || 0
-  const status = person.sufficient
-    ? 'voice remembered - identified automatically when they speak'
-    : `still learning - ${secs.toFixed(1)}s of ${Number(sufficientSeconds) || 6}s `
-      + 'of clear speech stored; turns stay uncertain until then'
+  let status
+  if (person.sufficient) {
+    status = 'voice remembered - identified automatically when they speak'
+  } else {
+    const prog = sufficiencyProgress(person, sufficientSeconds, minShortClips)
+    status = `still learning - ${prog ? prog.label : ''}; `
+      + 'turns stay uncertain until then'
+  }
   const shown = displayName(person) || person.name
+  const aside = Number(person.quarantined_count) || 0
   return {
     name: shown,
     // Honesty when a preferred spelling differs from the introduced name:
@@ -217,16 +257,19 @@ export function personSummary(person, sufficientSeconds) {
     detail: `${person.clip_count || 0} clip${person.clip_count === 1 ? '' : 's'}, `
       + `${secs.toFixed(1)}s`,
     status,
+    setAside: aside > 0
+      ? `${aside} clip${aside === 1 ? '' : 's'} set aside - they sounded `
+        + 'more like another remembered voice, so they no longer take part '
+        + 'in matching'
+      : '',
   }
 }
 
-// Session-start sniff cost honesty (#28, third field test). When the
-// household has remembered voices, every session that starts with room mode
-// off listens to its first couple of spoken turns twice, so a known voice
-// can switch room mode on without an introduction. That is real extra
-// transcription spend and the copy says so plainly - the same posture as
-// the room-mode toggle's own "roughly double" line.
-export const SNIFF_EXPLAINER =
+// Ambient arming honesty (#28; renamed from SNIFF_EXPLAINER in PR-B - the
+// EL session-start sniff retired with the cloud identity path, so ambient
+// local detection is the only automatic door and the "listens twice" cost
+// caveat is gone for real).
+export const AMBIENT_EXPLAINER =
   'With remembered voices in the house, room mode switches on by itself '
   + 'when a known voice speaks - identified on this device at no extra cost. '
   + 'Say "solo mode" to keep a session private.'

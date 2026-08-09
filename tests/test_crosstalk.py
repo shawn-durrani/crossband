@@ -169,6 +169,17 @@ def relay(app, monkeypatch):
 
 
 @pytest.fixture
+def multi_matcher(monkeypatch):
+    """#28 PR-B: the anchored EL pass under test fires only on the local
+    matcher's "multi" (overlapping speech) verdict - stub exactly that."""
+    from backend import voiceid
+    monkeypatch.setattr(
+        voiceid, "identify_utterance",
+        lambda *a, **k: {"status": "defer", "person_id": None, "name": None,
+                         "score": 0.4, "reason": "multi"})
+
+
+@pytest.fixture
 def batch_stt(monkeypatch):
     state = {"calls": [], "responses": []}
 
@@ -263,7 +274,7 @@ def _two_voice_room_response(text_a="hello", text_b="world", overlap=False):
 
 
 def test_room_crosstalk_turn_is_marked_and_split_when_aligned(
-        app, relay, batch_stt):
+        app, relay, batch_stt, multi_matcher):
     """The whole layer in one pass: two voices in one utterance -> the
     crosstalk marker AND, because the words alternate cleanly and read as
     the committed transcript, the best-effort split - Shawn's words as
@@ -289,7 +300,7 @@ def test_room_crosstalk_turn_is_marked_and_split_when_aligned(
     ]
 
 
-def test_misaligned_split_falls_back_to_the_marker_alone(app, relay, batch_stt):
+def test_misaligned_split_falls_back_to_the_marker_alone(app, relay, batch_stt, multi_matcher):
     """The two transcribers heard different words: the split would contradict
     the message it annotates, so only the marker persists."""
     batch_stt["responses"] = [_two_voice_room_response("goodbye", "world")]
@@ -307,7 +318,7 @@ def test_misaligned_split_falls_back_to_the_marker_alone(app, relay, batch_stt):
     assert "segments" not in data
 
 
-def test_simultaneous_speech_is_marked_but_never_split(app, relay, batch_stt):
+def test_simultaneous_speech_is_marked_but_never_split(app, relay, batch_stt, multi_matcher):
     """Overlapping word intervals mean the quieter voice's words may simply
     be GONE - a split would present the wreckage as tidy dialogue."""
     batch_stt["responses"] = [_two_voice_room_response("hello", "world",
@@ -327,7 +338,7 @@ def test_simultaneous_speech_is_marked_but_never_split(app, relay, batch_stt):
     assert "segments" not in data
 
 
-def test_single_voice_turn_carries_no_crosstalk_keys(app, relay, batch_stt):
+def test_single_voice_turn_carries_no_crosstalk_keys(app, relay, batch_stt, multi_matcher):
     """The overwhelmingly common case must persist byte-identically to what
     phases 1-3 wrote: no crosstalk, no overlap, no segments keys at all."""
     batch_stt["responses"] = [_words_resp([
@@ -347,19 +358,23 @@ def test_single_voice_turn_carries_no_crosstalk_keys(app, relay, batch_stt):
                                   "labels": ["Shawn"], "uncertain": []}
 
 
-def test_phase1_crosstalk_marks_with_uncertain_ordinal_segments(
-        app, relay, batch_stt):
-    """No roster (the phase-1 ordinal path): a two-voice utterance still
-    gets the marker, and its split - when alignable - carries the session
-    ordinals, every segment uncertain by construction."""
+def test_unmatched_clusters_split_as_uncertain_ordinals(
+        app, relay, batch_stt, multi_matcher):
+    """Two voices neither of which matches an anchor: the split - when
+    alignable - carries the session ordinals, every segment uncertain by
+    construction. (Deliberately reworked in #28 PR-B: this pin used to ride
+    the no-roster phase-1 pass, which retired with the cloud identity path;
+    the ordinal machinery survives in the anchored pass and is pinned
+    there.)"""
     batch_stt["responses"] = [_words_resp([
-        _w("s0", 0.1, 0.5, "hello"),
-        _w("s1", 0.7, 1.1, "world"),
+        _w("speaker_0", 0.4, 0.9),                       # prefix: Shawn
+        _w("s5", PREFIX_1 + 0.1, PREFIX_1 + 0.5, "hello"),
+        _w("s6", PREFIX_1 + 0.7, PREFIX_1 + 1.1, "world"),
     ])]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        chat = _setup_room(c, sufficient=["Shawn"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"], "hello world")

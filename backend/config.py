@@ -205,20 +205,32 @@ class Settings(BaseModel):
     # CROSSBAND_ROOM_ROSTER_MAX.
     room_roster_max: int = 6
 
-    # Local speaker identification (#28 part 2): the offline fast identity path.
-    # When on (default), room mode names a confident single known voice locally
-    # in a fraction of a second and skips the ElevenLabs diarize batch call for
-    # that turn; the batch call still runs whenever the local matcher sees more
-    # than one voice or cannot decide, so crosstalk and uncertain handling are
-    # unchanged. When off (CROSSBAND_VOICE_ID_ENABLED=false), or when sherpa-onnx
-    # or the model is absent, behaviour is exactly today's ElevenLabs-only pass.
+    # Local speaker identification (#28): THE identity path. Since PR-B the
+    # on-device matcher is the only way a voice ever gets a name - identity
+    # is local or honestly uncertain, and no cloud pass ever names a turn.
+    # When off (CROSSBAND_VOICE_ID_ENABLED=false), or when sherpa-onnx or
+    # the model is absent, turns simply stay unnamed and automatic voice
+    # arming does not happen; introductions, spoken commands and the toggle
+    # still arm room mode by hand. The ElevenLabs diarize batch call
+    # survives only for crosstalk word-splitting when the matcher hears
+    # overlapping speech.
     voice_id_enabled: bool = True
     # Cosine match threshold. Calibrated for nemo_en_titanet_small: same-speaker
     # ~0.63-0.73 vs best-impostor ~0.12-0.31 locally, so 0.5 sits in the gap.
     voice_id_threshold: float = 0.5
+    # Match margin (#28 PR-B): how far the best enrolled match must beat the
+    # runner-up before it is claimed. The hygiene guard widens it further,
+    # automatically, for enrolled pairs whose voices sound close.
+    voice_id_margin: float = 0.12
+    # The two-part anchor sufficiency bar (#28 PR-B): accepted seconds AND a
+    # minimum number of short (~1-2s) clips before a voice counts as
+    # identifiable - so second-long interjections have something like
+    # themselves to match against.
+    voice_id_sufficient_seconds: float = 6.0
+    voice_id_min_short_clips: int = 2
     # The pinned model. URL and SHA-256 pin TOGETHER - override both or neither;
     # a URL override checked against the default hash simply fails verification
-    # and the matcher stays on the EL path. Empty here means "use the built-in
+    # and the matcher stays unavailable. Empty here means "use the built-in
     # pins" (backend/voiceid.py). The model is fetched once to
     # <data_dir>/voice_models/ and never committed.
     voice_id_model_url: str = ""

@@ -9,10 +9,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  adoptRoomMode, askFlag, cleanPreferredName, displayName, flagCopy,
-  FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
-  reassignOptions, rosterChipText, rosterTitle, SNIFF_EXPLAINER,
-  sufficiencyProgress,
+  adoptRoomMode, AMBIENT_EXPLAINER, askFlag, cleanPreferredName, displayName,
+  flagCopy, FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
+  reassignOptions, rosterChipText, rosterTitle, sufficiencyProgress,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -32,27 +31,32 @@ test('an empty or junk roster shows no chip at all', () => {
 })
 
 test('the roster hint states the cost honestly and who is still being learned', () => {
-  // Ambient (#28): known voices are identified on-device at no extra cost;
-  // the second transcription is the exception (overlap / unplaceable), not
-  // the rule - the copy must say the new true thing, not the old one.
+  // #28 PR-B: the cloud identity fallback retired, so the hint's cost story
+  // simplified - overlap splitting is the ONLY second transcription left,
+  // and an unplaceable voice stays unnamed (it is not sent to the cloud to
+  // be guessed at). Deliberately updates the pre-PR-B "or a voice cannot be
+  // placed locally" wording pin.
   const t = rosterTitle([present('Shawn'), present('Alex', false)])
-  assert.match(t, /identified on this device at no extra cost/)
-  assert.match(t, /second transcription runs only/)
+  assert.match(t, /on this device, at no extra cost/)
+  assert.match(t, /second transcription runs only when voices overlap/)
+  assert.match(t, /stays unnamed/)
   assert.match(t, /solo mode/)
   assert.match(t, /Still learning: Alex/)
   assert.match(t, /uncertain/)
   assert.doesNotMatch(t, /roughly double/)
+  assert.doesNotMatch(t, /cannot be placed locally/)
   assert.doesNotMatch(rosterTitle([present('Shawn')]), /Still learning/)
 })
 
-test('the sniff explainer describes ambient arming and the solo escape hatch', () => {
-  // Ambient (#28): a known voice switches room mode on by itself via the
-  // free on-device matcher, and "solo mode" is the stated privacy override.
-  assert.match(SNIFF_EXPLAINER, /remembered voices/)
-  assert.match(SNIFF_EXPLAINER, /switches on by itself/)
-  assert.match(SNIFF_EXPLAINER, /no extra cost/)
-  assert.match(SNIFF_EXPLAINER, /solo mode/)
-  assert.doesNotMatch(SNIFF_EXPLAINER, /transcribed twice/)
+test('the ambient explainer describes ambient arming and the solo escape hatch', () => {
+  // Ambient (#28; renamed from the sniff explainer in PR-B - the EL sniff
+  // retired): a known voice switches room mode on by itself via the free
+  // on-device matcher, and "solo mode" is the stated privacy override.
+  assert.match(AMBIENT_EXPLAINER, /remembered voices/)
+  assert.match(AMBIENT_EXPLAINER, /switches on by itself/)
+  assert.match(AMBIENT_EXPLAINER, /no extra cost/)
+  assert.match(AMBIENT_EXPLAINER, /solo mode/)
+  assert.doesNotMatch(AMBIENT_EXPLAINER, /transcribed twice/)
 })
 
 test('askFlag returns the newest OPEN unknown-voice flag only', () => {
@@ -224,6 +228,47 @@ test('sufficiencyProgress is done for a remembered voice and defensive about jun
   // roster rows carry anchor_seconds instead of seconds - both read
   assert.equal(
     sufficiencyProgress({ anchor_seconds: 3, sufficient: false }, 6).fraction, 0.5)
+})
+
+// ── the two-part bar and the hygiene guard (#28 PR-B) ───────────────────────
+
+test('sufficiencyProgress reports the missing short-clip half once seconds are met', () => {
+  // seconds met, shorts missing: the label says exactly what is missing
+  const p = sufficiencyProgress(
+    { seconds: 7, short_clips: 0, sufficient: false }, 6, 2)
+  assert.equal(p.done, false)
+  assert.match(p.label, /enough long speech heard/)
+  assert.match(p.label, /2 more short utterances/)
+  assert.ok(p.fraction < 1)  // not done means the bar must not read full
+  // one of two shorts: singular copy, fraction rises
+  const q = sufficiencyProgress(
+    { seconds: 7, short_clips: 1, sufficient: false }, 6, 2)
+  assert.match(q.label, /1 more short utterance /)
+  assert.ok(q.fraction > p.fraction && q.fraction < 1)
+  // seconds still short: the seconds count leads regardless of shorts
+  const r = sufficiencyProgress(
+    { seconds: 3, short_clips: 0, sufficient: false }, 6, 2)
+  assert.equal(r.label, '3.0s of 6s of clear speech heard')
+  // without short data (older snapshots) the seconds-only reading stands
+  assert.equal(
+    sufficiencyProgress({ seconds: 7, sufficient: false }, 6, 2).fraction, 1)
+})
+
+test('person summary carries the two-part learning copy and the set-aside line', () => {
+  const learning = personSummary(
+    { name: 'Ben', seconds: 7, short_clips: 0, clip_count: 3,
+      sufficient: false }, 6, 2)
+  assert.match(learning.status, /still learning/)
+  assert.match(learning.status, /short utterance/)
+  const aside = personSummary(
+    { name: 'Sam', seconds: 8, clip_count: 4, sufficient: true,
+      quarantined_count: 2 }, 6, 2)
+  assert.match(aside.setAside, /2 clips set aside/)
+  assert.match(aside.setAside, /another remembered voice/)
+  assert.match(aside.setAside, /no longer take part in matching/)
+  const clean = personSummary(
+    { name: 'Sam', seconds: 8, clip_count: 4, sufficient: true }, 6, 2)
+  assert.equal(clean.setAside, '')
 })
 
 test('the roster hint shows each learner\'s progress when the snapshot carries it', () => {

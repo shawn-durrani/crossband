@@ -114,28 +114,50 @@ introduction re-identifies a remembered person named in the utterance or
 raises the ask-fallback, and the field-test case - "this is me, Sam,
 the owner's wife" - is pinned to yield Sam, never Wife.
 
-**Arming and the session-start sniff (third field test).** Room mode
-must be reachable by every spoken door, and its failures must be
-visible. The two field phrasings that silently never armed - an unnamed
-handover ("hand over to a guest") and a guest's self-introduction with
-a proper name and a short form - are pinned end to end: the first arms
-room mode and raises the ask-fallback without ever minting a
-placeholder person, the second arms it, adds the person under their
-proper name, and keeps the spoken short form ("also known as", "call
-me") as their preferred display name at creation only - a later
-re-introduction never overwrites what may have been corrected by hand.
-Every introduction scan now ends in exactly one content-free INFO
-verdict line with an allowlisted outcome, so "the model said no" can
-never again be confused with "the scan never ran". The session-start
-sniff closes the structural gap that remembered voices could not arm a
-fresh chat: with room mode off and sufficient remembered non-owner
-voices, the first two committed utterances also run the existing
-diarization pass - the committed transcript is pinned to arrive while
-the sniff's batch call is wedged open, a match arms room mode and seeds
-the roster linked to the matched anchors, two anchorless clusters arm
-with ordinals but seed and ask nothing, two negative passes end the
-sniff at exactly two metered batch calls, and the sniff is pinned off
-when nobody (or only the owner) is remembered.
+**Arming (third field test onward).** Room mode must be reachable by
+every spoken door, and its failures must be visible. The two field
+phrasings that silently never armed - an unnamed handover ("hand over
+to a guest") and a guest's self-introduction with a proper name and a
+short form - are pinned end to end: the first arms room mode and raises
+the ask-fallback without ever minting a placeholder person, the second
+arms it, adds the person under their proper name, and keeps the spoken
+short form ("also known as", "call me") as their preferred display name
+at creation only - a later re-introduction never overwrites what may
+have been corrected by hand. Every introduction scan now ends in
+exactly one content-free INFO verdict line with an allowlisted outcome,
+so "the model said no" can never again be confused with "the scan never
+ran". The session-start EL sniff that once closed the remembered-voices
+gap is RETIRED (#28 PR-B, below); the ambient local check owns that job,
+and the old sniff suite now pins the retirement itself.
+
+**The cloud identity retirement (#28 PR-B, eighth field test).**
+Identity is local or honestly uncertain: the on-device matcher names a
+turn or the turn stays unresolved, and NO ElevenLabs call ever fires
+because the matcher deferred - a solo utterance can never trigger one,
+every defer reason takes the same silent exit, and with the matcher
+disabled or unavailable nothing automatic happens at all (the manual
+doors - introductions, commands, the toggle - still arm, pinned).
+The batch diarize call keeps exactly one trigger: the matcher's window
+analysis returning "multi" (genuinely overlapping speech), which runs
+the anchored crosstalk split - pinned to be the only metered EL spend,
+with the wedge/latency pins re-pinned on both the matcher and that one
+surviving call. The eighth field test's false split/arm/name is pinned
+structurally impossible: the sniff's functions no longer exist, and its
+exact conditions (fresh chat, remembered voices, undecidable first
+utterances) fire zero EL calls and arm nothing. Sufficiency is a
+TWO-PART bar - the seconds target and a minimum of short (~1-2s) clips,
+kept best-N per length class so long clips can no longer starve the
+short class - and the hygiene guard audits every bank change: a clip
+closer to another person's centroid than its own quarantines (kept on
+disk, excluded from matching, surfaced as "set aside"), close centroid
+pairs surface in the health strip and automatically widen the match
+margin for exactly that pair. Speculative identity at silence-start:
+the client's content-free hint frame sends no byte upstream (pinned),
+the local check runs on the buffered utterance while the silence window
+counts down, a fresh verdict labels the commit with no re-embed (one
+matcher call per turn, pinned), resumed speech discards the stale
+verdict, and a cached match on someone outside the consuming pass's
+candidates re-checks instead of smuggling the name through.
 
 **Room-mode commands (chat 198).** "Group mode, please" used to do
 nothing: it is not an introduction, so the scan (correctly) logged
@@ -305,13 +327,14 @@ week when it was maintained by hand.
 - (`test_projection.py`) Characterization tests for the transcript projection, covering the load-bearing invariants, including room-mode voice labels (#28 phase 3) and the unlabelled-chat byte-identity gate
 - (`test_prompt_guardrail.py`) High-salience personal-claim guardrail
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
-- (`test_room_ambient.py`) Ambient room detection (#28): the local matcher runs on every committed utterance while room mode is off - the owner is a no-op, a remembered voice arms and names, a clear stranger (only when the owner is enrolled) arms and asks, undecidable defers - it never calls ElevenLabs, and "solo mode" sets a sacred durable disarm that gates both ambient and the sniff until an explicit re-enable clears it
-- (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N refresh, the sufficiency bar, forget-deletes-audio, the prefix builder, the tap-to-correct audio cache
+- (`test_room_ambient.py`) Ambient room detection (#28): the local matcher runs on every committed utterance while room mode is off - the owner is a no-op, a remembered voice arms and names, a clear stranger (only when the owner is enrolled) arms and asks, undecidable defers - it never calls ElevenLabs, and "solo mode" sets a sacred durable disarm until an explicit re-enable clears it; since PR-B ambient is the ONLY automatic arming door
+- (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N-per-length-class refresh, the two-part sufficiency bar, forget-deletes-audio, the prefix builder, the hygiene guard's quarantine/close-pair storage, the tap-to-correct audio cache
 - (`test_room_commands.py`) Room-mode commands (#28, chat 198): "group mode, please" arms and "solo mode" disarms through the same never-awaited scan, the verdict-line allowlist grows the command outcomes, talk ABOUT the mode changes nothing, and the engine feeds seats the per-round room state
 - (`test_room_identify.py`) Anchored identification (#28 phase 2): anchor-prefix requests with the roster+1 hint, name labels, cross-session re-identification, elimination and anchor accumulation, the unknown-voice ask-fallback, the mismatch flag that never mutates a label, tap-to-correct, roster/flag live events
 - (`test_room_intro.py`) Introduction detection (#28 phase 2): the send-never-waits pin, the lexical prefilter gating utility spend, confirmed introductions/departures driving room mode and the roster, the cap, owner-anchor seeding, the third-field-test arming phrasings, alias capture, the per-scan verdict line
-- (`test_room_mode.py`) Room mode's parallel diarization (#28 phase 1): toggle-off byte-for-byte identity on the realtime relay, the commit-boundary tee, the never-awaited pass, retro labels and their live-events push
-- (`test_room_sniff.py`) Session-start sniff (#28, third field test): a remembered voice arms a fresh chat, bounded at two never-awaited metered passes, pinned off without remembered non-owner voices
+- (`test_room_mode.py`) Room mode's identity passes (#28): toggle-off byte-for-byte identity on the realtime relay, the commit-boundary tee, the never-awaited pass, the PR-B retirement pins (no EL call on solo or deferred turns; the crosstalk split alone is metered), exact turn-id labelling, and the live-events push
+- (`test_room_sniff.py`) The EL sniff's retirement (#28 PR-B): the sniff machinery is structurally gone, the eighth field test's false split/arm/name conditions fire zero EL calls, matcher-unavailable means manual-only arming, and the sniff's old job (a remembered voice arming a fresh chat) is covered by the ambient local check
+- (`test_room_speculative.py`) Speculative identity at silence-start (#28 PR-B): the content-free hint sends no byte upstream, the check is never awaited, a fresh verdict labels the commit with one matcher call, stale and out-of-candidate verdicts re-check, and a disarmed chat schedules nothing
 - (`test_rounds.py`) Detached rounds
 - (`test_secret_scan.py`) Guardrail for scripts/secret-scan.sh, the ONE scanner that runs both as the local pre-commit hook and, through this test, in CI
 - (`test_setup.py`) Setup router
@@ -328,7 +351,7 @@ week when it was maintained by hand.
 - (`test_tool_dispatch.py`) Tool dispatch
 - (`test_utility_usage.py`) Utility-model (Haiku) spend attribution
 - (`test_voice_health.py`) The voice health strip's backend (#28): GET /api/voice/health is content-free (states, counts, ms - never names), the matcher-state readout never triggers the warm, and the bounded per-chat last-decision record is written only inside the never-awaited passes
-- (`test_voice_id.py`) Local speaker identification (#28 part 2): the pure identify/open-set/ambiguity/two-voice decision seam with synthetic vectors, enrolment averaging cached by clip set with a mocked extractor, the pinned-model SHA-256 fetch-and-verify with no network, and the run_pass wiring (fast match skips the batch call, defer and disabled run the ElevenLabs path). An integration test builds the real extractor when the model is present and skips cleanly when it is not
+- (`test_voice_id.py`) Local speaker identification (#28): the pure identify/open-set/ambiguity/two-voice decision seam with synthetic vectors (close pairs widening the margin), the pairwise hygiene rules and bank audit, enrolment averaging cached by clip set with a mocked extractor, the pinned-model SHA-256 fetch-and-verify with no network, and the PR-B run_pass wiring (fast match and every defer skip the batch call; only "multi" runs the crosstalk split; disabled does nothing automatic). An integration test builds the real extractor when the model is present and skips cleanly when it is not
 - (`test_voice_rounds.py`) Voice playback regression guards for the change that decoupled Claude Code guest execution from the turn lifecycle
 - (`test_voice_trace.py`) Per-turn voice latency instrumentation
 - (`test_work_status.py`) Announce pending external work before the chat goes silent, using a STRUCTURED status event (a trusted activity label) rather than hardcoded filler text, and NEVER persisting it into a chat message or the model's own reply content
@@ -349,15 +372,16 @@ week when it was maintained by hand.
 - (`messageCost.test.js`) Tests for the chat surface's cost labelling: it must not present
 - (`modelReadout.test.js`) Tests for the per-seat model-status readout: it must not misread on a narrow
 - (`rateCards.test.js`) Tests for owner-entered rate cards: an owner must be able to price a model
-- (`roomState.test.js`) Room-mode roster/flag state (#28 phase 2): the "In the room" chip names exactly the present people, ask/mismatch copy never claims a label changed, the correction menu's options, remembered-voice summaries, preferred display names (#28 phase 3)
+- (`roomState.test.js`) Room-mode roster/flag state (#28 phase 2): the "In the room" chip names exactly the present people, ask/mismatch copy never claims a label changed, the correction menu's options, remembered-voice summaries with the two-part learning bar and set-aside clips (PR-B), preferred display names (#28 phase 3)
 - (`runningState.test.js`) Tests for per-chat running-task state
+- (`speculative.test.js`) The silence-start hint's firing rule (#28 PR-B): once per silence gap after the confirmation window, re-armed by resumed speech, never outside an utterance
 - (`spendView.test.js`) Tests for the Spend page: it must lead with an honest answer, not a table
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard
 - (`textQueue.test.js`) Invariant tests for per-chat text batching + pre-ingestion cancel
 - (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery
 - (`voiceGate.test.js`) Pure-function tests for the voice playback gate (a regression guard)
-- (`voiceHealth.test.js`) The voice health strip's derivations (#28): matcher-state readouts (degraded states say the cloud takes over, never that voice broke), the room/solo/ambient mode line, the live pulse's exact "local · 227ms" formatting with 'pending' only during a live session, and known-voice progress lines
+- (`voiceHealth.test.js`) The voice health strip's derivations (#28): matcher-state readouts (degraded states say turns stay unnamed and arming is manual - never a cloud-fallback promise, which retired in PR-B), the room/solo/ambient mode line, the live pulse's exact "local · 227ms" formatting with 'pending' only during a live session, known-voice progress lines, and close-pair warnings
 - (`voiceRecovery.test.js`) Tests for voice session recovery: a session must repair itself when the tab
 - (`voiceTrace.test.js`) Pure-function tests for the client-side voice latency trace
 - (`voiceView.test.js`) Tests for the voice call screen's state rules

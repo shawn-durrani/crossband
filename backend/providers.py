@@ -600,16 +600,17 @@ _VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
 UNIDENTIFIED_SPEAKER = "unidentified speaker"
 IN_ROOM_SUFFIX = " (in the room)"
 
-# Honest pending identity (#28, night test 4). The identity pass costs
-# commit + a batch round trip; the round's first responder reads the
-# transcript sooner than that, so the just-spoken turn's label does not
-# exist yet - and rendering that absence as the owner made seats guess.
-# A room-mode user turn that is still inside the identity race projects
-# this head instead, so a seat says "the name is still coming" rather
-# than misattributing the turn. The window is a beat longer than the
-# measured worst-case pass (commit + ~1.9s); past it, an unlabelled turn
-# means the pass found nothing to say (the common lone-owner case) or
-# failed, and today's owner rendering is the honest reading again.
+# Honest pending identity (#28, night test 4; meaning narrowed by PR-B).
+# A room-mode user turn whose label has not landed yet projects this head,
+# so a seat says "the name is still coming" rather than misattributing the
+# turn. Since the cloud identity fallback retired (#28 PR-B), identity is
+# local or honestly uncertain: the local matcher (usually pre-warmed by the
+# speculative silence-start check) either names the turn within a few
+# hundred milliseconds or never will - a deferred verdict fires no
+# ElevenLabs call, so past this window an unlabelled turn simply IS
+# unresolved and today's owner rendering is the honest reading again. The
+# window survives at its measured-era width as slack for a slow matcher
+# and for the crosstalk split (the one batch call left).
 PENDING_IDENTITY_HEAD = "Identity pending" + IN_ROOM_SUFFIX
 PENDING_IDENTITY_SECS = 4.0
 
