@@ -4,6 +4,17 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode obeys spoken and typed commands (#28). Saying "group mode,
+  please" (or "room mode on", "multi-user mode") now actually switches
+  room mode on, and "solo mode" / "room mode off" / "just me now"
+  switches it off - previously the AIs would verbally agree while the
+  app did nothing. Detection rides the same background check as spoken
+  introductions, so live voice latency is untouched, and a cheap
+  confirmation step means talking ABOUT the mode ("is group mode on?")
+  changes nothing. Switching off also clears the "In the room" chip and
+  ends the doubled transcription in a live session. The AIs are now
+  told the current room-mode state and roster each round, so "is group
+  mode on?" gets a true answer instead of a guess.
 - Room mode identifies known voices locally, part 2 (#28). When more
   than one person is in the room, a known voice is now recognised
   on-device in a fraction of a second - so the models see the right name

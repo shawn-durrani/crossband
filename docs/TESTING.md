@@ -137,6 +137,33 @@ with ordinals but seed and ask nothing, two negative passes end the
 sniff at exactly two metered batch calls, and the sniff is pinned off
 when nobody (or only the owner) is remembered.
 
+**Room-mode commands (chat 198).** "Group mode, please" used to do
+nothing: it is not an introduction, so the scan (correctly) logged
+no_prefilter_match while the seats verbally agreed to a switch no code
+was performing. A command lexicon now rides the same post-commit
+fire-and-forget scan - the send-never-waits law is pinned by wedging
+the command confirmation open - with a deterministic prefilter gating
+one utility call and the model judging direction, so a question about
+the mode confirms as none and changes nothing. A confirmed arm flips
+the durable flag and diarize's live mirror through the existing
+control plumbing and rosters the owner (linked to remembered anchors
+when they exist, anchor-seeded from the stashed utterance when the
+command was spoken); a confirmed disarm flips it off, marks everyone
+still present left (the cap frees, the chip disappears) and resolves
+the open unknown-voice ask, while mismatch flags survive - they doubt
+past turns, which going solo answers nothing about. The verdict-line
+allowlist grows armed_by_command / disarmed_by_command, still exactly
+one content-free line per scan even when a turn is both a command and
+an introduction. Seats stop guessing about the mode: the engine hands
+every seat the chat's current room mode and present roster names,
+rendered as one short line in the UNCACHED volatile tail - the
+projection pins the line to the volatile block, roster names are
+pinned out of the transcript turns, and the cache-split pins prove
+that flipping the mode or the roster moves no byte of the cached
+prefix. On the client, a live session follows a server-side disarm
+only when its session flag came from the server, never overriding the
+user's own session-only toggle.
+
 **Label latency, part 1 (night test 4).** The identity pass loses the
 race to the round's first responder by arithmetic (the batch reply takes
 1.0-1.9s; the first seat reads at roughly commit plus 0.3-0.9s), so this
@@ -244,6 +271,7 @@ week when it was maintained by hand.
 - (`test_prompt_guardrail.py`) High-salience personal-claim guardrail
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
 - (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N refresh, the sufficiency bar, forget-deletes-audio, the prefix builder, the tap-to-correct audio cache
+- (`test_room_commands.py`) Room-mode commands (#28, chat 198): "group mode, please" arms and "solo mode" disarms through the same never-awaited scan, the verdict-line allowlist grows the command outcomes, talk ABOUT the mode changes nothing, and the engine feeds seats the per-round room state
 - (`test_room_identify.py`) Anchored identification (#28 phase 2): anchor-prefix requests with the roster+1 hint, name labels, cross-session re-identification, elimination and anchor accumulation, the unknown-voice ask-fallback, the mismatch flag that never mutates a label, tap-to-correct, roster/flag live events
 - (`test_room_intro.py`) Introduction detection (#28 phase 2): the send-never-waits pin, the lexical prefilter gating utility spend, confirmed introductions/departures driving room mode and the roster, the cap, owner-anchor seeding, the third-field-test arming phrasings, alias capture, the per-scan verdict line
 - (`test_room_mode.py`) Room mode's parallel diarization (#28 phase 1): toggle-off byte-for-byte identity on the realtime relay, the commit-boundary tee, the never-awaited pass, retro labels and their live-events push

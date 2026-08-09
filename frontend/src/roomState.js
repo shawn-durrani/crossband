@@ -95,6 +95,27 @@ export function rosterTitle(roster, sufficientSeconds) {
     + 'uncertain until enough of their voice has been heard.'
 }
 
+// Should a LIVE voice session's room-mode flag follow the chat's durable
+// room mode? (#28 room commands: "solo mode" spoken mid-session must
+// actually end the doubled transcription and the room capture profile, not
+// just flip the server flag.) `session` is {active, roomMode, source} where
+// source says who last set the session flag: 'server' (seeded from the chat
+// at session start, or adopted from a server-side arm) or 'manual' (the
+// user's own session-only toggle). Returns true (adopt on), false (adopt
+// off) or null (leave it alone).
+// - Arm always adopts: the server only arms on real evidence (an
+//   introduction, a recognised voice, a spoken command), and running the
+//   pass without the matching capture profile would half-work.
+// - Disarm adopts ONLY a server-sourced flag: a session-only room mode the
+//   user switched on by hand (durable mode off the whole time) is theirs
+//   alone to switch off.
+export function adoptRoomMode(serverOn, session) {
+  if (!session || !session.active) return null
+  if (serverOn && !session.roomMode) return true
+  if (!serverOn && session.roomMode && session.source === 'server') return false
+  return null
+}
+
 // The newest OPEN "someone new is speaking" ask, or null. One at a time by
 // backend design; defensive here anyway.
 export function askFlag(flags) {
