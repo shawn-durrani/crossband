@@ -646,6 +646,20 @@ def _clean_head(label):
     return " ".join(re.sub(r"[\[\]·\n]", "", label).split())[:60].strip()
 
 
+def _display_name(label, cfg):
+    """The name the models are TOLD (#28: naming is law): a voice label is
+    written with the person's identity name, but the projection speaks their
+    preferred display name. cfg['preferred_names'] is the engine-supplied
+    {casefolded identity or merged name: preferred} map; absent or unknown
+    keys leave the label untouched, so nothing changes for chats with no
+    remembered people."""
+    preferred = cfg.get("preferred_names")
+    if not isinstance(preferred, dict):
+        return label
+    hit = preferred.get(label.casefold())
+    return hit if isinstance(hit, str) and hit.strip() else label
+
+
 def _identity_pending(msg, cfg, now=None):
     """Is this user turn still inside the identity race (#28, night test 4)?
     True only when ALL of these hold: the chat is in room mode (cfg carries
@@ -692,6 +706,11 @@ def _user_turn_head(msg, cfg, now=None):
             named.append(_clean_head(label))
     if not any_unidentified and [n.casefold() for n in named] == [owner.casefold()]:
         return owner  # confidently the owner alone: today's rendering exactly
+    # Named guests project under their PREFERRED display name (#28: naming
+    # is law) - resolved after the owner check above, so the owner-confident-
+    # equals-unlabelled byte-identity pin is untouched.
+    named = list(dict.fromkeys(
+        _clean_head(_display_name(n, cfg)) or n for n in named))
     parts = named + ([UNIDENTIFIED_SPEAKER] if any_unidentified else [])
     head = " + ".join(parts)
     if head == UNIDENTIFIED_SPEAKER:
@@ -724,7 +743,9 @@ def _crosstalk_tail(msg, cfg):
                 or not _clean_head(label):
             shown = UNIDENTIFIED_SPEAKER
         else:
-            shown = _clean_head(label)
+            # Confident split segments speak the preferred display name too
+            # (#28: naming is law) - same resolution as the turn head.
+            shown = _clean_head(_display_name(label, cfg)) or _clean_head(label)
         parts.append(f'{shown}: "{text}"')
         if len(parts) >= MAX_PROJECTED_SEGMENTS:
             break

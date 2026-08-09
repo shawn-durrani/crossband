@@ -125,6 +125,15 @@ export function askFlag(flags) {
   return open.length ? open[open.length - 1] : null
 }
 
+// The newest OPEN merge question (#28: naming is law), or null: an
+// introduced name sits close to a remembered one, and the app asked instead
+// of guessing. Rendered through the same ask strip as unknown_voice.
+export function mergeFlag(flags) {
+  const open = (flags || []).filter(
+    (f) => f && f.kind === 'merge_question' && !f.resolved_at)
+  return open.length ? open[open.length - 1] : null
+}
+
 // Open mismatch flags keyed by the turn they doubt, for per-message render.
 export function mismatchByMessage(flags) {
   const out = {}
@@ -151,25 +160,42 @@ export function flagCopy(flag) {
     return `This turn is labelled ${flag.label || 'a speaker'} but ${who}. `
       + 'The label has NOT been changed - tap the name on the turn to correct it.'
   }
+  if (flag.kind === 'merge_question') {
+    // The merge question (#28: naming is law): honest that nothing was
+    // merged, and says exactly how to answer either way.
+    const a = flag.label || 'The new name'
+    const b = flag.suspected || 'someone already remembered'
+    return `Is ${a} the same person as ${b}? Nothing has been merged - `
+      + `rename ${a} to ${b} under Remembered voices to combine them, `
+      + 'or dismiss this if they are different people.'
+  }
   return ''
 }
 
 // Names offered by the tap-to-correct menu: everyone present in the room
 // plus every remembered voice, minus the labels the turn already carries.
 // Order: roster first (most likely correction), then remembered strangers.
+// Each option is {name, display}: `name` is the IDENTITY name the correction
+// endpoint must receive (so the fix lands on the existing person instead of
+// minting a twin), `display` is the preferred spelling the menu shows (#28:
+// naming is law).
 export function reassignOptions(roster, people, currentLabels) {
   const taken = new Set((currentLabels || []).map((l) => String(l).toLowerCase()))
   const out = []
-  const push = (name) => {
+  const push = (name, display) => {
     if (typeof name !== 'string' || !name) return
     const key = name.toLowerCase()
-    if (taken.has(key) || out.some((n) => n.toLowerCase() === key)) return
-    if (out.length < MAX_MENU_NAMES) out.push(name)
+    if (taken.has(key) || out.some((o) => o.name.toLowerCase() === key)) return
+    if (out.length < MAX_MENU_NAMES) {
+      out.push({ name, display: displayName(display) || name })
+    }
   }
   for (const p of roster || []) {
-    if (p && p.status !== 'left') push(p.name)
+    if (p && p.status !== 'left') push(p.name, p)
   }
-  for (const p of people || []) push(p && p.name)
+  for (const p of people || []) {
+    if (p) push(p.name, p)
+  }
   return out
 }
 

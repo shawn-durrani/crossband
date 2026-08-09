@@ -388,6 +388,21 @@ def _get_extractor(cfg):
     return None
 
 
+def matcher_status(cfg) -> str:
+    """The matcher's state for the voice health strip (#28): one of
+    'disabled' (feature flag off), 'unavailable' (no sherpa-onnx wheel, or
+    the fetch/build failed - identification runs on the cloud fallback),
+    'cold' (nothing has needed the matcher yet; the first voice check warms
+    it), 'fetching' (the one-time model download is in flight) or 'ready'.
+    Read-only and content-free: it never triggers the warm itself."""
+    if not enabled(cfg):
+        return "disabled"
+    if sherpa_onnx is None:
+        return "unavailable"
+    with _lock:
+        return _state
+
+
 # ================= embedding + enrolment ==================================
 
 def _pcm_to_float(pcm: bytes):

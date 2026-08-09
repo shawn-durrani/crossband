@@ -185,6 +185,40 @@ still books when labelling fails, and the anchor prefix is cached per
 roster snapshot with two hard pins: a cache hit reads zero clip files,
 and any anchor mutation invalidates, whichever store instance wrote it.
 
+**Naming is law (#28).** Owner-set display names are locked: the rename
+UI and a spoken correction ("her name is spelt ...") both set a
+preferred name owner-set, and from then on no automated path - alias
+capture, introductions, anything - may change it. The preferred name is
+pinned to win on every surface a name renders or ships: the voice
+chips, the roster snapshot, the model-facing projection heads and
+crosstalk splits (with the owner-confident-equals-unlabelled
+byte-identity pin untouched, and uncertain labels still never leaking a
+name), memory ingest's `guest:<preferred name>`, and the STT keyterm
+hints. Corrections match conservatively - the named target must resolve
+to exactly one known person, an unnamed correction falls back to the
+most recent confidently-labelled speaker, and ambiguity does nothing
+rather than guessing - with the verdict-line allowlist grown by the
+correction outcomes. Variants merge instead of duplicating: an
+introduction name that is confidently a folded-form variant (case,
+diacritics, edit distance scaled by name length) of a remembered person
+re-identifies them, a confident voice match on the introduction
+utterance re-identifies even an unalike name (and never seeds the
+owner's anchor from the guest's audio), a close-but-not-confident name
+raises one merge-question flag, and the rename endpoint returns the
+conflict so the UI can offer the merge - banks folding under
+keep-best-N, the oldest person_id surviving, roster rows re-pointing,
+and the survivor answering to both names. A forgotten person's name
+reappearing creates a fresh record: forget stays forgotten.
+
+**The voice health strip (#28).** GET /api/voice/health is pinned
+content-free - states, counts and milliseconds, never a name and never
+transcript text - and the per-chat last-decision record (which path
+identified the last turn, and how fast) is bounded and written only
+from inside the never-awaited background passes, so the zero-latency
+law is untouched by construction. The strip's readouts (matcher state,
+room/ambient/solo mode, the live pulse, per-voice learning progress)
+derive in a pure frontend module.
+
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
 backfilled; an unknown model id stays unpriced instead of inheriting a
@@ -262,6 +296,7 @@ week when it was maintained by hand.
 - (`test_mcp_servers_api.py`) Connections-page MCP management
 - (`test_mcp_servers_auth.py`) Host-level routes stay on the host
 - (`test_memory_attribution.py`) Guest speaker classes on memory ingest (#28 phase 3): owner turns stay `user`, confident guests go `guest:<preferred name>`, uncertain and open-flagged turns go `guest:unknown`, `SOURCE_APP` untouched
+- (`test_naming_law.py`) Naming is law (#28): owner-set preferred names are locked against every automated path and win on every surface (projection heads, ingest, chips via the store shape), spoken corrections set them conservatively, introduction variants re-identify instead of minting twins, the merge endpoint folds banks under keep-best-N with the oldest id surviving, and forget stays forgotten
 - (`test_memory_client.py`) Memory client degradation
 - (`test_models_status.py`) GET /api/models/status
 - (`test_openai_client.py`) Keyless-local edge for the OpenAI-compatible adapter
@@ -292,6 +327,7 @@ week when it was maintained by hand.
 - (`test_tool_concurrency.py`) One assistant turn's tool calls run concurrently, in-order
 - (`test_tool_dispatch.py`) Tool dispatch
 - (`test_utility_usage.py`) Utility-model (Haiku) spend attribution
+- (`test_voice_health.py`) The voice health strip's backend (#28): GET /api/voice/health is content-free (states, counts, ms - never names), the matcher-state readout never triggers the warm, and the bounded per-chat last-decision record is written only inside the never-awaited passes
 - (`test_voice_id.py`) Local speaker identification (#28 part 2): the pure identify/open-set/ambiguity/two-voice decision seam with synthetic vectors, enrolment averaging cached by clip set with a mocked extractor, the pinned-model SHA-256 fetch-and-verify with no network, and the run_pass wiring (fast match skips the batch call, defer and disabled run the ElevenLabs path). An integration test builds the real extractor when the model is present and skips cleanly when it is not
 - (`test_voice_rounds.py`) Voice playback regression guards for the change that decoupled Claude Code guest execution from the turn lifecycle
 - (`test_voice_trace.py`) Per-turn voice latency instrumentation
@@ -321,6 +357,7 @@ week when it was maintained by hand.
 - (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery
 - (`voiceGate.test.js`) Pure-function tests for the voice playback gate (a regression guard)
+- (`voiceHealth.test.js`) The voice health strip's derivations (#28): matcher-state readouts (degraded states say the cloud takes over, never that voice broke), the room/solo/ambient mode line, the live pulse's exact "local · 227ms" formatting with 'pending' only during a live session, and known-voice progress lines
 - (`voiceRecovery.test.js`) Tests for voice session recovery: a session must repair itself when the tab
 - (`voiceTrace.test.js`) Pure-function tests for the client-side voice latency trace
 - (`voiceView.test.js`) Tests for the voice call screen's state rules

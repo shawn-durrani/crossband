@@ -271,7 +271,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
     // by the parallel diarization pass. ALL decision logic lives in
     // voiceChips.js / roomState.js (pure, node --test); this only renders
     // what they return. Tapping a chip opens the correction menu.
-    const voiceChips = chipData(msg)
+    const voiceChips = chipData(msg, voicePeople)
     const reassignNames = onReassign
       ? reassignOptions(roomRoster, voicePeople, voiceChips.map((c) => c.label))
       : []
@@ -279,7 +279,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
     // per-voice split when one was salvageable. Decision logic in
     // voiceChips.js; this only renders what it returns.
     const ctNote = crosstalkNote(msg)
-    const ctSegments = crosstalkSegments(msg)
+    const ctSegments = crosstalkSegments(msg, voicePeople)
     return (
       <div className={`group flex items-center justify-end gap-2 ${gapClass}`}>
         {msg.content && (
@@ -294,7 +294,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                   key={chip.label}
                   type="button"
                   title={chipTitle(chip)}
-                  aria-label={`Spoken by ${chip.label}${chip.uncertain ? ' (uncertain)' : ''}${reassignNames.length ? ' - tap to correct' : ''}`}
+                  aria-label={`Spoken by ${chip.display || chip.label}${chip.uncertain ? ' (uncertain)' : ''}${reassignNames.length ? ' - tap to correct' : ''}`}
                   className={`text-[11px] px-1.5 py-0.5 rounded-full border bg-panel2 ${
                     chip.uncertain
                       ? 'border-dashed border-amber-700/70 text-amber-200/90'
@@ -302,21 +302,21 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                   } ${reassignNames.length ? 'hover:text-ink cursor-pointer' : 'cursor-default'}`}
                   onClick={() => reassignNames.length && setChipMenuOpen((o) => !o)}
                 >
-                  {chip.label}{chip.uncertain ? '?' : ''}
+                  {chip.display || chip.label}{chip.uncertain ? '?' : ''}
                 </button>
               ))}
               {chipMenuOpen && reassignNames.length > 0 && (
                 <div className="absolute top-full right-0 mt-1 z-10 min-w-32 bg-panel border border-edge rounded-lg p-1 flex flex-col"
                      style={{ boxShadow: 'var(--shadow-pop)' }}>
                   <span className="text-[10px] px-2 py-0.5 text-ink-faint">Who spoke this?</span>
-                  {reassignNames.map((n) => (
+                  {reassignNames.map((o) => (
                     <button
-                      key={n}
+                      key={o.name}
                       type="button"
                       className="text-left text-xs px-2 py-1 rounded text-ink-mid hover:text-ink hover:bg-panel2"
-                      onClick={() => { setChipMenuOpen(false); onReassign?.(msg.id, n) }}
+                      onClick={() => { setChipMenuOpen(false); onReassign?.(msg.id, o.name) }}
                     >
-                      {n}
+                      {o.display}
                     </button>
                   ))}
                   <button
@@ -341,7 +341,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
               {ctSegments.map((s, i) => (
                 <span key={i}>
                   {i > 0 ? ' / ' : ''}
-                  <span className="font-medium">{s.label}{s.uncertain ? '?' : ''}:</span>
+                  <span className="font-medium">{s.display || s.label}{s.uncertain ? '?' : ''}:</span>
                   {' '}&ldquo;{s.text}&rdquo;
                 </span>
               ))}

@@ -229,6 +229,15 @@ class AnchorStore:
                 # chip, the memory ingest and the STT keyterms call this
                 # person. Defaults to the name they were introduced under.
                 "preferred_name": p.get("preferred_name") or name,
+                # Owner-set names are LAW (#28): once the owner has set the
+                # display name - by the rename UI or a spoken correction - no
+                # automated path may change it again.
+                "owner_set": bool(p.get("preferred_owner_set")),
+                # Identity names this person has ALSO been known under
+                # (merge_people folds them in), so old voice labels and
+                # re-introductions under a merged-away name still resolve to
+                # this person instead of minting a twin.
+                "merged_names": list(p.get("merged_names") or []),
                 "created_at": p.get("created_at", 0),
                 "clip_count": len(clips),
                 "seconds": round(sum(c["seconds"] for c in clips), 1),
@@ -239,12 +248,17 @@ class AnchorStore:
     def find_by_name(self, name: str):
         """Case-insensitive name lookup: the re-identification hook - an
         introduction (or correction) for a name we already know reuses that
-        person's anchors instead of starting over."""
+        person's anchors instead of starting over. Merged-away identity names
+        match too: after a merge, the old name still means this person."""
         want = (name or "").strip().lower()
         if not want:
             return None
-        for p in self.people():
+        people = self.people()
+        for p in people:
             if p["name"].strip().lower() == want:
+                return p
+        for p in people:
+            if any(m.strip().lower() == want for m in p["merged_names"]):
                 return p
         return None
 
@@ -261,12 +275,19 @@ class AnchorStore:
             self._save(data)
         return pid
 
-    def set_preferred_name(self, person_id: str, preferred: str) -> bool:
+    def set_preferred_name(self, person_id: str, preferred: str,
+                           owner_set: bool = True) -> bool:
         """Set the person's correctable display name (#28 phase 3). The
         introduced name stays as the identity key (voice labels and roster
         rows keep matching); this only changes what the display, ingest and
         keyterm surfaces call them. Returns False for an unknown person or
-        an empty name after trimming."""
+        an empty name after trimming.
+
+        Naming is law (#28): `owner_set=True` (the rename UI, a spoken
+        correction) marks the name OWNER-SET, and from then on every
+        automated path - alias capture, introductions, anything calling with
+        `owner_set=False` - is refused. The owner's word is final until the
+        owner speaks again."""
         preferred = (preferred or "").strip()[:MAX_PREFERRED_CHARS].strip()
         if not preferred or not re.search(r"[A-Za-z]", preferred):
             return False
@@ -275,9 +296,57 @@ class AnchorStore:
             person = data["people"].get(person_id)
             if person is None:
                 return False
+            if not owner_set and person.get("preferred_owner_set"):
+                return False  # locked: no automated path may rename them
             person["preferred_name"] = preferred
+            if owner_set:
+                person["preferred_owner_set"] = True
             self._save(data)
         return True
+
+    def merge_people(self, person_id_a: str, person_id_b: str) -> str | None:
+        """Fold two remembered people into ONE (#28: variants merge instead
+        of duplicating). The OLDEST person_id survives; the other's clips
+        join the survivor's pool and the keep-best-N rule applies across the
+        union (evicted clip files are deleted, so the merged bank obeys the
+        same bounds as any other). The non-survivor's identity name (and any
+        names already merged into it) land in the survivor's merged_names, so
+        old voice labels and re-introductions under that name keep resolving.
+        The survivor's own preferred name and owner-set flag are untouched -
+        the caller applies the owner's chosen display name after the merge.
+        Returns the surviving person_id, or None (unknown id, or a == b)."""
+        if not person_id_a or not person_id_b or person_id_a == person_id_b:
+            return None
+        with self._lock:
+            data = self._load()
+            a = data["people"].get(person_id_a)
+            b = data["people"].get(person_id_b)
+            if a is None or b is None:
+                return None
+            survivor_id, gone_id = person_id_a, person_id_b
+            if b.get("created_at", 0) < a.get("created_at", 0):
+                survivor_id, gone_id = person_id_b, person_id_a
+            survivor = data["people"][survivor_id]
+            gone = data["people"].pop(gone_id)
+            merged = list(survivor.get("clips", [])) + list(gone.get("clips", []))
+            kept = select_keep(merged)
+            survivor["clips"] = kept
+            names = list(survivor.get("merged_names") or [])
+            for extra in [gone.get("name", gone_id)] + list(
+                    gone.get("merged_names") or []):
+                if extra and extra.lower() not in (
+                        [n.lower() for n in names]
+                        + [survivor.get("name", "").lower()]):
+                    names.append(extra)
+            survivor["merged_names"] = names
+            self._save(data)
+            kept_files = {c["file"] for c in kept}
+            for c in merged:
+                if c["file"] not in kept_files:
+                    self._delete_file(c["file"])
+        log.info("voices merged: survivor=%s forgotten=%s clips=%d",
+                 survivor_id, gone_id, len(kept))
+        return survivor_id
 
     def add_clip(self, person_id: str, pcm: bytes, sample_rate: int,
                  source: str) -> bool:

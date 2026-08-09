@@ -17,13 +17,40 @@ import { SNIFF_EXPLAINER } from '../roomState'
 // stable element.
 export default function VoiceDock({
   voiceState, pttMode, silenceSecs, voiceRate, dockOpen, roomMode,
-  rosterText, rosterHint, onRoomModeOff,
+  rosterText, rosterHint, onRoomModeOff, health,
   onPttModeChange, onSilenceSecsChange, onVoiceRateChange, onDockOpenChange,
   onRoomModeChange, onFinalizeNow, onInterrupt, onStop,
 }) {
   if (voiceState === 'off') return null
   return (
     <div className="absolute bottom-3 right-3 sm:right-5 voice-dock">
+      {/* The voice health strip (#28): matcher state, mode, the last
+          identification's path and latency, and each known voice's learning
+          progress. All derivations live in voiceHealth.js (pure,
+          node --test); this renders the strip it was handed. Its own row
+          above the orb row, so variable-length text never displaces the
+          orb (the geometry rule above). */}
+      {health && (
+        <div
+          className="flex flex-wrap justify-end gap-x-1.5 gap-y-0.5 text-[11px] text-ink-faint max-w-72 text-right"
+          role="status"
+          aria-label="Voice health"
+        >
+          <span
+            title={health.matcher.title}
+            className={health.matcher.degraded ? 'text-amber-300/90' : ''}
+          >
+            {health.matcher.label}
+          </span>
+          {health.mode && <span title={health.mode.title}>· {health.mode.label}</span>}
+          {health.pulse && <span title={health.pulse.title}>· {health.pulse.label}</span>}
+          {health.voices.length > 0 && (
+            <span title="Remembered voices, and how much clear speech has been learned for each">
+              · {health.voices.map((v) => (v.done ? `${v.name} ✓` : `${v.name} ${v.label}`)).join(', ')}
+            </span>
+          )}
+        </div>
+      )}
       {/* The roster chip (#28 phase 2): who the app is telling apart right
           now - which doubles as the transparency cue that multi-voice
           processing is on. The × is the durable override off. */}

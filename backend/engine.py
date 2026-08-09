@@ -181,9 +181,27 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0):
         if chat["room_mode"]:
             room_names = [r["name"] for r in
                           db.get_room_roster(con, chat_id, present_only=True)]
+        # Preferred display names (#28: naming is law): every projection
+        # surface speaks a person's preferred name, so the roster line and
+        # the turn heads resolve through this map (identity AND merged-away
+        # names -> preferred). Read per seat like everything else here; a
+        # broken store degrades to identity names, never to a broken round.
+        preferred_names = {}
+        try:
+            from . import anchors
+            for p in anchors.store().people():
+                preferred_names[p["name"].casefold()] = p["preferred_name"]
+                for merged in p.get("merged_names") or []:
+                    preferred_names[merged.casefold()] = p["preferred_name"]
+        except Exception:
+            log.debug("anchor store unreadable for the round's preferred "
+                      "names", exc_info=True)
+        room_names = [preferred_names.get(n.casefold(), n)
+                      for n in room_names]
         return {"chat": chat, "project": project, "roster": roster,
                 "names": names, "messages": messages, "last_seen_id": last_seen_id,
                 "labels_cursor": labels_cursor, "room_names": room_names,
+                "preferred_names": preferred_names,
                 "shared_instructions": db.get_setting(con, "shared_instructions")}
     finally:
         con.close()
@@ -528,6 +546,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # on?" from.
         round_cfg["room_mode"] = bool(chat["room_mode"])
         round_cfg["room_roster_names"] = state["room_names"]
+        # Naming is law (#28): the projection resolves voice-label identity
+        # names to preferred display names through this per-round map.
+        round_cfg["preferred_names"] = state.get("preferred_names") or {}
         memory_on = bool(chat["memory_enabled"])
         web_on = bool(chat["web_enabled"])
         code_on = bool(chat["code_enabled"])
@@ -965,8 +986,13 @@ async def leave_chat_job(chat_id, cfg, memory):
         preferred = {}
         try:
             from . import anchors
-            preferred = {p["name"].casefold(): p["preferred_name"]
-                         for p in anchors.store().people()}
+            for p in anchors.store().people():
+                preferred[p["name"].casefold()] = p["preferred_name"]
+                # Merged-away identity names (#28: naming is law): a label
+                # written before a merge still ingests under the survivor's
+                # preferred name.
+                for merged in p.get("merged_names") or []:
+                    preferred[merged.casefold()] = p["preferred_name"]
         except Exception:
             log.warning("anchor store unreadable during handoff - guest "
                         "names ingest as spoken", exc_info=True)

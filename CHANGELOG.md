@@ -4,6 +4,27 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Naming is law (#28). A name you set - by renaming a remembered voice
+  or just saying it ("her name is spelt Samantha") - is now locked and
+  wins everywhere a name appears: the labels on spoken turns, the "In
+  the room" chip, what the AIs are told, what memory records, and the
+  transcriber's spelling hints. No automatic step can change it back.
+  Spelling variants of a name you already know are recognised as the
+  same person instead of creating a duplicate with a blank voice
+  memory; when the app is not sure, it asks ("Is Sal the same person as
+  Sam?") instead of guessing. Renaming one person onto another's name
+  offers to merge them - their stored voices combine, the best clips
+  are kept, and both names keep working. Forgetting someone still
+  sticks: the same name heard later starts fresh.
+- The voice health strip (#28). The voice dock and the mobile call
+  screen now show a compact readout of what voice identification is
+  doing: whether the on-device matcher is ready (or fetching its model,
+  or falling back to the cloud), whether the room is on, solo, or
+  ambient-listening, each remembered voice's learning progress, and how
+  the last spoken turn was identified ("local · 227ms", "cloud ·
+  1.9s"). The readout is fed by a new content-free endpoint - states,
+  counts and milliseconds only, never names or words - and costs the
+  live voice path nothing.
 - The room-mode toggle is now durable and honest (#28). Switching it on
   acts exactly like saying "group mode": it sticks to the chat, puts you
   on the roster so voices are identified by the fast on-device matcher,

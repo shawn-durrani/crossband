@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from .. import anchors, db
+from .. import anchors, db, introductions
 
 router = APIRouter(tags=["room"])
 
@@ -62,22 +62,133 @@ def get_people():
             "sufficient_seconds": anchors.SUFFICIENT_SECONDS}
 
 
+@router.get("/api/voice/health")
+def voice_health(request: Request, chat_id: int | None = None):
+    """The voice health strip's snapshot (#28): matcher state, remembered-
+    voice counts, the chat's mode flags, and the most recent identification
+    decision's path and latency. CONTENT-FREE by design - states, counts and
+    milliseconds only; the names the strip shows come from the roster and
+    people snapshots the caller already has, and transcript text never
+    appears anywhere near this endpoint. Session-gated like every /api
+    route."""
+    from .. import diarize, voiceid
+    cfg = request.app.state.settings.as_cfg()
+    people = anchors.store().people()
+    out = {
+        "matcher": voiceid.matcher_status(cfg),
+        "people_total": len(people),
+        "people_sufficient": sum(1 for p in people if p["sufficient"]),
+        "chat": None,
+        "last_decision": None,
+    }
+    if chat_id is not None:
+        con = db.connect()
+        try:
+            row = con.execute(
+                "SELECT room_mode, ambient_off FROM chats WHERE id=?",
+                (chat_id,)).fetchone()
+            if not row:
+                raise HTTPException(404)
+            roster_count = len(db.get_room_roster(con, chat_id,
+                                                  present_only=True))
+        finally:
+            con.close()
+        out["chat"] = {"room_mode": bool(row["room_mode"]),
+                       "ambient_off": bool(row["ambient_off"]),
+                       "roster_count": roster_count}
+        out["last_decision"] = diarize.last_decision(chat_id)
+    return out
+
+
 @router.post("/api/voice/people/{person_id}/name")
 def rename_person(person_id: str, body: dict = Body(...)):
     """Set a remembered person's preferred display name (#28 phase 3) - the
-    correctable spelling the roster chip, memory ingest and STT keyterms use.
-    The introduced name stays as the identity key, so existing voice labels
-    and roster rows keep matching."""
+    correctable spelling the roster chip, memory ingest, the model-facing
+    projection and STT keyterms use. The introduced name stays as the
+    identity key, so existing voice labels and roster rows keep matching.
+    Owner action, so the name is OWNER-SET (#28: naming is law): no
+    automated path may change it afterwards.
+
+    Merge affordance (#28): renaming this person to a name that already
+    belongs to ANOTHER remembered person does not rename - it returns the
+    conflict ({"ok": False, "conflict": {...}}) so the UI can offer merging
+    the two, which is almost always what a shared name means."""
     name = (body.get("name") or "").strip()[:anchors.MAX_PREFERRED_CHARS]
     store = anchors.store()
     if not any(p["person_id"] == person_id for p in store.people()):
         raise HTTPException(404, "no such remembered voice")
+    folded = introductions.fold_name(name)
+    if folded:
+        for p in store.people():
+            if p["person_id"] == person_id:
+                continue
+            known_as = [p["name"], p["preferred_name"]] + p["merged_names"]
+            if any(introductions.fold_name(k) == folded for k in known_as if k):
+                return {"ok": False,
+                        "conflict": {"person_id": p["person_id"],
+                                     "name": p["name"],
+                                     "display_name": p["preferred_name"]
+                                     or p["name"]}}
     if not store.set_preferred_name(person_id, name):
         raise HTTPException(400, "a preferred name needs at least one letter")
     from .. import events
     events.notify_room_update()
     log.info("voice renamed: person=%s", person_id)
     return {"ok": True}
+
+
+@router.post("/api/voice/people/{person_id}/merge")
+def merge_person(person_id: str, body: dict = Body(...)):
+    """Merge this remembered person into another (#28: variants merge
+    instead of duplicating): banks fold together under the keep-best-N rule,
+    the OLDEST person_id survives, the other is forgotten, and the survivor
+    answers to both names. `body`: {"into": <person_id>, "name": <optional
+    display name the owner chose>}. The chosen (or the target's) display
+    name is applied OWNER-SET - the owner just said who this is. Roster rows
+    pointing at the forgotten id re-point at the survivor, and any open
+    merge-question flags resolve - the question has been answered."""
+    other_id = (body.get("into") or "").strip()
+    store = anchors.store()
+    people = {p["person_id"]: p for p in store.people()}
+    if person_id not in people or other_id not in people:
+        raise HTTPException(404, "no such remembered voice")
+    if person_id == other_id:
+        raise HTTPException(400, "cannot merge a person into themselves")
+    chosen = (body.get("name") or "").strip()[:anchors.MAX_PREFERRED_CHARS] \
+        or people[other_id]["preferred_name"] or people[other_id]["name"]
+    survivor = store.merge_people(person_id, other_id)
+    if survivor is None:
+        raise HTTPException(400, "merge failed")
+    store.set_preferred_name(survivor, chosen)  # owner-set: they chose it
+    gone = other_id if survivor == person_id else person_id
+    merged_names = set()
+    for pid in (person_id, other_id):
+        p = people[pid]
+        for n in [p["name"], p["preferred_name"], chosen] + p["merged_names"]:
+            folded_n = introductions.fold_name(n)
+            if folded_n:
+                merged_names.add(folded_n)
+    con = db.connect()
+    try:
+        con.execute(
+            "UPDATE room_roster SET person_id=?, updated_at=? WHERE person_id=?",
+            (survivor, db.now(), gone))
+        con.commit()
+        # An open merge question ABOUT either of these names is answered by
+        # this merge; questions about other people stand.
+        for f in con.execute(
+                "SELECT * FROM room_flags WHERE kind='merge_question' "
+                "AND resolved_at IS NULL").fetchall():
+            if introductions.fold_name(f["label"]) in merged_names \
+                    or introductions.fold_name(f["suspected"]) in merged_names:
+                db.resolve_room_flags(con, f["chat_id"], flag_id=f["id"])
+    finally:
+        con.close()
+    from .. import events
+    events.notify_room_update()
+    log.info("voices merged via endpoint: survivor=%s forgotten=%s",
+             survivor, gone)
+    return {"ok": True, "person_id": survivor}
 
 
 @router.delete("/api/voice/people/{person_id}")

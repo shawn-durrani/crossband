@@ -24,7 +24,8 @@ import { contextGauge } from './headerView'
 import { useEventStream } from './hooks/useEventStream'
 import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
-import { adoptRoomMode, askFlag, flagCopy, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
+import { adoptRoomMode, askFlag, flagCopy, mergeFlag, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
+import { healthStrip } from './voiceHealth'
 import { mergeMessagesById } from './eventStream'
 import GuestStatusChip from './components/GuestStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
@@ -108,6 +109,12 @@ export default function App() {
   // open, refetched on every content-free room_roster/room_flag live event.
   const [roomInfo, setRoomInfo] = useState(null)
   const [voicePeople, setVoicePeople] = useState([])
+  // The voice health strip's content-free snapshot (#28): matcher state,
+  // mode flags and the last identification's path/latency. Fetched on
+  // session start and refreshed off the existing live events (room events
+  // and label writes); the strip itself is derived in voiceHealth.js.
+  const [voiceHealth, setVoiceHealth] = useState(null)
+  const healthFetchedAt = useRef(0)
   const [contRounds, setContRounds] = useState(1)
   const [atBottom, setAtBottom] = useState(true)
   const [newCount, setNewCount] = useState(0) // messages arrived while scrolled up
@@ -229,6 +236,20 @@ export default function App() {
       }
     }).catch(() => {})
     api.voicePeople().then((d) => setVoicePeople(d.people || [])).catch(() => {})
+    refreshVoiceHealth(chatId)
+  }
+
+  // Refetch the health strip's snapshot, lightly throttled - room events and
+  // label writes can arrive in bursts, and one fetch a second is plenty for
+  // a glanceable readout. Same cross-chat write-guard as every async fetch.
+  function refreshVoiceHealth(chatId, force = false) {
+    if (!chatId) return
+    const now = Date.now()
+    if (!force && now - healthFetchedAt.current < 1000) return
+    healthFetchedAt.current = now
+    api.voiceHealth(chatId).then((h) => {
+      if (chatId === activeChatIdRef.current) setVoiceHealth(h)
+    }).catch(() => {})
   }
 
   // Tap-to-correct on a labelled turn: reassign, then let the row's
@@ -371,6 +392,9 @@ export default function App() {
       setRoomMode(chatRoomOn)
       voiceRef.current.setRoomMode(chatRoomOn)
       await voiceRef.current.start()
+      // Seed the health strip (#28) the moment the session is live; the
+      // room events and label writes keep it fresh from here.
+      refreshVoiceHealth(activeChatIdRef.current, true)
     } catch (e) {
       setBanner(`Voice failed to start: ${e.message}`)
     }
@@ -407,6 +431,14 @@ export default function App() {
       setBanner(`Could not switch room mode on: ${e.message}`)
     }
   }
+
+  // Keep the health strip's live pulse fresh (#28): a diarization pass
+  // attaching labels re-renders the turn through the message flow, and that
+  // same signal means a new identification decision exists. Throttled inside
+  // refreshVoiceHealth; only while a voice session is live.
+  useEffect(() => {
+    if (voiceState !== 'off') refreshVoiceHealth(activeChatIdRef.current)
+  }, [messages, voiceState])
 
   // Pin-to-bottom only while the user is at the bottom; the moment they scroll
   // up during streaming, stop following and count new arrivals for the pill.
@@ -626,7 +658,20 @@ export default function App() {
   // Room mode (#28 phase 2) derivations - all decision logic in roomState.js.
   const rosterText = rosterChipText(roomInfo?.roster)
   const rosterHint = rosterTitle(roomInfo?.roster, roomInfo?.sufficient_seconds)
-  const openAsk = askFlag(roomInfo?.flags)
+  // The ask strip serves both question kinds: "someone new - who?" and the
+  // merge question ("is X the same person as Y?"). One at a time each,
+  // unknown-voice first (it is about the CURRENT speaker).
+  const openAsk = askFlag(roomInfo?.flags) || mergeFlag(roomInfo?.flags)
+  // The voice health strip (#28), derived in voiceHealth.js (pure): only
+  // while a session is live - it describes the machinery under a live call.
+  const health = voiceState !== 'off'
+    ? healthStrip({
+        health: voiceHealth,
+        people: voicePeople,
+        sufficientSeconds: roomInfo?.sufficient_seconds,
+        sessionActive: true,
+      })
+    : null
   const mismatchFlags = mismatchByMessage(roomInfo?.flags)
 
   // Running-task badge: whether this chat has a round/agent working. It
@@ -798,6 +843,7 @@ export default function App() {
                 roomMode={roomMode}
                 rosterText={rosterText}
                 rosterHint={rosterHint}
+                health={health}
                 onRoomModeOff={roomModeOff}
                 onPttModeChange={setPttMode}
                 onSilenceSecsChange={setSilenceSecs}
@@ -930,6 +976,7 @@ export default function App() {
           rosterText={rosterText}
           rosterHint={rosterHint}
           askText={openAsk ? flagCopy(openAsk) : null}
+          health={health}
         />
       )}
       {projectModal !== null && (

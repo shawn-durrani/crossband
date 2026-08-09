@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   assignVoiceOrdinals, chipData, chipsForMessage, chipTitle, CHIP_EXPLAINER,
-  CROSSTALK_NOTE, crosstalkNote, crosstalkSegments,
+  CROSSTALK_NOTE, crosstalkNote, crosstalkSegments, displayLabel,
 } from './voiceChips.js'
 
 const labelled = (labels, clusters = ['s0', 's1'], speaker = 'user') => ({
@@ -92,14 +92,14 @@ const named = (labels, uncertain = [], extra = {}) => ({
 
 test('chipData carries per-label uncertainty from the phase-2 payload', () => {
   assert.deepEqual(chipData(named(['Shawn'], [])), [
-    { label: 'Shawn', uncertain: false, corrected: false }])
+    { label: 'Shawn', display: 'Shawn', uncertain: false, corrected: false }])
   assert.deepEqual(chipData(named(['Alex'], ['Alex'])), [
-    { label: 'Alex', uncertain: true, corrected: false }])
+    { label: 'Alex', display: 'Alex', uncertain: true, corrected: false }])
 })
 
 test('chipData marks a corrected turn', () => {
   assert.deepEqual(chipData(named(['Alex'], [], { corrected: true })), [
-    { label: 'Alex', uncertain: false, corrected: true }])
+    { label: 'Alex', display: 'Alex', uncertain: false, corrected: true }])
 })
 
 test('chipData on a phase-1 payload degrades to certain ordinals', () => {
@@ -117,7 +117,7 @@ test('chipData is as defensive as chipsForMessage', () => {
   assert.deepEqual(chipData(null), [])
   // junk uncertain entries are ignored, not crashed on
   assert.deepEqual(chipData(named(['Shawn'], [42, null])), [
-    { label: 'Shawn', uncertain: false, corrected: false }])
+    { label: 'Shawn', display: 'Shawn', uncertain: false, corrected: false }])
 })
 
 test('chip titles state trust plainly, per state', () => {
@@ -163,9 +163,9 @@ test('crosstalk segments render bounded, sanitised, with uncertainty kept', () =
     { label: 'Alex', text: 'sure', uncertain: true },
   ] })
   assert.deepEqual(crosstalkSegments(msg), [
-    { label: 'Shawn', text: 'pass the salt', uncertain: false },
-    { label: 'Voice 2', text: 'and pepper', uncertain: true },
-    { label: 'Alex', text: 'sure', uncertain: true },
+    { label: 'Shawn', display: 'Shawn', text: 'pass the salt', uncertain: false },
+    { label: 'Voice 2', display: 'Voice 2', text: 'and pepper', uncertain: true },
+    { label: 'Alex', display: 'Alex', text: 'sure', uncertain: true },
   ])
 })
 
@@ -186,4 +186,51 @@ test('crosstalk segments refuse junk and stay bounded', () => {
   assert.equal(out.length, 8)
   assert.ok(out.every((s) => s.text.length <= 200))
   assert.deepEqual(crosstalkSegments(null), [])
+})
+
+// ---- preferred display names (#28: naming is law) ----
+//
+// Voice labels persist the IDENTITY name; the chips must show the owner's
+// preferred spelling - this is the fix for the phase-3 punt where a renamed
+// person's chips kept the introduced spelling.
+
+const PEOPLE = [
+  { name: 'Mateo', preferred_name: 'Matteo', merged_names: [] },
+  { name: 'Sam', preferred_name: 'Sam', merged_names: ['Samm'] },
+]
+
+test('displayLabel resolves identity and merged names to the preferred spelling', () => {
+  assert.equal(displayLabel('Mateo', PEOPLE), 'Matteo')
+  assert.equal(displayLabel('mateo', PEOPLE), 'Matteo')   // case-insensitive
+  assert.equal(displayLabel('Samm', PEOPLE), 'Sam')       // merged-away name
+  assert.equal(displayLabel('Voice 1', PEOPLE), 'Voice 1') // ordinals untouched
+  assert.equal(displayLabel('Dave', PEOPLE), 'Dave')       // unknown untouched
+  assert.equal(displayLabel('Mateo', null), 'Mateo')       // no people: no crash
+  assert.equal(displayLabel('Mateo', [null, 42, {}]), 'Mateo')
+})
+
+test('chips show the preferred name and keep the identity label (#28)', () => {
+  const chips = chipData(named(['Mateo'], []), PEOPLE)
+  assert.deepEqual(chips, [
+    { label: 'Mateo', display: 'Matteo', uncertain: false, corrected: false }])
+  // the correction menu and endpoints still key on chip.label - the identity
+  assert.equal(chips[0].label, 'Mateo')
+})
+
+test('chip titles speak the preferred name', () => {
+  assert.match(
+    chipTitle({ label: 'Mateo', display: 'Matteo', uncertain: false, corrected: false }),
+    /Matched to Matteo's remembered voice/)
+  assert.match(
+    chipTitle({ label: 'Mateo', display: 'Matteo', uncertain: true, corrected: false }),
+    /Probably Matteo/)
+})
+
+test('crosstalk segments carry the preferred display name too', () => {
+  const msg = crosstalked({ segments: [
+    { label: 'Mateo', text: 'over here', uncertain: false },
+  ] })
+  assert.deepEqual(crosstalkSegments(msg, PEOPLE), [
+    { label: 'Mateo', display: 'Matteo', text: 'over here', uncertain: false },
+  ])
 })
