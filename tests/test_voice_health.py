@@ -128,9 +128,12 @@ def test_cloud_pass_records_the_decision(app, monkeypatch):
         assert got["path"] == "cloud"
 
 
-def test_deferred_verdict_records_no_decision_and_no_cloud(app, monkeypatch):
-    """#28 PR-B: a defer leaves the turn unresolved - no EL call, and the
-    health pulse records nothing (there was no identification to report)."""
+def test_deferred_verdict_records_the_reason_and_no_cloud(app, monkeypatch):
+    """#28 PR-B: a defer leaves the turn unresolved and fires no EL call.
+    Since the thirteenth field test the pulse DOES record it, as an
+    `unresolved` decision carrying the matcher's own reason - "identity
+    pending" hid "too quiet to judge" and "not sure who" behind one word,
+    and the reason was already computed, so surfacing it costs nothing."""
     monkeypatch.setattr(
         "backend.voice.transcribe_diarized",
         lambda *a, **k: pytest.fail("no EL call on a deferred verdict"))
@@ -150,7 +153,9 @@ def test_deferred_verdict_records_no_decision_and_no_cloud(app, monkeypatch):
         session = diarize.RoomSession(enabled=True)
         asyncio.run(diarize.run_pass(chat["id"], loud_pcm(1.0), 16000,
                                      time.time(), session, {}))
-        assert diarize.last_decision(chat["id"]) is None
+        decision = diarize.last_decision(chat["id"])
+        assert decision["path"] == diarize.DECISION_UNRESOLVED
+        assert decision["reason"] == "below_threshold"
 
 
 def test_ambient_local_check_records_the_decision(app, monkeypatch):

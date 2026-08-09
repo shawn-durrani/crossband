@@ -317,6 +317,16 @@ class AnchorStore:
                 "created_at": p.get("created_at", 0),
                 "clip_count": len(clips),
                 "seconds": round(sum(c["seconds"] for c in clips), 1),
+                # Learning visibility (#28, thirteenth field test): when this
+                # person last banked a clip, and whether BOTH length classes
+                # are full - the difference between "still growing" and
+                # "refreshing in place", which was previously knowable only by
+                # reading the store file by hand.
+                "last_clip_at": max((c.get("added_at", 0) for c in clips),
+                                    default=0),
+                "at_capacity": (
+                    sum(1 for c in clips if not is_short(c)) >= KEEP_CLIPS
+                    and sum(1 for c in clips if is_short(c)) >= KEEP_SHORT_CLIPS),
                 # Short-clip progress (#28 PR-B, demoted to a signal by the
                 # tenth field test): readiness for second-long interjections,
                 # shown in the UI, never a gate on matching.

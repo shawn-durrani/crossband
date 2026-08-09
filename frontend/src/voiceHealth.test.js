@@ -13,7 +13,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   boundedChips, closeVoiceLines, collapsedVoiceSummary, healthStrip,
-  knownVoiceLines, matcherReadout, modeReadout, pulseReadout,
+  knownVoiceLines, learningAge, learningLines, matcherReadout, modeReadout,
+  pulseReadout,
 } from './voiceHealth.js'
 
 test('matcher readouts cover every state and mark the degraded ones', () => {
@@ -217,4 +218,46 @@ test('the strip hands over a ready-bounded chip row', () => {
   })
   assert.equal(many.chips.shown.length, 2)
   assert.equal(many.chips.more, '+2')
+})
+
+test('the pulse says WHY a turn went unnamed, not just that it did', () => {
+  // #28, thirteenth field test: "identity pending" hid two different
+  // problems. The matcher already knows which; the strip now says it.
+  const quiet = pulseReadout({ path: 'unresolved', reason: 'too_short', ms: 40 })
+  assert.match(quiet.label, /too short/)
+  assert.equal(quiet.unresolved, true)
+  const unsure = pulseReadout({ path: 'unresolved', reason: 'below_threshold', ms: 90 })
+  assert.match(unsure.label, /not recognised/)
+  assert.match(unsure.title, /did not match a remembered voice/)
+  // an unknown reason still degrades to something honest
+  assert.match(pulseReadout({ path: 'unresolved', reason: 'wat', ms: 1 }).label,
+    /not named/)
+  // and a normal identification is unchanged
+  assert.match(pulseReadout({ path: 'local', ms: 227 }).label, /local · 227ms/)
+})
+
+test('learning lines distinguish still-growing from refreshing', () => {
+  const people = [{ person_id: 'p1', name: 'Alex' },
+                  { person_id: 'p2', name: 'Sam' }]
+  const learning = {
+    p1: { clips: 3, seconds: 21.4, at_capacity: false, last_learned_age_s: 45 },
+    p2: { clips: 8, seconds: 54.4, at_capacity: true, last_learned_age_s: 7200 },
+  }
+  const [alex, sam] = learningLines(people, learning)
+  assert.match(alex.label, /Alex · still learning · 3 clips/)
+  assert.match(alex.title, /just now/)
+  assert.match(sam.label, /Sam · refreshing · 8 clips/)
+  assert.match(sam.title, /2h ago/)
+  assert.match(sam.title, /replace weaker ones/)
+  // no snapshot, no invented lines
+  assert.deepEqual(learningLines(people, null), [])
+  assert.deepEqual(learningLines(people, { p9: {} }), [])
+})
+
+test('learning age reads in plain english', () => {
+  assert.equal(learningAge(10), 'just now')
+  assert.equal(learningAge(600), '10m ago')
+  assert.equal(learningAge(7200), '2h ago')
+  assert.equal(learningAge(172800), '2d ago')
+  assert.equal(learningAge(null), 'not yet')
 })

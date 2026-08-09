@@ -251,7 +251,12 @@ def test_without_a_candidate_a_defer_still_labels_nothing(app, monkeypatch):
         session = diarize.RoomSession(enabled=True)
         asyncio.run(diarize.run_pass(chat["id"], loud_pcm(3.0), 16000,
                                      time.time(), session, {}))
-        assert diarize.last_decision(chat["id"]) is None
+        # Since the thirteenth field test a defer records WHY on the
+        # pulse (the reason was already computed); the point of this
+        # pin is that no LABEL is written, which still holds.
+        decision = diarize.last_decision(chat["id"])
+        assert decision["path"] == diarize.DECISION_UNRESOLVED
+        assert decision["reason"] == "below_threshold"
         assert anchors.store().people() == []
 
 

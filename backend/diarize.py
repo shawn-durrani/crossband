@@ -362,27 +362,43 @@ _DECISION_MAX_CHATS = 8
 
 DECISION_LOCAL = "local"
 DECISION_CLOUD = "cloud"
+# A turn the matcher declined to name (#28, thirteenth field test). The
+# matcher ALREADY computes why - "too_short", "below_threshold", "ambiguous"
+# - and used to drop it into a log line, so "identity pending" hid two very
+# different problems behind one word: audio too poor to judge, versus heard
+# clearly but not sure who. Carrying the string costs nothing (it is already
+# in hand) and is what lets the strip say which.
+DECISION_UNRESOLVED = "unresolved"
+
+# The allowlist for what may leave the process as a reason - content-free by
+# construction, like every other value here.
+DEFER_REASONS = {"too_short", "below_threshold", "ambiguous", "multi",
+                 "no_candidates", "unavailable", "disabled", "error"}
 
 
-def record_decision(chat_id, path, ms):
+def record_decision(chat_id, path, ms, reason=""):
     """Remember one chat's freshest identification decision. Bounded like
     the stash: at most _DECISION_MAX_CHATS chats, one record each."""
-    if chat_id is None or path not in (DECISION_LOCAL, DECISION_CLOUD):
+    if chat_id is None or path not in (DECISION_LOCAL, DECISION_CLOUD,
+                                       DECISION_UNRESOLVED):
         return
+    reason = reason if reason in DEFER_REASONS else ""
     _LAST_DECISION.pop(chat_id, None)  # re-insert = newest (insert order)
     _LAST_DECISION[chat_id] = {"path": path, "ms": round(float(ms), 1),
-                               "at": time.monotonic()}
+                               "reason": reason, "at": time.monotonic()}
     while len(_LAST_DECISION) > _DECISION_MAX_CHATS:
         _LAST_DECISION.pop(next(iter(_LAST_DECISION)))
 
 
 def last_decision(chat_id):
-    """The freshest decision for a chat as {"path", "ms", "age_s"}, or None.
-    age_s lets the client say how stale the pulse is without sharing clocks."""
+    """The freshest decision for a chat as {"path", "ms", "reason", "age_s"},
+    or None. age_s lets the client say how stale the pulse is without sharing
+    clocks; reason is "" unless the path is unresolved."""
     entry = _LAST_DECISION.get(chat_id)
     if not entry:
         return None
     return {"path": entry["path"], "ms": entry["ms"],
+            "reason": entry.get("reason", ""),
             "age_s": round(time.monotonic() - entry["at"], 1)}
 
 
@@ -826,8 +842,15 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # THE RETIREMENT PIN (#28 PR-B): a deferred verdict leaves the turn
         # unresolved, full stop. The projection's pending head ages out into
         # today's unlabelled rendering; no ElevenLabs call fires.
+        reason = (verdict or {}).get("reason", "error")
+        # Carry WHY into the pulse (#28, thirteenth field test): the reason is
+        # already computed, so this costs a dict write inside a background
+        # task and turns "identity pending" from a dead end into something
+        # actionable ("too quiet to judge" vs "not sure who").
+        record_decision(chat_id, DECISION_UNRESOLVED,
+                        (time.perf_counter() - t0) * 1000, reason)
         log.info("diarize pass (voiceid defer): chat=%s reason=%s", chat_id,
-                 (verdict or {}).get("reason", "error"))
+                 reason)
         return
     log.info("diarize pass (crosstalk trigger): chat=%s score=%.3f",
              chat_id, verdict.get("score", 0.0))

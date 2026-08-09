@@ -82,10 +82,32 @@ def voice_health(request: Request, chat_id: int | None = None):
     from .. import diarize, voiceid
     cfg = request.app.state.settings.as_cfg()
     people = anchors.store().people()
+    # Learning visibility (#28, thirteenth field test): "is it still
+    # learning?" was unanswerable from the app - the numbers existed only in
+    # the store file, so the question needed a maintainer with a shell. These
+    # are read straight off the snapshot already loaded above: no new work,
+    # nothing on the voice path, and still content-free (counts and seconds,
+    # never audio, never text). `last_learned_age_s` is None when a person
+    # has never banked a clip.
+    now_ts = db.now()
+
+    def _learning(p):
+        last = p.get("last_clip_at") or 0
+        return {
+            "clips": p.get("clip_count", 0),
+            "seconds": p.get("seconds", 0),
+            "short_clips": p.get("short_clips", 0),
+            "sufficient": bool(p.get("sufficient")),
+            "at_capacity": bool(p.get("at_capacity")),
+            "last_learned_age_s": (round(now_ts - last, 1)
+                                   if last else None),
+        }
+
     out = {
         "matcher": voiceid.matcher_status(cfg),
         "people_total": len(people),
         "people_sufficient": sum(1 for p in people if p["sufficient"]),
+        "learning": {p["person_id"]: _learning(p) for p in people},
         "chat": None,
         "last_decision": None,
     }
