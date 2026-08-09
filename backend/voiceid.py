@@ -745,10 +745,22 @@ def audit_banks_if_changed(cfg):
     with _audit_lock:
         if fp == _audit_fingerprint:
             return False
+        # Do NOT spend the attempt while the matcher is cold (#28, tenth
+        # field test): the first anchor change of a process almost always
+        # lands during model warm-up, and memoising THAT shape meant the
+        # audit never ran again for it. The live store proved the cost - it
+        # carried a phantom owner-double whose clips were byte-identical to
+        # the owner's own, with no quarantine verdict ever written and no
+        # close-pair recorded. Returning before touching the fingerprint
+        # keeps the anti-busy-retry intent (the matcher's own state machine
+        # throttles warming, not this function) while guaranteeing the audit
+        # happens once the matcher is ready.
+        if _get_extractor(cfg) is None:
+            return False
         ran = audit_banks(cfg)
-        # Remember the shape we audited (or verified we cannot audit) so an
-        # unavailable matcher does not busy-retry on every utterance.
-        _audit_fingerprint = fp
+        # Remember the shape only when an audit ACTUALLY ran.
+        if ran:
+            _audit_fingerprint = fp
         return ran
 
 

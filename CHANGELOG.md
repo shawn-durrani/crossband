@@ -4,6 +4,17 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Fix the cause of "identity pending" on the owner's own voice (#28).
+  Two faults compounded. A tap-correction naming you could mint a SECOND
+  person holding copies of your own voice clips, so the matcher found two
+  perfect matches for one voice and honestly refused to choose - which
+  read as "it never recognises me". And the hygiene audit that exists to
+  catch exactly that duplication spent its one attempt per bank shape
+  while the model was still warming up, so it never actually ran. Now: a
+  correction that names you (by spelling OR by voice match) feeds your
+  existing record instead of creating a twin, and the audit waits for the
+  matcher to be ready before counting its attempt.
+
 - Your own voice is now shown as recognised, not hidden (#28). The app
   has always quietly checked spoken turns against your remembered voice
   - it is how a solo chat stays solo - but it kept the result to
