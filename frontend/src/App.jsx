@@ -279,8 +279,9 @@ export default function App() {
     } catch { /* the next live event re-syncs */ }
   }
 
-  // Durable room-mode OFF (the explicit override on the roster chip): the
-  // server flag AND this session's client toggle both drop.
+  // Durable room-mode OFF (the "switch off for this chat" action in the
+  // voice settings, since the tray's room button became an indicator - #28):
+  // the server flag AND this session's client flag both drop.
   async function roomModeOff() {
     if (!activeChat) return
     try {
@@ -412,11 +413,13 @@ export default function App() {
     voiceRef.current?.setRoomMode(on)
   }
 
-  // The dock/call-screen toggle is DURABLE (#28, fifth field test): the old
+  // The manual arm/disarm is DURABLE (#28, fifth field test), and since the
+  // room button became an indicator it is reached from the voice settings
+  // ("switch on now" / "switch off for this chat"), not the tray. The old
   // session-only semantics both bypassed the ambient/matcher path (the relay
   // ran the slow no-roster pass) and left the seats' room-state line reading
   // the durable flag - so the models said "off" right after the owner
-  // switched it on. ON now acts like the "group mode" command: durable flag,
+  // switched it on. ON acts like the "group mode" command: durable flag,
   // owner rostered, any sacred ambient-off cleared, seats told the truth.
   // OFF is the existing durable override-off. The client flag just mirrors.
   async function manualRoomMode(on) {
@@ -979,6 +982,7 @@ export default function App() {
           voice={voiceRef.current}
           roomMode={roomMode}
           onRoomModeChange={manualRoomMode}
+          onRoomModeOff={roomModeOff}
           rosterText={rosterText}
           rosterHint={rosterHint}
           askText={openAsk ? flagCopy(openAsk) : null}

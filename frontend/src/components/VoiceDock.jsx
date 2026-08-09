@@ -22,15 +22,27 @@ import { AMBIENT_EXPLAINER, CHIP_CONFIRMED, CHIP_LEARNING } from '../roomState'
 // each sized by its own content, with an unbounded prose status line that
 // overflowed the tray as soon as a second voice existed. Now a single
 // fixed-width panel holds:
-//   tier 1, status:   per-person chips that WRAP, plus the live pulse,
-//                     small and right-aligned;
-//   tier 2, controls: the per-turn controls inline (mic mode, room, send,
-//                     stop, end, collapse);
-//   behind a settings disclosure: the set-once sliders (pause, speed) and
-//                     the standing readouts (matcher, mode, remembered
-//                     voices, close-voice warnings).
+//   tier 1, status:   the room-mode INDICATOR chip, then per-person chips
+//                     that WRAP, plus the live pulse, small and
+//                     right-aligned;
+//   tier 2, controls: the per-turn controls inline (mic mode, send, stop,
+//                     end, collapse);
+//   behind a settings disclosure: the set-once sliders (pause, speed), the
+//                     room-mode escape hatches, and the standing readouts
+//                     (matcher, remembered voices, close-voice warnings).
 // Nothing was removed - the sliders and readouts are one click away, and
 // the panel's width is fixed so no amount of text can shove the orb.
+//
+// THE ROOM BUTTON BECAME AN INDICATOR (#28): arming is fully automatic now
+// (ambient arm on unknown or remembered voices, spoken commands,
+// introductions), so a toggle in the tray misled users into thinking they
+// had to press it. Room state is SHOWN here - "room on · N" / "listening" /
+// "solo" - and never operated from the tray: the chip has no click handler.
+// The two manual doors survive, demoted into the settings disclosure below:
+// "switch on now" and "switch off for this chat". They are the degraded
+// path (matcher unavailable = no automatic arming - a pinned behaviour),
+// the day-one enrolment door, and the control for anyone who cannot speak
+// a command.
 //
 // Every derivation the chips need - which state, the label text, the order,
 // the "+N" - lives in roomState.js / voiceHealth.js with node --test cover.
@@ -40,6 +52,14 @@ const CHIP_CLASS = {
   [CHIP_LEARNING]: 'border-dashed border-amber-700/70 text-amber-200/90',
 }
 const CHIP_FALLBACK = 'border-edge2 text-ink-dim'
+// The indicator's colour per mode state (modeReadout in voiceHealth.js is
+// the one source of the state and the copy): an armed room reads active,
+// the two off states stay quiet.
+const MODE_CLASS = {
+  on: 'border-sky-700 text-sky-300 bg-sky-950/40',
+  listening: 'border-edge2 text-ink-dim',
+  solo: 'border-edge2 text-ink-dim',
+}
 
 export default function VoiceDock({
   voiceState, pttMode, silenceSecs, voiceRate, dockOpen, roomMode,
@@ -50,8 +70,9 @@ export default function VoiceDock({
   const [settingsOpen, setSettingsOpen] = useState(false)
   if (voiceState === 'off') return null
   const chips = health && health.chips
-  const hasStatus = !!(health && ((chips && chips.shown.length) || health.pulse
-    || health.matcher.degraded))
+  const mode = health && health.mode
+  const hasStatus = !!(health && (mode || (chips && chips.shown.length)
+    || health.pulse || health.matcher.degraded))
   return (
     <div className="absolute bottom-3 right-3 sm:right-5 voice-dock">
       <div className="voice-panel">
@@ -63,6 +84,20 @@ export default function VoiceDock({
               title={rosterHint || undefined}
               aria-label={rosterText || 'Voices this session can name'}
             >
+              {/* The room-mode indicator (#28: the room button became an
+                  indicator). Passive by design - NO click handler: arming
+                  is automatic, and the manual doors live in the settings
+                  disclosure. State and copy come from modeReadout
+                  (voiceHealth.js), the one source of the mode string. */}
+              {mode && (
+                <span
+                  className={`voice-chip ${MODE_CLASS[mode.state] || CHIP_FALLBACK}`}
+                  title={mode.title}
+                >
+                  <Users size={11} aria-hidden="true" />
+                  <span>{mode.label}</span>
+                </span>
+              )}
               {chips && chips.shown.map((chip) => (
                 <span
                   key={chip.key}
@@ -105,7 +140,7 @@ export default function VoiceDock({
           <div className="voice-tier-controls">
             <button
               className="voice-controls-toggle"
-              title="Show voice controls (mode, room, settings, stop)"
+              title="Show voice controls (mode, settings, stop)"
               aria-label="Show voice controls"
               aria-expanded="false"
               onClick={() => onDockOpenChange(true)}
@@ -129,37 +164,10 @@ export default function VoiceDock({
             >
               {pttMode ? <><Hand size={13} /> manual</> : <><Timer size={13} /> auto</>}
             </button>
-            {/* Room mode (#28): the manual session toggle. Detection is now
-                ambient - a known voice arms it by itself - so this is an
-                override, not the only way in. Known voices are identified
-                on-device at no extra cost; a second transcription runs only
-                for overlap or a voice the matcher cannot place. */}
-            <button
-              title={roomMode
-                ? 'Room mode is on: turns are attributed by voice. Known voices are identified on this device at no extra cost; a second transcription runs only when voices overlap or a voice cannot be placed. Click to switch it off, or say "solo mode".'
-                : `Room mode labels turns when more than one person is talking, and switches on by itself when a known voice speaks. ${AMBIENT_EXPLAINER}`}
-              aria-pressed={!!roomMode}
-              className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
-                roomMode
-                  ? 'border-sky-700 text-sky-300 bg-sky-950/40'
-                  : 'border-edge2 text-ink-dim hover:text-ink-mid'
-              }`}
-              onClick={() => onRoomModeChange(!roomMode)}
-            >
-              <Users size={13} /> room
-            </button>
-            {/* The durable override off, kept beside the session toggle it
-                differs from: this one sticks for the chat. */}
-            {rosterText && onRoomModeOff && (
-              <button
-                className="text-xs inline-flex items-center rounded-full px-2 py-1.5 border border-edge2 text-ink-dim hover:text-ink"
-                title="Switch room mode off for this chat (turns stop being attributed by voice)"
-                aria-label="Switch room mode off for this chat"
-                onClick={onRoomModeOff}
-              >
-                <X size={12} />
-              </button>
-            )}
+            {/* The room toggle that used to sit here became the tier-1
+                indicator (#28): arming is automatic, so the tray shows room
+                state and never operates it. The manual doors moved into the
+                settings disclosure below. */}
             {pttMode && voiceState === 'listening' && (
               <button
                 title="Send your turn now"
@@ -243,6 +251,32 @@ export default function VoiceDock({
               />
               <span className="tabular-nums">{voiceRate.toFixed(2)}×</span>
             </span>
+            {/* The room-mode escape hatches (#28: the room button became an
+                indicator). Settings-tier on purpose: arming is automatic,
+                so these are for the degraded path (matcher unavailable = no
+                automatic arming - a pinned behaviour), day-one enrolment,
+                and anyone who cannot speak a command. Same durable plumbing
+                as ever: "switch off for this chat" is the solo-mode disarm
+                the tray's × used to do, "switch on now" is the manual arm. */}
+            <span className="inline-flex items-center flex-wrap gap-1.5 text-xs text-ink-dim">
+              <span className="text-ink-faint w-12" title={AMBIENT_EXPLAINER}>room</span>
+              <button
+                className="rounded-full px-2.5 py-1 border border-edge2 text-ink-dim hover:text-ink disabled:opacity-40"
+                title="Switch the room on for this chat now - the manual door for a first session, or while voice recognition is unavailable."
+                disabled={!!roomMode}
+                onClick={() => onRoomModeChange(true)}
+              >
+                switch on now
+              </button>
+              <button
+                className="rounded-full px-2.5 py-1 border border-edge2 text-ink-dim hover:text-ink disabled:opacity-40"
+                title='Switch the room off for this chat and keep it off - the same durable disarm as saying "solo mode".'
+                disabled={!!(mode && mode.state === 'solo')}
+                onClick={onRoomModeOff}
+              >
+                switch off for this chat
+              </button>
+            </span>
             {health && (
               <div className="text-[11px] text-ink-faint flex flex-col gap-0.5">
                 <span
@@ -251,7 +285,6 @@ export default function VoiceDock({
                 >
                   {health.matcher.label}
                 </span>
-                {health.mode && <span title={health.mode.title}>{health.mode.label}</span>}
                 {health.voices.length > 0 && (
                   <span title="Remembered voices, and how much clear speech has been learned for each">
                     {health.voices.map((v) => (v.done ? `${v.name} ✓` : `${v.name} ${v.label}`)).join(', ')}

@@ -17,8 +17,10 @@ import { displayName, sufficiencyProgress, voiceChips } from './roomState.js'
 // path working; since #28 PR-B there is NO cloud identity fallback, so a
 // degraded matcher means turns stay unnamed and nothing arms automatically
 // - voice itself keeps working, and the manual doors (introductions,
-// spoken commands, the toggle) still arm room mode. The copy says exactly
-// that, never that a cloud check "takes over".
+// spoken commands, the switch in the voice settings) still arm room mode.
+// The copy says exactly that, never that a cloud check "takes over".
+// ("The toggle" became "the switch in the voice settings" when the tray's
+// room button became an indicator - #28.)
 const MATCHER_READOUTS = {
   ready: {
     label: 'matcher ready',
@@ -29,7 +31,8 @@ const MATCHER_READOUTS = {
     label: 'fetching model…',
     title: 'The one-time voice-model download is in flight. Until it lands, '
       + 'turns are not named and room mode only switches on by hand '
-      + '(an introduction, a spoken command, or the toggle).',
+      + '(an introduction, a spoken command, or the switch in the voice '
+      + 'settings).',
     degraded: true,
   },
   cold: {
@@ -55,35 +58,55 @@ export function matcherReadout(state) {
   return MATCHER_READOUTS[state] || MATCHER_READOUTS.unavailable
 }
 
-// The session's mode, one honest line: room on (and how many the roster
-// holds), solo because the owner disarmed it, or ambient listening (the
-// default: a known voice would switch the room on by itself). Null when the
-// snapshot has no chat block - nothing worth a line.
+// The session's mode, one honest line - and, since the room button became
+// an indicator (#28: arming is fully automatic now, so room state is SHOWN
+// from the tray, never operated there), the ONE source of truth for the
+// mode string. The tray's indicator chip, the mobile call screen's chip and
+// every settings readout render exactly this object; nothing else may
+// derive a competing mode label. Three states, each with a one-sentence
+// tooltip explaining the automation:
+// - 'on':        the room is attributing turns ("room on · N");
+// - 'listening': the default - the room switches itself on when it is
+//                needed (a known or unknown voice, an introduction, a
+//                spoken command);
+// - 'solo':      the owner durably disarmed it for this chat.
+// Null when the snapshot has no chat block - nothing worth a chip.
 export function modeReadout(health) {
   const chat = health && health.chat
   if (!chat || typeof chat !== 'object') return null
   if (chat.room_mode) {
     const n = Number(chat.roster_count) || 0
     return {
-      label: n > 0 ? `room on · ${n} in the room` : 'room on',
-      title: 'Turns are attributed by voice. Say "solo mode" to switch off.',
+      state: 'on',
+      label: n > 0 ? `room on · ${n}` : 'room on',
+      title: 'Turns are attributed by voice; say "solo mode" to switch '
+        + 'the room off.',
     }
   }
   if (chat.ambient_off) {
     return {
+      state: 'solo',
       label: 'solo',
-      title: 'You switched automatic listening off ("solo mode"). Room mode '
-        + 'stays off until you re-enable it.',
+      title: 'You switched the room off for this chat; say "group mode" or '
+        + 'use "switch on now" in the voice settings to bring it back.',
     }
   }
-  // #28 PR-C: the owner's confidently-matched turns are now labelled even
-  // with room mode off, so the old "your own voice changes nothing" copy
-  // would be dishonest - the session stays solo, but the turn says so.
+  // Degraded-matcher honesty: without voice recognition nothing arms on a
+  // voice (a pinned behaviour), so the listening tooltip must not promise
+  // it. The spoken doors and the settings switch still work and the copy
+  // says exactly that.
+  const degraded = typeof (health && health.matcher) === 'string'
+    ? matcherReadout(health.matcher).degraded
+    : false
   return {
-    label: 'ambient listening',
-    title: 'Room mode is off. A remembered voice switches it on by itself; '
-      + 'your own voice keeps the session solo, with your turns marked '
-      + 'voice-confirmed.',
+    state: 'listening',
+    label: 'listening',
+    title: degraded
+      ? 'Voice recognition is unavailable right now, so the room switches '
+        + 'on only for a spoken introduction, "group mode", or the switch '
+        + 'in the voice settings.'
+      : 'The room switches itself on when another voice speaks; say '
+        + '"solo mode" to switch that off.',
   }
 }
 

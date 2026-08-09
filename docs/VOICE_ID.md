@@ -37,7 +37,10 @@ Three things catch what the phrase lists miss:
   record explains it, the app asks who is speaking rather than guessing.
 
 If a phrasing never triggers anything, the manual doors always work: the
-room-mode toggle in the voice dock, or typing the command.
+room switches in the voice settings drawer ("switch on now" and "switch
+off for this chat"), or typing the command. There is no toggle in the
+tray itself any more - the tray shows the room state ("room on · N",
+"listening" or "solo") and the automation does the arming.
 
 ## Starting from nothing: cold-start enrolment
 
@@ -77,9 +80,9 @@ Two separate things lean English:
 
 - **The phrase lists and the confirmation step.** Introductions and
   commands spoken in other languages will often not be recognised. Use
-  the toggle or typed commands instead; ambient recognition of already-
-  known voices still works regardless of language, because it listens to
-  the voice, not the words.
+  the switches in the voice settings drawer or typed commands instead;
+  ambient recognition of already-known voices still works regardless of
+  language, because it listens to the voice, not the words.
 - **The speaker model.** The on-device voice matcher ships as an
   English-trained model, and every threshold in this document was
   calibrated with English speech. Voice matching itself is largely about
@@ -111,11 +114,12 @@ an adult child) are exactly the case where the defaults may need moving.
 | `room_roster_max` | `6` | How many people the room can hold at once. |
 
 When tuning, change one knob at a time and check the voice dock first.
-Its top row shows one chip per person - a tick once their voice is
+Its top row leads with the room indicator ("room on · N", "listening" or
+"solo") and shows one chip per person - a tick once their voice is
 remembered, "learning 4s" while it is still being learnt - plus how fast
-the last turn was identified. The matcher's own state, the session mode
-and any "sound close" warning sit behind the settings button beside the
-controls.
+the last turn was identified. The matcher's own state and any "sound
+close" warning sit behind the settings button beside the controls, along
+with the manual room switches.
 
 ## Similar-voice households
 

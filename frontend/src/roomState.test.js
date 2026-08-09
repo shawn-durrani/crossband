@@ -53,6 +53,9 @@ test('the ambient explainer describes ambient arming and the solo escape hatch',
   // Ambient (#28; renamed from the sniff explainer in PR-B - the EL sniff
   // retired): a known voice switches room mode on by itself via the free
   // on-device matcher, and "solo mode" is the stated privacy override.
+  // Since the room button became an indicator (#28) this explainer titles
+  // the settings disclosure's room row - the old toggle it captioned is
+  // gone from the tray.
   assert.match(AMBIENT_EXPLAINER, /remembered voices/)
   assert.match(AMBIENT_EXPLAINER, /switches on by itself/)
   assert.match(AMBIENT_EXPLAINER, /no extra cost/)
@@ -289,6 +292,14 @@ test('the roster hint shows each learner\'s progress when the snapshot carries i
 // must follow it - or the doubled transcription keeps running for the rest
 // of the call - without ever overriding a session-only toggle the user set
 // by hand.
+//
+// Location note (#28: the room button became an indicator): the tray no
+// longer has a room toggle - the manual arm/disarm live in the voice
+// settings disclosure as "switch on now" / "switch off for this chat".
+// Both go through the same durable plumbing as ever (manualRoomMode /
+// roomModeOff in App.jsx), so adoptRoomMode's rules are unchanged and
+// these pins stand as they are: 'manual' remains the defensive branch for
+// a session-only flag, which no current UI path sets.
 
 const session = (roomMode, source, active = true) => ({ active, roomMode, source })
 
@@ -404,4 +415,42 @@ test('the same person never chips twice', () => {
   const roster = [chipPerson('Sam', { sufficient: true }),
                   chipPerson('Sam', { sufficient: true })]
   assert.equal(voiceChips(roster, [], 6, 3).length, 1)
+})
+
+// ---- the tray renders no room on/off control (#28) ------------------------
+//
+// The room button became an indicator: arming is fully automatic (ambient
+// arm on unknown or remembered voices, spoken commands, introductions), so
+// a toggle in the tray misled users into thinking they had to press it.
+// React components deliberately have no test infrastructure here, so this
+// pin greps the JSX the same way the backend pins its one-insert-path rule:
+// the tray must SHOW room state (the modeReadout indicator) and never
+// operate it, while the two demoted manual doors - "switch on now" and
+// "switch off for this chat" - survive in the settings tier for the
+// degraded path (matcher unavailable = no automatic arming), day-one
+// enrolment, and anyone who cannot speak a command.
+
+import { readFileSync } from 'node:fs'
+
+const componentSrc = (name) =>
+  readFileSync(new URL(`./components/${name}`, import.meta.url), 'utf8')
+
+test('the tray renders no room on/off control - only the indicator (#28)', () => {
+  for (const name of ['VoiceDock.jsx', 'MobileVoiceCall.jsx']) {
+    const src = componentSrc(name)
+    // No toggle affordance anywhere: nothing flips the room from a click
+    // on its current state, and no control claims a pressed room state.
+    assert.doesNotMatch(src, /onRoomModeChange(\?\.)?\(!roomMode\)/, name)
+    assert.doesNotMatch(src, /aria-pressed=\{!!roomMode\}/, name)
+    // The indicator renders the derived mode - the one source of truth.
+    assert.match(src, /mode\.label/, name)
+    assert.match(src, /mode\.title/, name)
+    // The escape hatches survive, demoted to the settings tier: the manual
+    // arm is an explicit switch-ON (never a toggle of current state) and
+    // the durable solo-mode disarm is still wired.
+    assert.match(src, /onRoomModeChange(\?\.)?\(true\)/, name)
+    assert.match(src, /onRoomModeOff/, name)
+    assert.match(src, /switch on now/, name)
+    assert.match(src, /switch off for this chat/, name)
+  }
 })

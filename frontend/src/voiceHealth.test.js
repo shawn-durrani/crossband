@@ -4,11 +4,14 @@
 // What these pin: every matcher state maps to an honest plain-English
 // readout (#28 PR-B - degraded states say turns stay unnamed and arming is
 // manual; they may NOT promise a cloud fallback, because the cloud identity
-// path retired); the mode line tells room-on/solo/ambient apart; the live
-// pulse formats path and latency exactly ("local · 227ms", "cloud · 1.9s",
-// "pending" only while a session is live); known-voice lines reuse the
-// people snapshot's two-part sufficiency; close-pair warnings name both
-// voices; and junk input renders nothing rather than crashing.
+// path retired); the mode readout is the ONE source of the tray's room
+// INDICATOR (#28: the room button became an indicator - room state is
+// shown, never operated, from the tray) with its three states and their
+// one-sentence automation tooltips; the live pulse formats path and latency
+// exactly ("local · 227ms", "cloud · 1.9s", "pending" only while a session
+// is live); known-voice lines reuse the people snapshot's two-part
+// sufficiency; close-pair warnings name both voices; and junk input renders
+// nothing rather than crashing.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -42,29 +45,68 @@ test('degraded readouts are honest: unnamed turns and manual arming, never a clo
     assert.match(r.title, /not named|unnamed/i, state)
     assert.match(r.title, /by hand|manual/i, state)
     assert.doesNotMatch(r.title, /cloud (check|fallback)|slower cloud/i, state)
+    // Since the room button became an indicator (#28) there is no tray
+    // toggle for this copy to point at - the manual door it may name is
+    // the switch in the voice settings.
+    assert.doesNotMatch(r.title, /the toggle/i, state)
   }
 })
 
-test('the mode line tells room on, solo and ambient apart', () => {
-  assert.equal(
-    modeReadout({ chat: { room_mode: true, ambient_off: false, roster_count: 3 } }).label,
-    'room on · 3 in the room')
+test('the mode readout is the indicator: room on · N, listening, solo', () => {
+  // #28, the room button became an indicator: these labels ARE the tray
+  // chip, so they are pinned exactly. Deliberately updates the older
+  // "room on · N in the room" / "ambient listening" wordings - the chip
+  // must stay short, and modeReadout is the one source of the string.
+  const on = modeReadout({ matcher: 'ready',
+    chat: { room_mode: true, ambient_off: false, roster_count: 3 } })
+  assert.equal(on.label, 'room on · 3')
+  assert.equal(on.state, 'on')
+  assert.match(on.title, /solo mode/)
   assert.equal(
     modeReadout({ chat: { room_mode: true, ambient_off: false, roster_count: 0 } }).label,
     'room on')
-  const solo = modeReadout({ chat: { room_mode: false, ambient_off: true, roster_count: 0 } })
+  const solo = modeReadout({ matcher: 'ready',
+    chat: { room_mode: false, ambient_off: true, roster_count: 0 } })
   assert.equal(solo.label, 'solo')
-  assert.match(solo.title, /solo mode/)
-  const ambient = modeReadout({ chat: { room_mode: false, ambient_off: false, roster_count: 0 } })
-  assert.equal(ambient.label, 'ambient listening')
-  // #28 PR-C: the ambient copy is honest about owner labels - the session
-  // stays solo, but the owner's turns are voice-confirmed, so the old
-  // "your own voice changes nothing" wording is gone
-  assert.match(ambient.title, /voice-confirmed/)
-  assert.doesNotMatch(ambient.title, /changes nothing/)
+  assert.equal(solo.state, 'solo')
+  // The solo tooltip names both ways back in: the spoken command and the
+  // settings switch (the demoted manual door).
+  assert.match(solo.title, /group mode/)
+  assert.match(solo.title, /switch on now/)
+  const listening = modeReadout({ matcher: 'ready',
+    chat: { room_mode: false, ambient_off: false, roster_count: 0 } })
+  assert.equal(listening.label, 'listening')
+  assert.equal(listening.state, 'listening')
+  // One sentence explaining the automation, with the spoken way out. The
+  // pre-indicator ambient copy (its PR-C voice-confirmed honesty) moved
+  // off this line - the turn chips carry the voice-confirmed marker.
+  assert.match(listening.title, /switches itself on when another voice speaks/)
+  assert.match(listening.title, /solo mode/)
   // no chat block: no line
   assert.equal(modeReadout({ chat: null }), null)
   assert.equal(modeReadout(null), null)
+})
+
+test('a degraded matcher makes the listening tooltip honest about arming', () => {
+  // Pinned behaviour: matcher unavailable = no automatic arming. The
+  // indicator still reads "listening" (the spoken doors do still work),
+  // but the tooltip must not promise the room arms on a voice - and it
+  // names the settings switch, the door that always works (#28: the room
+  // button became an indicator; the manual arm lives in the settings).
+  for (const state of ['fetching', 'unavailable', 'disabled']) {
+    const r = modeReadout({ matcher: state,
+      chat: { room_mode: false, ambient_off: false, roster_count: 0 } })
+    assert.equal(r.label, 'listening', state)
+    assert.match(r.title, /unavailable/, state)
+    assert.match(r.title, /voice settings/, state)
+    assert.doesNotMatch(r.title, /switches itself on when another voice speaks/, state)
+  }
+  // and a healthy or absent matcher keeps the plain automation sentence
+  for (const matcher of ['ready', 'cold', undefined]) {
+    const r = modeReadout({ matcher,
+      chat: { room_mode: false, ambient_off: false, roster_count: 0 } })
+    assert.match(r.title, /switches itself on/, String(matcher))
+  }
 })
 
 test('the pulse formats path and latency exactly', () => {
@@ -139,7 +181,9 @@ test('the strip assembles all blocks, and nothing without a snapshot', () => {
     sessionActive: true,
   })
   assert.equal(strip.matcher.label, 'matcher ready')
-  assert.equal(strip.mode.label, 'room on · 2 in the room')
+  // "room on · 2" since the room button became an indicator (#28): the
+  // strip's mode IS the tray chip, kept short.
+  assert.equal(strip.mode.label, 'room on · 2')
   assert.equal(strip.pulse.label, 'local · 120ms')
   assert.deepEqual(strip.voices, [{ name: 'Sam', done: true, label: 'remembered' }])
   assert.deepEqual(strip.close, [])
