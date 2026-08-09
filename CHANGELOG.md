@@ -4,6 +4,18 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The room button in the voice tray is now an indicator (#28). The room
+  switches itself on whenever it is needed - a voice it recognises or
+  cannot place, a spoken introduction, a "group mode" command - so a
+  button there suggested a press was required when it never was. The
+  tray now simply shows the state: "room on · N", "listening" or
+  "solo", each with a plain one-line explanation. The manual switches
+  live on in the voice settings drawer ("switch on now" and "switch off
+  for this chat") for first sessions, for when voice recognition is
+  unavailable, and for anyone who cannot speak a command. Nothing
+  changed underneath: the same durable switch, the same spoken
+  commands.
+
 - A remembered voice is now recognised the moment they speak, even in a
   room that is already listening for several people (#28). Before this,
   turning room mode on quietly narrowed recognition to the people

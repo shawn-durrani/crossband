@@ -11,6 +11,14 @@ const CHIP_CLASS = {
   [CHIP_LEARNING]: 'border-dashed border-amber-700/70 text-amber-200/90',
 }
 const CHIP_FALLBACK = 'border-edge2 text-ink-dim'
+// The room-mode indicator's colour per state (#28: the room button became
+// an indicator). modeReadout (voiceHealth.js) is the one source of the
+// state and the copy; this maps a state to a class, same as the chips.
+const MODE_CLASS = {
+  on: 'border-sky-700 text-sky-300 bg-sky-950/40',
+  listening: 'border-edge2 text-ink-dim',
+  solo: 'border-edge2 text-ink-dim',
+}
 
 // Full-screen mobile voice "call" overlay. Rendered by App only while a voice
 // session is live (voiceState !== 'off'). Mobile-only: the wrapper is `sm:hidden`
@@ -19,14 +27,18 @@ const CHIP_FALLBACK = 'border-edge2 text-ink-dim'
 // This is a VIEW over state App already owns - it renders the orb (driven by
 // voiceState), the roster, and the transient captions the useCaptions hook
 // produces from the SSE event flow. It does not touch the voice pipeline; the
-// actions it takes are stopVoice() (End), the mic mute toggle, and per-agent
+// actions it takes are stopVoice() (End), the mic mute toggle, per-agent
 // sit-out via onToggleParticipant (the same roster toggle as the desktop
-// header chips - an agent tapped out skips rounds from the next turn).
+// header chips - an agent tapped out skips rounds from the next turn), and
+// the two settings-tier room-mode switches in the expanded voice panel
+// (#28: the room button became an indicator - the top row only SHOWS the
+// room state).
 export default function MobileVoiceCall({ voiceState, held = 0, participants, roster = [],
                                           activeIds = [], onToggleParticipant, captions,
                                           captionHistory = [], speakingSlug, onEnd, voice,
                                           partial = null, banner = null, onDismissBanner,
                                           roomMode = false, onRoomModeChange,
+                                          onRoomModeOff,
                                           rosterText = '', rosterHint = '',
                                           askText = null, health = null }) {
   const [muted, setMuted] = useState(false)
@@ -115,24 +127,24 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
           })}
         </div>
         <div className="flex items-center gap-2">
-          {/* Room mode (#28 phase 1) - the phone-on-the-table case. Same
-              session toggle as the desktop dock, same plain cost note. */}
-          <button
-            type="button"
-            aria-pressed={!!roomMode}
-            aria-label={roomMode ? 'Switch room mode off' : 'Switch room mode on'}
-            title={roomMode
-              ? 'Room mode is on: turns are attributed by voice. Known voices are identified on this device at no extra cost; a second transcription runs only when voices overlap or a voice cannot be placed. Tap to switch it off, or say "solo mode".'
-              : `Room mode labels turns when more than one person is talking, and switches on by itself when a known voice speaks. ${AMBIENT_EXPLAINER}`}
-            className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
-              roomMode
-                ? 'border-sky-700 text-sky-300 bg-sky-950/40'
-                : 'border-edge2 text-ink-dim'
-            }`}
-            onClick={() => onRoomModeChange?.(!roomMode)}
-          >
-            <Users size={13} /> room{roomMode ? ' on' : ''}
-          </button>
+          {/* The room-mode INDICATOR (#28: the room button became an
+              indicator). Passive by design - no tap handler: arming is
+              automatic (a voice, an introduction, a spoken command), so the
+              call screen shows room state and never operates it. The manual
+              doors live in the expanded voice panel below. modeReadout
+              (voiceHealth.js) is the one source of the state and copy. */}
+          {health && health.mode && (
+            <span
+              role="status"
+              aria-label={`Room: ${health.mode.label}`}
+              title={health.mode.title}
+              className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
+                MODE_CLASS[health.mode.state] || CHIP_FALLBACK
+              }`}
+            >
+              <Users size={13} /> {health.mode.label}
+            </span>
+          )}
           <span className="mvc-lock">🔒 private</span>
         </div>
       </div>
@@ -181,7 +193,8 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                       className={health.matcher.degraded ? 'text-amber-300/90' : ''}>
                   {health.matcher.label}
                 </span>
-                {health.mode && <span title={health.mode.title}> · {health.mode.label}</span>}
+                {/* The mode line that sat here now renders once, as the
+                    top-row indicator chip (#28) - one string, one place. */}
                 {health.pulse && <span title={health.pulse.title}> · {health.pulse.label}</span>}
                 {(health.close || []).map((line) => (
                   <span
@@ -192,6 +205,34 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                     {' · '}{line}
                   </span>
                 ))}
+              </span>
+              {/* The room-mode escape hatches (#28: the room button became
+                  an indicator), in the expanded panel - the phone's
+                  settings tier. They exist for the degraded path (matcher
+                  unavailable = no automatic arming), day-one enrolment, and
+                  anyone who cannot speak a command. Same durable plumbing
+                  as the desktop dock: "switch off for this chat" is the
+                  solo-mode disarm, "switch on now" the manual arm. */}
+              <span className="inline-flex items-center flex-wrap justify-center gap-1.5 text-xs text-ink-dim"
+                    title={AMBIENT_EXPLAINER}>
+                <button
+                  type="button"
+                  className="rounded-full px-2.5 py-1 border border-edge2 text-ink-dim disabled:opacity-40"
+                  title="Switch the room on for this chat now - the manual door for a first session, or while voice recognition is unavailable."
+                  disabled={!!roomMode}
+                  onClick={() => onRoomModeChange?.(true)}
+                >
+                  switch on now
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full px-2.5 py-1 border border-edge2 text-ink-dim disabled:opacity-40"
+                  title='Switch the room off for this chat and keep it off - the same durable disarm as saying "solo mode".'
+                  disabled={!!(health.mode && health.mode.state === 'solo')}
+                  onClick={() => onRoomModeOff?.()}
+                >
+                  switch off for this chat
+                </button>
               </span>
             </div>
           )}
