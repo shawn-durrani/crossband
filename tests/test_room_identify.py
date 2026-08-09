@@ -642,3 +642,52 @@ def test_roster_and_flag_changes_ride_the_stream_content_free(tmp_path):
         await gen.aclose()
 
     asyncio.run(go())
+
+
+# ── the phantom owner-double (#28, tenth field test) ────────────────────────
+
+def test_correcting_a_turn_to_an_owner_alias_never_mints_a_second_person(
+        tmp_path, monkeypatch):
+    """THE BUG THAT COST A WEEKEND. With `user_name` left at its default, the
+    owner was enrolled as one person and a tap-correction to their real name
+    minted a SECOND person holding byte-identical copies of the same voice.
+    Two perfect matches for one voice means every later identification is
+    "ambiguous", so the owner sat on "identity pending" forever. A correction
+    naming the owner (or a spelling variant of it) must route to the owner's
+    EXISTING record - never mint a twin."""
+    diarize._ROOM_ENABLED.clear()
+    anchors.clear_recent_audio()
+    app = create_app(Settings(data_dir=str(tmp_path / "data"),
+                              memory_url="http://127.0.0.1:1",
+                              user_name="Shawn"))
+    # The matcher is offline in the keyless suite, so stub the one call the
+    # guard makes: this turn's audio IS the owner's voice. That is the
+    # reliable half of the guard - "Sean" is two edits from "Shawn", so the
+    # spelling half deliberately does not catch it (that is how the live
+    # phantom was minted).
+    from backend import voiceid
+    monkeypatch.setattr(voiceid, "identify_utterance",
+                        lambda pcm, sr, cands, cfg: {
+                            "status": voiceid.MATCH,
+                            "person_id": cands[0]["person_id"],
+                            "name": cands[0]["name"], "score": 0.93,
+                            "reason": "match"})
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        store = anchors.store()
+        owner_pid = store.ensure_person("Shawn")
+        assert store.add_clip(owner_pid, loud_pcm(8.0), 16000,
+                              source="introduction")
+        # the owner corrects a turn to a MIS-HEARD spelling of their own name
+        msg = _insert_user_message(chat["id"], "that was me")
+        anchors.remember_audio(msg["id"], loud_pcm(8.0), 16000, 1)
+        r = c.post(f"/api/chats/{chat['id']}/messages/{msg['id']}/speaker",
+                   json={"name": "Sean"})
+        assert r.status_code == 200
+    people = anchors.store().people()
+    # exactly ONE person: the owner. No "Sean" twin.
+    assert [p["name"] for p in people] == ["Shawn"]
+    assert people[0]["person_id"] == owner_pid
+    assert people[0]["clip_count"] == 2      # the correction fed the OWNER
+    # and the turn's label carries the canonical name, not the misheard one
+    assert json.loads(_message_labels(msg["id"]))["labels"] == ["Shawn"]

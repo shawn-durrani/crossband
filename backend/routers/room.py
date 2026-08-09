@@ -271,6 +271,31 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
             old = json.loads(row["voice_labels"] or "{}")
         except json.JSONDecodeError:
             old = {}
+        # Resolve an owner alias BEFORE the label is written, so the turn
+        # carries the canonical owner name rather than the spelling that was
+        # typed or heard (#28, tenth field test - see the anchor note below).
+        # Two guards, spelling and VOICE: the live store proved spelling alone
+        # is not enough (Shawn -> "Sean" is two edits, so it slipped through
+        # and minted a phantom owner-double). The voice check is the reliable
+        # one: if this turn's audio matches the owner's own bank confidently,
+        # the speaker IS the owner whatever name was typed.
+        from .. import introductions, voiceid
+        cfg = request.app.state.settings.as_cfg()
+        owner = cfg.get("user_name") or "User"
+        if introductions.owner_alias(name, owner):
+            name = owner
+        elif name.strip().casefold() != owner.strip().casefold():
+            owner_person = anchors.store().find_by_name(owner)
+            peek = anchors.peek_audio(message_id)
+            if owner_person and peek and peek[2] == 1:
+                verdict = voiceid.identify_utterance(
+                    peek[0], peek[1],
+                    [{"person_id": owner_person["person_id"], "name": owner}],
+                    cfg)
+                if voiceid.matched(verdict):
+                    log.info("correction resolved to the owner by voice: "
+                             "chat=%s score=%.3f", chat_id, verdict["score"])
+                    name = owner
         payload = {"clusters": old.get("clusters") or [],
                    "labels": [name], "uncertain": [], "corrected": True}
         if old.get("crosstalk") is True:
@@ -286,6 +311,12 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
         db.resolve_room_flags(con, chat_id, message_id=message_id)
 
         store = anchors.store()
+        # `name` is already owner-resolved above. That guard is what stops a
+        # correction minting a SECOND person holding byte-identical copies of
+        # the owner's own clips - two perfect matches for one voice, which is
+        # exactly why the owner sat on "identity pending" forever in the
+        # tenth field test. owner_alias covers spelling variants of the
+        # configured name, so the phantom cannot be minted by ear either.
         pid = store.ensure_person(name)
         learned = False
         cached = anchors.take_audio(message_id)

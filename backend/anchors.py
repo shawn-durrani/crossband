@@ -754,6 +754,15 @@ def take_audio(message_id: int):
         return _recent_audio.pop(message_id, None)
 
 
+def peek_audio(message_id: int):
+    """Read a stashed utterance WITHOUT claiming it (#28, tenth field test).
+    The correction path checks the audio against the owner's bank before
+    deciding whose record to feed, and the feed itself still needs the same
+    entry afterwards, so this read must not consume it."""
+    with _recent_lock:
+        return _recent_audio.get(message_id)
+
+
 def clear_recent_audio():
     with _recent_lock:
         _recent_audio.clear()

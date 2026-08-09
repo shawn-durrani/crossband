@@ -257,6 +257,24 @@ def test_audit_banks_if_changed_runs_once_per_bank_shape(store, monkeypatch):
     assert calls["n"] == 2
 
 
+def test_a_cold_matcher_never_spends_the_audit_attempt(store, monkeypatch):
+    """#28, tenth field test: the audit memoised the bank shape even when the
+    extractor was still warming, so the FIRST anchor change of a process -
+    which almost always lands during warm-up - permanently consumed the one
+    attempt for that shape. The live store proved the cost: a phantom
+    owner-double sat there with byte-identical clips and no quarantine
+    verdict ever written. A cold matcher must leave the fingerprint alone."""
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: None)
+    assert voiceid.audit_banks_if_changed(_cfg()) is False   # cold: no audit
+    assert voiceid.audit_banks_if_changed(_cfg()) is False   # still cold
+    # the matcher warms up; the SAME unchanged bank shape must now audit
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "_embed", _fake_embed)
+    assert voiceid.audit_banks_if_changed(_cfg()) is True
+    # and only once it has actually run does the shape memoise
+    assert voiceid.audit_banks_if_changed(_cfg()) is False
+
+
 # ============================ 2. config surface ===========================
 
 def test_enabled_default_and_off():
