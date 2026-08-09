@@ -302,9 +302,12 @@ def test_elimination_names_the_single_pending_person_and_builds_their_anchor(
                                         "uncertain": ["Alex"]}
     alex = anchors.store().find_by_name("Alex")
     assert alex is not None
-    # 2 x 2.5s + 2 x 1.5s = 8s with two short clips: both halves of the bar
+    # Elimination built her a real anchor set and she crossed the seconds bar
+    # (#28, tenth field test: sufficiency is seconds alone, so she graduates
+    # to the voice-matched path partway through rather than being eliminated
+    # on every turn - at least one short clip was banked before she did).
     assert alex["sufficient"] is True
-    assert alex["short_clips"] == 2
+    assert alex["short_clips"] >= 1
     # the roster row linked the moment her first clip was accepted
     row = next(p for p in _roster(chat["id"]) if p["name"] == "Alex")
     assert row["person_id"] == alex["person_id"]

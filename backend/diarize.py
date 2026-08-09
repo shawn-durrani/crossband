@@ -1006,10 +1006,27 @@ def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None):
     """Refresh a fast-matched person's anchors (worker thread). Confident-
     match accumulation continues indefinitely (#28 PR-B) - keep-best-N per
     length class bounds the bank - and every accepted clip re-runs the
-    pairwise hygiene audit."""
+    pairwise hygiene audit.
+
+    Short-slice harvesting (#28, tenth field test): a confident LONG match
+    also banks a short slice cut from its own audio, so the short class
+    fills itself from ordinary speech and the short-utterance deadlock
+    (cannot match without short clips, cannot bank short clips without
+    matching) can never form."""
     from . import anchors
-    if anchors.store().add_clip(person_id, pcm, sample_rate,
-                                source="accumulated"):
+    store = anchors.store()
+    changed = store.add_clip(person_id, pcm, sample_rate,
+                             source="accumulated")
+    sr = sample_rate or 16000
+    seconds = len(pcm) / 2 / sr
+    if seconds >= 2 * anchors.SHORT_CLIP_MAX_SECONDS:
+        # The slice comes from the MIDDLE of the utterance: starts carry
+        # breaths and ends trail off, mid-speech is the cleanest voice.
+        span = int(anchors.SHORT_CLIP_MAX_SECONDS * 0.75 * sr) * 2
+        mid = (len(pcm) - span) // 2
+        changed = store.add_clip(person_id, pcm[mid:mid + span], sr,
+                                 source="harvested-short") or changed
+    if changed:
         voiceid.audit_banks_if_changed(cfg or {})
 
 
