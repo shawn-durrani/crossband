@@ -338,7 +338,11 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         f"assume it was {user}, and never guess a name. A turn headed \"Identity "
         "pending (in the room)\" means the name is still being worked out - the voice "
         "check runs a moment behind the words - so treat that speaker as unknown for "
-        "now and do not guess who it was. A note under a turn saying two "
+        f"now and do not guess who it was. A turn headed \"{user} (voice confirmed)\" "
+        f"means the app's on-device voice check confidently recognised {user}'s own "
+        f"voice on that turn - that label, not any hearing of yours, is how you know "
+        f"it was {user} speaking, and it applies in any mode, including with room "
+        "mode off. A note under a turn saying two "
         "voices spoke at once means people talked over each other and the transcript may "
         "have lost or merged the quieter person's words - if the missing words matter, "
         "ask that person to repeat what they said. A best-effort split by voice under "
@@ -589,6 +593,13 @@ def _iso(ts):
 # - NO labels (the overwhelmingly common case, and every chat from before
 #   room mode existed): the turn renders EXACTLY as it always has, as the
 #   owner. Pinned byte-for-byte by tests/test_projection.py.
+# - Confident OWNER label, alone: the owner's name with the voice-confirmed
+#   marker (#28 PR-C - the owner's identity is shown, not hidden). This
+#   deliberately replaced the owner-confident-equals-unlabelled pin: the
+#   ambient check voice-verifies the owner constantly, and hiding that fact
+#   made seats say "identity pending" about a person already identified.
+#   Unlabelled-chat byte-identity above is untouched - only a turn that
+#   CARRIES a confident owner label renders the marker.
 # - Confident named labels: the named person (or people - one utterance can
 #   confidently hold two voices), marked "(in the room)" so a human guest is
 #   never mistaken for an AI seat.
@@ -599,6 +610,11 @@ def _iso(ts):
 _VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
 UNIDENTIFIED_SPEAKER = "unidentified speaker"
 IN_ROOM_SUFFIX = " (in the room)"
+# The owner's voice-confirmed marker (#28 PR-C): a turn the matcher
+# confidently matched to the OWNER alone, in any mode - room on, ambient,
+# or solo. Deliberately NOT "(in the room)": the owner is not a guest, and
+# the marker's whole point is that it applies with room mode off too.
+VOICE_CONFIRMED_SUFFIX = " (voice confirmed)"
 
 # Honest pending identity (#28, night test 4; meaning narrowed by PR-B).
 # A room-mode user turn whose label has not landed yet projects this head,
@@ -706,10 +722,22 @@ def _user_turn_head(msg, cfg, now=None):
         elif _clean_head(label) not in named:
             named.append(_clean_head(label))
     if not any_unidentified and [n.casefold() for n in named] == [owner.casefold()]:
-        return owner  # confidently the owner alone: today's rendering exactly
+        # #28 PR-C: a confident owner match is SHOWN, not hidden. This
+        # deliberately replaced the owner-confident-equals-unlabelled pin
+        # (test_projection/test_naming_law carry the updated pins); a chat
+        # with NO labels still renders byte-identically to history. The
+        # bare cfg name, never the preferred map: unlabelled owner turns
+        # render cfg['user_name'], so the confirmed head must speak the
+        # same name plus the marker. A CORRECTED-to-owner turn keeps the
+        # bare name: the marker's explainer says the on-device voice check
+        # recognised the owner, and a human correction is not that - it is
+        # ground truth of a different kind, already rendered as the owner.
+        if data.get("corrected") is True:
+            return owner
+        return owner + VOICE_CONFIRMED_SUFFIX
     # Named guests project under their PREFERRED display name (#28: naming
-    # is law) - resolved after the owner check above, so the owner-confident-
-    # equals-unlabelled byte-identity pin is untouched.
+    # is law) - resolved after the owner check above, which keeps the
+    # owner's rendering independent of the preferred map.
     named = list(dict.fromkeys(
         _clean_head(_display_name(n, cfg)) or n for n in named))
     parts = named + ([UNIDENTIFIED_SPEAKER] if any_unidentified else [])

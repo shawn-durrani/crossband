@@ -88,6 +88,13 @@ export function displayLabel(label, people) {
 // a correction sends back); `display` is what renders, resolved through
 // the remembered people's preferred names. Same defensive posture - junk
 // renders nothing.
+//
+// #28 PR-C (the owner's identity is shown, not hidden): a payload the
+// backend marked {"owner": true} - a confident on-device match of the
+// owner's own voice - sets `owner: true` on its confident chip, so the UI
+// can render the quiet voice-confirmed reassurance on solo/room-off turns.
+// The key is only ever ADDED (never owner: false), so payloads from before
+// the marker existed produce exactly the chips they always did.
 export function chipData(msg, people = []) {
   if (!msg || msg.speaker !== 'user' || !msg.voice_labels) return []
   let data
@@ -101,12 +108,16 @@ export function chipData(msg, people = []) {
     (Array.isArray(data.uncertain) ? data.uncertain : [])
       .filter((u) => typeof u === 'string')
       .map((u) => u.trim().slice(0, MAX_LABEL_CHARS)))  // match display form
-  return chipsForMessage(msg).map((label) => ({
-    label,
-    display: displayLabel(label, people),
-    uncertain: uncertain.has(label),
-    corrected: data.corrected === true,
-  }))
+  return chipsForMessage(msg).map((label) => {
+    const chip = {
+      label,
+      display: displayLabel(label, people),
+      uncertain: uncertain.has(label),
+      corrected: data.corrected === true,
+    }
+    if (data.owner === true && !chip.uncertain) chip.owner = true
+    return chip
+  })
 }
 
 // Plain-English explainer for the chips, shared by every surface that shows
@@ -183,6 +194,12 @@ export function chipTitle(chip) {
   if (!chip) return ''
   const shown = chip.display || chip.label
   if (chip.corrected) return `Corrected by you to ${shown}.`
+  if (chip.owner) {
+    // #28 PR-C: the owner's voice-confirmed chip is reassurance, not an
+    // identification of a guest - say so plainly.
+    return `Voice confirmed: this turn matched ${shown}'s own voice, `
+      + 'checked on this device.'
+  }
   if (chip.uncertain) {
     return `Probably ${shown} - their voice is still being learned, so `
       + 'this stays uncertain. Tap to correct if wrong.'

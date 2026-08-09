@@ -76,10 +76,14 @@ export function modeReadout(health) {
         + 'stays off until you re-enable it.',
     }
   }
+  // #28 PR-C: the owner's confidently-matched turns are now labelled even
+  // with room mode off, so the old "your own voice changes nothing" copy
+  // would be dishonest - the session stays solo, but the turn says so.
   return {
     label: 'ambient listening',
     title: 'Room mode is off. A remembered voice switches it on by itself; '
-      + 'your own voice changes nothing.',
+      + 'your own voice keeps the session solo, with your turns marked '
+      + 'voice-confirmed.',
   }
 }
 

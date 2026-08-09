@@ -7,10 +7,11 @@ What these tests pin, in order:
    every automated path (alias capture, anything calling with
    owner_set=False) is refused, and only another owner action changes it.
 2. THE PREFERRED NAME WINS EVERYWHERE. The projection's turn head and
-   crosstalk tail speak the preferred name (with the owner-confident-equals-
-   unlabelled byte-identity pin untouched), memory ingest resolves merged-
-   away names to guest:<preferred>, and the roster snapshot already carries
-   display_name (pinned in test_room_identify).
+   crosstalk tail speak the preferred name (the OWNER's head is the one
+   exception: since #28 PR-C it renders the bare cfg name plus the
+   voice-confirmed marker, never the preferred map), memory ingest resolves
+   merged-away names to guest:<preferred>, and the roster snapshot already
+   carries display_name (pinned in test_room_identify).
 3. SPOKEN CORRECTIONS. "her name is spelt ..." rides the same never-awaited
    scan: the prefilter gates one utility call, a confirmed correction sets
    the preferred name owner-set, matching is conservative (roster/remembered
@@ -212,12 +213,16 @@ def test_projection_head_speaks_the_preferred_name():
         == "Mateo (in the room)"
 
 
-def test_owner_confident_byte_identity_pin_survives_the_preferred_map():
-    """Confidently the owner alone still renders as the bare owner name -
-    even when the owner's own record carries a preferred spelling. The
-    owner-confident-equals-unlabelled pin outranks display preference."""
+def test_owner_confident_head_ignores_the_preferred_map():
+    """#28 PR-C deliberately updated this pin (it used to assert the bare
+    owner name): confidently the owner alone now renders the voice-confirmed
+    head - but still the CFG name plus the marker, never the preferred
+    spelling. Unlabelled owner turns render cfg['user_name'] everywhere, so
+    the confirmed head must speak the same name; display preference stays a
+    guest-name concern."""
     cfg = {"user_name": "Alex", "preferred_names": {"alex": "Aleks"}}
-    assert _user_turn_head(_labelled_msg(["Alex"]), cfg) == "Alex"
+    assert _user_turn_head(_labelled_msg(["Alex"]), cfg) \
+        == "Alex (voice confirmed)"
 
 
 def test_uncertain_labels_never_leak_a_preferred_name():
