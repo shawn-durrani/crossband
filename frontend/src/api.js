@@ -138,6 +138,17 @@ export const api = {
   forgetVoice: (personId) => fetch(`/api/voice/people/${encodeURIComponent(personId)}`, {
     method: 'DELETE',
   }).then(json),
+  // Merge one remembered voice into another (#28: naming is law) - banks
+  // fold, the oldest person survives, and the owner's chosen name is law.
+  mergeVoice: (personId, intoId, name) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/merge`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ into: intoId, name }),
+    }).then(json),
+  // The voice health strip's content-free snapshot (#28): matcher state,
+  // counts, mode flags and the last identification's path/latency.
+  voiceHealth: (chatId) => fetch(
+    `/api/voice/health${chatId ? `?chat_id=${chatId}` : ''}`).then(json),
   reassignSpeaker: (chatId, messageId, name) => fetch(
     `/api/chats/${chatId}/messages/${messageId}/speaker`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -260,6 +260,57 @@ def take_stashed_utterance(chat_id):
     return pcm, sample_rate
 
 
+def peek_stashed_utterance(chat_id):
+    """Read the stashed utterance WITHOUT claiming it (#28: the introduction
+    scan's voice-match arm) - the owner-anchor seed path still decides
+    whether to consume it. Same freshness rule as take_stashed_utterance."""
+    entry = _STASHED.get(chat_id)
+    if not entry:
+        return None
+    pcm, sample_rate, at = entry
+    if time.monotonic() - at > INTRO_STASH_TTL_S:
+        return None
+    return pcm, sample_rate
+
+
+# ---- the last identification decision (#28: the voice health strip) ----
+#
+# A tiny in-memory per-chat record of the most recent identification
+# decision: which path decided (local matcher or the cloud batch pass) and
+# how long it took. Content-free BY CONSTRUCTION - path, milliseconds and a
+# monotonic timestamp; never a name, never transcript text - and written
+# only from inside the already-never-awaited background passes, so the live
+# voice path gains nothing. GET /api/voice/health surfaces it.
+
+_LAST_DECISION: dict = {}
+_DECISION_MAX_CHATS = 8
+
+DECISION_LOCAL = "local"
+DECISION_CLOUD = "cloud"
+
+
+def record_decision(chat_id, path, ms):
+    """Remember one chat's freshest identification decision. Bounded like
+    the stash: at most _DECISION_MAX_CHATS chats, one record each."""
+    if chat_id is None or path not in (DECISION_LOCAL, DECISION_CLOUD):
+        return
+    _LAST_DECISION.pop(chat_id, None)  # re-insert = newest (insert order)
+    _LAST_DECISION[chat_id] = {"path": path, "ms": round(float(ms), 1),
+                               "at": time.monotonic()}
+    while len(_LAST_DECISION) > _DECISION_MAX_CHATS:
+        _LAST_DECISION.pop(next(iter(_LAST_DECISION)))
+
+
+def last_decision(chat_id):
+    """The freshest decision for a chat as {"path", "ms", "age_s"}, or None.
+    age_s lets the client say how stale the pulse is without sharing clocks."""
+    entry = _LAST_DECISION.get(chat_id)
+    if not entry:
+        return None
+    return {"path": entry["path"], "ms": entry["ms"],
+            "age_s": round(time.monotonic() - entry["at"], 1)}
+
+
 # ---------- pure rules (unit-tested directly, no I/O) ----------
 
 def pcm16_wav(pcm_bytes: bytes, sample_rate: int) -> bytes:
@@ -638,6 +689,8 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                      chat_id)
             log.debug("voiceid identify failure detail", exc_info=True)
         if voiceid.matched(verdict):
+            record_decision(chat_id, DECISION_LOCAL,
+                            (time.perf_counter() - t0) * 1000)
             log.info("diarize pass (voiceid): chat=%s ms=%.0f score=%.3f",
                      chat_id, (time.perf_counter() - t0) * 1000,
                      verdict["score"])
@@ -667,6 +720,9 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         log.debug("diarize pass failure detail", exc_info=True)
         return
     duration_ms = (time.perf_counter() - t0) * 1000
+    # The health strip's live pulse (#28): this decision came from the cloud
+    # batch pass. One dict write, content-free, inside the background task.
+    record_decision(chat_id, DECISION_CLOUD, duration_ms)
     # Labelling runs FIRST, metering after (#28, night test 4): from the
     # moment the batch reply is parsed, every millisecond spent before the
     # label write is identity latency the seats can observe, so nothing may
@@ -1008,6 +1064,13 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             return
         decision = ambient_decision(verdict, cfg.get("user_name") or "User",
                                     owner_ok)
+        if decision != "defer":
+            # A local decision was actually made (owner confirmed, known
+            # voice named, or a clear stranger detected): the health strip's
+            # pulse. A defer records nothing - the EL paths that follow
+            # record their own.
+            record_decision(chat_id, DECISION_LOCAL,
+                            (time.perf_counter() - t0) * 1000)
         log.info("ambient check: chat=%s ms=%.0f decision=%s", chat_id,
                  (time.perf_counter() - t0) * 1000, decision)
         if decision == "noop_owner":
@@ -1134,6 +1197,8 @@ async def run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                          chat_id)
                 log.debug("voiceid sniff identify failure detail", exc_info=True)
             if voiceid.matched(verdict):
+                record_decision(chat_id, DECISION_LOCAL,
+                                (time.perf_counter() - t0) * 1000)
                 await _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts,
                                        session, cfg, verdict, t0,
                                        turn_id=turn_id)
@@ -1157,6 +1222,8 @@ async def run_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             armed = bool(non_owner) or len(clusters) >= 2
             # The sniff marker: content-free, and distinguishable from the
             # room-mode pass's own line at a grep.
+            record_decision(chat_id, DECISION_CLOUD,
+                            (time.perf_counter() - t0) * 1000)
             log.info("diarize pass (sniff): chat=%s ms=%.0f clusters=%d "
                      "matched=%d armed=%d", chat_id,
                      (time.perf_counter() - t0) * 1000, len(clusters),

@@ -10,8 +10,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   adoptRoomMode, askFlag, cleanPreferredName, displayName, flagCopy,
-  FORGET_EXPLAINER, mismatchByMessage, personSummary, reassignOptions,
-  rosterChipText, rosterTitle, SNIFF_EXPLAINER, sufficiencyProgress,
+  FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
+  reassignOptions, rosterChipText, rosterTitle, SNIFF_EXPLAINER,
+  sufficiencyProgress,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -94,11 +95,48 @@ test('reassign options: roster first, then remembered people, minus current labe
   const roster = [present('Shawn'), present('Alex'), { name: 'Old', status: 'left' }]
   const people = [{ name: 'Alex' }, { name: 'Grandma' }]
   assert.deepEqual(reassignOptions(roster, people, ['Shawn']),
-    ['Alex', 'Grandma'])
+    [{ name: 'Alex', display: 'Alex' }, { name: 'Grandma', display: 'Grandma' }])
   // case-insensitive exclusion and de-dup
   assert.deepEqual(reassignOptions(roster, people, ['alex']),
-    ['Shawn', 'Grandma'])
+    [{ name: 'Shawn', display: 'Shawn' }, { name: 'Grandma', display: 'Grandma' }])
   assert.deepEqual(reassignOptions(null, null, null), [])
+})
+
+test('mergeFlag returns the newest OPEN merge question only (#28)', () => {
+  assert.equal(mergeFlag(null), null)
+  assert.equal(mergeFlag([{ kind: 'unknown_voice' }]), null)
+  const open = { kind: 'merge_question', label: 'Matteo', suspected: 'Mateo' }
+  assert.equal(mergeFlag([
+    { kind: 'merge_question', label: 'x', suspected: 'y', resolved_at: 5 },
+    open,
+  ]), open)
+})
+
+test('merge question copy asks plainly and never claims a merge happened', () => {
+  const copy = flagCopy({ kind: 'merge_question', label: 'Matteo',
+                          suspected: 'Mateo' })
+  assert.match(copy, /Is Matteo the same person as Mateo\?/)
+  assert.match(copy, /Nothing has been merged/)
+  assert.match(copy, /dismiss this if they are different people/)
+  // junk survives
+  assert.ok(flagCopy({ kind: 'merge_question' }).includes('the same person'))
+})
+
+test('reassign options show preferred names but send identity names (#28)', () => {
+  // The menu SHOWS the corrected spelling; the correction endpoint receives
+  // the identity name, so the fix lands on the existing person instead of
+  // minting a twin under the preferred spelling.
+  const roster = [present('Mateo')]
+  const people = [{ name: 'Mateo', preferred_name: 'Matteo' },
+                  { name: 'Sam', preferred_name: 'Samantha' }]
+  assert.deepEqual(reassignOptions(roster, people, []), [
+    { name: 'Mateo', display: 'Mateo' },  // roster row carries no preferred
+    { name: 'Sam', display: 'Samantha' },
+  ])
+  // a roster row with the backend-joined display_name shows it
+  const joined = [{ name: 'Mateo', status: 'present', display_name: 'Matteo' }]
+  assert.deepEqual(reassignOptions(joined, [], []),
+    [{ name: 'Mateo', display: 'Matteo' }])
 })
 
 test('person summary states sufficiency honestly', () => {

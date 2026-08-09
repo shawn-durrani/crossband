@@ -19,7 +19,7 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                                           partial = null, banner = null, onDismissBanner,
                                           roomMode = false, onRoomModeChange,
                                           rosterText = '', rosterHint = '',
-                                          askText = null }) {
+                                          askText = null, health = null }) {
   const [muted, setMuted] = useState(false)
   // Transcript browsing: faded captions aren't gone - swipe up (or tap the
   // hint) to scroll back through everything said this session.
@@ -137,6 +137,28 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
           >
             <Users size={13} />
             <span className="truncate">{rosterText}</span>
+          </span>
+        </div>
+      )}
+      {/* The voice health strip (#28), same pure derivations as the desktop
+          dock (voiceHealth.js) - matcher state, mode, the last
+          identification's path/latency, and per-voice learning progress. */}
+      {health && (
+        <div className="px-4 pt-1 flex justify-center" role="status"
+             aria-label="Voice health">
+          <span className="text-[11px] text-ink-faint text-center max-w-full">
+            <span title={health.matcher.title}
+                  className={health.matcher.degraded ? 'text-amber-300/90' : ''}>
+              {health.matcher.label}
+            </span>
+            {health.mode && <span title={health.mode.title}> · {health.mode.label}</span>}
+            {health.pulse && <span title={health.pulse.title}> · {health.pulse.label}</span>}
+            {health.voices.length > 0 && (
+              <span title="Remembered voices, and how much clear speech has been learned for each">
+                {' · '}
+                {health.voices.map((v) => (v.done ? `${v.name} ✓` : `${v.name} ${v.label}`)).join(', ')}
+              </span>
+            )}
           </span>
         </div>
       )}

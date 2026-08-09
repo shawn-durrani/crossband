@@ -30,6 +30,7 @@ import asyncio
 import json
 import logging
 import re
+import unicodedata
 
 from . import anchors, db, diarize, llm_util
 
@@ -377,29 +378,112 @@ def _letters(name: str) -> str:
     return re.sub(r"[^a-z]", "", (name or "").casefold())
 
 
-def _within_one_edit(a: str, b: str) -> bool:
-    """Levenshtein distance <= 1, the cheap special case (one insert, delete
-    or substitute). Enough for a transcriber's phonetic slip; anything
-    further apart is honestly a different name."""
+def fold_name(name: str) -> str:
+    """A name reduced to its comparable core: casefolded, diacritics
+    stripped (NFKD-decomposed, combining marks dropped), letters only. The
+    normalisation half of the variant-merge rule - a transcriber writing a
+    name with or without its accents must compare equal."""
+    decomposed = unicodedata.normalize("NFKD", name or "")
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"[^a-z]", "", stripped.casefold())
+
+
+def _edit_distance(a: str, b: str, cap: int = 3) -> int:
+    """Levenshtein distance, capped: anything beyond `cap` returns cap + 1.
+    Names are short, so the plain dynamic program is cheap; the cap keeps a
+    pasted-novel pathological input from mattering."""
     if a == b:
-        return True
-    if abs(len(a) - len(b)) > 1:
-        return False
-    if len(a) > len(b):
-        a, b = b, a
-    i = j = edits = 0
-    while i < len(a) and j < len(b):
-        if a[i] == b[j]:
-            i += 1
-            j += 1
+        return 0
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        best = i
+        for j, cb in enumerate(b, 1):
+            cost = min(prev[j] + 1, cur[j - 1] + 1,
+                       prev[j - 1] + (0 if ca == cb else 1))
+            cur.append(cost)
+            best = min(best, cost)
+        if best > cap:
+            return cap + 1
+        prev = cur
+    return min(prev[-1], cap + 1)
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """Levenshtein distance <= 1. Enough for a transcriber's phonetic slip;
+    anything further apart is honestly a different name."""
+    return _edit_distance(a, b, cap=1) <= 1
+
+
+# ---- variant merging (#28: naming is law) ----
+#
+# The seventh-generation defect this closes: an introduction name that is a
+# spelling variant of a person we already remember ("Matteo" beside a
+# remembered "Mateo") used to mint a TWIN with an empty anchor bank. The rule:
+# fold case and diacritics, then take edit distance on the folded forms.
+# Distance scales with name length because two edits inside a three-letter
+# name is usually a DIFFERENT name, not a variant - that case is "close", and
+# close raises a merge question instead of silently folding two people
+# together.
+
+VARIANT_CONFIDENT = "confident"
+VARIANT_CLOSE = "close"
+
+
+def name_variant(a: str, b: str) -> str:
+    """How alike are two names once folded? VARIANT_CONFIDENT (same person,
+    re-identify), VARIANT_CLOSE (plausibly the same - ask, don't guess), or
+    '' (different names). Confident: folded-equal, or within one edit at >= 4
+    letters, or within two edits at >= 6 letters. Close: within two edits on
+    shorter names - where an edit is a big fraction of the name - but only
+    when a single edit did it or the names share a first letter; two edits
+    from the first letter onward ("Sam" vs "Dan") is a different name, not a
+    variant."""
+    fa, fb = fold_name(a), fold_name(b)
+    if not fa or not fb:
+        return ""
+    if fa == fb:
+        return VARIANT_CONFIDENT
+    shortest = min(len(fa), len(fb))
+    d = _edit_distance(fa, fb, cap=2)
+    if d <= 1 and shortest >= 4:
+        return VARIANT_CONFIDENT
+    if d <= 2 and shortest >= 6:
+        return VARIANT_CONFIDENT
+    if d <= 2 and shortest >= 3 and (d <= 1 or fa[0] == fb[0]):
+        return VARIANT_CLOSE
+    return ""
+
+
+def variant_of(name: str, people, exclude=frozenset()):
+    """The single remembered person `name` is a variant of, as
+    (person, confidence). Checks each person's identity name, preferred name
+    and merged-away names; a confident hit wins over a close one; TWO
+    different people at the same best confidence is ambiguity, which returns
+    (None, '') - merging the wrong two people is worse than asking. `people`
+    is anchors.store().people(); `exclude` is casefolded names to skip (the
+    owner)."""
+    excluded = {e.casefold() for e in exclude or ()}
+    best = {VARIANT_CONFIDENT: [], VARIANT_CLOSE: []}
+    for p in people or []:
+        if (p.get("name") or "").casefold() in excluded:
             continue
-        edits += 1
-        if edits > 1:
-            return False
-        if len(a) == len(b):
-            i += 1  # substitution
-        j += 1      # insertion into the longer string
-    return edits + (len(b) - j) + (len(a) - i) <= 1
+        candidates = [p.get("name"), p.get("preferred_name")] + list(
+            p.get("merged_names") or [])
+        verdicts = [name_variant(name, c) for c in candidates if c]
+        if VARIANT_CONFIDENT in verdicts:
+            best[VARIANT_CONFIDENT].append(p)
+        elif VARIANT_CLOSE in verdicts:
+            best[VARIANT_CLOSE].append(p)
+    for confidence in (VARIANT_CONFIDENT, VARIANT_CLOSE):
+        hits = best[confidence]
+        if len(hits) == 1:
+            return hits[0], confidence
+        if len(hits) > 1:
+            return None, ""  # ambiguous: never guess between two people
+    return None, ""
 
 
 def owner_alias(name: str, owner: str) -> bool:
@@ -418,6 +502,148 @@ def owner_alias(name: str, owner: str) -> bool:
     if a == b:
         return True
     return len(a) >= 3 and len(b) >= 3 and _within_one_edit(a, b)
+
+
+# ---- spoken name corrections (#28: naming is law) ----
+#
+# A spoken "her name is spelt ..." correction used to do NOTHING - the
+# rename UI was the only door. A correction-shaped turn now rides the
+# same post-commit fire-and-forget scan: a deterministic prefilter decides
+# whether the turn looks like a spelling/naming correction, one cheap
+# utility call confirms it and extracts WHO and the corrected NAME, and a
+# confirmed correction sets the person's preferred display name OWNER-SET
+# (spoken by the owner's session, it carries the same authority as the
+# rename UI). Matching is deliberately conservative: the named target must
+# resolve to exactly one known person (roster or remembered, exact or
+# variant), an unnamed target falls back to the most recent confidently
+# labelled speaker, and any ambiguity does nothing rather than guessing.
+
+_CORRECTION_PATTERNS = [
+    r"\bname (?:is|'s) (?:actually |really )?spel(?:t|led)\b",
+    r"\bname (?:is|'s) (?:actually|really)\b",   # "her name is actually Sam"
+    r"\bspel(?:t|led) (?:with|like|as)\b",       # "it's actually spelt with a C"
+    r"\bactually spel(?:t|led)\b",
+    r"\bspell (?:it|that|her name|his name|their name)\b",
+    r"\bnot spel(?:t|led)\b",
+    r"\byou(?:'re| are) (?:mis)?spelling\b",
+    r"\bcall (?:her|him|them) \w+",              # "call her Sam" ("call me" is
+                                                 # an introduction shape)
+    r"\bshould be spel(?:t|led)\b",
+]
+_CORRECTION_RE = re.compile("|".join(_CORRECTION_PATTERNS), re.IGNORECASE)
+
+CORRECTION_TARGET_OWNER = "owner"
+
+
+def correction_prefilter(text: str) -> bool:
+    """Is this turn shaped like a naming correction, worth one utility-model
+    confirmation? Same posture as the other prefilters: cheap, bounded,
+    over-inclusive on purpose - the model is the judge."""
+    head = (text or "")[:600]
+    if not head.strip():
+        return False
+    return bool(_CORRECTION_RE.search(head))
+
+
+def build_correction_prompt(text: str, user_name: str, known_names: list) -> str:
+    """The correction-confirmation prompt. Same discipline as the other
+    scans: transcript text stays in the request, the model returns only
+    names, and nothing from here is persisted or logged."""
+    known = ", ".join(known_names) if known_names else "(nobody yet)"
+    return (
+        "You watch one message from a voice conversation and decide whether "
+        "it CORRECTS how a person's name is spelt or what they should be "
+        "called: 'her name is spelt Aleks', 'it's actually spelt with a K', "
+        "'call her Sam', 'my name is spelt Matteo'. Merely mentioning or "
+        "introducing a name is NOT a correction; neither is correcting "
+        "anything other than a person's name.\n"
+        f"The device owner is {user_name}. People already known: {known}.\n"
+        "Reply with ONLY JSON: {\"corrections\": [{\"who\": ..., \"name\": "
+        "...}]}. `name` is the corrected name exactly as the message spells "
+        "it (assemble it from spelled-out letters when given letter by "
+        "letter). `who` is the person being corrected as previously known: "
+        "one of the known names when the message says or implies which, "
+        f"\"{CORRECTION_TARGET_OWNER}\" when the speaker corrects their own "
+        "name ('my name is...'), or \"\" when the message does not say who. "
+        "Empty list when the message corrects nobody's name. Never invent "
+        "names that are not in the message or the known list.\n\n"
+        f"Message: {text[:600]}"
+    )
+
+
+def parse_correction_verdict(text) -> list:
+    """Parse the utility model's correction verdict, defensively: anything
+    off-shape degrades to [] rather than raising. Returns a bounded list of
+    {"who": str, "name": str} with cleaned names; `who` may be '', the
+    owner marker, or a cleaned name."""
+    if not text:
+        return []
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    out = []
+    for entry in (data.get("corrections")
+                  if isinstance(data.get("corrections"), list) else []):
+        if not isinstance(entry, dict):
+            continue
+        name = _clean_name(entry.get("name"))
+        if not name or relationship_noun(name):
+            continue
+        raw_who = entry.get("who")
+        if raw_who == CORRECTION_TARGET_OWNER:
+            who = CORRECTION_TARGET_OWNER
+        else:
+            who = _clean_name(raw_who)
+        out.append({"who": who, "name": name})
+        if len(out) >= MAX_NAMES_PER_TURN:
+            break
+    return out
+
+
+def resolve_correction_target(who, owner, people, roster_names,
+                              recent_speaker=""):
+    """WHO does a confirmed correction rename? Returns the person's identity
+    name (the anchor-store key), or '' when honesty says stop.
+
+    - the owner marker, or a `who` that is plausibly the owner's own name:
+      the owner's record (identity = the user_name setting);
+    - a named `who`: exactly one known person (roster or remembered; exact
+      match first, then the variant rule) - two candidates or none is
+      ambiguity, and ambiguity does nothing;
+    - no `who` at all: the most recent confidently-labelled speaker when the
+      caller found one, else nothing. Guessing a rename target would let a
+      stray phrase rename the wrong person, which is worse than ignoring a
+      real correction (the rename UI still exists)."""
+    owner = (owner or "").strip()
+    if who == CORRECTION_TARGET_OWNER or (who and owner_alias(who, owner)):
+        return owner
+    if not who:
+        return recent_speaker or ""
+    candidates = []
+    for p in people or []:
+        names = [p.get("name"), p.get("preferred_name")] + list(
+            p.get("merged_names") or [])
+        if any(n and n.casefold() == who.casefold() for n in names):
+            candidates.append(p.get("name"))
+    for name in roster_names or []:
+        if name.casefold() == who.casefold() \
+                and name.casefold() not in {c.casefold() for c in candidates}:
+            candidates.append(name)
+    if not candidates:
+        person, confidence = variant_of(who, people,
+                                        exclude={owner.casefold()})
+        if person is not None and confidence == VARIANT_CONFIDENT:
+            candidates.append(person["name"])
+    unique = list(dict.fromkeys(c.casefold() for c in candidates if c))
+    if len(unique) != 1:
+        return ""
+    return next(c for c in candidates if c.casefold() == unique[0])
 
 
 # ---------- the fire-and-forget scan ----------
@@ -439,6 +665,9 @@ SCAN_OUTCOMES = (
     "ask_raised",           # relationship-only, no remembered match: asking
     "roster_grew",          # already armed; people were added
     "roster_shrank",        # a departure freed roster slots
+    "name_corrected",       # a spoken correction set a preferred name
+    "correction_unmatched", # a correction confirmed, but no unambiguous
+                            # target person - nothing changed, by design
     "no_change",            # a confirmed verdict that changed nothing
     "scan_error",           # the scan itself failed (detail logged below it)
 )
@@ -456,7 +685,8 @@ def schedule_scan(chat_id, message_id, text, cfg):
     not break the send. One scan covers BOTH detections (introductions and
     room-mode commands), so every user turn still ends in exactly one
     verdict line."""
-    if not prefilter(text) and not command_prefilter(text):
+    if not prefilter(text) and not command_prefilter(text) \
+            and not correction_prefilter(text):
         _log_verdict(chat_id, "no_prefilter_match")
         return None
     task = asyncio.get_running_loop().create_task(
@@ -468,11 +698,12 @@ def schedule_scan(chat_id, message_id, text, cfg):
 
 async def scan_user_turn(chat_id, message_id, text, cfg):
     """One user turn's scan: the command confirmation first (#28, chat 198),
-    then the introduction confirmation, each gated on its own prefilter so a
+    then the introduction confirmation, then the name-correction
+    confirmation (#28: naming is law), each gated on its own prefilter so a
     turn normally pays for at most one utility call. A confirmed command's
     outcome wins the verdict line when it changed anything; the rare turn
-    that is both a command and an introduction ("group mode on - this is
-    Dave") applies both. Every failure ends here (log only)."""
+    that matches two shapes ("group mode on - this is Dave") applies both.
+    Every failure ends here (log only)."""
     try:
         outcome = None
         command_confirmed = False
@@ -497,6 +728,21 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
                                                         verdict, cfg, text)
                 if outcome is None:
                     outcome = intro_outcome
+        if correction_prefilter(text):
+            # Naming is law (#28): a spoken correction sets the preferred
+            # name, owner-set. Its own prefilter + utility call, same
+            # fire-and-forget scan, still one verdict line per turn.
+            known = await asyncio.to_thread(_correction_known_names, chat_id)
+            reply = await llm_util.utility_complete(
+                build_correction_prompt(text, cfg.get("user_name", "User"),
+                                        known),
+                cfg, max_tokens=120)
+            corrections = parse_correction_verdict(reply)
+            if corrections:
+                corr_outcome = await asyncio.to_thread(
+                    apply_corrections, chat_id, corrections, cfg)
+                if outcome is None or outcome == "no_change":
+                    outcome = corr_outcome
         if outcome is None:
             # A confirmed command that changed nothing (arm while already
             # armed, disarm while off) is an honest no_change; with nothing
@@ -518,6 +764,84 @@ def _present_names(chat_id) -> list:
         con.close()
 
 
+def _correction_known_names(chat_id) -> list:
+    """The names a correction may target, for the confirmation prompt:
+    everyone present plus everyone remembered, de-duplicated, identity names
+    (the store keys a correction resolves to)."""
+    names = _present_names(chat_id)
+    for p in anchors.store().people():
+        if p["name"].casefold() not in {n.casefold() for n in names}:
+            names.append(p["name"])
+    return names
+
+
+def _recent_confident_speaker(con, chat_id, owner) -> str:
+    """The most recent speaker context for an unnamed correction ("it's
+    actually spelt with a K"): the newest user turn whose voice labels carry
+    exactly ONE confident non-owner name. Anything else - unlabelled turns
+    only, ordinals, uncertainty, crosstalk, several names - returns '', and
+    the correction does nothing rather than guess. Bounded read."""
+    rows = con.execute(
+        "SELECT voice_labels FROM messages WHERE chat_id=? AND speaker='user' "
+        "AND voice_labels != '' ORDER BY id DESC LIMIT 10",
+        (chat_id,)).fetchall()
+    for row in rows:
+        try:
+            data = json.loads(row["voice_labels"])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict) or data.get("crosstalk") is True:
+            continue
+        labels = [l for l in (data.get("labels")
+                              if isinstance(data.get("labels"), list) else [])
+                  if isinstance(l, str) and l.strip()]
+        uncertain = set(data.get("uncertain")
+                        if isinstance(data.get("uncertain"), list) else [])
+        named = [l for l in dict.fromkeys(labels)
+                 if l not in uncertain and not re.match(r"^Voice \d+$", l)
+                 and l.casefold() != (owner or "").casefold()]
+        if len(named) == 1 and len(dict.fromkeys(labels)) == 1:
+            return named[0]
+        return ""  # the newest labelled turn is the context; never dig past it
+    return ""
+
+
+def apply_corrections(chat_id, corrections, cfg):
+    """Apply confirmed name corrections (synchronous; worker thread). For
+    each: resolve the target person conservatively (resolve_correction_target
+    above), then set their preferred display name OWNER-SET - the spoken
+    correction carries the same authority as the rename UI, and locks the
+    name against every automated path. Returns the scan outcome. Content-free
+    logging: counts only, never names."""
+    store = anchors.store()
+    people = store.people()
+    owner = cfg.get("user_name", "User")
+    con = db.connect()
+    try:
+        roster_names = [r["name"] for r in
+                        db.get_room_roster(con, chat_id, present_only=True)]
+        recent = _recent_confident_speaker(con, chat_id, owner)
+    finally:
+        con.close()
+    applied = 0
+    for corr in corrections:
+        target = resolve_correction_target(corr["who"], owner, people,
+                                           roster_names, recent_speaker=recent)
+        if not target:
+            continue
+        person = store.find_by_name(target)
+        pid = person["person_id"] if person else store.ensure_person(target)
+        if store.set_preferred_name(pid, corr["name"], owner_set=True):
+            applied += 1
+    log.info("name corrections applied: chat=%s applied=%d of=%d",
+             chat_id, applied, len(corrections))
+    if applied:
+        from . import events
+        events.notify_room_update()
+        return "name_corrected"
+    return "correction_unmatched"
+
+
 def apply_scan(chat_id, verdict, cfg, text=""):
     """Apply a confirmed verdict (synchronous; runs on a worker thread):
 
@@ -535,6 +859,12 @@ def apply_scan(chat_id, verdict, cfg, text=""):
       Sam" sets a NEW person's preferred display name at creation. An
       existing person's preferred name is never overwritten - it may have
       been corrected by hand.
+    - variant merging (#28: naming is law): an introduction name that is
+      confidently a spelling variant of a remembered person (folded case and
+      diacritics, an edit or two), or whose utterance voice-matches an
+      enrolled non-owner bank, RE-IDENTIFIES that person instead of minting
+      a twin; a close-but-not-confident name keeps the new person and
+      raises one merge-question flag.
     - departures: mark the named people left (the cap frees).
 
     Returns the scan's outcome, one of SCAN_OUTCOMES - the verdict line the
@@ -605,23 +935,65 @@ def apply_scan(chat_id, verdict, cfg, text=""):
             if allowed < len(new):
                 log.info("roster cap reached: chat=%s cap=%d dropped=%d",
                          chat_id, cap, len(new) - allowed)
+            store = anchors.store()
+            people = store.people() if new else []
+            # Variant merging's voice arm (#28: naming is law), once per
+            # scan: does the introduction utterance's own audio match an
+            # enrolled non-owner bank? A confident match means the person
+            # speaking IS someone we remember, whatever the transcriber made
+            # of their name - re-identify them instead of minting a twin.
+            voice_person = _voice_matched_person(chat_id, people, cfg,
+                                                 owner) if new else None
+            seed_owner = True
             for name in new[:allowed]:
-                known = anchors.store().find_by_name(name)
+                known = store.find_by_name(name)
+                variant = None
+                if known is None:
+                    # Variants merge instead of duplicating: a name that is
+                    # confidently a spelling of a remembered person (case,
+                    # diacritics, a transcriber's edit or two) re-identifies
+                    # them; a CLOSE-but-not-confident match keeps the new
+                    # person but asks the merge question rather than guess.
+                    variant, confidence = variant_of(
+                        name, people, exclude={owner.casefold()})
+                    if variant is not None and confidence == VARIANT_CONFIDENT:
+                        known = variant
+                        variant = None
+                        log.info("introduction variant re-identified a "
+                                 "remembered person: chat=%s", chat_id)
+                if known is None and voice_person is not None:
+                    known = voice_person
+                    variant = None
+                    # The stashed utterance is the GUEST's voice, not the
+                    # owner's - claiming it as the owner's anchor would be
+                    # exactly the cross-contamination the sixth field test
+                    # found. Discard it instead.
+                    seed_owner = False
+                    log.info("introduction voice-matched a remembered "
+                             "person: chat=%s", chat_id)
+                roster_name = known["name"] if known else name
                 pid = known["person_id"] if (known and known["sufficient"]) else ""
                 alias = aliases.get(name)
                 if alias and known is None:
                     # Alias capture at CREATION only: mint the store entry so
                     # the preferred name has somewhere durable to live, and
                     # link the roster row to it. Anchor audio arrives later,
-                    # exactly as for any pending person.
-                    store = anchors.store()
+                    # exactly as for any pending person. owner_set=False:
+                    # an automated capture must never claim (or take) the
+                    # owner's authority over a name.
                     pid = store.ensure_person(name)
-                    if store.set_preferred_name(pid, alias):
+                    if store.set_preferred_name(pid, alias, owner_set=False):
                         log.info("alias captured at introduction: chat=%s",
                                  chat_id)
-                db.add_room_person(con, chat_id, name, person_id=pid)
+                if variant is not None:
+                    _raise_merge_question(con, chat_id, name, variant)
+                    log.info("introduction close to a remembered name: "
+                             "chat=%s merge question raised", chat_id)
+                db.add_room_person(con, chat_id, roster_name, person_id=pid)
             added = min(allowed, len(new))
             log.info("roster grew: chat=%s added=%d", chat_id, added)
+            if not seed_owner:
+                diarize.take_stashed_utterance(chat_id)  # guest audio: drop it
             if named:
                 # An introduction is also the ANSWER to an open "someone new
                 # is speaking - who?" ask: naming them closes it. The next
@@ -660,6 +1032,52 @@ def _raise_unnamed_intro_ask(con, chat_id):
                  if f["kind"] == "unknown_voice"]
     if not open_asks:
         db.insert_room_flag(con, chat_id, "unknown_voice")
+
+
+def _raise_merge_question(con, chat_id, new_name, existing_person):
+    """The merge question (#28: naming is law): a just-introduced name sits
+    close to a remembered person's, but not close enough to fold them
+    together silently. Reuses the ask plumbing - one OPEN merge question per
+    chat, label = the new name, suspected = the remembered person's display
+    name. Dismissing it keeps them separate; renaming one onto the other in
+    Remembered voices merges them."""
+    open_flags = [f for f in db.get_room_flags(con, chat_id)
+                  if f["kind"] == "merge_question"]
+    if open_flags:
+        return
+    display = existing_person.get("preferred_name") or existing_person["name"]
+    db.insert_room_flag(con, chat_id, "merge_question", label=new_name,
+                        suspected=display)
+
+
+def _voice_matched_person(chat_id, people, cfg, owner):
+    """Does the introduction utterance's audio confidently match an enrolled
+    NON-owner voice? Peeks the stashed utterance (never consumes it - the
+    owner-anchor seed path still owns that decision), runs the local matcher
+    against every sufficient person, and returns the matched person dict or
+    None. Every doubt is None: this is an extra door to re-identification,
+    never a required one. Runs on the scan's worker thread."""
+    from . import voiceid
+    if not voiceid.enabled(cfg):
+        return None
+    stashed = diarize.peek_stashed_utterance(chat_id)
+    if not stashed:
+        return None
+    pcm, sample_rate = stashed
+    candidates = [{"person_id": p["person_id"], "name": p["name"]}
+                  for p in people if p.get("sufficient")]
+    if not candidates:
+        return None
+    try:
+        verdict = voiceid.identify_utterance(pcm, sample_rate, candidates, cfg)
+    except Exception:
+        log.debug("introduction voice-match failed", exc_info=True)
+        return None
+    if not voiceid.matched(verdict) \
+            or (verdict.get("name") or "").casefold() == (owner or "").casefold():
+        return None
+    return next((p for p in people
+                 if p["person_id"] == verdict["person_id"]), None)
 
 
 def _seed_owner_anchor(chat_id, cfg):

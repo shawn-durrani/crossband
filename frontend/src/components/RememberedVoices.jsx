@@ -20,6 +20,10 @@ export default function RememberedVoices() {
   const [confirming, setConfirming] = useState(null)  // person_id pending confirm
   const [editing, setEditing] = useState(null)        // person_id being renamed
   const [draft, setDraft] = useState('')
+  // A rename that hit another person's name (#28: naming is law): the
+  // backend refused and returned the conflict, and the merge affordance
+  // asks before folding two people together. {personId, name, conflict}.
+  const [mergeOffer, setMergeOffer] = useState(null)
 
   async function load() {
     try {
@@ -50,10 +54,28 @@ export default function RememberedVoices() {
     setEditing(null)
     setDraft('')
     try {
-      await api.renameVoice(personId, name)
+      const r = await api.renameVoice(personId, name)
+      if (r && r.ok === false && r.conflict) {
+        // The name belongs to someone else: offer the merge instead of
+        // silently renaming two people onto one another.
+        setMergeOffer({ personId, name, conflict: r.conflict })
+        return
+      }
       await load()
     } catch (e) {
       setError(`Could not rename: ${e.message}`)
+    }
+  }
+
+  async function merge() {
+    const offer = mergeOffer
+    setMergeOffer(null)
+    if (!offer) return
+    try {
+      await api.mergeVoice(offer.personId, offer.conflict.person_id, offer.name)
+      await load()
+    } catch (e) {
+      setError(`Could not merge: ${e.message}`)
     }
   }
 
@@ -74,6 +96,30 @@ export default function RememberedVoices() {
       {open && (
         <div className="px-3 pb-3 space-y-2">
           {error && <div className="text-xs text-red-400">{error}</div>}
+          {mergeOffer && (
+            <div className="text-xs border border-sky-800 bg-sky-950/40 rounded-lg px-3 py-2 space-y-1.5">
+              <div className="text-sky-200">
+                {mergeOffer.name} already belongs to{' '}
+                {mergeOffer.conflict.display_name}. Merge them into one
+                person? Their stored voices combine (the best clips are
+                kept), and both names will mean the same person.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="text-sky-300 hover:text-sky-100 border border-sky-800 rounded px-2 py-1"
+                  onClick={merge}
+                >
+                  Merge them
+                </button>
+                <button
+                  className="text-ink-dim hover:text-ink px-1"
+                  onClick={() => setMergeOffer(null)}
+                >
+                  keep separate
+                </button>
+              </div>
+            </div>
+          )}
           {people !== null && people.length === 0 && !error && (
             <p className="text-xs text-ink-faint">
               Nobody yet. When someone is introduced in a voice chat ("say hi

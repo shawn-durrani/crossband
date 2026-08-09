@@ -58,12 +58,37 @@ export function chipsForMessage(msg) {
   return out
 }
 
+// The name a chip SHOWS (#28: naming is law). Voice labels are written with
+// a person's identity name - the stable key corrections and roster rows
+// match on - but the owner's preferred spelling must win everywhere a name
+// renders. `people` is the remembered-voices list ({name, preferred_name,
+// merged_names}); the label resolves through identity and merged-away names
+// alike, and an unknown label (an ordinal, a person since forgotten) shows
+// unchanged. This is the fix for the phase-3 punt where chips kept showing
+// the introduced spelling after a rename.
+export function displayLabel(label, people) {
+  if (typeof label !== 'string' || !label) return label
+  const key = label.trim().toLowerCase()
+  for (const p of people || []) {
+    if (!p || typeof p !== 'object') continue
+    const names = [p.name, ...(Array.isArray(p.merged_names) ? p.merged_names : [])]
+    if (names.some((n) => typeof n === 'string' && n.trim().toLowerCase() === key)) {
+      const preferred = typeof p.preferred_name === 'string' && p.preferred_name.trim()
+      return preferred ? p.preferred_name.trim().slice(0, MAX_LABEL_CHARS) : label
+    }
+  }
+  return label
+}
+
 // Phase 2 (#28): the payload may carry names, per-label uncertainty and a
-// corrected marker - {"labels": ["Shawn"], "uncertain": ["Alex"],
+// corrected marker - {"labels": ["Alex"], "uncertain": ["Sam"],
 // "corrected": true}. chipData is chipsForMessage plus that: each chip says
 // whether it is a confident voice match or still uncertain, and whether a
-// human correction set it. Same defensive posture - junk renders nothing.
-export function chipData(msg) {
+// human correction set it. `label` stays the persisted identity name (what
+// a correction sends back); `display` is what renders, resolved through
+// the remembered people's preferred names. Same defensive posture - junk
+// renders nothing.
+export function chipData(msg, people = []) {
   if (!msg || msg.speaker !== 'user' || !msg.voice_labels) return []
   let data
   try {
@@ -78,6 +103,7 @@ export function chipData(msg) {
       .map((u) => u.trim().slice(0, MAX_LABEL_CHARS)))  // match display form
   return chipsForMessage(msg).map((label) => ({
     label,
+    display: displayLabel(label, people),
     uncertain: uncertain.has(label),
     corrected: data.corrected === true,
   }))
@@ -124,11 +150,12 @@ export function crosstalkNote(msg) {
 }
 
 // Best-effort attributed sub-segments for a crosstalk turn, bounded and
-// sanitised for display: [{label, text, uncertain}]. Empty when the turn is
-// not crosstalk-marked, carries no split, or the data is junk. An uncertain
-// segment keeps its uncertainty (the UI shows "label?"), and a phase-1
-// ordinal counts as uncertain by construction.
-export function crosstalkSegments(msg) {
+// sanitised for display: [{label, display, text, uncertain}]. Empty when
+// the turn is not crosstalk-marked, carries no split, or the data is junk.
+// An uncertain segment keeps its uncertainty (the UI shows "label?"), and a
+// phase-1 ordinal counts as uncertain by construction. `display` resolves
+// the identity label through preferred names (#28: naming is law).
+export function crosstalkSegments(msg, people = []) {
   const data = labelData(msg)
   if (!data || data.crosstalk !== true || !Array.isArray(data.segments)) return []
   const out = []
@@ -140,6 +167,7 @@ export function crosstalkSegments(msg) {
     if (!label || !text) continue
     out.push({
       label,
+      display: displayLabel(label, people),
       text,
       uncertain: seg.uncertain === true || /^Voice \d+$/.test(label),
     })
@@ -149,14 +177,16 @@ export function crosstalkSegments(msg) {
 }
 
 // Per-chip explainers for the named phase: how much to trust this exact
-// label, and that tapping it corrects it.
+// label, and that tapping it corrects it. Speaks the display name (#28:
+// naming is law), falling back to the raw label for older callers.
 export function chipTitle(chip) {
   if (!chip) return ''
-  if (chip.corrected) return `Corrected by you to ${chip.label}.`
+  const shown = chip.display || chip.label
+  if (chip.corrected) return `Corrected by you to ${shown}.`
   if (chip.uncertain) {
-    return `Probably ${chip.label} - their voice is still being learned, so `
+    return `Probably ${shown} - their voice is still being learned, so `
       + 'this stays uncertain. Tap to correct if wrong.'
   }
   if (/^Voice \d+$/.test(chip.label)) return CHIP_EXPLAINER
-  return `Matched to ${chip.label}'s remembered voice. Tap to correct if wrong.`
+  return `Matched to ${shown}'s remembered voice. Tap to correct if wrong.`
 }
