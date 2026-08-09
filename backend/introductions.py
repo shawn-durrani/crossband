@@ -571,6 +571,10 @@ def apply_scan(chat_id, verdict, cfg, text=""):
         aliases = verdict.get("aliases")
         aliases = aliases if isinstance(aliases, dict) else {}
         if intros:
+            # An introduction is an explicit owner re-enable: clear any
+            # sacred ambient-off so remembered voices resume being noticed.
+            db.set_chat_ambient_off(con, chat_id, False)
+            diarize.set_ambient_off(chat_id, False)
             if not chat["room_mode"]:
                 db.set_chat_room_mode(con, chat_id, True)
                 diarize.set_room_enabled(chat_id, True)
@@ -714,6 +718,10 @@ def apply_command(chat_id, direction, cfg):
         if not chat:
             return "no_change"
         if direction == COMMAND_ARM:
+            # An arm command is an explicit re-enable: clear any sacred
+            # ambient-off, even if room mode is already on.
+            db.set_chat_ambient_off(con, chat_id, False)
+            diarize.set_ambient_off(chat_id, False)
             if chat["room_mode"]:
                 return "no_change"
             db.set_chat_room_mode(con, chat_id, True)
@@ -722,8 +730,16 @@ def apply_command(chat_id, direction, cfg):
             _roster_owner(con, chat_id, cfg)
             outcome = "armed_by_command"
         elif direction == COMMAND_DISARM:
+            # "Solo mode" is the SACRED disarm: it always sets ambient-off so
+            # automatic arming stops until an explicit re-enable, even when
+            # room mode was already off (nothing had armed yet, but the owner
+            # is stating a preference for privacy).
+            db.set_chat_ambient_off(con, chat_id, True)
+            diarize.set_ambient_off(chat_id, True)
             if not chat["room_mode"]:
-                return "no_change"
+                log.info("ambient off via command (room already off): chat=%s",
+                         chat_id)
+                return "disarmed_by_command"
             db.set_chat_room_mode(con, chat_id, False)
             diarize.set_room_enabled(chat_id, False)
             departed = 0
@@ -764,3 +780,13 @@ def _roster_owner(con, chat_id, cfg):
         db.add_room_person(con, chat_id, owner, person_id=pid)
     elif pid:
         db.link_room_person(con, chat_id, owner, pid)
+
+
+def roster_owner_only(chat_id, cfg):
+    """Connection-owning wrapper over _roster_owner, for callers on a worker
+    thread that hold no connection (diarize's ambient-unknown arm)."""
+    con = db.connect()
+    try:
+        _roster_owner(con, chat_id, cfg)
+    finally:
+        con.close()

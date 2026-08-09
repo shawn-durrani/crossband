@@ -87,9 +87,10 @@ export function rosterTitle(roster, sufficientSeconds) {
       return name
     })
   const base =
-    'Room mode is on: turns are attributed by voice, and audio is '
-    + 'transcribed twice while it is on (roughly double voice spend). '
-    + 'Say "X has left" to remove someone.'
+    'Room mode is on: turns are attributed by voice. Known voices are '
+    + 'identified on this device at no extra cost; a second transcription '
+    + 'runs only when voices overlap or a voice cannot be placed locally. '
+    + 'Say "X has left" to remove someone, or "solo mode" to switch off.'
   if (!learning.length) return base
   return `${base} Still learning: ${learning.join(', ')} - their turns stay `
     + 'uncertain until enough of their voice has been heard.'
@@ -200,9 +201,9 @@ export function personSummary(person, sufficientSeconds) {
 // transcription spend and the copy says so plainly - the same posture as
 // the room-mode toggle's own "roughly double" line.
 export const SNIFF_EXPLAINER =
-  'With remembered voices in the house, the first couple of spoken turns '
-  + 'of each session are transcribed twice, listening for a known voice - '
-  + 'a recognised voice switches room mode on by itself.'
+  'With remembered voices in the house, room mode switches on by itself '
+  + 'when a known voice speaks - identified on this device at no extra cost. '
+  + 'Say "solo mode" to keep a session private.'
 
 // What forgetting means, stated before the click - deletion copy lives with
 // the logic so every surface says the same true thing.

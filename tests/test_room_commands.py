@@ -363,9 +363,16 @@ def test_disarm_marks_everyone_left_and_resolves_the_ask(app):
         assert sorted(p["name"] for p in gone) == ["Alex", "Dave"]
         assert all(p["status"] == "left" and p["left_at"] for p in gone)
         assert [f["kind"] for f in _flags(chat_id)] == ["mismatch"]
-        # disarm while already off changes nothing
+        # Disarm while already off is no longer a no_change: since ambient
+        # detection (#28) it records the sacred solo preference, a real state
+        # change (test_room_ambient.py owns the ambient-off transitions).
         assert introductions.apply_command(chat_id, "disarm", CFG) \
-            == "no_change"
+            == "disarmed_by_command"
+        con = db.connect()
+        try:
+            assert db.get_chat_ambient_off(con, chat_id) is True
+        finally:
+            con.close()
 
 
 def test_a_departure_left_person_can_rejoin_by_introduction(app):

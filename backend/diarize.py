@@ -149,6 +149,79 @@ def sniff_eligible(people, owner_name) -> bool:
         for p in people or [])
 
 
+# ---- ambient room detection (#28) ----
+#
+# The arming ceremony (introduction, command, or the bounded session-start
+# sniff) existed to gate a real cost: identity used to require a second cloud
+# transcription per utterance. The local matcher (voiceid.py) made identity
+# ~free - one on-device embed, ~33-59ms, offline - so the gate loses its
+# reason to exist. With ambient detection on, EVERY committed utterance in a
+# room-mode-OFF session gets a quiet LOCAL-ONLY check (never an ElevenLabs
+# call): the owner's own voice is a no-op, a remembered non-owner arms room
+# mode automatically, and a clear voice that matches nobody (only decidable
+# when the owner is itself sufficiently enrolled) arms and raises the
+# ask-fallback. Anything the matcher cannot decide is left to the unchanged
+# bounded EL sniff / introduction paths.
+#
+# DISARM IS SACRED: after the owner says "solo mode", chats.ambient_off is set
+# and ambient never re-arms that chat until an explicit re-enable (a command,
+# an introduction, or the manual toggle) clears it. This live mirror lets the
+# relay honour it without a DB read on the audio path, exactly like
+# _ROOM_ENABLED.
+_AMBIENT_OFF: dict = {}
+
+
+def set_ambient_off(chat_id, off: bool):
+    if chat_id is None:
+        return
+    if off:
+        _AMBIENT_OFF[chat_id] = True
+    else:
+        _AMBIENT_OFF[chat_id] = False
+
+
+def ambient_off(chat_id) -> bool:
+    return bool(_AMBIENT_OFF.get(chat_id))
+
+
+def ambient_eligible(people, cfg) -> bool:
+    """Should this session run the ambient local check at all? Only when the
+    matcher is enabled AND at least one SUFFICIENT remembered voice exists to
+    match against. Computed once at session open, off the audio path, into a
+    session flag - the per-commit path is then a plain bool. With nobody
+    remembered, the common no-household case costs nothing and behaves exactly
+    as before ambient existed."""
+    return bool(voiceid.enabled(cfg)) and any(
+        p.get("sufficient") for p in people or [])
+
+
+def owner_sufficient(people, owner_name) -> bool:
+    """Is the owner's OWN voice sufficiently enrolled? Only then can a
+    below-threshold match mean 'a clear voice that is not the owner' rather
+    than 'the owner, not yet learnt'. Without this, ambient must never arm on
+    an unknown - it could be the owner."""
+    owner = (owner_name or "").strip().casefold()
+    return any(p.get("sufficient")
+               and (p.get("name") or "").strip().casefold() == owner
+               for p in people or [])
+
+
+# Ambient decisions, as a pure rule over a matcher verdict (unit-tested with
+# no I/O). `owner` is casefolded; `owner_ok` is owner_sufficient() for the
+# roster. Outcomes: "noop_owner" (owner spoke, nothing to do), "arm_known"
+# (a remembered non-owner - arm and name), "arm_unknown" (a clear stranger,
+# only when the owner is enrolled so we know it is not them - arm and ask),
+# or "defer" (matcher could not decide, or could not rule out the owner).
+def ambient_decision(verdict, owner, owner_ok) -> str:
+    owner = (owner or "").strip().casefold()
+    if voiceid.matched(verdict):
+        return "noop_owner" if (verdict.get("name") or "").strip().casefold() == owner \
+            else "arm_known"
+    if owner_ok and verdict and verdict.get("reason") == "below_threshold":
+        return "arm_unknown"
+    return "defer"
+
+
 def set_room_enabled(chat_id, on: bool):
     if chat_id is None:
         return
@@ -460,6 +533,11 @@ class RoomSession:
         # SNIFF_UTTERANCES at session open when the chat is eligible; it
         # only ever counts down, and an armed sniff zeroes it.
         self.sniff_remaining = 0
+        # Ambient local check (#28): when true, every committed utterance runs
+        # the local-only matcher while room mode is off. Seeded at session
+        # open from ambient_eligible (matcher enabled + a sufficient remembered
+        # voice exists); a plain bool so the per-commit path does no I/O.
+        self.ambient_on = False
 
     def set_enabled(self, on: bool):
         """Toggle mid-session. Either edge clears the buffer: audio captured
@@ -887,6 +965,123 @@ async def _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         anchors.remember_audio(target_id, pcm, sample_rate, 1)
 
 
+# ---------- the ambient local check (#28) ----------
+
+def schedule_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                     turn_id=None):
+    """Fire one ambient local check and return IMMEDIATELY - the relay never
+    awaits it, exactly the schedule_pass/schedule_sniff contract. Local-only:
+    this path never makes an ElevenLabs call, so it is safe to run on every
+    committed utterance while room mode is off."""
+    if not pcm:
+        return None
+    task = asyncio.get_running_loop().create_task(
+        run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                    turn_id=turn_id))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+    return task
+
+
+async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                      turn_id=None):
+    """The ambient local check for one committed utterance (room mode off).
+    Runs the on-device matcher against every sufficient remembered voice and
+    acts on the pure `ambient_decision`: owner's voice is a no-op (its anchor
+    is topped up), a remembered non-owner arms room mode and is named, and a
+    clear stranger - decidable only when the owner is itself enrolled - arms
+    and raises the ask-fallback. Anything undecidable is left to the bounded
+    EL sniff / introduction paths. Never an ElevenLabs call; every failure
+    ends here."""
+    t0 = time.perf_counter()
+    try:
+        plan = await asyncio.to_thread(_ambient_plan, chat_id, sample_rate, cfg)
+        if plan is None:
+            return
+        candidates, owner_ok = plan
+        try:
+            verdict = await asyncio.to_thread(
+                voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+        except Exception:
+            log.info("ambient identify failed: chat=%s", chat_id)
+            log.debug("ambient identify failure detail", exc_info=True)
+            return
+        decision = ambient_decision(verdict, cfg.get("user_name") or "User",
+                                    owner_ok)
+        log.info("ambient check: chat=%s ms=%.0f decision=%s", chat_id,
+                 (time.perf_counter() - t0) * 1000, decision)
+        if decision == "noop_owner":
+            if voiceid.matched(verdict):
+                await asyncio.to_thread(_accumulate_fast_anchor,
+                                        verdict["person_id"], pcm, sample_rate)
+            return
+        if decision == "arm_known":
+            session.sniff_remaining = 0
+            await _fast_sniff_pass(chat_id, pcm, sample_rate, commit_ts,
+                                   session, cfg, verdict, t0, turn_id=turn_id)
+            return
+        if decision == "arm_unknown":
+            session.sniff_remaining = 0
+            await asyncio.to_thread(_arm_ambient_unknown, chat_id, cfg)
+            ordinal = session.assign(["ambient_unknown"])
+            payload = {"clusters": ["ambient_unknown"], "labels": ordinal,
+                       "uncertain": list(ordinal)}
+            target_id = await _attach_until_deadline(chat_id, commit_ts,
+                                                     payload, session,
+                                                     turn_id=turn_id)
+            if target_id:
+                await asyncio.to_thread(_raise_unknown_voice, chat_id, target_id)
+        # decision == "defer": nothing here; the bounded EL sniff and the
+        # introduction/command paths still cover what the matcher could not.
+    except Exception:
+        log.info("ambient pass failed: chat=%s", chat_id)
+        log.debug("ambient pass failure detail", exc_info=True)
+
+
+def _ambient_plan(chat_id, sample_rate, cfg):
+    """Ambient snapshot for one check (worker thread): None unless the check
+    should still run - the chat's durable room mode must be OFF (another path
+    may have armed it since the utterance was scheduled), ambient must not be
+    disarmed, and at least one sufficient remembered voice must exist to match
+    against. Returns (candidates, owner_ok): the sufficient people as matcher
+    candidates, and whether the owner is among them (so a below-threshold
+    result can mean 'not the owner')."""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT room_mode, ambient_off FROM chats WHERE id=?",
+                          (chat_id,)).fetchone()
+    finally:
+        con.close()
+    if not row or row["room_mode"] or row["ambient_off"]:
+        return None
+    from . import anchors
+    people = anchors.store().people()
+    candidates = [{"person_id": p["person_id"], "name": p["name"]}
+                  for p in people if p.get("sufficient")]
+    if not candidates:
+        return None
+    return candidates, owner_sufficient(people, cfg.get("user_name"))
+
+
+def _arm_ambient_unknown(chat_id, cfg):
+    """Arm room mode for a clear stranger the matcher could not name (worker
+    thread): the durable flip plus the live mirror, and the owner joins the
+    roster so the armed pass runs anchored (the next voice raises the
+    ask-fallback rather than a bare ordinal). Idempotent."""
+    con = db.connect()
+    try:
+        if con.execute("SELECT room_mode FROM chats WHERE id=?",
+                       (chat_id,)).fetchone()["room_mode"]:
+            return
+        db.set_chat_room_mode(con, chat_id, True)
+        set_room_enabled(chat_id, True)
+        log.info("room mode ON via ambient (unknown voice): chat=%s", chat_id)
+    finally:
+        con.close()
+    from . import introductions
+    introductions.roster_owner_only(chat_id, cfg)
+
+
 # ---------- the session-start sniff pass (#28, third field test) ----------
 
 def schedule_sniff(chat_id, pcm, sample_rate, commit_ts, session, cfg,
@@ -1012,11 +1207,12 @@ def _sniff_plan(chat_id, sample_rate, cfg):
     whole question."""
     con = db.connect()
     try:
-        row = con.execute("SELECT room_mode FROM chats WHERE id=?",
+        row = con.execute("SELECT room_mode, ambient_off FROM chats WHERE id=?",
                           (chat_id,)).fetchone()
     finally:
         con.close()
-    if not row or row["room_mode"]:
+    # room armed since, or the owner said "solo mode" meanwhile: stop.
+    if not row or row["room_mode"] or row["ambient_off"]:
         return None
     from . import anchors
     store = anchors.store()

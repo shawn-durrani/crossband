@@ -111,8 +111,8 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
             aria-pressed={!!roomMode}
             aria-label={roomMode ? 'Switch room mode off' : 'Switch room mode on'}
             title={roomMode
-              ? 'Room mode is on: turns can carry a Voice label when another voice is heard. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. Tap to switch it off.'
-              : `Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. ${SNIFF_EXPLAINER}`}
+              ? 'Room mode is on: turns are attributed by voice. Known voices are identified on this device at no extra cost; a second transcription runs only when voices overlap or a voice cannot be placed. Tap to switch it off, or say "solo mode".'
+              : `Room mode labels turns when more than one person is talking, and switches on by itself when a known voice speaks. ${SNIFF_EXPLAINER}`}
             className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
               roomMode
                 ? 'border-sky-700 text-sky-300 bg-sky-950/40'
