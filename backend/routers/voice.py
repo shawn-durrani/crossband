@@ -348,7 +348,8 @@ async def stt_stream_relay(ws: WebSocket):
             def _session_open_reads():
                 con = db.connect()
                 try:
-                    row = con.execute("SELECT room_mode FROM chats WHERE id=?",
+                    row = con.execute("SELECT room_mode, ambient_off "
+                                      "FROM chats WHERE id=?",
                                       (chat_id,)).fetchone()
                     roster = db.get_room_roster(con, chat_id,
                                                 present_only=True)
@@ -361,19 +362,26 @@ async def stt_stream_relay(ws: WebSocket):
                 names = [preferred.get(r["name"].lower(), r["name"])
                          for r in roster]
                 on = bool(row and row["room_mode"])
+                disarmed = bool(row and row["ambient_off"])
                 # Session-start sniff eligibility (#28, third field test):
                 # room mode off but sufficient remembered non-owner voices
                 # exist. Decided here, once, off the audio path - the same
                 # people read the keyterms already needed.
-                sniff = (not on) and diarize.sniff_eligible(
+                sniff = (not on) and (not disarmed) and diarize.sniff_eligible(
                     people, cfg.get("user_name"))
-                return on, names, sniff
-            enabled, roster_names, sniff_ok = await asyncio.to_thread(
-                _session_open_reads)
+                # Ambient local check (#28): room off, not disarmed, matcher
+                # enabled, and some sufficient remembered voice to match.
+                ambient = (not on) and (not disarmed) and \
+                    diarize.ambient_eligible(people, cfg)
+                return on, names, sniff, disarmed, ambient
+            enabled, roster_names, sniff_ok, disarmed, ambient_ok = \
+                await asyncio.to_thread(_session_open_reads)
             diarize.set_room_enabled(chat_id, enabled)
+            diarize.set_ambient_off(chat_id, disarmed)
             keyterm_names += roster_names
             room.sniff_remaining = (diarize.SNIFF_UTTERANCES if sniff_ok
                                     else 0)
+            room.ambient_on = ambient_ok
         except Exception:
             log.warning("room-mode seed failed; session continues", exc_info=True)
     try:
@@ -476,18 +484,33 @@ async def stt_stream_relay(ws: WebSocket):
                                                       turn_id=commit_turn_id)
                             else:
                                 diarize.stash_utterance(chat_id, pcm, pcm_sr)
-                                # Session-start sniff (#28): with room mode
-                                # off but remembered voices in the house,
-                                # the first couple of committed utterances
-                                # ALSO run the diarization pass, listening
-                                # for a known non-owner voice or a second
-                                # cluster - which arms room mode without an
-                                # introduction. create_task only, same as
-                                # the pass above: NEVER awaited here, and
-                                # the upstream byte stream is untouched.
-                                if room.sniff_remaining > 0:
+                                # Automatic arming while room mode is off (#28),
+                                # unless the owner has said "solo mode" (the
+                                # sacred disarm, honoured cheaply via the live
+                                # mirror here and re-checked inside each pass).
+                                # Two paths, in order:
+                                #   1. The bounded session-start sniff (third
+                                #      field test): the first couple of turns
+                                #      run the local-first pass and, only on a
+                                #      matcher defer, an EL diarization call -
+                                #      the sole path that may spend EL money for
+                                #      arming.
+                                #   2. After that budget, the ambient local
+                                #      check (this change): every remaining turn
+                                #      runs the on-device matcher, which NEVER
+                                #      calls EL - so a known voice that speaks
+                                #      minutes in is still noticed, at no cost.
+                                # create_task only, NEVER awaited; the upstream
+                                # byte stream is untouched either way.
+                                if diarize.ambient_off(chat_id):
+                                    pass
+                                elif room.sniff_remaining > 0:
                                     room.sniff_remaining -= 1
                                     diarize.schedule_sniff(
+                                        chat_id, pcm, pcm_sr, db.now(),
+                                        room, cfg, turn_id=commit_turn_id)
+                                elif room.ambient_on:
+                                    diarize.schedule_ambient(
                                         chat_id, pcm, pcm_sr, db.now(),
                                         room, cfg, turn_id=commit_turn_id)
                         except Exception:

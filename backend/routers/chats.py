@@ -150,6 +150,10 @@ def update_chat(chat_id: int, body: ChatIn):
         updates["code_enabled"] = int(body.code_enabled)
     if body.room_mode is not None:
         updates["room_mode"] = int(body.room_mode)
+        if body.room_mode:
+            # An explicit manual enable clears any sacred ambient-off (#28):
+            # the owner turning room mode on is a re-enable.
+            updates["ambient_off"] = 0
     if body.archived is not None:
         updates["archived_at"] = db.now() if body.archived else None
     if updates:
@@ -169,6 +173,8 @@ def update_chat(chat_id: int, body: ChatIn):
         # dict at commit boundaries (no I/O on the audio path), and the DB
         # row above is what re-seeds it on restart or session open.
         diarize.set_room_enabled(chat_id, bool(body.room_mode))
+        if body.room_mode:
+            diarize.set_ambient_off(chat_id, False)
     chat = _chat_payload(con, chat_id)
     con.close()
     return chat

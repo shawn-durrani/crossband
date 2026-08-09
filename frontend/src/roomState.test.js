@@ -30,22 +30,28 @@ test('an empty or junk roster shows no chip at all', () => {
   assert.equal(rosterChipText([{ status: 'present' }, { name: 42 }]), '')
 })
 
-test('the roster hint states the cost and who is still being learned', () => {
+test('the roster hint states the cost honestly and who is still being learned', () => {
+  // Ambient (#28): known voices are identified on-device at no extra cost;
+  // the second transcription is the exception (overlap / unplaceable), not
+  // the rule - the copy must say the new true thing, not the old one.
   const t = rosterTitle([present('Shawn'), present('Alex', false)])
-  assert.match(t, /transcribed twice/)
+  assert.match(t, /identified on this device at no extra cost/)
+  assert.match(t, /second transcription runs only/)
+  assert.match(t, /solo mode/)
   assert.match(t, /Still learning: Alex/)
   assert.match(t, /uncertain/)
+  assert.doesNotMatch(t, /roughly double/)
   assert.doesNotMatch(rosterTitle([present('Shawn')]), /Still learning/)
 })
 
-test('the sniff explainer states the double transcription plainly', () => {
-  // Session-start sniff cost honesty (#28, third field test): a session in
-  // a household with remembered voices transcribes its first couple of
-  // utterances twice, and the copy must say so rather than hint at it.
+test('the sniff explainer describes ambient arming and the solo escape hatch', () => {
+  // Ambient (#28): a known voice switches room mode on by itself via the
+  // free on-device matcher, and "solo mode" is the stated privacy override.
   assert.match(SNIFF_EXPLAINER, /remembered voices/)
-  assert.match(SNIFF_EXPLAINER, /first couple of spoken turns/)
-  assert.match(SNIFF_EXPLAINER, /transcribed twice/)
-  assert.match(SNIFF_EXPLAINER, /switches room mode on/)
+  assert.match(SNIFF_EXPLAINER, /switches on by itself/)
+  assert.match(SNIFF_EXPLAINER, /no extra cost/)
+  assert.match(SNIFF_EXPLAINER, /solo mode/)
+  assert.doesNotMatch(SNIFF_EXPLAINER, /transcribed twice/)
 })
 
 test('askFlag returns the newest OPEN unknown-voice flag only', () => {

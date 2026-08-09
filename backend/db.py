@@ -18,7 +18,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 15  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3)
+SCHEMA_VERSION = 16  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS chats(
   room_mode INTEGER NOT NULL DEFAULT 0,         -- multi-human room mode (#28 phase 2):
                                                 -- flipped by a spoken introduction or the
                                                 -- explicit toggle; durable per chat
+  ambient_off INTEGER NOT NULL DEFAULT 0,       -- owner said "solo mode" (#28 ambient):
+                                                -- suppresses automatic arming until an
+                                                -- explicit re-enable; durable per chat
   archived_at REAL,                             -- hidden from the sidebar; nothing deleted
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL,
@@ -471,6 +474,14 @@ def init(settings=None):
                        "AND name='messages'").fetchone():
             con.execute("ALTER TABLE messages ADD COLUMN voice_turn_id "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 15:  # v16: ambient room detection off-switch (#28)
+        # Defaults 0, so every existing chat starts with ambient allowed -
+        # exactly the behaviour before the flag existed. Set to 1 only when
+        # the owner explicitly says "solo mode"; cleared on any re-enable.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='chats'").fetchone():
+            con.execute("ALTER TABLE chats ADD COLUMN ambient_off "
+                        "INTEGER NOT NULL DEFAULT 0")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -820,6 +831,23 @@ def set_chat_room_mode(con, chat_id, on):
     con.execute("UPDATE chats SET room_mode=? WHERE id=?",
                 (1 if on else 0, chat_id))
     con.commit()
+
+
+def set_chat_ambient_off(con, chat_id, off):
+    """Flip the durable per-chat ambient-off flag (#28). Set when the owner
+    says "solo mode", so automatic arming is suppressed until an explicit
+    re-enable clears it. Callers must ALSO update diarize's live mirror
+    (diarize.set_ambient_off) so a running STT session honours it without a
+    DB read on the audio path."""
+    con.execute("UPDATE chats SET ambient_off=? WHERE id=?",
+                (1 if off else 0, chat_id))
+    con.commit()
+
+
+def get_chat_ambient_off(con, chat_id) -> bool:
+    row = con.execute("SELECT ambient_off FROM chats WHERE id=?",
+                      (chat_id,)).fetchone()
+    return bool(row and row["ambient_off"])
 
 
 def get_room_roster(con, chat_id, present_only=False):

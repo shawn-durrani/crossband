@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Room mode is now ambient - no trigger needed (#28). In a voice
+  session, every turn gets a quiet on-device voice check: your own voice
+  changes nothing, a remembered voice switches room mode on and is named
+  automatically, and a clear voice the app cannot place asks who is
+  speaking. Because known voices are identified locally at no extra cost,
+  the second transcription (and its doubled voice spend) now runs only
+  for overlapping speech or a voice the local matcher cannot place. Say
+  "solo mode" to keep a session private - that preference sticks until
+  you turn room mode back on.
+
 - Room mode obeys spoken and typed commands (#28). Saying "group mode,
   please" (or "room mode on", "multi-user mode") now actually switches
   room mode on, and "solo mode" / "room mode off" / "just me now"

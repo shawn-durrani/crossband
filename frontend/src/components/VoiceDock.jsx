@@ -75,15 +75,15 @@ export default function VoiceDock({
           >
             {pttMode ? <><Hand size={13} /> manual</> : <><Timer size={13} /> auto</>}
           </button>
-          {/* Room mode (#28 phase 1): session-only, default off. The copy
-              states the cost plainly - a second transcription pass runs, so
-              voice minutes roughly double while it is on. The off-state copy
-              also carries the session-start sniff's cost note (#28): with
-              remembered voices, the first couple of turns transcribe twice. */}
+          {/* Room mode (#28): the manual session toggle. Detection is now
+              ambient - a known voice arms it by itself - so this is an
+              override, not the only way in. Known voices are identified
+              on-device at no extra cost; a second transcription runs only
+              for overlap or a voice the matcher cannot place. */}
           <button
             title={roomMode
-              ? 'Room mode is on: turns can carry a Voice label when another voice is heard. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. Click to switch it off.'
-              : `Room mode: label turns when more than one person is talking. Telling voices apart uses a second transcription pass, so voice minutes roughly double while it is on. ${SNIFF_EXPLAINER}`}
+              ? 'Room mode is on: turns are attributed by voice. Known voices are identified on this device at no extra cost; a second transcription runs only when voices overlap or a voice cannot be placed. Click to switch it off, or say "solo mode".'
+              : `Room mode labels turns when more than one person is talking, and switches on by itself when a known voice speaks. ${SNIFF_EXPLAINER}`}
             aria-pressed={!!roomMode}
             className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
               roomMode
