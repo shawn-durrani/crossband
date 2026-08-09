@@ -52,6 +52,10 @@ def app(tmp_path):
     diarize._ROOM_ENABLED.clear()
     diarize._STASHED.clear()
     diarize._LAST_DECISION.clear()
+    # The per-message audio memory is process-global and keyed by message
+    # id; a fresh test database restarts ids from 1, so stale entries from
+    # an earlier test would satisfy this suite's armed voice-arm lookups.
+    anchors.clear_recent_audio()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     return create_app(settings)
@@ -391,6 +395,133 @@ def test_owner_corrects_their_own_name(tmp_path, utility):
 def test_correction_outcomes_are_allowlisted():
     assert "name_corrected" in introductions.SCAN_OUTCOMES
     assert "correction_unmatched" in introductions.SCAN_OUTCOMES
+    assert "alias_recorded" in introductions.SCAN_OUTCOMES
+
+
+# ── two-form declarations: "X is the spelling but it's pronounced Y" ────────
+#
+# #28, names collapse by voice. A pronunciation note is a statement that
+# BOTH forms are one person, not a rename: the correction scan records both
+# names on the person and never fights an owner-set display name.
+
+def test_correction_prefilter_matches_pronunciation_declarations():
+    yes = [
+        "Matteo is the spelling but it's pronounced Mateo",
+        "it's pronounced Mateo",
+        "the spelling is Matteo",
+        "Sam's the spelling, by the way",
+    ]
+    for t in yes:
+        assert introductions.correction_prefilter(t), t
+
+
+def test_parse_correction_verdict_keeps_the_also_form():
+    parse = introductions.parse_correction_verdict
+    out = parse(json.dumps({"corrections": [
+        {"who": "", "name": "Matteo", "also": "Mateo"}]}))
+    assert out == [{"who": "", "name": "Matteo", "also": "Mateo"}]
+    # a single-form entry keeps its historical shape exactly - no also key
+    out = parse(json.dumps({"corrections": [{"who": "Sam",
+                                             "name": "Samantha"}]}))
+    assert out == [{"who": "Sam", "name": "Samantha"}]
+    # a relationship noun, or an also equal to the name, says nothing
+    for junk in ("Wife", "matteo", ""):
+        out = parse(json.dumps({"corrections": [
+            {"who": "", "name": "Matteo", "also": junk}]}))
+        assert out == [{"who": "", "name": "Matteo"}], junk
+
+
+def test_alias_declaration_puts_both_names_on_one_person(app):
+    with TestClient(app, base_url="http://127.0.0.1"):
+        chat_id = _mk_chat()
+        pid = anchors.store().ensure_person("Mateo")
+        outcome = introductions.apply_corrections(
+            chat_id, [{"who": "", "name": "Matteo", "also": "Mateo"}], CFG)
+        assert outcome == "alias_recorded"
+        person = anchors.store().find_by_name("Mateo")
+        assert person["person_id"] == pid
+        # the declared SPELLING displays; nothing is owner-locked by it
+        assert person["preferred_name"] == "Matteo"
+        assert person["owner_set"] is False
+        # both forms resolve to the one person from now on
+        assert "Matteo" in person["merged_names"]
+        assert anchors.store().find_by_name("Matteo")["person_id"] == pid
+        assert len(anchors.store().people()) == 1     # no twin
+
+
+def test_alias_declaration_never_fights_an_owner_set_name(app):
+    with TestClient(app, base_url="http://127.0.0.1"):
+        chat_id = _mk_chat()
+        store = anchors.store()
+        pid = store.ensure_person("Mateo")
+        assert store.set_preferred_name(pid, "Teo")   # the owner's word
+        outcome = introductions.apply_corrections(
+            chat_id, [{"who": "", "name": "Matteo", "also": "Mateo"}], CFG)
+        assert outcome == "alias_recorded"            # the names still record
+        person = store.find_by_name("Mateo")
+        assert person["preferred_name"] == "Teo"      # the owner's word stands
+        assert person["owner_set"] is True
+        assert "Matteo" in person["merged_names"]
+
+
+def test_alias_declaration_naming_two_known_people_does_nothing(app):
+    """Both declared forms resolve, to DIFFERENT people: that is ambiguity,
+    and ambiguity does nothing - merging the wrong two people is worse than
+    ignoring a real declaration."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        chat_id = _mk_chat()
+        anchors.store().ensure_person("Mateo")
+        anchors.store().ensure_person("Sam")
+        outcome = introductions.apply_corrections(
+            chat_id, [{"who": "", "name": "Mateo", "also": "Sam"}], CFG)
+        assert outcome == "correction_unmatched"
+        for p in anchors.store().people():
+            assert p["merged_names"] == []
+            assert p["preferred_name"] == p["name"]
+
+
+def test_alias_declaration_with_unknown_forms_uses_the_recent_speaker(app):
+    """Neither form is known: the existing conservative fallback applies -
+    the most recent confidently-labelled speaker is who the declaration is
+    about, exactly as for a single-form unnamed correction."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        pid = anchors.store().ensure_person("Sam")
+        chat_id = _mk_chat()
+        con = db.connect()
+        mid = db.insert_message(con, chat_id, "user", "hello there")["id"]
+        db.set_message_voice_labels(con, mid, {"clusters": ["s0"],
+                                               "labels": ["Sam"],
+                                               "uncertain": []})
+        con.close()
+        outcome = introductions.apply_corrections(
+            chat_id, [{"who": "", "name": "Matteo", "also": "Mateo"}], CFG)
+        assert outcome == "alias_recorded"
+        person = anchors.store().find_by_name("Sam")
+        assert person["person_id"] == pid
+        assert "Matteo" in person["merged_names"]
+        assert "Mateo" in person["merged_names"]
+
+
+def test_spoken_alias_declaration_end_to_end(app, utility, caplog):
+    """Through /send: the pronunciation-note shape passes the prefilter,
+    one utility call confirms it, and the verdict line says alias_recorded
+    - content-free as ever."""
+    utility["verdict"] = {"corrections": [
+        {"who": "Mateo", "name": "Matteo", "also": "Mateo"}]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        anchors.store().ensure_person("Mateo")
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        with caplog.at_level("INFO", logger="crossband.introductions"):
+            _send(c, chat["id"],
+                  "Matteo is the spelling but it's pronounced Mateo")
+            _wait_for(lambda: any("outcome=" in r.message
+                                  for r in caplog.records))
+        person = anchors.store().find_by_name("Mateo")
+        assert "Matteo" in person["merged_names"]
+        verdicts = [r.message for r in caplog.records
+                    if "introduction scan verdict" in r.message]
+        assert any("outcome=alias_recorded" in v for v in verdicts)
+        assert "Matteo" not in " ".join(verdicts)
 
 
 def test_scan_verdict_line_stays_singular_for_corrections(app, utility,
@@ -518,6 +649,106 @@ def test_voice_match_reidentifies_and_never_poisons_the_owner_bank(
         assert anchors.store().find_by_name("Alex") is None
         # the stash was discarded, not left for a later claim
         assert diarize.take_stashed_utterance(chat_id) is None
+        # names collapse by voice (#28, fourteenth field test): the spelling
+        # the introduction carried is recorded on the matched person, so it
+        # resolves by name from now on
+        person = anchors.store().find_by_name("Samantha")
+        assert "Dave" in person["merged_names"]
+        assert anchors.store().find_by_name("Dave")["person_id"] == pid
+
+
+# ── the fourteenth field test: the armed-room introduction ──────────────────
+#
+# 2026-08-08, night. Room mode had ARMED (ambient, unknown voice) before the
+# guest introduced herself, and the scan's voice-match arm then judged the
+# WRONG audio: nothing is stashed once room mode is on, so the stash held a
+# stale pre-arm utterance the matcher had already declined to name - and the
+# owner-anchor seed then consumed that same stash, banking the guest's voice
+# as the owner's. Two fixes, both pinned here with synthetic names: in an
+# armed room the voice arm judges the introduction TURN's own audio (the
+# per-message memory the label passes keep), and the stash is never claimed
+# as the owner's anchor in a chat that was already armed.
+
+def _armed_chat_id():
+    chat_id = _mk_chat()
+    con = db.connect()
+    try:
+        db.set_chat_room_mode(con, chat_id, True)
+    finally:
+        con.close()
+    diarize.set_room_enabled(chat_id, True)
+    return chat_id
+
+
+def _insert_user_message(chat_id, text="hello world"):
+    con = db.connect()
+    try:
+        return db.insert_message(con, chat_id, "user", text)
+    finally:
+        con.close()
+
+
+def test_armed_introduction_voice_match_judges_the_turns_own_audio(
+        app, monkeypatch):
+    """The introduced name is nothing like the remembered one (four-plus
+    edits - every spelling rule honestly fails), but the introduction
+    TURN's remembered audio confidently matches: re-identify, link the
+    roster row, record the spelling - and never touch the stale stash."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        pid = _mint_sufficient("Samantha")
+
+        def fake_identify(pcm, sample_rate, candidates, cfg):
+            return {"status": "match", "person_id": pid, "name": "Samantha",
+                    "score": 0.8, "reason": "match"}
+
+        monkeypatch.setattr("backend.voiceid.identify_utterance",
+                            fake_identify)
+        chat_id = _armed_chat_id()
+        diarize.stash_utterance(chat_id, loud_pcm(2.0), 16000)  # stale, pre-arm
+        msg = _insert_user_message(chat_id, "this is Dave, hello")
+        anchors.remember_audio(msg["id"], loud_pcm(3.0), 16000, 1)
+        introductions.apply_scan(
+            chat_id, {"introductions": ["Dave"], "departures": []}, CFG,
+            text="this is Dave, hello", message_id=msg["id"])
+        roster = _roster(chat_id)
+        assert [p["name"] for p in roster] == ["Samantha"]
+        assert roster[0]["person_id"] == pid
+        person = anchors.store().find_by_name("Samantha")
+        assert "Dave" in person["merged_names"]
+        # the owner gained nothing, least of all the stale pre-arm audio
+        assert anchors.store().find_by_name("Alex") is None
+
+
+def test_armed_introduction_never_judges_or_seeds_from_the_stale_stash(
+        app, monkeypatch):
+    """THE LOG PIN. No per-turn audio remembered (the turn deferred, or a
+    typed introduction): the voice arm must NOT fall back to the stale
+    stash - that audio did not speak this introduction - and the
+    owner-anchor seed must NOT consume it either. Before this fix the
+    fourteenth field test's log shows exactly that consumption: 'owner
+    anchor seeded from introduction' fired in an armed room while a guest
+    was speaking."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        _mint_sufficient("Samantha")
+        monkeypatch.setattr(
+            "backend.voiceid.identify_utterance",
+            lambda *a, **k: pytest.fail(
+                "an armed-room scan with no turn audio must not judge "
+                "the stale stash"))
+        chat_id = _armed_chat_id()
+        diarize.stash_utterance(chat_id, loud_pcm(2.0), 16000)  # stale, pre-arm
+        msg = _insert_user_message(chat_id, "this is Dave, hello")
+        introductions.apply_scan(
+            chat_id, {"introductions": ["Dave"], "departures": []}, CFG,
+            text="this is Dave, hello", message_id=msg["id"])
+        # no voice evidence: Dave joins anchor-pending, honestly unlinked
+        roster = _roster(chat_id)
+        assert [p["name"] for p in roster] == ["Dave"]
+        assert roster[0]["person_id"] == ""
+        # the owner's bank gained NOTHING, and the stash was left alone
+        # (TTL is its only exit) rather than claimed as anyone's anchor
+        assert anchors.store().find_by_name("Alex") is None
+        assert diarize.take_stashed_utterance(chat_id) is not None
 
 
 # ── 5. the merge endpoint and the rename conflict ───────────────────────────

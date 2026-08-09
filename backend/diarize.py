@@ -263,18 +263,22 @@ def ambient_decision(verdict, owner, owner_ok) -> str:
 # and over), nothing accumulated, and the seats said "identity pending"
 # forever.
 #
-# The way out is elimination, not recognition. In an ARMED room with
-# exactly ONE person on the roster whose bank cannot yet identify them, an
-# utterance the matcher could not place can only be theirs: there is nobody
-# else in the room for it to belong to. That is enough to bank the audio
-# and to tell the seats a name, honestly marked as still being learned.
+# The way out is elimination, not recognition. In an ARMED room where
+# exactly ONE present person's bank cannot yet identify them - and every
+# OTHER present person's bank can - an utterance the matcher could not
+# place can only be theirs: everyone else in the room would have matched.
+# That is enough to bank the audio and to tell the seats a name, honestly
+# marked as still being learned. (Generalised by the fourteenth field test:
+# the rule used to require exactly one present person TOTAL, which meant a
+# genuinely new guest could never start learning while the owner sat
+# identified beside them.)
 #
 # The guards are what keep it conservative:
 # - a MULTI verdict never qualifies. Overlapping speech is the one thing
 #   elimination cannot survive, and it has its own path.
-# - two or more present people never qualify. With a second person in the
-#   room the audio could be either, and that is exactly what the
-#   ask-fallback exists for.
+# - two or more UNIDENTIFIABLE present people never qualify. The audio
+#   could be either of them, and that is exactly what the ask-fallback
+#   exists for.
 # - a confident MATCH never qualifies (it is not a defer): a named turn
 #   already has a better answer, and the normal accumulation path takes it.
 # - a matcher that FAILED outright (verdict None) never qualifies: banking
@@ -285,9 +289,10 @@ COLD_START_SOURCE = "cold-start"
 def cold_start_person(verdict, solo_pending):
     """Who this unplaceable utterance can only belong to, or None (pure,
     unit-tested). `solo_pending` is _room_plan's by-elimination candidate:
-    the name of the ONE present person whose bank is insufficient, and None
-    whenever the roster does not hold exactly that. `verdict` is the local
-    matcher's answer for this utterance."""
+    the name of the ONE present person whose bank is insufficient while
+    every other present person's is sufficient, and None whenever the
+    roster does not hold exactly that. `verdict` is the local matcher's
+    answer for this utterance."""
     if not solo_pending:
         return None
     if not verdict or verdict.get("status") != voiceid.DEFER:
@@ -766,17 +771,26 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     test - the cloud identity fallback is retired):
 
     - the local matcher NAMES a confident single speaker -> fast label, no
-      ElevenLabs call;
+      ElevenLabs call. REMEMBERED-FIRST (#28, fourteenth field test): the
+      matcher's candidates are EVERY sufficient remembered person, not the
+      present roster - and a match for someone NOT yet rostered rosters
+      them on the spot, through the same durable plumbing an introduction
+      uses. The roster-as-candidates rule was a deadlock: a remembered
+      guest could not be recognised without being rostered and could not
+      be rostered without being recognised, so her turns deferred
+      below_threshold while her bank sat sufficient in the store;
     - the matcher's window analysis hears OVERLAPPING speech (the "multi"
       verdict) -> the one surviving ElevenLabs job runs: batch diarize with
       the anchor prefix, for per-word crosstalk splitting (the phase-4
-      machinery, unchanged from there);
+      machinery, unchanged from there). The prefix stays ROSTER-based -
+      it is about who is present, not who is remembered;
     - ANY other defer -> COLD START (#28) when the roster leaves exactly one
-      possible speaker whose bank cannot identify them yet: the turn is
-      labelled as that person, marked still-learning, and the audio is
-      banked. Otherwise the turn stays unresolved. No EL call fires either
-      way because the matcher deferred - a solo utterance can never trigger
-      one, and a wrong cloud-asserted name is structurally impossible;
+      possible speaker whose bank cannot identify them yet (everyone else
+      present is identifiable): the turn is labelled as that person, marked
+      still-learning, and the audio is banked. Otherwise the turn stays
+      unresolved. No EL call fires either way because the matcher deferred
+      - a solo utterance can never trigger one, and a wrong cloud-asserted
+      name is structurally impossible;
     - matcher disabled/unavailable -> same as a defer: unresolved, silent.
 
     `speculative` is the silence-start head start's claimed entry (#28
@@ -795,15 +809,20 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # to do. The phase-1 no-roster ordinal pass retired with the rest of
         # the cloud identity path (#28 PR-B).
         return
-    prefix_pcm, segments, pending, num_speakers, solo_pending = plan
+    prefix_pcm, segments, pending, num_speakers, solo_pending, remembered = plan
     if not voiceid.enabled(cfg):
         # The matcher is switched off: no local identity, and (#28 PR-B) no
         # cloud identity either - turns stay unlabelled, room mode itself
         # still works through its manual doors.
         log.info("diarize pass (matcher off): chat=%s", chat_id)
         return
-    candidates = [{"person_id": s["person_id"], "name": s["name"]}
-                  for s in segments]
+    # REMEMBERED-FIRST (#28, fourteenth field test): the LOCAL candidate
+    # list is every sufficient remembered person (_room_plan's `remembered`,
+    # built by remembered_candidates - the same construction the ambient
+    # and speculative checks use, pinned so the paths cannot drift apart
+    # again). The roster-scoped `segments` survive only as the EL crosstalk
+    # prefix, which is about who is PRESENT.
+    candidates = remembered
     verdict = await _utterance_verdict(chat_id, pcm, sample_rate, candidates,
                                        cfg, speculative)
     if voiceid.matched(verdict):
@@ -813,8 +832,16 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                  chat_id, (time.perf_counter() - t0) * 1000,
                  verdict["score"])
         try:
-            await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
-                                   session, cfg, verdict, turn_id=turn_id)
+            # A confident match for a remembered person NOT on the present
+            # roster rosters them first (#28 remembered-first) - the first
+            # utterance a remembered guest speaks in an armed room names
+            # AND seats them, instead of deferring forever.
+            present_names = {s["name"].casefold() for s in segments} \
+                | {(n or "").casefold() for n in pending}
+            await _fast_label_pass(
+                chat_id, pcm, sample_rate, commit_ts, session, cfg, verdict,
+                turn_id=turn_id,
+                roster_join=verdict["name"].casefold() not in present_names)
         except Exception:
             log.info("voiceid fast-label failed: chat=%s", chat_id)
             log.debug("voiceid fast-label failure detail", exc_info=True)
@@ -822,10 +849,12 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     if not voiceid.is_multi(verdict):
         cold = cold_start_person(verdict, solo_pending)
         if cold:
-            # COLD START (#28): the matcher could not place this utterance,
-            # but only one person is in the room and their bank cannot yet
-            # identify them - so it is theirs by elimination. Bank it, and
-            # tell the seats a name marked as still being learned. Still NO
+            # COLD START (#28, generalised by the fourteenth field test):
+            # the matcher could not place this utterance against ANY
+            # remembered voice, and exactly one present person's bank
+            # cannot identify them while everyone else present would have
+            # matched - so it is theirs by elimination. Bank it, and tell
+            # the seats a name marked as still being learned. Still NO
             # ElevenLabs call: elimination is free.
             ms = (time.perf_counter() - t0) * 1000
             record_decision(chat_id, DECISION_LOCAL, ms)
@@ -996,9 +1025,18 @@ def _room_plan(chat_id, sample_rate):
     """Roster snapshot for one pass (worker thread): the anchor prefix for
     every SUFFICIENT present person, the names still pending an anchor, the
     num_speakers hint (present + 1 - the plus-one is what lets an
-    unannounced voice surface as an unmatched cluster), and the cold-start
-    candidate. None when the chat has no roster - the phase-1 pass then runs
-    untouched."""
+    unannounced voice surface as an unmatched cluster), the cold-start
+    candidate, and the local matcher's candidates. None when the chat has
+    no roster - the phase-1 pass then runs untouched.
+
+    REMEMBERED-FIRST (#28, fourteenth field test): the matcher candidates
+    are EVERY sufficient remembered person (remembered_candidates), not the
+    present roster. The roster-as-candidates rule was the chicken-and-egg
+    failure that night: a remembered, fully-sufficient guest was never
+    rostered, so her bank was never even compared, so she could never be
+    recognised - and she could not be rostered without being recognised.
+    Only the EL crosstalk prefix stays roster-scoped (presence, not
+    memory)."""
     con = db.connect()
     try:
         present = db.get_room_roster(con, chat_id, present_only=True)
@@ -1008,7 +1046,8 @@ def _room_plan(chat_id, sample_rate):
         return None
     from . import anchors
     store = anchors.store()
-    sufficient = {p["person_id"] for p in store.people() if p["sufficient"]}
+    people = store.people()
+    sufficient = {p["person_id"] for p in people if p["sufficient"]}
     ids, pending = [], []
     for row in present:
         pid = row["person_id"]
@@ -1020,12 +1059,18 @@ def _room_plan(chat_id, sample_rate):
             pending.append(row["name"])
     prefix_pcm, segments = store.build_prefix(ids, sample_rate)
     num_speakers = min(32, len(present) + 1)
-    # The cold-start candidate (#28): exactly one person present, and their
-    # bank cannot identify them yet (a non-empty `pending` with one present
-    # row means that row IS the pending one). Derived here from the roster
-    # read the pass already did, so the defer path costs no extra I/O.
-    solo_pending = present[0]["name"] if len(present) == 1 and pending else None
-    return prefix_pcm, segments, pending, num_speakers, solo_pending
+    # The cold-start candidate (#28), GENERALISED by the fourteenth field
+    # test: exactly ONE present person whose bank cannot identify them yet,
+    # while every OTHER present person's can. An unplaceable clear
+    # utterance can then only be theirs - which is what lets a genuinely
+    # new guest start learning while the owner sits identified beside
+    # them. Two or more unidentifiable people is ambiguity and offers
+    # nobody. (The original rule required exactly one present person
+    # TOTAL.) Derived from the roster read the pass already did, so the
+    # defer path costs no extra I/O.
+    solo_pending = pending[0] if len(pending) == 1 else None
+    return (prefix_pcm, segments, pending, num_speakers, solo_pending,
+            remembered_candidates(people))
 
 
 async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
@@ -1131,7 +1176,7 @@ def _accumulate_anchor(chat_id, pcm, sample_rate, cluster, resolved, cfg=None):
 # ---------- the fast local-identity label pass (#28 part 2) ----------
 
 async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
-                           verdict, turn_id=None):
+                           verdict, turn_id=None, roster_join=False):
     """Label a turn from a confident LOCAL single-speaker match, with NO
     ElevenLabs batch call. Mirrors the roster path's post-label bookkeeping for
     one matched voice: the name is attached FIRST (it is what the seats are
@@ -1139,8 +1184,26 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     anchors, is remembered for tap-to-correct, and gets the LLM mismatch
     cross-check. With the batch pass skipped, that cross-check is now the sole
     detector of an unannounced second voice the matcher took for one (owner
-    decision on the issue: the mismatch flag doubles as that detector)."""
+    decision on the issue: the mismatch flag doubles as that detector).
+
+    `roster_join` (#28 remembered-first, fourteenth field test): the match
+    named a remembered person who is NOT on the present roster. They are
+    seated before the label attaches - the same durable plumbing an
+    introduction uses (a linked present row, the room-update bell for the
+    seats' refresh, an open who-is-speaking ask answered) - so by the time
+    the name is claimable, the room state already agrees with it. The
+    write is milliseconds on a worker thread; the attach still parks the
+    label the instant it runs."""
     name = verdict["name"]
+    if roster_join:
+        try:
+            await asyncio.to_thread(_roster_remembered, chat_id, name,
+                                    verdict.get("person_id"), cfg)
+        except Exception:
+            # The label must still attach: a failed roster write may not
+            # cost the turn its name.
+            log.info("remembered roster join failed: chat=%s", chat_id)
+            log.debug("remembered roster join failure detail", exc_info=True)
     # Payload shape matches the batch path's confident-named case: a single
     # certain label projects as "<name> (in the room)" and chips as a matched
     # voice. 'source' is content-free metadata; every consumer ignores unknown
@@ -1169,6 +1232,35 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     if seconds >= FAST_MISMATCH_MIN_SECONDS:
         from . import mismatch
         mismatch.schedule_check(chat_id, target_id, name, cfg)
+
+
+def _roster_remembered(chat_id, name, person_id, cfg):
+    """Seat a remembered person a confident LOCAL match just named in an
+    ARMED room (worker thread; #28 remembered-first, fourteenth field
+    test). The introduction's roster plumbing, minus the introduction: a
+    present row linked to their anchors (add_room_person rings the
+    room-update bell, so every seat's next refresh sees them), and any
+    open "someone new is speaking - who?" ask is answered by the name,
+    exactly as a naming introduction answers it. Cap-guarded like every
+    roster writer - past the cap the turn is still NAMED (the identity is
+    true regardless), the roster simply does not grow. Idempotent: two
+    passes racing re-run the same writes harmlessly."""
+    con = db.connect()
+    try:
+        present = db.get_room_roster(con, chat_id, present_only=True)
+        if any((p["name"] or "").casefold() == (name or "").casefold()
+               for p in present):
+            return
+        cap = int((cfg or {}).get("room_roster_max") or 6)
+        if len(present) >= cap:
+            log.info("roster cap reached; matched voice not rostered: "
+                     "chat=%s cap=%d", chat_id, cap)
+            return
+        db.add_room_person(con, chat_id, name, person_id=person_id or "")
+        db.resolve_room_flags(con, chat_id, kind="unknown_voice")
+        log.info("remembered voice rostered by local match: chat=%s", chat_id)
+    finally:
+        con.close()
 
 
 def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None):
@@ -1399,8 +1491,7 @@ def _ambient_plan(chat_id, sample_rate, cfg):
         return None
     from . import anchors
     people = anchors.store().people()
-    candidates = [{"person_id": p["person_id"], "name": p["name"]}
-                  for p in people if p.get("sufficient")]
+    candidates = remembered_candidates(people)
     if not candidates:
         return None
     return candidates, owner_sufficient(people, cfg.get("user_name"))
@@ -1460,7 +1551,7 @@ async def run_speculative(chat_id, pcm, sample_rate, cfg):
     match against its own candidate set, so a broader speculative candidate
     pool can never name someone the consuming pass would not."""
     try:
-        candidates = await asyncio.to_thread(_speculative_candidates)
+        candidates = await asyncio.to_thread(remembered_candidates)
         if not candidates:
             return None
         verdict = await asyncio.to_thread(
@@ -1474,11 +1565,20 @@ async def run_speculative(chat_id, pcm, sample_rate, cfg):
         return None
 
 
-def _speculative_candidates():
-    """Worker-thread snapshot: every sufficient remembered voice."""
-    from . import anchors
+def remembered_candidates(people=None):
+    """EVERY sufficient remembered person as matcher candidates - THE
+    candidate semantics, shared verbatim by the armed pass (#28
+    remembered-first), the ambient room-off check and the speculative
+    silence-start check, so the three paths can never drift apart again.
+    The fourteenth field test was exactly such a drift: the armed path had
+    narrowed its candidates to the present roster, and a remembered guest
+    became unrecognisable the moment room mode armed. Reads the store when
+    `people` is None - call it on a worker thread then."""
+    if people is None:
+        from . import anchors
+        people = anchors.store().people()
     return [{"person_id": p["person_id"], "name": p["name"]}
-            for p in anchors.store().people() if p.get("sufficient")]
+            for p in people if p.get("sufficient")]
 
 
 def _arm_known(chat_id, matched, cfg):

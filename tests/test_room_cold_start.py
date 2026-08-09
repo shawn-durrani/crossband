@@ -92,9 +92,11 @@ def test_a_multi_verdict_never_qualifies():
     assert diarize.cold_start_person(_defer(voiceid.MULTI), "Alex") is None
 
 
-def test_two_or_more_present_people_never_qualify():
-    """_room_plan offers no candidate unless exactly one person is present;
-    with a second person in the room the audio could be either, which is
+def test_two_or_more_unidentifiable_people_never_qualify():
+    """_room_plan offers no candidate unless exactly one present person is
+    unidentifiable (reworded by remembered-first, #28 fourteenth field
+    test - the rule generalised from one present person TOTAL); with two
+    unplaceable people in the room the audio could be either, which is
     what the ask-fallback exists for."""
     assert diarize.cold_start_person(_defer("below_threshold"), None) is None
     assert diarize.cold_start_person(_defer("below_threshold"), "") is None
@@ -128,7 +130,14 @@ def test_room_plan_offers_the_one_pending_person_and_stops_when_sufficient(app):
             con.close()
         # Empty bank: Alex is the by-elimination candidate.
         assert diarize._room_plan(chat["id"], 16000)[4] == "Alex"
-        # A second person in the room ends it - elimination needs one door.
+        # A second UNIDENTIFIABLE person ends it - elimination needs one
+        # door. (Deliberately reworded by remembered-first, #28 fourteenth
+        # field test: the rule generalised from "exactly one present
+        # person" to "exactly one present person whose bank cannot
+        # identify them"; Sam here has no bank, so both people are
+        # unidentifiable and the candidate honestly disappears. The
+        # sufficient-other-people shape is pinned in
+        # test_room_remembered_first.)
         con = db.connect()
         try:
             db.add_room_person(con, chat["id"], "Sam")
@@ -158,7 +167,11 @@ def test_room_plan_stops_offering_once_the_bank_is_sufficient(app):
 # ── 3. run_pass end to end ──────────────────────────────────────────────────
 
 def _plan(solo_pending):
-    return (b"", [], ["Alex"], 2, solo_pending)
+    # The trailing [] is _room_plan's remembered-first candidate list (#28,
+    # fourteenth field test) - the plan tuple grew when the armed pass's
+    # candidates became every sufficient remembered person. Empty keeps
+    # these pins exercising the defer/cold-start paths unchanged.
+    return (b"", [], ["Alex"], 2, solo_pending, [])
 
 
 def test_cold_start_labels_learning_banks_the_audio_and_calls_no_cloud(

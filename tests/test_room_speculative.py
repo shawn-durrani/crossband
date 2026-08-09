@@ -16,9 +16,12 @@ the name with no re-embed. What these tests prove, in order:
 4. STALENESS IS HONEST: audio with real speech after the hint discards the
    cached verdict and the commit-time check runs fresh; pure-rule coverage
    for the tail-RMS judgment and the session claim.
-5. REVALIDATION: a cached match on a person OUTSIDE the consuming pass's
-   candidates is not trusted - the check runs fresh rather than smuggling a
-   name in.
+5. REVALIDATION, remembered-first (#28, fourteenth field test): the armed
+   pass's candidates are now every sufficient remembered person - the
+   hint's own list - so a cached match on a remembered NON-rostered
+   person is valid and seats them. The narrowing case (a match on someone
+   no longer among the candidates re-runs fresh) is pinned at the unit
+   seam in test_room_remembered_first.
 6. The hint respects the sacred disarm: a "solo mode" chat schedules no
    speculative check at all.
 """
@@ -338,19 +341,24 @@ def test_take_speculative_claims_once_and_rejects_oversized_hints():
 
 # ── 5. a cached match must survive revalidation ─────────────────────────────
 
-def test_cached_match_outside_the_pass_candidates_is_not_trusted(
+def test_cached_match_on_a_remembered_non_rostered_person_is_trusted(
         app, relay, no_batch, matcher):
-    """The speculative check matches against EVERY sufficient remembered
-    voice; an armed pass names only its roster. A cached match on someone
-    outside the pass's candidates re-runs the check instead of smuggling the
-    name through."""
+    """DELIBERATELY REWRITTEN by remembered-first (#28, fourteenth field
+    test). This pin used to assert the opposite: that an armed pass names
+    only its roster, so a cached hint match on a sufficient remembered
+    person OUTSIDE the roster was re-run and discarded. That narrowing was
+    the field failure - a remembered guest could never be named in an
+    armed room. The armed pass's candidates are now every sufficient
+    remembered person (the hint's own list), so the cached match is valid:
+    it labels the turn with NO re-embed and seats the person on the
+    roster. The revalidation mechanism itself survives and is pinned at
+    the unit seam in test_room_remembered_first (a match on someone no
+    longer sufficient still re-runs)."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat, _pid = _room_chat(c, name="Sam")
         outsider = _remember("Dave")   # sufficient, but NOT on the roster
         matcher["verdicts"] = [
             _match("Dave", outsider),  # the hint matches the outsider
-            {"status": "defer", "person_id": None, "name": None,
-             "score": 0.3, "reason": "below_threshold"},  # the fresh check
         ]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
@@ -364,12 +372,19 @@ def test_cached_match_outside_the_pass_candidates_is_not_trusted(
                           "turn_id": "t-reval"})
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"], voice_turn_id="t-reval")
-            assert _wait_for(lambda: len(matcher["calls"]) == 2)
-            # the fresh check ran against the ROSTER candidates only
-            assert matcher["calls"][1][1] == ["Sam"]
+            labels = _wait_for(lambda: _message_labels(msg["id"]))
             time.sleep(0.3)
             ws.send_json({"done": True})
-    assert _message_labels(msg["id"]) == ""   # Dave's name never attached
+    assert json.loads(labels)["labels"] == ["Dave"]
+    assert len(matcher["calls"]) == 1   # the cached verdict was reused
+    con = db.connect()
+    try:
+        roster = db.get_room_roster(con, chat["id"], present_only=True)
+    finally:
+        con.close()
+    assert sorted(p["name"] for p in roster) == ["Dave", "Sam"]
+    assert next(p for p in roster
+                if p["name"] == "Dave")["person_id"] == outsider
 
 
 # ── 6. the sacred disarm ────────────────────────────────────────────────────

@@ -515,15 +515,20 @@ def _run(coro):
 
 
 def _plan(solo_pending=None):
-    # (prefix_pcm, segments, pending, num_speakers, solo_pending) as
-    # _room_plan returns. The fifth item arrived with cold-start enrolment
-    # (#28): the ONE present person whose bank cannot identify them yet, or
-    # None when the roster is not that shape. Defaulting it to None keeps
-    # every pin below asserting exactly what it always did - with no
-    # by-elimination candidate, cold start cannot fire.
+    # (prefix_pcm, segments, pending, num_speakers, solo_pending,
+    # remembered) as _room_plan returns. The fifth item arrived with
+    # cold-start enrolment (#28): the ONE present person whose bank cannot
+    # identify them yet, or None when the roster is not that shape.
+    # Defaulting it to None keeps every pin below asserting exactly what it
+    # always did - with no by-elimination candidate, cold start cannot
+    # fire. The sixth is the remembered-first candidate list (#28,
+    # fourteenth field test) - the armed pass's local candidates became
+    # every sufficient remembered person; mirroring the one rostered
+    # person here keeps these wiring pins byte-identical in behaviour.
     return (b"\x00\x40" * 16000,
             [{"person_id": "p1", "name": "Alex", "start": 0.0, "end": 1.0}],
-            [], 2, solo_pending)
+            [], 2, solo_pending,
+            [{"person_id": "p1", "name": "Alex"}])
 
 
 def test_run_pass_fast_match_skips_batch(monkeypatch):

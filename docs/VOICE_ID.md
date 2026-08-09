@@ -28,7 +28,11 @@ Three things catch what the phrase lists miss:
   as the rough shape is there.
 - Ambient detection does not need phrases at all: every spoken turn gets
   a quiet on-device voice check, so a person the app already knows is
-  recognised by voice alone, however they were greeted.
+  recognised by voice alone, however they were greeted. This holds
+  whether or not room mode is already on: with the room armed, the
+  check compares against everyone the app remembers, not just the
+  people already listed as present, and a recognised remembered voice
+  joins the room on their first turn.
 - The ask-fallback: when a clearly new voice appears and nothing on
   record explains it, the app asks who is speaking rather than guessing.
 
@@ -44,17 +48,20 @@ introduction needs an introduction-shaped sentence, and correcting a name
 needs a name on the turn to correct.
 
 So there is one route that needs none of that. With room mode ON and
-exactly one person in the room whose voice is not yet learnt, a turn the
-matcher cannot place is worked out by elimination: there is nobody else
-it could be. The audio is stored towards learning that voice, and the
-turn is labelled with their name, marked "learning this voice" - a name
-worth using, not yet worth trusting. Once enough speech is stored, the
-voice is remembered and ordinary recognition takes over.
+exactly one person in the room whose voice is not yet learnt - everyone
+else present already recognisable - a turn the matcher cannot place is
+worked out by elimination: anyone else in the room would have been
+recognised, so it can only be the one unlearnt person. The audio is
+stored towards learning that voice, and the turn is labelled with their
+name, marked "learning this voice" - a name worth using, not yet worth
+trusting. Once enough speech is stored, the voice is remembered and
+ordinary recognition takes over. (This is what lets a genuinely new
+guest be learnt while the owner sits in the room, already recognised.)
 
 It is deliberately narrow, because elimination is only sound when there
 is genuinely one candidate:
 
-- never with two or more people in the room (that is what the
+- never with two or more unlearnt people in the room (that is what the
   ask-fallback is for),
 - never when two voices overlap on one turn,
 - never with room mode off, where the app cannot tell you from a
