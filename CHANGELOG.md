@@ -4,6 +4,12 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The room-mode toggle is now durable and honest (#28). Switching it on
+  acts exactly like saying "group mode": it sticks to the chat, puts you
+  on the roster so voices are identified by the fast on-device matcher,
+  and the models are told the true state. Previously the toggle only
+  affected the current session, silently skipped the fast matcher, and
+  the models would say room mode was off right after you turned it on.
 - Room mode is now ambient - no trigger needed (#28). In a voice
   session, every turn gets a quiet on-device voice check: your own voice
   changes nothing, a remembered voice switches room mode on and is named

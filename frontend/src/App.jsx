@@ -388,12 +388,24 @@ export default function App() {
     voiceRef.current?.setRoomMode(on)
   }
 
-  // The dock/call-screen toggle is a deliberate session-only choice: mark
-  // the flag manual so a server-side disarm never overrides it (#28 room
-  // commands; adoptRoomMode in roomState.js).
-  function manualRoomMode(on) {
-    roomModeSourceRef.current = 'manual'
-    changeRoomMode(on)
+  // The dock/call-screen toggle is DURABLE (#28, fifth field test): the old
+  // session-only semantics both bypassed the ambient/matcher path (the relay
+  // ran the slow no-roster pass) and left the seats' room-state line reading
+  // the durable flag - so the models said "off" right after the owner
+  // switched it on. ON now acts like the "group mode" command: durable flag,
+  // owner rostered, any sacred ambient-off cleared, seats told the truth.
+  // OFF is the existing durable override-off. The client flag just mirrors.
+  async function manualRoomMode(on) {
+    if (!activeChat) return
+    if (!on) return roomModeOff()
+    try {
+      mergeChat(await api.updateChat(activeChat.id, { room_mode: true }))
+      roomModeSourceRef.current = 'server' // durable is the truth now
+      changeRoomMode(true)
+      refreshRoom(activeChat.id)
+    } catch (e) {
+      setBanner(`Could not switch room mode on: ${e.message}`)
+    }
   }
 
   // Pin-to-bottom only while the user is at the bottom; the moment they scroll

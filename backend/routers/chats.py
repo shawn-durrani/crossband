@@ -129,7 +129,7 @@ async def get_chat_guest_jobs(chat_id: int):
 
 
 @router.patch("/api/chats/{chat_id}")
-def update_chat(chat_id: int, body: ChatIn):
+def update_chat(chat_id: int, body: ChatIn, request: Request):
     con = db.connect()
     if not con.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone():
         con.close()
@@ -175,6 +175,15 @@ def update_chat(chat_id: int, body: ChatIn):
         diarize.set_room_enabled(chat_id, bool(body.room_mode))
         if body.room_mode:
             diarize.set_ambient_off(chat_id, False)
+            # A manual arm behaves like the "group mode" command (#28, fifth
+            # field test): the owner joins the roster (linked to their anchors
+            # when remembered), so the pass runs ANCHORED and the fast local
+            # matcher path engages instead of the slow no-roster pass.
+            from .. import introductions
+            introductions.roster_owner_only(
+                chat_id, request.app.state.settings.as_cfg())
+        from .. import events
+        events.notify_room_update()
     chat = _chat_payload(con, chat_id)
     con.close()
     return chat
