@@ -430,13 +430,17 @@ def test_every_reenable_clears_ambient_off(app):
                          {"introductions": ["Sam"], "departures": []},
                          cfg, text="this is Sam")
         assert _chat_state(chat2["id"])[1] is False
-        # the manual toggle-on clears it
+        # the manual toggle-on clears it, and (#28, fifth field test) behaves
+        # like the arm command: the owner joins the roster so the pass runs
+        # ANCHORED - the slow no-roster path can no longer be reached from
+        # the control that looks like it should enable identification
         chat3 = _new_chat(c)
         intro.apply_command(chat3["id"], intro.COMMAND_DISARM, cfg)
         assert _chat_state(chat3["id"])[1] is True
         c.patch(f"/api/chats/{chat3['id']}", json={"room_mode": True})
         assert _chat_state(chat3["id"])[1] is False
         assert diarize.ambient_off(chat3["id"]) is False
+        assert [p["name"] for p in _roster(chat3["id"])] == ["Alex"]
 
 
 # ── 5. fallback: the bounded EL sniff survives ──────────────────────────────
