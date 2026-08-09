@@ -18,9 +18,13 @@ covers.
    layers, all keys with defaults, and `config.local.json.example` to copy
    from. You only need this once something in the README says "configured in
    `config.local.json`".
-4. [docs/REMOTE_ACCESS.md](REMOTE_ACCESS.md): the whole app, voice included,
+4. [docs/VOICE_ID.md](VOICE_ID.md): voice identification's known limitations
+   and tuning, written for households that are not the one it was calibrated
+   in. Where the trigger phrases came from, the English bias, every tuning
+   knob, similar-sounding voices, and the scale bounds.
+5. [docs/REMOTE_ACCESS.md](REMOTE_ACCESS.md): the whole app, voice included,
    from your phone over Tailscale. Nothing exposed to the internet.
-5. [docs/OPERATIONS.md](OPERATIONS.md): keeping a live instance up. The
+6. [docs/OPERATIONS.md](OPERATIONS.md): keeping a live instance up. The
    launchd supervisor, logs, restart-on-crash, reboot survival, backups.
 
 Companion memory service (optional, auto-detected):

@@ -657,7 +657,8 @@ export default function App() {
 
   // Room mode (#28 phase 2) derivations - all decision logic in roomState.js.
   const rosterText = rosterChipText(roomInfo?.roster)
-  const rosterHint = rosterTitle(roomInfo?.roster, roomInfo?.sufficient_seconds)
+  const rosterHint = rosterTitle(roomInfo?.roster, roomInfo?.sufficient_seconds,
+                                 roomInfo?.min_short_clips)
   // The ask strip serves both question kinds: "someone new - who?" and the
   // merge question ("is X the same person as Y?"). One at a time each,
   // unknown-voice first (it is about the CURRENT speaker).
@@ -669,6 +670,7 @@ export default function App() {
         health: voiceHealth,
         people: voicePeople,
         sufficientSeconds: roomInfo?.sufficient_seconds,
+        minShortClips: roomInfo?.min_short_clips,
         sessionActive: true,
       })
     : null

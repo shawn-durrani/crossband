@@ -1,4 +1,5 @@
 import { captureConstraints, captureProfileName } from './captureProfile.js'
+import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
@@ -428,6 +429,7 @@ export default class VoiceController {
     // "did THIS utterance's audio flow", so pre-roll is deliberately not
     // counted.
     this._utterFrames = 0
+    this._specFired = false  // a fresh utterance re-arms the silence hint
     if (!this.sttRealtime || !this.sttWs || this.sttStreaming) return
     this.sttStreaming = true
     for (const c of this._pcmPre) this._sttSend({ audio: c })
@@ -723,6 +725,20 @@ export default class VoiceController {
         }
       } else {
         if (voiced) this.lastVoice = now
+        // Speculative identity (#28 PR-B): at silence-start, send a
+        // content-free hint frame so the server can run the LOCAL identity
+        // check on the buffered utterance while the silence window is still
+        // counting down. The rule lives in speculative.js (pure,
+        // unit-tested); the frame carries no audio and the relay forwards
+        // nothing upstream for it.
+        const spec = speculativeStep(this._specFired, {
+          inUtterance: true,
+          streaming: this.sttStreaming && !!this.sttWs,
+          voiced,
+          silenceMs: now - this.lastVoice,
+        })
+        this._specFired = spec.fired
+        if (spec.fire) this._sttSend({ speculative: true })
         // Auto mode sends after a pause; manual mode waits for finalizeNow().
         if (!this.manualMode && now - this.lastVoice > this.silenceMs) this._finalizeUtterance()
       }

@@ -101,10 +101,21 @@ def test_last_decision_store_is_bounded():
 
 
 def test_cloud_pass_records_the_decision(app, monkeypatch):
-    """run_pass's ElevenLabs path stamps a 'cloud' decision - driven with
-    the batch call mocked, inside the never-awaited pass itself."""
+    """The crosstalk split - the one ElevenLabs pass left (#28 PR-B) -
+    stamps a 'cloud' decision, driven with the matcher stubbed to "multi"
+    (its only trigger) and the batch call mocked, inside the never-awaited
+    pass itself."""
     monkeypatch.setattr("backend.voice.transcribe_diarized",
                         lambda *a, **k: {"words": []})
+    monkeypatch.setattr(
+        "backend.voiceid.identify_utterance",
+        lambda *a, **k: {"status": "defer", "person_id": None, "name": None,
+                         "score": 0.4, "reason": "multi"})
+    monkeypatch.setattr(
+        diarize, "_room_plan",
+        lambda *a, **k: (b"\x00\x40" * 16000,
+                         [{"person_id": "p1", "name": "Sam",
+                           "start": 0.0, "end": 1.0}], [], 2))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         session = diarize.RoomSession(enabled=True)
@@ -113,6 +124,29 @@ def test_cloud_pass_records_the_decision(app, monkeypatch):
         got = diarize.last_decision(chat["id"])
         assert got is not None
         assert got["path"] == "cloud"
+
+
+def test_deferred_verdict_records_no_decision_and_no_cloud(app, monkeypatch):
+    """#28 PR-B: a defer leaves the turn unresolved - no EL call, and the
+    health pulse records nothing (there was no identification to report)."""
+    monkeypatch.setattr(
+        "backend.voice.transcribe_diarized",
+        lambda *a, **k: pytest.fail("no EL call on a deferred verdict"))
+    monkeypatch.setattr(
+        "backend.voiceid.identify_utterance",
+        lambda *a, **k: {"status": "defer", "person_id": None, "name": None,
+                         "score": 0.2, "reason": "below_threshold"})
+    monkeypatch.setattr(
+        diarize, "_room_plan",
+        lambda *a, **k: (b"\x00\x40" * 16000,
+                         [{"person_id": "p1", "name": "Sam",
+                           "start": 0.0, "end": 1.0}], [], 2))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        session = diarize.RoomSession(enabled=True)
+        asyncio.run(diarize.run_pass(chat["id"], loud_pcm(1.0), 16000,
+                                     time.time(), session, {}))
+        assert diarize.last_decision(chat["id"]) is None
 
 
 def test_ambient_local_check_records_the_decision(app, monkeypatch):

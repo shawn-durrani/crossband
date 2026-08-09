@@ -372,24 +372,20 @@ async def stt_stream_relay(ws: WebSocket):
                     names.append(p["name"])
                 on = bool(row and row["room_mode"])
                 disarmed = bool(row and row["ambient_off"])
-                # Session-start sniff eligibility (#28, third field test):
-                # room mode off but sufficient remembered non-owner voices
-                # exist. Decided here, once, off the audio path - the same
-                # people read the keyterms already needed.
-                sniff = (not on) and (not disarmed) and diarize.sniff_eligible(
-                    people, cfg.get("user_name"))
                 # Ambient local check (#28): room off, not disarmed, matcher
                 # enabled, and some sufficient remembered voice to match.
+                # Since PR-B this is the ONLY automatic arming door - the
+                # bounded EL session-start sniff retired with the cloud
+                # identity path, so no arming decision ever costs a batch
+                # call.
                 ambient = (not on) and (not disarmed) and \
                     diarize.ambient_eligible(people, cfg)
-                return on, names, sniff, disarmed, ambient
-            enabled, roster_names, sniff_ok, disarmed, ambient_ok = \
+                return on, names, disarmed, ambient
+            enabled, roster_names, disarmed, ambient_ok = \
                 await asyncio.to_thread(_session_open_reads)
             diarize.set_room_enabled(chat_id, enabled)
             diarize.set_ambient_off(chat_id, disarmed)
             keyterm_names += roster_names
-            room.sniff_remaining = (diarize.SNIFF_UTTERANCES if sniff_ok
-                                    else 0)
             room.ambient_on = ambient_ok
         except Exception:
             log.warning("room-mode seed failed; session continues", exc_info=True)
@@ -419,6 +415,26 @@ async def stt_stream_relay(ws: WebSocket):
                         if p:
                             log.info("stt capture profile: chat=%s profile=%s",
                                      chat_id, p)
+                        continue
+                    if msg.get("speculative") and "audio" not in msg:
+                        # Silence-start hint (#28 PR-B), ours alone - NOTHING
+                        # goes upstream for it, pinned like the room_mode
+                        # control frame. Fire the LOCAL-ONLY identity check
+                        # on the buffered utterance now, so the verdict is
+                        # cached before the commit frame arrives. create_task
+                        # inside, never awaited; a failure to schedule must
+                        # not break live transcription.
+                        try:
+                            if chat_id and not diarize.ambient_off(chat_id) \
+                                    and (room.enabled
+                                         or diarize.room_enabled(chat_id)
+                                         or room.ambient_on):
+                                diarize.schedule_speculative(chat_id, room,
+                                                             cfg)
+                        except Exception:
+                            log.warning("speculative scheduling failed; live "
+                                        "transcription continues",
+                                        exc_info=True)
                         continue
                     audio = msg.get("audio") or ""
                     sr = int(msg.get("sample_rate", 16000))
@@ -485,43 +501,40 @@ async def stt_stream_relay(ws: WebSocket):
                         # identical whether or not it is sent.
                         try:
                             pcm, pcm_sr = room.take_utterance()
+                            # Claim the speculative silence-start entry (#28
+                            # PR-B) synchronously, so it can never leak onto
+                            # the next utterance. A dict pop - no I/O; the
+                            # staleness judgment happens inside the pass, on
+                            # a worker thread.
+                            spec = room.take_speculative(len(pcm)) \
+                                if room.speculative else None
                             commit_turn_id = (str(msg.get("turn_id") or "")
                                               .strip()[:64] or None)
                             if room.enabled or diarize.room_enabled(chat_id):
                                 diarize.schedule_pass(chat_id, pcm, pcm_sr,
                                                       db.now(), room, cfg,
-                                                      turn_id=commit_turn_id)
+                                                      turn_id=commit_turn_id,
+                                                      speculative=spec)
                             else:
                                 diarize.stash_utterance(chat_id, pcm, pcm_sr)
-                                # Automatic arming while room mode is off (#28),
-                                # unless the owner has said "solo mode" (the
-                                # sacred disarm, honoured cheaply via the live
-                                # mirror here and re-checked inside each pass).
-                                # Two paths, in order:
-                                #   1. The bounded session-start sniff (third
-                                #      field test): the first couple of turns
-                                #      run the local-first pass and, only on a
-                                #      matcher defer, an EL diarization call -
-                                #      the sole path that may spend EL money for
-                                #      arming.
-                                #   2. After that budget, the ambient local
-                                #      check (this change): every remaining turn
-                                #      runs the on-device matcher, which NEVER
-                                #      calls EL - so a known voice that speaks
-                                #      minutes in is still noticed, at no cost.
-                                # create_task only, NEVER awaited; the upstream
-                                # byte stream is untouched either way.
+                                # Automatic arming while room mode is off
+                                # (#28), unless the owner has said "solo
+                                # mode" (the sacred disarm, honoured cheaply
+                                # via the live mirror here and re-checked
+                                # inside each pass). ONE door since PR-B:
+                                # the ambient local check - the on-device
+                                # matcher, which NEVER calls ElevenLabs (the
+                                # bounded EL session-start sniff retired
+                                # with the cloud identity path). create_task
+                                # only, NEVER awaited; the upstream byte
+                                # stream is untouched either way.
                                 if diarize.ambient_off(chat_id):
                                     pass
-                                elif room.sniff_remaining > 0:
-                                    room.sniff_remaining -= 1
-                                    diarize.schedule_sniff(
-                                        chat_id, pcm, pcm_sr, db.now(),
-                                        room, cfg, turn_id=commit_turn_id)
                                 elif room.ambient_on:
                                     diarize.schedule_ambient(
                                         chat_id, pcm, pcm_sr, db.now(),
-                                        room, cfg, turn_id=commit_turn_id)
+                                        room, cfg, turn_id=commit_turn_id,
+                                        speculative=spec)
                         except Exception:
                             log.warning("diarize scheduling failed; live "
                                         "transcription continues", exc_info=True)

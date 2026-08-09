@@ -17,8 +17,10 @@ now gets a quiet LOCAL-ONLY check. What these tests prove, in order:
    mode already off), sessions in a disarmed chat never schedule ambient
    checks, a mid-session disarm is honoured at the next commit, and every
    explicit re-enable (arm command, introduction, manual toggle) clears it.
-5. The bounded EL sniff survives as the fallback: with the matcher disabled,
-   eligibility falls back to the sniff exactly as before ambient existed.
+
+(#28 PR-B: the bounded EL sniff that used to back ambient up is retired
+with the cloud identity path - ambient is the ONLY automatic arming door,
+and tests/test_room_sniff.py pins the retirement itself.)
 """
 
 import base64
@@ -443,43 +445,11 @@ def test_every_reenable_clears_ambient_off(app):
         assert [p["name"] for p in _roster(chat3["id"])] == ["Alex"]
 
 
-# ── 5. fallback: the bounded EL sniff survives ──────────────────────────────
-
-def test_matcher_disabled_falls_back_to_the_bounded_sniff(
-        tmp_path, monkeypatch):
-    diarize._ROOM_ENABLED.clear()
-    diarize._AMBIENT_OFF.clear()
-    anchors.clear_recent_audio()
-    settings = Settings(data_dir=str(tmp_path / "data"),
-                        memory_url="http://127.0.0.1:1",
-                        user_name="Alex", voice_id_enabled=False)
-    app = create_app(settings)
-    fake = FakeEleven()
-    monkeypatch.setattr(voice_router.websockets, "connect",
-                        lambda *a, **kw: fake)
-    monkeypatch.setattr(voice_router.voice, "enabled", lambda: True)
-    monkeypatch.setattr(voice_router.voice, "api_key", lambda: "test-key")
-    monkeypatch.setattr(voice_router.engine, "prewarm_recall",
-                        lambda *a, **kw: None)
-    app.state.allowed_hosts = {"testserver", "127.0.0.1", "localhost", "::1"}
-    _remember("Sam")
-    seen = {}
-    orig = diarize.schedule_sniff
-
-    def spy(*a, **kw):
-        seen["sniffed"] = True
-        return orig(*a, **kw)
-
-    monkeypatch.setattr(diarize, "schedule_sniff", spy)
-    monkeypatch.setattr(
-        voice_router.voice.httpx, "post",
-        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no network")))
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _new_chat(c)
-        with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"]})
-            ws.send_json(_frame(loud_pcm(1.5), commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
-            assert _wait_for(lambda: seen.get("sniffed"))
-            ws.send_json({"done": True})
-    assert _chat_state(chat["id"])[0] is False  # failed EL call armed nothing
+# ── 5. no fallback behind ambient (#28 PR-B) ────────────────────────────────
+#
+# The bounded EL sniff that used to catch what ambient deferred is RETIRED
+# with the whole cloud identity path. tests/test_room_sniff.py now pins that
+# retirement end to end (no EL call under any defer, matcher-off/unavailable
+# means manual-only arming); this file keeps owning the ambient decision
+# table above. This deliberate note replaces the deleted
+# test_matcher_disabled_falls_back_to_the_bounded_sniff.

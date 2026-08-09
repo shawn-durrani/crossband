@@ -13,9 +13,12 @@
 
 import { displayName, sufficiencyProgress } from './roomState.js'
 
-// How the matcher's state reads on the strip. 'ready' is the local
-// fast path; anything else means identification falls back to the cloud
-// batch pass (slower, still correct), and the strip says so plainly.
+// How the matcher's state reads on the strip. 'ready' is the identity
+// path working; since #28 PR-B there is NO cloud identity fallback, so a
+// degraded matcher means turns stay unnamed and nothing arms automatically
+// - voice itself keeps working, and the manual doors (introductions,
+// spoken commands, the toggle) still arm room mode. The copy says exactly
+// that, never that a cloud check "takes over".
 const MATCHER_READOUTS = {
   ready: {
     label: 'matcher ready',
@@ -25,7 +28,8 @@ const MATCHER_READOUTS = {
   fetching: {
     label: 'fetching model…',
     title: 'The one-time voice-model download is in flight. Until it lands, '
-      + 'identification uses the slower cloud check.',
+      + 'turns are not named and room mode only switches on by hand '
+      + '(an introduction, a spoken command, or the toggle).',
     degraded: true,
   },
   cold: {
@@ -34,15 +38,15 @@ const MATCHER_READOUTS = {
     degraded: false,
   },
   unavailable: {
-    label: 'cloud fallback',
-    title: 'The on-device matcher is unavailable, so identification uses the '
-      + 'slower cloud check. Voice still works.',
+    label: 'matcher unavailable',
+    title: 'The on-device matcher is unavailable, so turns are not named '
+      + 'and room mode only switches on by hand. Voice itself still works.',
     degraded: true,
   },
   disabled: {
     label: 'matcher off',
-    title: 'Local voice identification is switched off in settings; the '
-      + 'cloud check does the work instead.',
+    title: 'Local voice identification is switched off in settings, so '
+      + 'turns are not named and room mode only switches on by hand.',
     degraded: true,
   },
 }
@@ -92,9 +96,11 @@ export function pulseReadout(lastDecision, sessionActive = false) {
   }
   const ms = Math.max(0, lastDecision.ms)
   const shown = ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
+  // 'cloud' now means exactly one thing (#28 PR-B): the crosstalk split -
+  // the only ElevenLabs pass left after the identity fallback retired.
   const how = lastDecision.path === 'local'
     ? 'identified on this device'
-    : 'identified by the cloud second listen'
+    : 'untangled by the cloud crosstalk split (overlapping voices)'
   return {
     label: `${lastDecision.path} · ${shown}`,
     title: `The last spoken turn was ${how} in ${shown}.`,
@@ -102,34 +108,71 @@ export function pulseReadout(lastDecision, sessionActive = false) {
 }
 
 // Known voices, one entry each: display name plus sufficiency - 'done' for
-// a remembered voice, seconds-progress while still learning. Reuses the
-// people snapshot (names live there, not in the health endpoint).
-export function knownVoiceLines(people, sufficientSeconds) {
+// a remembered voice, progress while still learning. The two-part bar (#28
+// PR-B) reads honestly: the seconds count while it is short, then the
+// missing short-clip half once the seconds are met. Reuses the people
+// snapshot (names live there, not in the health endpoint).
+export function knownVoiceLines(people, sufficientSeconds, minShortClips) {
   const out = []
   for (const p of people || []) {
     if (!p || typeof p !== 'object') continue
     const name = displayName(p)
     if (!name) continue
-    const prog = sufficiencyProgress(p, sufficientSeconds)
-    out.push({
-      name,
-      done: !!(prog && prog.done),
-      label: prog && !prog.done
-        ? `${(Number(p.seconds) || 0).toFixed(1)}s of ${Number(sufficientSeconds) || 6}s`
-        : 'remembered',
-    })
+    const prog = sufficiencyProgress(p, sufficientSeconds, minShortClips)
+    let label = 'remembered'
+    if (prog && !prog.done) {
+      const secsPart =
+        `${(Number(p.seconds) || 0).toFixed(1)}s of ${Number(sufficientSeconds) || 6}s`
+      const needShorts = Number(minShortClips) > 0 ? Number(minShortClips) : 0
+      const shorts = typeof p.short_clips === 'number'
+        ? Math.max(0, p.short_clips) : null
+      label = needShorts > 0 && shorts !== null && shorts < needShorts
+        ? `${secsPart} · ${shorts} of ${needShorts} short clips`
+        : secsPart
+    }
+    out.push({ name, done: !!(prog && prog.done), label })
+  }
+  return out
+}
+
+// Close-pair warnings (#28 PR-B, the hygiene guard): pairs of remembered
+// voices whose banks sound alike. Names come from the people snapshot's
+// per-person close_to lists (person ids), rendered once per pair. The copy
+// states the consequence honestly - matching got stricter, not broken.
+export function closeVoiceLines(people) {
+  const byId = {}
+  for (const p of people || []) {
+    if (p && typeof p === 'object' && p.person_id) byId[p.person_id] = p
+  }
+  const seen = new Set()
+  const out = []
+  for (const p of people || []) {
+    if (!p || typeof p !== 'object' || !Array.isArray(p.close_to)) continue
+    for (const otherId of p.close_to) {
+      const other = byId[otherId]
+      if (!other) continue
+      const key = [p.person_id, otherId].sort().join('|')
+      if (seen.has(key)) continue
+      seen.add(key)
+      const a = displayName(p)
+      const b = displayName(other)
+      if (!a || !b) continue
+      out.push(`${a} and ${b} sound close - matching is stricter`)
+    }
   }
   return out
 }
 
 // The assembled strip: everything the dock and the call screen render, or
 // null when there is nothing useful to show (no health snapshot yet).
-export function healthStrip({ health, people, sufficientSeconds, sessionActive }) {
+export function healthStrip({ health, people, sufficientSeconds, minShortClips,
+                              sessionActive }) {
   if (!health || typeof health !== 'object') return null
   return {
     matcher: matcherReadout(health.matcher),
     mode: modeReadout(health),
     pulse: pulseReadout(health.last_decision, !!sessionActive),
-    voices: knownVoiceLines(people, sufficientSeconds),
+    voices: knownVoiceLines(people, sufficientSeconds, minShortClips),
+    close: closeVoiceLines(people),
   }
 }

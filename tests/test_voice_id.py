@@ -1,21 +1,31 @@
-"""Local speaker identification (#28 part 2): the offline fast identity path.
+"""Local speaker identification (#28): THE identity path.
 
-The matcher is an ACCELERATOR that must never break voice: on any doubt it
-defers and the pass runs the unchanged ElevenLabs diarize path. These pins,
-all of which run WITHOUT the 38MB model and WITHOUT sherpa-onnx present:
+Since PR-B (the eighth field test's owner decision) the matcher is not an
+accelerator in front of a cloud fallback - identity is local or honestly
+uncertain, and the only ElevenLabs trigger left is the matcher's own "multi"
+verdict (crosstalk splitting). These pins, all of which run WITHOUT the 38MB
+model and WITHOUT sherpa-onnx present:
 
 1. The pure decision seam (normalise/average/cosine + classify_utterance) -
-   identify, open-set "none of the enrolled", the ambiguity margin, and the
-   two-voice split - proved with synthetic vectors, no ONNX.
+   identify, open-set "none of the enrolled", the ambiguity margin (widened
+   for flagged close pairs), and the two-voice split - proved with synthetic
+   vectors, no ONNX.
 2. Enrolment averages a person's stored anchor clips and caches the embedding
    keyed by the clip set, so identification re-embeds anchors only when they
    change (exercised with a MOCKED extractor - no model).
 3. The pinned-model fetch verifies SHA-256 before use and refuses a mismatch,
    with no network (httpx mocked).
-4. run_pass takes the fast path on a confident match (NO batch call) and the
-   ElevenLabs path on a defer or when disabled - the additive/fallback contract.
-5. An integration test that builds the real extractor when the model is present
-   and SKIPS cleanly when it is not (the CI case).
+4. run_pass wiring (#28 PR-B): a confident match fast-labels with NO batch
+   call; a solo utterance and EVERY deferred verdict fire NO batch call
+   either; ONLY the "multi" verdict runs the ElevenLabs crosstalk split; and
+   with the matcher disabled nothing automatic happens at all.
+5. The pairwise hygiene rules (#28 PR-B): contaminated clips quarantine,
+   close centroid pairs are flagged, and the audit persists both through the
+   anchor store.
+6. The EL sniff is RETIRED (#28 PR-B): pinned structurally - the functions
+   are gone, so no code path can fire it.
+7. An integration test that builds the real extractor when the model is
+   present and SKIPS cleanly when it is not (the CI case).
 """
 
 import asyncio
@@ -87,7 +97,7 @@ def test_classify_ambiguous_two_close_voices_defers():
     assert v["status"] == "defer" and v["reason"] == "ambiguous"
 
 
-def test_classify_multi_voice_defers_to_batch():
+def test_classify_multi_voice_is_the_crosstalk_verdict():
     enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0, 1, 0]))
     whole = voiceid.l2_normalize([0.98, 0.1, 0.0])          # Alex dominates
     a = voiceid.l2_normalize([1, 0, 0])
@@ -95,6 +105,25 @@ def test_classify_multi_voice_defers_to_batch():
     windows = [a, a, s, s]                                  # two clear winners
     v = voiceid.classify_utterance(whole, windows, enr)
     assert v["status"] == "defer" and v["reason"] == "multi"
+    assert voiceid.is_multi(v) is True   # the one batch-pass trigger (PR-B)
+    assert voiceid.is_multi(voiceid.classify_utterance(whole, [], enr)) is False
+
+
+def test_classify_multi_outranks_a_blended_whole_verdict():
+    """#28 PR-B: the window evidence is checked FIRST. A two-voice blend
+    whose whole-utterance embedding resembles nobody (below threshold) must
+    still classify as "multi" - it is now the only door to the crosstalk
+    split, and the blend landing exactly there was the reason the old
+    confident-only pre-check had to go."""
+    enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0, 1, 0]))
+    blend = voiceid.l2_normalize([0.5, 0.5, 0.9])   # resembles nobody enrolled
+    a = voiceid.l2_normalize([1, 0, 0])
+    s = voiceid.l2_normalize([0, 1, 0])
+    v = voiceid.classify_utterance(blend, [a, a, s, s], enr)
+    assert v["reason"] == "multi"
+    # without window evidence the same blend stays an open-set defer
+    v2 = voiceid.classify_utterance(blend, [], enr)
+    assert v2["reason"] == "below_threshold"
 
 
 def test_classify_no_candidates_defers():
@@ -111,6 +140,121 @@ def test_window_multi_voice_rules():
     assert voiceid.window_multi_voice([a, s], enr, 0.5) is False       # one each < min
     # A single enrolled candidate can never be "multi".
     assert voiceid.window_multi_voice([a, a], {"p1": enr["p1"]}, 0.5) is False
+
+
+def test_close_pair_widens_the_required_margin():
+    """#28 PR-B, the hygiene guard's teeth: a margin that would win between
+    unrelated voices is NOT enough when the best and runner-up are a flagged
+    close pair - similar-sounding households get stricter matching, never a
+    confident mistake."""
+    enr = _enr(p1=("Alex", [1.0, 0.0, 0.0]), p2=("Sam", [0.9, 0.4359, 0.0]))
+    q = voiceid.l2_normalize([1.0, 0.05, 0.0])
+    plain = voiceid.classify_utterance(q, [], enr, margin=0.05)
+    assert plain["status"] == "match" and plain["name"] == "Alex"
+    strict = voiceid.classify_utterance(q, [], enr, margin=0.05,
+                                        close_pairs=[("p1", "p2")])
+    assert strict["status"] == "defer" and strict["reason"] == "ambiguous"
+    # pair order is irrelevant, and an unrelated pair changes nothing
+    strict2 = voiceid.classify_utterance(q, [], enr, margin=0.05,
+                                         close_pairs=[("p2", "p1")])
+    assert strict2["reason"] == "ambiguous"
+    other = voiceid.classify_utterance(q, [], enr, margin=0.05,
+                                       close_pairs=[("p1", "p9")])
+    assert other["status"] == "match"
+
+
+# ── the pairwise hygiene rules (#28 PR-B; pure, synthetic vectors) ─────────
+
+def _bank(**people):
+    """{pid: [(clip_name, normalised emb), ...]}"""
+    return {pid: [(n, voiceid.l2_normalize(v)) for n, v in clips]
+            for pid, clips in people.items()}
+
+
+def test_quarantine_flags_the_contaminated_clip_only():
+    """The sixth field test's defect in miniature: Sam's bank holds one clip
+    that is actually Alex's voice. The audit sets exactly that clip aside -
+    Alex's own clips and Sam's clean ones are untouched."""
+    bank = _bank(
+        alex=[("a1", [1, 0, 0]), ("a2", [0.99, 0.05, 0])],
+        sam=[("s1", [0, 1, 0]), ("s2", [0.05, 0.99, 0]),
+             ("bad", [0.98, 0.1, 0])],   # Alex's voice in Sam's bank
+    )
+    q = voiceid.quarantine_verdicts(bank)
+    assert q == {"sam": ["bad"]}
+
+
+def test_quarantine_never_judges_a_single_clip_bank():
+    bank = _bank(alex=[("a1", [1, 0, 0])], sam=[("s1", [0.9, 0.3, 0])])
+    assert voiceid.quarantine_verdicts(bank) == {}
+
+
+def test_clean_banks_quarantine_nothing():
+    bank = _bank(alex=[("a1", [1, 0, 0]), ("a2", [0.98, 0.1, 0])],
+                 sam=[("s1", [0, 1, 0]), ("s2", [0.1, 0.98, 0])])
+    assert voiceid.quarantine_verdicts(bank) == {}
+
+
+def test_close_centroid_pairs_flags_alike_voices_once():
+    cents = {
+        "alex": voiceid.l2_normalize([1, 0, 0]),
+        "twin": voiceid.l2_normalize([0.95, 0.31, 0]),   # cosine ~0.95
+        "sam": voiceid.l2_normalize([0, 1, 0]),
+    }
+    pairs = voiceid.close_centroid_pairs(cents)
+    assert [(a, b) for a, b, _ in pairs] == [("alex", "twin")]
+    assert pairs[0][2] >= voiceid.CLOSE_PAIR_COSINE
+    assert voiceid.close_centroid_pairs({}) == []
+
+
+def test_audit_banks_persists_quarantine_and_close_pairs(store, monkeypatch):
+    """The impure half wired end to end with a mocked extractor: a
+    contaminated clip lands quarantined in the store - kept on disk,
+    excluded from matching."""
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "_embed", _fake_embed)
+    s = store["store"]
+    # Poison Sam's bank with a clip that is really Alex's voice.
+    assert s.add_clip(store["sam"], _tone(_ALEX_VAL, 2), 16000, "accumulated")
+    before = {p["person_id"]: p for p in s.people()}
+    assert before[store["sam"]]["quarantined_count"] == 0
+    assert voiceid.audit_banks(_cfg()) is True
+    after = {p["person_id"]: p for p in s.people()}
+    assert after[store["sam"]]["quarantined_count"] == 1
+    # the file is still on disk - set aside, not deleted
+    import os
+    wavs = [f for f in os.listdir(s.root) if f.endswith(".wav")]
+    assert len(wavs) == after[store["sam"]]["clip_count"] \
+        + after[store["alex"]]["clip_count"] + 1
+    # distinct synthetic voices: no close pair flagged
+    assert s.close_pairs() == []
+
+
+def test_audit_banks_is_a_noop_without_the_extractor(store):
+    # conftest keeps the matcher offline: the audit must decline honestly.
+    assert voiceid.audit_banks(_cfg()) is False
+    assert store["store"].close_pairs() == []
+
+
+def test_audit_banks_if_changed_runs_once_per_bank_shape(store, monkeypatch):
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "_embed", _fake_embed)
+    calls = {"n": 0}
+    real = voiceid.audit_banks
+
+    def counting(cfg, sample_rate=16000):
+        calls["n"] += 1
+        return real(cfg, sample_rate)
+
+    monkeypatch.setattr(voiceid, "audit_banks", counting)
+    assert voiceid.audit_banks_if_changed(_cfg()) is True
+    assert voiceid.audit_banks_if_changed(_cfg()) is False  # unchanged bank
+    assert calls["n"] == 1
+    # a new clip changes the fingerprint: the next call audits again
+    store["store"].add_clip(store["alex"], _tone(_ALEX_VAL, 2), 16000,
+                            "accumulated")
+    assert voiceid.audit_banks_if_changed(_cfg()) is True
+    assert calls["n"] == 2
 
 
 # ============================ 2. config surface ===========================
@@ -131,10 +275,23 @@ def test_threshold_override_and_bounds():
 def test_env_overrides_map_the_new_settings():
     out = _env_overrides({"CROSSBAND_VOICE_ID_ENABLED": "false",
                           "CROSSBAND_VOICE_ID_THRESHOLD": "0.62",
+                          "CROSSBAND_VOICE_ID_MARGIN": "0.2",
+                          "CROSSBAND_VOICE_ID_SUFFICIENT_SECONDS": "8",
+                          "CROSSBAND_VOICE_ID_MIN_SHORT_CLIPS": "3",
                           "CROSSBAND_VOICE_ID_MODEL_URL": "https://example/x.onnx"})
     assert out["voice_id_enabled"] is False
     assert out["voice_id_threshold"] == 0.62
+    assert out["voice_id_margin"] == 0.2
+    assert out["voice_id_sufficient_seconds"] == 8.0
+    assert out["voice_id_min_short_clips"] == 3
     assert out["voice_id_model_url"] == "https://example/x.onnx"
+
+
+def test_margin_override_and_bounds():
+    assert voiceid._margin(_cfg()) == 0.12
+    assert voiceid._margin(_cfg(voice_id_margin=0.2)) == 0.2
+    assert voiceid._margin(_cfg(voice_id_margin=1.5)) == 0.12   # out of range
+    assert voiceid._margin(_cfg(voice_id_margin="x")) == 0.12   # unparseable
 
 
 # ============================ 2b. extractor state machine =================
@@ -264,12 +421,14 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATA_DIR", str(tmp_path))
     anchors._store = None  # rebind to this data dir
     s = anchors.store()
-    # Alex and Sam each get sufficient (>=6s) anchor audio.
+    # Alex and Sam each get sufficient anchor audio. The bar is TWO-PART
+    # since #28 PR-B (seconds AND short clips), so the fixture stores a mix
+    # of lengths: 2 x 3s + 2 x 1.5s = 9s with two short clips each.
     alex = s.ensure_person("Alex")
     sam = s.ensure_person("Sam")
-    for _ in range(3):
-        s.add_clip(alex, _tone(_ALEX_VAL, 3), 16000, "introduction")
-        s.add_clip(sam, _tone(_SAM_VAL, 3), 16000, "introduction")
+    for seconds in (3, 3, 1.5, 1.5):
+        s.add_clip(alex, _tone(_ALEX_VAL, seconds), 16000, "introduction")
+        s.add_clip(sam, _tone(_SAM_VAL, seconds), 16000, "introduction")
     return {"store": s, "alex": alex, "sam": sam}
 
 
@@ -372,97 +531,89 @@ def test_run_pass_fast_match_skips_batch(monkeypatch):
     assert seen["payload"]["uncertain"] == []
 
 
-def test_run_pass_defer_runs_batch(monkeypatch):
+def test_run_pass_defer_fires_no_batch_call(monkeypatch):
+    """THE RETIREMENT PIN (#28 PR-B; deliberately inverts the pre-PR-B
+    test_run_pass_defer_runs_batch): a deferred verdict leaves the turn
+    unresolved - NO ElevenLabs call, NO label, NO metering. Every defer
+    reason takes the same silent exit."""
+    for reason in ("below_threshold", "ambiguous", "too_short",
+                   "unavailable", "no_candidates", "no_enrolled"):
+        monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
+        monkeypatch.setattr(diarize.voiceid, "identify_utterance",
+                            lambda *a, _r=reason, **k: {
+                                "status": "defer", "person_id": None,
+                                "name": None, "score": 0.1, "reason": _r})
+        monkeypatch.setattr(
+            diarize.voice, "transcribe_diarized",
+            lambda *a, **k: pytest.fail("no EL call on a deferred verdict"))
+        monkeypatch.setattr(
+            diarize, "_attach_until_deadline",
+            lambda *a, **k: pytest.fail("no label write on a defer"))
+        monkeypatch.setattr(
+            diarize, "_meter",
+            lambda *a: pytest.fail("no metering without a batch call"))
+        session = diarize.RoomSession(enabled=True)
+        _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
+                              _cfg(), turn_id="t1"))
+
+
+def test_run_pass_multi_verdict_runs_the_crosstalk_split(monkeypatch):
+    """The ONE surviving ElevenLabs trigger (#28 PR-B): the matcher's window
+    analysis heard overlapping speech, so the batch diarize call runs (with
+    the anchor prefix) for per-word crosstalk splitting, and is metered."""
     monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
     monkeypatch.setattr(diarize.voiceid, "identify_utterance",
                         lambda *a, **k: {"status": "defer", "person_id": None,
-                                         "name": None, "score": 0.1,
-                                         "reason": "below_threshold"})
-    ran = {"batch": False}
+                                         "name": None, "score": 0.4,
+                                         "reason": "multi"})
+    ran = {"batch": False, "metered": False, "labelled": False}
 
-    def fake_batch(*a, **k):
+    def fake_batch(wav, mime, cfg, num_speakers=None):
         ran["batch"] = True
+        assert num_speakers == 2          # the roster+1 hint rides along
         return {"words": []}
     monkeypatch.setattr(diarize.voice, "transcribe_diarized", fake_batch)
 
     async def fake_room_label(*a, **k):
-        return None
+        ran["labelled"] = True
     monkeypatch.setattr(diarize, "_room_label_pass", fake_room_label)
-    monkeypatch.setattr(diarize, "_meter", lambda *a: None)
+    monkeypatch.setattr(diarize, "_meter",
+                        lambda *a: ran.__setitem__("metered", True))
 
     session = diarize.RoomSession(enabled=True)
     _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
                           _cfg(), turn_id="t1"))
-    assert ran["batch"] is True   # the unchanged ElevenLabs path ran
+    assert ran == {"batch": True, "metered": True, "labelled": True}
 
 
-def test_run_pass_disabled_never_calls_matcher(monkeypatch):
+def test_run_pass_disabled_does_nothing_automatic(monkeypatch):
+    """#28 PR-B (deliberately replaces the pre-PR-B pin that disabling the
+    matcher ran the EL path): with the matcher off there is NO identity at
+    all - no matcher call, no ElevenLabs call, no labels. Degraded means
+    manual, never wrong."""
     monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
     monkeypatch.setattr(diarize.voiceid, "identify_utterance",
                         lambda *a, **k: pytest.fail("matcher must be untouched"))
-    ran = {"batch": False}
     monkeypatch.setattr(diarize.voice, "transcribe_diarized",
-                        lambda *a, **k: ran.__setitem__("batch", True) or {"words": []})
-
-    async def fake_room_label(*a, **k):
-        return None
-    monkeypatch.setattr(diarize, "_room_label_pass", fake_room_label)
-    monkeypatch.setattr(diarize, "_meter", lambda *a: None)
+                        lambda *a, **k: pytest.fail("no EL call with the matcher off"))
+    monkeypatch.setattr(diarize, "_meter",
+                        lambda *a: pytest.fail("no metering either"))
 
     session = diarize.RoomSession(enabled=True)
     _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
                           _cfg(voice_id_enabled=False), turn_id="t1"))
-    assert ran["batch"] is True
 
 
-# ============================ 4c. run_sniff wiring ========================
+# ============================ 4c. the sniff is retired ====================
 
-def _sniff_plan_stub():
-    # (prefix_pcm, segments, num_speakers) as _sniff_plan returns
-    return (b"\x00\x40" * 16000,
-            [{"person_id": "p1", "name": "Sam", "start": 0.0, "end": 1.0}], 2)
-
-
-def test_run_sniff_fast_nonowner_arms_and_skips_batch(monkeypatch):
-    monkeypatch.setattr(diarize, "_sniff_plan", lambda *a, **k: _sniff_plan_stub())
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: {"status": "match", "person_id": "p1",
-                                         "name": "Sam", "score": 0.9,
-                                         "reason": "match"})
-    monkeypatch.setattr(diarize.voice, "transcribe_diarized",
-                        lambda *a, **k: pytest.fail("sniff must not batch on a match"))
-    armed = {}
-    monkeypatch.setattr(diarize, "_arm_from_sniff",
-                        lambda chat_id, matched, cfg: armed.update(matched))
-
-    async def fake_attach(*a, **k):
-        return 7
-    monkeypatch.setattr(diarize, "_attach_until_deadline", fake_attach)
-    monkeypatch.setattr(diarize, "_accumulate_fast_anchor", lambda *a: None)
-
-    session = diarize.RoomSession(enabled=False)
-    session.sniff_remaining = 1
-    _run(diarize.run_sniff(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
-                           _cfg(user_name="Alex"), turn_id="t1"))
-    assert armed == {"local": "Sam"}         # armed with the matched guest
-    assert session.sniff_remaining == 0
-
-
-def test_run_sniff_fast_owner_match_does_not_arm(monkeypatch):
-    monkeypatch.setattr(diarize, "_sniff_plan", lambda *a, **k: _sniff_plan_stub())
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: {"status": "match", "person_id": "p0",
-                                         "name": "Alex", "score": 0.9,
-                                         "reason": "match"})
-    monkeypatch.setattr(diarize.voice, "transcribe_diarized",
-                        lambda *a, **k: pytest.fail("owner match must not batch"))
-    monkeypatch.setattr(diarize, "_arm_from_sniff",
-                        lambda *a, **k: pytest.fail("owner alone must not arm room mode"))
-
-    session = diarize.RoomSession(enabled=False)
-    session.sniff_remaining = 1
-    _run(diarize.run_sniff(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
-                           _cfg(user_name="Alex"), turn_id="t1"))
+def test_the_el_sniff_is_structurally_gone():
+    """#28 PR-B: the bounded session-start EL sniff retired with the cloud
+    identity path. Pinned structurally - the functions and the session
+    budget no longer exist, so no code path can fire one."""
+    for name in ("run_sniff", "schedule_sniff", "_sniff_plan",
+                 "sniff_eligible", "SNIFF_UTTERANCES"):
+        assert not hasattr(diarize, name), name
+    assert not hasattr(diarize.RoomSession(), "sniff_remaining")
 
 
 # ============================ 5. integration (skips without model) ========

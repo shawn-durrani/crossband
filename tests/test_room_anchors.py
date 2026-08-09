@@ -53,18 +53,59 @@ def test_quality_gate_rejects_short_and_quiet():
     assert not anchors.accepts_clip(anchors.clip_quality(quiet_pcm(3.0), 16000))
 
 
-def test_keep_policy_keeps_the_best_n_by_score():
+def test_keep_policy_keeps_the_best_n_per_length_class():
+    """Deliberately updated for #28 PR-B: keep-best-N applies PER LENGTH
+    CLASS. Under the old single pool the short clips (scores scale with
+    seconds) were always evicted first, which starved exactly the clips the
+    two-part sufficiency bar needs - so shorts now keep their own best-N."""
     clips = [{"file": f"c{i}", "seconds": s, "score": s, "added_at": i}
-             for i, s in enumerate([1.0, 5.0, 2.0, 4.0, 3.0, 6.0, 0.5])]
+             for i, s in enumerate([1.0, 5.0, 2.0, 4.0, 3.0, 6.0, 0.5,
+                                    1.5, 1.2])]
     kept = anchors.select_keep(clips)
-    assert len(kept) == anchors.KEEP_CLIPS
-    assert {c["file"] for c in kept} == {"c1", "c3", "c4", "c5", "c2"}
+    # longs (> SHORT_CLIP_MAX_SECONDS): 5.0, 4.0, 3.0, 6.0 - all four kept
+    # shorts (<= 2.0): best KEEP_SHORT_CLIPS of 1.0/2.0/0.5/1.5/1.2
+    assert {c["file"] for c in kept if not anchors.is_short(c)} \
+        == {"c1", "c3", "c4", "c5"}
+    assert {c["file"] for c in kept if anchors.is_short(c)} \
+        == {"c2", "c7", "c8"}  # 2.0s, 1.5s, 1.2s - the best three shorts
+    # a long-heavy pool still caps at KEEP_CLIPS longs
+    longs = [{"file": f"l{i}", "seconds": 3.0 + i, "score": 3.0 + i,
+              "added_at": i} for i in range(anchors.KEEP_CLIPS + 2)]
+    assert len(anchors.select_keep(longs)) == anchors.KEEP_CLIPS
 
 
-def test_sufficiency_is_a_seconds_threshold():
+def test_sufficiency_is_a_two_part_bar():
+    """#28 PR-B (eighth field test): seconds alone no longer suffice - the
+    bank must also hold MIN_SHORT_CLIPS short clips, so second-long
+    interjections have something like themselves to match against."""
     two = [{"seconds": 2.0}, {"seconds": 2.0}]
-    assert not anchors.is_sufficient(two)
-    assert anchors.is_sufficient(two + [{"seconds": 2.0}])
+    assert not anchors.is_sufficient(two)                      # seconds short
+    assert anchors.is_sufficient(two + [{"seconds": 2.0}])     # 6s + 3 shorts
+    # seconds met by LONG clips only: still insufficient - no shorts
+    longs = [{"seconds": 4.0}, {"seconds": 4.0}]
+    assert not anchors.is_sufficient(longs)
+    assert not anchors.is_sufficient(longs + [{"seconds": 1.5}])  # 1 short
+    assert anchors.is_sufficient(longs + [{"seconds": 1.5},
+                                          {"seconds": 1.2}])      # 2 shorts
+    # quarantined clips count for neither half
+    assert not anchors.is_sufficient(
+        longs + [{"seconds": 1.5}, {"seconds": 1.2, "quarantined": True}])
+
+
+def test_configure_sufficiency_applies_and_guards_the_knobs():
+    orig_secs, orig_short = anchors.SUFFICIENT_SECONDS, anchors.MIN_SHORT_CLIPS
+    try:
+        anchors.configure_sufficiency(8.0, 3)
+        assert anchors.SUFFICIENT_SECONDS == 8.0
+        assert anchors.MIN_SHORT_CLIPS == 3
+        # junk keeps the current values rather than crashing or zeroing
+        anchors.configure_sufficiency("x", -1)
+        assert anchors.SUFFICIENT_SECONDS == 8.0
+        assert anchors.MIN_SHORT_CLIPS == 3
+        anchors.configure_sufficiency(None, None)
+        assert anchors.SUFFICIENT_SECONDS == 8.0
+    finally:
+        anchors.configure_sufficiency(orig_secs, orig_short)
 
 
 def test_trim_caps_a_clip_at_max_seconds():
@@ -153,18 +194,21 @@ def test_accumulation_reaches_sufficiency_across_utterances(store):
 
 
 def test_keep_best_n_evicts_worst_clip_files(store):
+    """Deliberately updated for #28 PR-B: eviction is per length class, so
+    the weak-but-short 1.0s clip now SURVIVES a long-clip refresh (it is the
+    short class's best) while the sixth LONG clip evicts a long one - and
+    the evicted long's file is really deleted."""
     pid = store.ensure_person("Alex")
-    # KEEP_CLIPS strong clips, then a weak-but-acceptable one and another
-    # strong one: the weak one is evicted and its FILE deleted.
     for _ in range(anchors.KEEP_CLIPS):
         assert store.add_clip(pid, loud_pcm(3.0), 16000, source="accumulated")
     assert store.add_clip(pid, loud_pcm(1.0), 16000, source="accumulated")
     assert store.add_clip(pid, loud_pcm(3.0), 16000, source="accumulated")
     person = store.people()[0]
-    assert person["clip_count"] == anchors.KEEP_CLIPS
+    assert person["clip_count"] == anchors.KEEP_CLIPS + 1  # 5 longs + 1 short
+    assert person["short_clips"] == 1
     wavs = [f for f in os.listdir(store.root) if f.endswith(".wav")]
-    assert len(wavs) == anchors.KEEP_CLIPS  # evictions deleted their files
-    assert person["seconds"] == pytest.approx(3.0 * anchors.KEEP_CLIPS)
+    assert len(wavs) == anchors.KEEP_CLIPS + 1  # the evicted long is deleted
+    assert person["seconds"] == pytest.approx(3.0 * anchors.KEEP_CLIPS + 1.0)
 
 
 def test_find_by_name_is_case_insensitive_reidentification(store):
@@ -304,6 +348,113 @@ def test_prefix_cache_sees_another_stores_writes(store):
     assert other.add_clip(a, loud_pcm(3.0), 16000, source="correction")
     store.build_prefix([a], 16000)
     assert reads["n"] > 0
+
+
+# ── the hygiene guard's storage (#28 PR-B) ──────────────────────────────────
+#
+# The AUDIT lives in voiceid.py (tests/test_voice_id.py pins its rules);
+# this section pins the store half: set-aside clips stay on disk but take
+# part in NOTHING (sufficiency, prefix, enrolment, the UI counts), close
+# pairs persist and clean up with their people, and quarantine is bounded.
+
+
+def _clip_files(store, pid):
+    with store._lock:
+        data = store._load()
+    return [c["file"] for c in data["people"][pid]["clips"]]
+
+
+def test_quarantined_clips_are_set_aside_not_deleted(store):
+    pid = store.ensure_person("Alex")
+    for secs in (2.5, 2.5, 1.5, 1.5):
+        assert store.add_clip(pid, loud_pcm(secs), 16000, source="accumulated")
+    assert store.people()[0]["sufficient"] is True
+    bad = _clip_files(store, pid)[0]
+    store.set_hygiene({pid: [bad]}, [])
+    person = store.people()[0]
+    assert person["quarantined_count"] == 1
+    assert person["clip_count"] == 3            # active clips only
+    # the file is STILL on disk - set aside, not forgotten
+    assert (store.root / bad).exists()
+    # the prefix and enrolment exclude it
+    pcm, segments = store.build_prefix([pid], 16000)
+    enrol = store.enrollment_clips([pid], 16000)
+    if pid in enrol:
+        assert bad not in enrol[pid]["fingerprint"]
+    # a later audit that clears the verdict reinstates the clip
+    store.set_hygiene({}, [])
+    person = store.people()[0]
+    assert person["quarantined_count"] == 0
+    assert person["clip_count"] == 4
+
+
+def test_quarantine_can_cost_sufficiency(store):
+    """Setting aside a load-bearing clip honestly drops the person below
+    the bar - their turns go back to uncertain rather than resting on
+    contaminated evidence."""
+    pid = store.ensure_person("Alex")
+    for secs in (4.0, 1.5, 1.2):
+        assert store.add_clip(pid, loud_pcm(secs), 16000, source="accumulated")
+    assert store.people()[0]["sufficient"] is True
+    short = next(f for f, s in zip(_clip_files(store, pid), (4.0, 1.5, 1.2))
+                 if s == 1.5)
+    store.set_hygiene({pid: [short]}, [])
+    assert store.people()[0]["sufficient"] is False  # one short left < 2
+
+
+def test_close_pairs_persist_and_surface_per_person(store):
+    a = store.ensure_person("Alex")
+    b = store.ensure_person("Sam")
+    c = store.ensure_person("Dave")
+    store.set_hygiene({}, [(a, b, 0.71)])
+    assert store.close_pairs() == [(a, b, 0.71)]
+    people = {p["person_id"]: p for p in store.people()}
+    assert people[a]["close_to"] == [b]
+    assert people[b]["close_to"] == [a]
+    assert people[c]["close_to"] == []
+    # forgetting either person clears the stale pair
+    store.forget(b)
+    assert store.close_pairs() == []
+
+
+def test_quarantine_is_bounded_per_person(store):
+    """Set aside is not a licence to hoard audio: past QUARANTINE_MAX the
+    oldest set-aside clips are deleted for real. Overflow needs two rounds -
+    a full bank quarantined, refilled, and quarantined again."""
+    pid = store.ensure_person("Alex")
+    for _ in range(anchors.KEEP_CLIPS):
+        assert store.add_clip(pid, loud_pcm(3.0), 16000, source="accumulated")
+    for _ in range(anchors.KEEP_SHORT_CLIPS):
+        assert store.add_clip(pid, loud_pcm(1.5), 16000, source="accumulated")
+    store.set_hygiene({pid: _clip_files(store, pid)}, [])
+    assert store.people()[0]["quarantined_count"] \
+        == anchors.KEEP_CLIPS + anchors.KEEP_SHORT_CLIPS
+    # the bank refills with fresh clips; the next audit condemns those too
+    assert store.add_clip(pid, loud_pcm(3.0), 16000, source="accumulated")
+    assert store.add_clip(pid, loud_pcm(1.5), 16000, source="accumulated")
+    store.set_hygiene({pid: _clip_files(store, pid)}, [])
+    person = store.people()[0]
+    assert person["quarantined_count"] == anchors.QUARANTINE_MAX
+    assert person["clip_count"] == 0
+    wavs = [f for f in os.listdir(store.root) if f.endswith(".wav")]
+    assert len(wavs) == anchors.QUARANTINE_MAX  # the overflow was deleted
+
+
+def test_bank_clips_and_clip_fingerprint(store):
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
+    fp1 = store.clip_fingerprint()
+    bank = store.bank_clips(16000)
+    assert list(bank) == [pid] and bank[pid]["name"] == "Alex"
+    assert len(bank[pid]["clips"]) == 1
+    # quarantined clips STAY in the audit's view (they can be reinstated),
+    # and flipping the flag does not move the fingerprint - only real clip
+    # changes do, or the audit would chase its own writes forever
+    store.set_hygiene({pid: [bank[pid]["clips"][0][0]]}, [])
+    assert store.clip_fingerprint() == fp1
+    assert len(store.bank_clips(16000)[pid]["clips"]) == 1
+    assert store.add_clip(pid, loud_pcm(2.2), 16000, source="accumulated")
+    assert store.clip_fingerprint() != fp1
 
 
 # ── recent-utterance cache (tap-to-correct's audio source) ──────────────────

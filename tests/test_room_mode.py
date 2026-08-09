@@ -1,7 +1,10 @@
-"""Room mode (#28 phase 1): the parallel diarization pass, pinned to its one
-non-negotiable - ZERO added latency on the live voice path.
+"""Room mode (#28): the identity passes, pinned to the one non-negotiable -
+ZERO added latency on the live voice path.
 
-What these tests prove, in order of importance:
+Reshaped by #28 PR-B (the cloud identity fallback retired): identity is
+local or honestly uncertain, and the ElevenLabs batch call has exactly ONE
+trigger left - the local matcher's "multi" (overlapping speech) verdict,
+which routes the crosstalk split. What these tests prove, in order:
 
 1. Toggle OFF (or never mentioned) => the realtime relay behaves byte-for-byte
    identically upstream: the exact frames reach the faked ElevenLabs socket,
@@ -10,17 +13,21 @@ What these tests prove, in order of importance:
    is local); the buffered audio is sliced on the same commit boundaries the
    realtime path produces; the pass fires as a fire-and-forget task.
 3. The live path never waits: the committed transcript reaches the client
-   while the diarization call is deliberately wedged open.
-4. Labels attach through the single update path when diarization says
-   something (multiple clusters, or a different cluster than the previous
-   utterance); a lone speaker stays unlabelled; failure leaves the message
-   unlabelled and the relay alive.
+   while the identity decision - local matcher AND the crosstalk batch call -
+   is deliberately wedged open.
+4. THE RETIREMENT PINS (#28 PR-B): a solo utterance can never trigger an EL
+   call; a deferred verdict never triggers one; only the "multi" verdict
+   does, and that call is metered; failure leaves the message unlabelled and
+   the relay alive.
 5. The label write rides the live-events stream as a content-free
    message_update event.
+6. Labels key to the exact turn id (phase 3 machinery, now driven through
+   the LOCAL fast path).
 
 The ElevenLabs batch call is mocked at the httpx level (voice.transcribe_
 diarized's real parsing runs); the realtime socket is the same FakeEleven
-pattern as tests/test_stt_relay.py. Keyless throughout, like everything else.
+pattern as tests/test_stt_relay.py; the local matcher is stubbed at the
+voiceid module. Keyless throughout, like everything else.
 """
 
 import asyncio
@@ -34,7 +41,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import db, diarize, events
+from backend import anchors, db, diarize, events, voiceid
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
@@ -42,6 +49,7 @@ from backend.routers import voice as voice_router
 
 @pytest.fixture
 def app(tmp_path):
+    diarize._ROOM_ENABLED.clear()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     return create_app(settings)
@@ -138,6 +146,78 @@ def batch_stt(monkeypatch):
     return state
 
 
+# ---- #28 PR-B doubles: the local matcher, and an anchored room chat ----
+
+def _verdict_multi(score=0.4):
+    return {"status": "defer", "person_id": None, "name": None,
+            "score": score, "reason": "multi"}
+
+
+def _verdict_defer(reason="below_threshold", score=0.2):
+    return {"status": "defer", "person_id": None, "name": None,
+            "score": score, "reason": reason}
+
+
+def _verdict_match(name, pid, score=0.9):
+    return {"status": "match", "person_id": pid, "name": name,
+            "score": score, "reason": "match"}
+
+
+@pytest.fixture
+def matcher(monkeypatch):
+    """The local matcher double: a FIFO of verdicts, an optional wedge
+    (threading.Event) and a call count. The default verdict is a defer, so
+    an unexpected extra call is honest rather than a crash."""
+    state = {"verdicts": [], "calls": 0, "gate": None}
+
+    def fake_identify(pcm, sample_rate, candidates, cfg):
+        if state["gate"] is not None:
+            state["gate"].wait(10)
+        state["calls"] += 1
+        if state["verdicts"]:
+            return state["verdicts"].pop(0)
+        return _verdict_defer("unavailable")
+
+    monkeypatch.setattr(voiceid, "identify_utterance", fake_identify)
+    return state
+
+
+def loud_pcm(seconds, sample_rate=16000):
+    return b"\x00\x40" * int(seconds * sample_rate)
+
+
+def _room_chat(client, name="Shawn"):
+    """A chat with durable room mode on and one rostered SUFFICIENT person,
+    so run_pass has an anchored plan (#28 PR-B: the pass identifies against
+    the roster; the old no-roster ordinal pass is retired)."""
+    chat = client.post("/api/chats", json={}).json()
+    con = db.connect()
+    db.set_chat_room_mode(con, chat["id"], True)
+    diarize.set_room_enabled(chat["id"], True)
+    store = anchors.store()
+    pid = store.ensure_person(name)
+    for _ in range(3):
+        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
+    db.add_room_person(con, chat["id"], name, person_id=pid)
+    con.close()
+    return chat, pid
+
+
+# One sufficient person's prefix is PREFIX_PERSON_SECONDS long; utterance
+# word timestamps in a roster-mode batch response start after it.
+PREFIX_1 = anchors.PREFIX_PERSON_SECONDS
+
+
+def _room_words(*speaker_ids):
+    """A diarized batch response whose words sit PAST the anchor prefix, so
+    they read as utterance clusters (the roster-mode split)."""
+    return {"language_code": "en", "text": "hello world",
+            "words": [{"text": f"w{i}", "type": "word", "speaker_id": sid,
+                       "start": PREFIX_1 + 0.1 + i * 0.4,
+                       "end": PREFIX_1 + 0.1 + i * 0.4 + 0.3}
+                      for i, sid in enumerate(speaker_ids)]}
+
+
 def _wait_for(pred, timeout=6.0, interval=0.02):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -232,137 +312,153 @@ def test_room_mode_on_leaves_upstream_frames_byte_for_byte_identical(
 # ── 2. the tee slices on commit boundaries ──────────────────────────────────
 
 def test_tee_slices_utterances_on_the_same_commit_boundaries(
-        app, relay, batch_stt):
-    """Each commit fires ONE batch call carrying exactly that utterance's
-    audio (including the commit frame's own chunk), WAV-wrapped, with
-    diarize=true and no num_speakers hint - and the next utterance starts
-    clean."""
+        app, relay, batch_stt, matcher):
+    """Each commit fires ONE crosstalk batch call (matcher stubbed to
+    "multi" - the sole EL trigger since #28 PR-B) carrying the anchor prefix
+    plus exactly that utterance's audio (including the commit frame's own
+    chunk), WAV-wrapped, with diarize=true and the roster+1 hint - and the
+    next utterance starts clean. Deliberately reworked from the phase-1
+    no-roster form: the pass now always runs anchored."""
+    matcher["verdicts"] = [_verdict_multi(), _verdict_multi()]
+    batch_stt["responses"] = [_room_words("speaker_0", "speaker_1"),
+                              _room_words("speaker_0", "speaker_1")]
     u1 = [_frame(b"\x11\x11" * 80), _frame(b"\x22\x22" * 80),
           _frame(b"\x33\x33" * 80, commit=True)]
     u2 = [_frame(b"\x44\x44" * 80), _frame(b"\x55\x55" * 80, commit=True)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             for f in u1 + u2:
                 ws.send_json(f)
                 ws.receive_json()
             assert _wait_for(lambda: len(batch_stt["calls"]) == 2)
             ws.send_json({"done": True})
+    prefix_pcm, _ = anchors.store().build_prefix([pid], 16000)
     pcm1 = b"".join(base64.b64decode(f["audio"]) for f in u1)
     pcm2 = b"".join(base64.b64decode(f["audio"]) for f in u2)
-    assert batch_stt["calls"][0]["audio"] == diarize.pcm16_wav(pcm1, 16000)
-    assert batch_stt["calls"][1]["audio"] == diarize.pcm16_wav(pcm2, 16000)
+    assert batch_stt["calls"][0]["audio"] == diarize.pcm16_wav(
+        prefix_pcm + pcm1, 16000)
+    assert batch_stt["calls"][1]["audio"] == diarize.pcm16_wav(
+        prefix_pcm + pcm2, 16000)
     for call in batch_stt["calls"]:
         assert call["data"]["diarize"] == "true"
-        assert "num_speakers" not in call["data"]   # phase 1: no hint
+        assert call["data"]["num_speakers"] == "2"   # roster (1) + 1
 
 
 # ── 3. the live path never waits on the pass ────────────────────────────────
 
-def test_committed_transcript_returns_while_diarization_is_wedged_open(
-        app, relay, batch_stt, caplog):
+def test_committed_transcript_returns_while_the_matcher_is_wedged_open(
+        app, relay, batch_stt, matcher):
     """Round dispatch hangs off the committed transcript, so the transcript
-    arriving while the batch call is DELIBERATELY blocked proves dispatch has
-    no dependence on the diarization pass. Once released, the labels catch up
-    on the already-persisted message."""
-    gate = threading.Event()
-    batch_stt["responses"] = [gate, _diarized_words("speaker_0", "speaker_1")]
-    caplog.set_level(logging.INFO, logger="crossband.diarize")
+    arriving while the LOCAL matcher is DELIBERATELY blocked proves dispatch
+    has no dependence on the identity pass (#28 PR-B: the matcher IS the
+    identity path now, so it inherits the wedge pin the batch call carried).
+    Once released, the label catches up on the already-persisted message."""
+    matcher["gate"] = threading.Event()
+    matcher["verdicts"] = [None]  # replaced below once we know the pid
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, pid = _room_chat(c)
+        matcher["verdicts"] = [_verdict_match("Shawn", pid)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_frame(commit=True))
-            # The pass is wedged open right now - and the live transcript
+            # The matcher is wedged open right now - and the live transcript
             # still arrives. This is the zero-added-latency pin.
-            assert not gate.is_set()
+            assert not matcher["gate"].is_set()
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
             assert _message_labels(msg["id"]) == ""  # nothing yet - it's async
-            gate.set()  # let the pass finish; labels catch up out of band
+            matcher["gate"].set()  # release; the label catches up out of band
             labels = _wait_for(lambda: _message_labels(msg["id"]))
             ws.send_json({"done": True})
-    # Phase 4 grew this payload: a two-cluster utterance is crosstalk by
-    # definition, so the marker rides the same write. The phase-1 halves
-    # (clusters + ordinals) are unchanged; the LATENCY pin above - the
-    # transcript arriving while the pass is wedged - is what this test
-    # exists for, and it held.
-    assert json.loads(labels) == {"clusters": ["speaker_0", "speaker_1"],
-                                  "labels": ["Voice 1", "Voice 2"],
-                                  "crosstalk": True, "overlap": False}
-    # The latency instrumentation: an INFO line with the pass duration,
-    # content-free - stage timings and counts, never transcript text.
-    lines = [r.getMessage() for r in caplog.records
-             if "diarize pass:" in r.getMessage()]
-    assert lines and "ms=" in lines[0]
-    assert "hello" not in " ".join(lines)
+    parsed = json.loads(labels)
+    assert parsed["labels"] == ["Shawn"] and parsed["uncertain"] == []
+    assert batch_stt["calls"] == []   # a confident local match costs nothing
 
 
-# ── 4. labelling rules end to end ───────────────────────────────────────────
-
-def test_lone_speaker_stays_unlabelled_across_utterances(app, relay, batch_stt):
-    """The overwhelmingly common case: one person talking. Two utterances,
-    same single cluster - diarization found nothing to say, so no label is
-    written at all (silence is the honest default)."""
-    batch_stt["responses"] = [_diarized_words("speaker_0"),
-                              _diarized_words("speaker_0")]
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
-        with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
-            ws.send_json(_frame(commit=True))
-            ws.receive_json()
-            m1 = _insert_user_message(chat["id"], "first turn")
-            assert _wait_for(lambda: _stt_usage_rows() == 1)  # pass 1 done
-            ws.send_json(_frame(commit=True))
-            ws.receive_json()
-            m2 = _insert_user_message(chat["id"], "second turn")
-            assert _wait_for(lambda: _stt_usage_rows() == 2)  # pass 2 done
-            ws.send_json({"done": True})
-        time.sleep(0.2)
-        assert _message_labels(m1["id"]) == ""
-        assert _message_labels(m2["id"]) == ""
-
-
-def test_new_cluster_on_a_later_utterance_labels_that_turn(app, relay, batch_stt):
-    """A different cluster than the previous utterance = someone else spoke:
-    the second turn gets the session's next ordinal ("Voice 2"), the first
-    stays unlabelled. Best-effort per the issue - clusters are per-request -
-    but this is the phase 1 contract."""
-    batch_stt["responses"] = [_diarized_words("speaker_0"),
-                              _diarized_words("speaker_1")]
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
-        with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
-            ws.send_json(_frame(commit=True))
-            ws.receive_json()
-            m1 = _insert_user_message(chat["id"], "first turn")
-            assert _wait_for(lambda: _stt_usage_rows() == 1)
-            ws.send_json(_frame(commit=True))
-            ws.receive_json()
-            m2 = _insert_user_message(chat["id"], "second turn")
-            labels = _wait_for(lambda: _message_labels(m2["id"]))
-            ws.send_json({"done": True})
-        assert _message_labels(m1["id"]) == ""
-        assert json.loads(labels)["labels"] == ["Voice 2"]
-
-
-def test_diarization_failure_is_silent_and_the_relay_lives_on(
-        app, relay, batch_stt, caplog):
-    """Failure posture: the batch call blowing up leaves the message
-    unlabelled and everything else exactly as it was - the next utterance
-    still transcribes live, nothing retries into the live path."""
+def test_committed_transcript_returns_while_the_crosstalk_call_is_wedged(
+        app, relay, batch_stt, matcher, caplog):
+    """The same pin for the ONE batch call left (#28 PR-B): a "multi"
+    verdict's crosstalk split is wedged open and the live transcript still
+    arrives; released, the split's labels catch up."""
+    gate = threading.Event()
+    matcher["verdicts"] = [_verdict_multi()]
+    batch_stt["responses"] = [gate, _room_words("speaker_3", "speaker_4")]
     caplog.set_level(logging.INFO, logger="crossband.diarize")
-    batch_stt["responses"] = [httpx.ConnectError("nope"),
-                              _diarized_words("speaker_0")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
+            ws.send_json(_frame(commit=True))
+            assert not gate.is_set()
+            assert ws.receive_json() == {"final": "hello world"}
+            msg = _insert_user_message(chat["id"])
+            assert _message_labels(msg["id"]) == ""
+            gate.set()
+            labels = _wait_for(lambda: _message_labels(msg["id"]))
+            ws.send_json({"done": True})
+    parsed = json.loads(labels)
+    # two unmatched clusters: uncertain ordinals plus the crosstalk marker
+    assert parsed["labels"] == ["Voice 1", "Voice 2"]
+    assert parsed["crosstalk"] is True
+    # The latency instrumentation: INFO lines with durations, content-free.
+    lines = [r.getMessage() for r in caplog.records
+             if "diarize pass" in r.getMessage()]
+    assert lines and "hello" not in " ".join(lines)
+
+
+# ── 4. the retirement pins (#28 PR-B) ───────────────────────────────────────
+
+def test_solo_utterances_never_trigger_an_el_call(app, relay, batch_stt,
+                                                  matcher):
+    """THE PIN the eighth field test bought: a solo speaker - whether the
+    matcher names them or honestly defers - NEVER causes an ElevenLabs call.
+    Two commits (a confident owner-of-roster match, then a defer): zero
+    batch calls, zero extra metering, and the deferred turn stays unlabelled
+    (the pending head simply ages out). Deliberately replaces the phase-1
+    lone-speaker/new-cluster ordinal tests, whose EL passes retired."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat, pid = _room_chat(c)
+        matcher["verdicts"] = [_verdict_match("Shawn", pid),
+                               _verdict_defer("below_threshold")]
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            ws.send_json({**_frame(commit=True), "turn_id": "t-1"})
+            ws.receive_json()
+            m1 = _insert_user_message(chat["id"], "first turn",
+                                      voice_turn_id="t-1")
+            labels = _wait_for(lambda: _message_labels(m1["id"]))
+            ws.send_json({**_frame(commit=True), "turn_id": "t-2"})
+            ws.receive_json()
+            m2 = _insert_user_message(chat["id"], "second turn",
+                                      voice_turn_id="t-2")
+            assert _wait_for(lambda: matcher["calls"] == 2)
+            time.sleep(0.3)  # give a wrongly-scheduled EL call time to fire
+            ws.send_json({"done": True})
+        assert json.loads(labels)["labels"] == ["Shawn"]   # named locally
+        assert _message_labels(m2["id"]) == ""             # honestly unresolved
+        assert batch_stt["calls"] == []                    # NO cloud identity
+        # the session's ONLY stt spend is the relay's own realtime metering
+        assert _wait_for(lambda: _stt_usage_rows() == 1)
+        time.sleep(0.2)
+        assert _stt_usage_rows() == 1
+
+
+def test_crosstalk_split_failure_is_silent_and_the_relay_lives_on(
+        app, relay, batch_stt, matcher, caplog):
+    """Failure posture: the crosstalk batch call blowing up leaves the
+    message unlabelled and everything else exactly as it was - the next
+    utterance still transcribes live, nothing retries into the live path."""
+    caplog.set_level(logging.INFO, logger="crossband.diarize")
+    matcher["verdicts"] = [_verdict_multi(), _verdict_defer()]
+    batch_stt["responses"] = [httpx.ConnectError("nope")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat, _pid = _room_chat(c)
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
             ws.send_json(_frame(commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
@@ -378,15 +474,24 @@ def test_diarization_failure_is_silent_and_the_relay_lives_on(
         assert _message_labels(msg["id"]) == ""
 
 
-def test_room_mode_pass_is_metered_as_stt_spend(app, relay, batch_stt):
-    """The toggle's cost warning ("voice minutes roughly double") must be
-    true in the books: each pass logs its seconds to voice_usage like every
-    other transcribed second."""
+def test_crosstalk_split_is_metered_as_stt_spend(app, relay, batch_stt,
+                                                 matcher):
+    """Room mode's only remaining cloud spend (#28 PR-B): the crosstalk
+    split books its seconds - prefix included - to voice_usage like every
+    transcribed second before it."""
+    matcher["verdicts"] = [_verdict_multi()]
+    batch_stt["responses"] = [_room_words("speaker_0", "speaker_1")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, pid = _room_chat(c)
+        prefix_pcm, _ = anchors.store().build_prefix([pid], 16000)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
-            ws.send_json(_frame(b"\x00\x01" * 16000, commit=True))  # 1s at 16k
+            ws.send_json({"chat_id": chat["id"]})
+            # the target row exists up front so the attach resolves at once
+            # and the meter (which books AFTER the labels) runs promptly
+            _insert_user_message(chat["id"], "the turn",
+                                 voice_turn_id="turn-meter")
+            ws.send_json({**_frame(b"\x00\x01" * 16000, commit=True),
+                          "turn_id": "turn-meter"})  # 1s at 16k
             ws.receive_json()
             # while the session is open the ONLY stt row is the pass's own
             # (the relay meters its realtime seconds at session end)
@@ -395,7 +500,8 @@ def test_room_mode_pass_is_metered_as_stt_spend(app, relay, batch_stt):
             row = con.execute(
                 "SELECT units FROM voice_usage WHERE kind='stt'").fetchone()
             con.close()
-            assert row["units"] == pytest.approx(1.0)
+            expected = 1.0 + len(prefix_pcm) / 2 / 16000
+            assert row["units"] == pytest.approx(expected)
             ws.send_json({"done": True})
 
 
@@ -462,17 +568,22 @@ def test_labelled_row_travels_on_the_per_chat_fetch(tmp_path):
 
 
 # ── 6. exact label targeting via the commit frame's turn id (#28 phase 3) ───
+#
+# Reworked in PR-B to drive the LOCAL fast path (the EL identity pass these
+# tests used to ride is retired); the attach machinery under test -
+# _attach_until_deadline's exact turn-id targeting - is shared by every pass.
 
-def test_labels_key_to_the_exact_message_by_turn_id(app, relay, batch_stt):
+def test_labels_key_to_the_exact_message_by_turn_id(app, relay, batch_stt,
+                                                    matcher):
     """The field-test smear, fixed: a NEIGHBOURING user turn is the oldest
     unlabelled row in the time window (the old matcher's pick), but the
     commit frame carried the client's turn id - so the labels land on the
     message persisted WITH that id and the neighbour stays untouched."""
-    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, pid = _room_chat(c)
+        matcher["verdicts"] = [_verdict_match("Shawn", pid)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             ws.send_json({**_frame(commit=True), "turn_id": "turn-exact"})
             assert ws.receive_json() == {"final": "hello world"}
             # The decoy lands FIRST - the old window matcher would take it.
@@ -481,29 +592,28 @@ def test_labels_key_to_the_exact_message_by_turn_id(app, relay, batch_stt):
                                           voice_turn_id="turn-exact")
             labels = _wait_for(lambda: _message_labels(target["id"]))
             ws.send_json({"done": True})
-        assert json.loads(labels)["labels"] == ["Voice 1", "Voice 2"]
+        assert json.loads(labels)["labels"] == ["Shawn"]
         assert _message_labels(decoy["id"]) == ""
 
 
 def test_dropped_interjection_never_smears_onto_a_neighbour(
-        app, relay, batch_stt, monkeypatch):
+        app, relay, batch_stt, matcher, monkeypatch):
     """A too-short interjection commits WITH its turn id, but the client
     drops the transcript and never /sends - no row ever carries that id.
     The pass must give up labelling NOTHING, even though a neighbouring
     user turn sits squarely in the old time window."""
-    monkeypatch.setattr(diarize, "MATCH_WINDOW_SECS", 0.8)
-    monkeypatch.setattr(diarize, "MATCH_PROBE_SECS", 0.05)
-    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    monkeypatch.setattr(diarize, "ID_ATTACH_WINDOW_SECS", 0.4)
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, pid = _room_chat(c)
+        matcher["verdicts"] = [_verdict_match("Shawn", pid)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             ws.send_json({**_frame(commit=True), "turn_id": "turn-dropped"})
             assert ws.receive_json() == {"final": "hello world"}
             neighbour = _insert_user_message(chat["id"], "someone else's turn")
-            # the pass runs, probes to its deadline, and gives up
-            assert _wait_for(lambda: _stt_usage_rows() == 1)
-            time.sleep(1.2)  # past the (shrunk) match window
+            # the pass runs, retries to its (shrunk) deadline, and gives up
+            assert _wait_for(lambda: matcher["calls"] == 1)
+            time.sleep(0.8)
             ws.send_json({"done": True})
         assert _message_labels(neighbour["id"]) == ""
         assert diarize._TASKS == set()  # the pass ended; nothing lingers
@@ -527,20 +637,24 @@ def test_commit_turn_id_never_leaks_upstream(app, relay, batch_stt):
 
 
 # ── 7. attach immediately, meter after (#28, night test 4) ──────────────────
+#
+# PR-B reroutes these through the crosstalk trigger - the one batch call
+# left - so the order pins survive on the pass that still meters.
 
 def test_exact_turn_id_attach_never_waits_on_the_probe_cadence(
-        app, relay, batch_stt, monkeypatch):
+        app, relay, batch_stt, matcher, monkeypatch):
     """With a turn id the attach is a direct lookup plus a FAST retry for the
     /send race - the probe cadence may play no part. Pinned by making the
     cadence pathological (30s): the target row lands ~0.15s after the batch
     reply parsed, and the labels must still attach well inside a second -
     under the old cadence-driven probing this test would time out."""
     monkeypatch.setattr(diarize, "MATCH_PROBE_SECS", 30.0)
-    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    matcher["verdicts"] = [_verdict_multi()]
+    batch_stt["responses"] = [_room_words("speaker_3", "speaker_4")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             ws.send_json({**_frame(commit=True), "turn_id": "turn-fast"})
             assert ws.receive_json() == {"final": "hello world"}
             # let the pass reach its first lookup and MISS (the /send race)
@@ -555,7 +669,7 @@ def test_exact_turn_id_attach_never_waits_on_the_probe_cadence(
 
 
 def test_label_write_lands_before_the_meter_write(
-        app, relay, batch_stt, monkeypatch):
+        app, relay, batch_stt, matcher, monkeypatch):
     """Metering moved BEHIND the label attach: the spend is bookkeeping, the
     label is what the round's seats are waiting on, so nothing may queue in
     front of it. Pinned on call order, with both writes still landing."""
@@ -573,11 +687,12 @@ def test_label_write_lands_before_the_meter_write(
 
     monkeypatch.setattr(db, "set_message_voice_labels", labels_spy)
     monkeypatch.setattr(diarize, "_meter", meter_spy)
-    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    matcher["verdicts"] = [_verdict_multi()]
+    batch_stt["responses"] = [_room_words("speaker_3", "speaker_4")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             target = _insert_user_message(chat["id"], "already persisted",
                                           voice_turn_id="turn-order")
             ws.send_json({**_frame(commit=True), "turn_id": "turn-order"})
@@ -589,7 +704,7 @@ def test_label_write_lands_before_the_meter_write(
 
 
 def test_labelling_failure_still_meters_the_spend(
-        app, relay, batch_stt, monkeypatch):
+        app, relay, batch_stt, matcher, monkeypatch):
     """The other half of moving the meter: the batch call's spend became real
     the moment it returned, so a labelling crash must still book it - just
     behind where the labels would have gone, never silently unbilled."""
@@ -597,11 +712,12 @@ def test_labelling_failure_still_meters_the_spend(
         raise RuntimeError("label write exploded")
 
     monkeypatch.setattr(db, "set_message_voice_labels", broken_labels)
-    batch_stt["responses"] = [_diarized_words("speaker_0", "speaker_1")]
+    matcher["verdicts"] = [_verdict_multi()]
+    batch_stt["responses"] = [_room_words("speaker_3", "speaker_4")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={}).json()
+        chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            ws.send_json({"chat_id": chat["id"]})
             msg = _insert_user_message(chat["id"], "turn that fails",
                                        voice_turn_id="turn-boom")
             ws.send_json({**_frame(commit=True), "turn_id": "turn-boom"})

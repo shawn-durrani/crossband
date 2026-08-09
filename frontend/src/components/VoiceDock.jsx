@@ -1,5 +1,5 @@
 import { Hand, Timer, Square, X, CornerDownLeft, SlidersHorizontal, ChevronDown, Users } from 'lucide-react'
-import { SNIFF_EXPLAINER } from '../roomState'
+import { AMBIENT_EXPLAINER } from '../roomState'
 
 // The in-session voice controls, docked bottom-right of the thread.
 //
@@ -49,6 +49,15 @@ export default function VoiceDock({
               · {health.voices.map((v) => (v.done ? `${v.name} ✓` : `${v.name} ${v.label}`)).join(', ')}
             </span>
           )}
+          {(health.close || []).map((line) => (
+            <span
+              key={line}
+              className="text-amber-300/90"
+              title="These voices' stored banks sit close together, so the matcher demands a wider winning margin before naming either - fewer names, never wrong ones."
+            >
+              · {line}
+            </span>
+          ))}
         </div>
       )}
       {/* The roster chip (#28 phase 2): who the app is telling apart right
@@ -110,7 +119,7 @@ export default function VoiceDock({
           <button
             title={roomMode
               ? 'Room mode is on: turns are attributed by voice. Known voices are identified on this device at no extra cost; a second transcription runs only when voices overlap or a voice cannot be placed. Click to switch it off, or say "solo mode".'
-              : `Room mode labels turns when more than one person is talking, and switches on by itself when a known voice speaks. ${SNIFF_EXPLAINER}`}
+              : `Room mode labels turns when more than one person is talking, and switches on by itself when a known voice speaks. ${AMBIENT_EXPLAINER}`}
             aria-pressed={!!roomMode}
             className={`text-xs inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 border ${
               roomMode

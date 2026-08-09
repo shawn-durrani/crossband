@@ -2,7 +2,13 @@
 
 Driven end to end through the realtime relay with the same FakeEleven /
 httpx-mock doubles as tests/test_room_mode.py - phase 1's latency pins stay
-in that file and still hold; this file pins what phase 2 adds ON TOP:
+in that file and still hold; this file pins what phase 2 adds ON TOP.
+
+#28 PR-B: the anchored EL pass these tests exercise now has exactly ONE
+door - the local matcher's "multi" (overlapping speech) verdict - so the
+relay-driven tests stub the matcher to that verdict (the `multi_matcher`
+fixture). The machinery under test (prefix cluster naming, elimination,
+the ask-fallback, the mismatch cross-check) is unchanged behind that door.
 
 1. With a roster, the diarization request grows the anchor prefix and the
    num_speakers = roster+1 hint; a cluster matching a person's prefix segment
@@ -87,6 +93,17 @@ def relay(app, monkeypatch):
                         lambda *a, **kw: None)
     app.state.allowed_hosts = {"testserver", "127.0.0.1", "localhost", "::1"}
     return fake
+
+
+@pytest.fixture
+def multi_matcher(monkeypatch):
+    """Stub the local matcher to the "multi" verdict - since #28 PR-B the
+    only verdict that runs the anchored ElevenLabs pass under test here."""
+    from backend import voiceid
+    monkeypatch.setattr(
+        voiceid, "identify_utterance",
+        lambda *a, **k: {"status": "defer", "person_id": None, "name": None,
+                         "score": 0.4, "reason": "multi"})
 
 
 @pytest.fixture
@@ -204,7 +221,7 @@ PREFIX_1 = anchors.PREFIX_PERSON_SECONDS
 
 # ── 1. anchored request + name labels ───────────────────────────────────────
 
-def test_matched_cluster_gets_the_persons_name(app, relay, batch_stt):
+def test_matched_cluster_gets_the_persons_name(app, relay, batch_stt, multi_matcher):
     """The whole point: prefix cluster -> Shawn's segment -> the utterance
     cluster that matches it is labelled 'Shawn', and the request carried the
     anchor prefix and the roster+1 num_speakers hint."""
@@ -230,7 +247,7 @@ def test_matched_cluster_gets_the_persons_name(app, relay, batch_stt):
     assert call["audio"] == diarize.pcm16_wav(prefix_pcm + utter, 16000)
 
 
-def test_remembered_voice_reidentifies_in_a_fresh_session(app, relay, batch_stt):
+def test_remembered_voice_reidentifies_in_a_fresh_session(app, relay, batch_stt, multi_matcher):
     """A NEW websocket session (fresh RoomSession, fresh ordinals) still
     names the remembered voice - anchors, not session state, carry identity.
     No introduction happened in either session."""
@@ -256,11 +273,13 @@ def test_remembered_voice_reidentifies_in_a_fresh_session(app, relay, batch_stt)
 # ── 2. elimination + anchor accumulation for the introduced person ──────────
 
 def test_elimination_names_the_single_pending_person_and_builds_their_anchor(
-        app, relay, batch_stt):
+        app, relay, batch_stt, multi_matcher):
     """After 'my wife Alex is here', Alex speaks: her cluster matches no
     anchor, but she is the ONLY pending person - elimination names her
     (uncertain), and each clean single-speaker utterance feeds her anchor set
-    until it crosses the sufficiency bar."""
+    until it crosses the sufficiency bar. The bar is TWO-PART since #28 PR-B
+    (seconds AND short clips), so her utterances mix lengths - two long, two
+    short - exactly the mix real speech provides."""
     batch_stt["responses"] = [
         _resp(("speaker_0", 0.4, 0.9),
               ("speaker_1", PREFIX_1 + 0.3, PREFIX_1 + 0.7))
@@ -270,8 +289,8 @@ def test_elimination_names_the_single_pending_person_and_builds_their_anchor(
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             first_labels = None
-            for n in range(1, 5):
-                ws.send_json(_frame(loud_pcm(1.5), commit=True))
+            for n, secs in enumerate((2.5, 2.5, 1.5, 1.5), start=1):
+                ws.send_json(_frame(loud_pcm(secs), commit=True))
                 assert ws.receive_json() == {"final": "hello world"}
                 msg = _insert_user_message(chat["id"], f"turn {n}")
                 labels = _wait_for(lambda: _message_labels(msg["id"]))
@@ -283,14 +302,16 @@ def test_elimination_names_the_single_pending_person_and_builds_their_anchor(
                                         "uncertain": ["Alex"]}
     alex = anchors.store().find_by_name("Alex")
     assert alex is not None
-    assert alex["sufficient"] is True        # 4 x 1.5s = the bar
+    # 2 x 2.5s + 2 x 1.5s = 8s with two short clips: both halves of the bar
+    assert alex["sufficient"] is True
+    assert alex["short_clips"] == 2
     # the roster row linked the moment her first clip was accepted
     row = next(p for p in _roster(chat["id"]) if p["name"] == "Alex")
     assert row["person_id"] == alex["person_id"]
     assert _flags(chat["id"]) == []          # elimination was unambiguous - no ask
 
 
-def test_num_speakers_tracks_roster_size(app, relay, batch_stt):
+def test_num_speakers_tracks_roster_size(app, relay, batch_stt, multi_matcher):
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _setup_room(c, sufficient=["Shawn"], pending=["Ana", "Ben"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -305,7 +326,7 @@ def test_num_speakers_tracks_roster_size(app, relay, batch_stt):
 # ── 3. the ask-fallback ─────────────────────────────────────────────────────
 
 def test_ambiguous_unknown_cluster_stays_uncertain_and_asks_once(
-        app, relay, batch_stt):
+        app, relay, batch_stt, multi_matcher):
     """Two pending people, one unknown cluster: no elimination possible. The
     turn keeps an uncertain ordinal, ONE 'unknown_voice' flag opens (not one
     per utterance), and a later introduction resolves it."""
@@ -340,7 +361,7 @@ def test_ambiguous_unknown_cluster_stays_uncertain_and_asks_once(
 
 # ── 4. the mismatch cross-check ─────────────────────────────────────────────
 
-def test_mismatch_flags_but_never_mutates_the_label(app, relay, batch_stt,
+def test_mismatch_flags_but_never_mutates_the_label(app, relay, batch_stt, multi_matcher,
                                                     monkeypatch):
     """The cross-check doubts a named turn: a 'mismatch' flag opens carrying
     names only, and the voice label is EXACTLY what it was - there is no code
@@ -386,7 +407,7 @@ def test_mismatch_parse_verdict_is_defensive():
         assert mismatch.parse_verdict(bad)["mismatch"] is False, bad
 
 
-def test_mismatch_keyless_is_a_quiet_no_op(app, relay, batch_stt):
+def test_mismatch_keyless_is_a_quiet_no_op(app, relay, batch_stt, multi_matcher):
     """No utility key: the check degrades to nothing - no flag, no error, and
     obviously no label change."""
     batch_stt["responses"] = [_resp(

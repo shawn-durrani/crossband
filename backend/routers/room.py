@@ -43,6 +43,9 @@ def get_roster(chat_id: int, request: Request):
         # still-learning voice can show how far along it is instead of a
         # bare "uncertain". Content-free numbers only, same as /voice/people.
         row["anchor_seconds"] = float((person or {}).get("seconds") or 0.0)
+        # The short-clip half of the two-part bar (#28 PR-B), so learning
+        # progress can say which part is still missing.
+        row["anchor_short_clips"] = int((person or {}).get("short_clips") or 0)
         # The correctable display name (#28 phase 3): a remembered person is
         # shown under their preferred name; an anchor-pending person under
         # the name they were introduced as. `name` stays the identity key
@@ -51,15 +54,20 @@ def get_roster(chat_id: int, request: Request):
     return {"room_mode": bool(chat["room_mode"]),
             "cap": int(request.app.state.settings.room_roster_max),
             "sufficient_seconds": anchors.SUFFICIENT_SECONDS,
+            "min_short_clips": anchors.MIN_SHORT_CLIPS,
             "roster": roster, "flags": flags}
 
 
 @router.get("/api/voice/people")
 def get_people():
-    """Remembered voices: names, clip counts, accepted seconds, sufficiency.
-    No audio and no transcript text ever leaves this endpoint."""
+    """Remembered voices: names, clip counts, accepted seconds, sufficiency
+    (both halves of the two-part bar), set-aside counts and close-pair
+    hints (#28 PR-B). No audio and no transcript text ever leaves this
+    endpoint."""
     return {"people": anchors.store().people(),
-            "sufficient_seconds": anchors.SUFFICIENT_SECONDS}
+            "sufficient_seconds": anchors.SUFFICIENT_SECONDS,
+            "min_short_clips": anchors.MIN_SHORT_CLIPS,
+            "short_clip_max_seconds": anchors.SHORT_CLIP_MAX_SECONDS}
 
 
 @router.get("/api/voice/health")
@@ -138,7 +146,7 @@ def rename_person(person_id: str, body: dict = Body(...)):
 
 
 @router.post("/api/voice/people/{person_id}/merge")
-def merge_person(person_id: str, body: dict = Body(...)):
+def merge_person(person_id: str, request: Request, body: dict = Body(...)):
     """Merge this remembered person into another (#28: variants merge
     instead of duplicating): banks fold together under the keep-best-N rule,
     the OLDEST person_id survives, the other is forgotten, and the survivor
@@ -160,6 +168,10 @@ def merge_person(person_id: str, body: dict = Body(...)):
     if survivor is None:
         raise HTTPException(400, "merge failed")
     store.set_preferred_name(survivor, chosen)  # owner-set: they chose it
+    # A merged bank is a changed bank: re-run the pairwise hygiene audit
+    # (#28 PR-B). No-op when the matcher is unavailable; never raises.
+    from .. import voiceid
+    voiceid.audit_banks_if_changed(request.app.state.settings.as_cfg())
     gone = other_id if survivor == person_id else person_id
     merged_names = set()
     for pid in (person_id, other_id):
@@ -230,7 +242,8 @@ def resolve_flag(chat_id: int, flag_id: int):
 
 
 @router.post("/api/chats/{chat_id}/messages/{message_id}/speaker")
-def reassign_speaker(chat_id: int, message_id: int, body: dict = Body(...)):
+def reassign_speaker(chat_id: int, message_id: int, request: Request,
+                     body: dict = Body(...)):
     """Tap-to-correct: reassign a labelled turn to `name`. Three effects, in
     order:
 
@@ -287,6 +300,11 @@ def reassign_speaker(chat_id: int, message_id: int, body: dict = Body(...)):
         db.link_room_person(con, chat_id, name, pid)
     finally:
         con.close()
+    if learned:
+        # A correction clip changed the bank: re-run the pairwise hygiene
+        # audit (#28 PR-B). No-op when the matcher is unavailable.
+        from .. import voiceid
+        voiceid.audit_banks_if_changed(request.app.state.settings.as_cfg())
     log.info("speaker corrected: chat=%s msg=%s learned=%s",
              chat_id, message_id, learned)
     return {"ok": True, "learned": learned}
