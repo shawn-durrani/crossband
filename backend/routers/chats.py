@@ -269,9 +269,22 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
             if chat["title"] == "New chat" and body.text.strip():
                 title = body.text.strip().splitlines()[0][:60]
                 con.execute("UPDATE chats SET title=? WHERE id=?", (title, chat_id))
+            # Claim a finished voice label INSIDE the insert (#28, twelfth
+            # field test). The identity check normally completes seconds
+            # before this row exists - it fires at the start of the silence
+            # gap - but the label could only ever be written after the row,
+            # and the round that renders the transcript dispatches the moment
+            # this returns. Result: models read "identity pending" on the very
+            # turn they were answering while the browser already showed the
+            # name. Stamping it here puts the label on the row before anything
+            # can read it. A miss (check not finished) is simply today's
+            # behaviour: the pass labels the row a moment later and the
+            # browser updates live.
+            voice_labels = diarize.claim_label(turn_id) if turn_id else None
             user_msg = db.insert_message(con, chat_id, "user", body.text,
                                          attachment_ids=body.attachment_ids,
-                                         voice_turn_id=turn_id or "")
+                                         voice_turn_id=turn_id or "",
+                                         voice_labels=voice_labels)
             roster = db.get_chat_participants(con, chat_id)
             return chat, user_msg, roster
         finally:

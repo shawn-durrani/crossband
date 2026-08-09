@@ -329,3 +329,55 @@ def test_the_learning_explainer_lives_in_the_stable_block(cfg):
                  "likely rather than certain"):
         assert tell in stable, tell
         assert tell not in volatile
+
+
+# ── the ordering pin (#28, twelfth field test) ──────────────────────────────
+
+def test_a_finished_verdict_is_on_the_row_at_insert(tmp_path):
+    """THE ORDERING BUG. The identity check finishes seconds before /send
+    creates the row (it fires at the start of the silence gap), but the label
+    could only be written AFTER the row existed - and /send dispatches the
+    round that renders the transcript in the same breath. So the model
+    answering a turn read "identity pending" on the very turn the browser
+    already showed as confirmed. A parked verdict must therefore ride the
+    INSERT itself, not a write that follows it."""
+    from backend import diarize
+    from backend.app import create_app
+    from backend.config import Settings
+    from fastapi.testclient import TestClient
+
+    diarize._PENDING_LABELS.clear()
+    app = create_app(Settings(data_dir=str(tmp_path / "data"),
+                              memory_url="http://127.0.0.1:1",
+                              user_name="Alex"))
+    payload = {"clusters": ["local"], "labels": ["Alex"], "uncertain": []}
+    diarize.park_label("turn-abc", payload)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        con = db.connect()
+        try:
+            msg = db.insert_message(con, chat["id"], "user", "hello",
+                                    voice_turn_id="turn-abc",
+                                    voice_labels=diarize.claim_label("turn-abc"))
+            row = con.execute("SELECT voice_labels, labels_updated_at "
+                              "FROM messages WHERE id=?",
+                              (msg["id"],)).fetchone()
+        finally:
+            con.close()
+    # the label is ON the row from the moment it exists - no later write
+    assert json.loads(row["voice_labels"])["labels"] == ["Alex"]
+    assert row["labels_updated_at"] > 0      # the live cursor sees it too
+    # and the park is single-use, so the pass cannot double-write it
+    assert diarize.claim_label("turn-abc") is None
+
+
+def test_an_unclaimed_park_expires_and_never_leaks_to_another_turn(tmp_path):
+    from backend import diarize
+    diarize._PENDING_LABELS.clear()
+    diarize.park_label("turn-1", {"labels": ["Alex"], "uncertain": []})
+    # a different turn never sees it
+    assert diarize.claim_label("turn-2") is None
+    # bounded: flooding parks evicts oldest rather than growing forever
+    for n in range(diarize._PENDING_MAX + 5):
+        diarize.park_label(f"flood-{n}", {"labels": ["Sam"], "uncertain": []})
+    assert len(diarize._PENDING_LABELS) <= diarize._PENDING_MAX

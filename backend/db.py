@@ -690,7 +690,7 @@ def get_messages_after(con, since, chat_id=None):
 
 def insert_message(con, chat_id, speaker, content, *, usage_json=None,
                     import_uuid=None, tool_events=None, attachment_ids=None,
-                    notify=True, voice_turn_id=""):
+                    notify=True, voice_turn_id="", voice_labels=None):
     """THE single write path for a LIVE message - every insert
     that should be pushed to a connected client goes through here, not a raw
     `INSERT INTO messages`. Centralizing this is what makes the live-events
@@ -705,11 +705,19 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
     that: the notify() call is the last thing this function does, after
     con.commit() has already returned, so a waiter that wakes up can always
     read the row it was woken for."""
+    # voice_labels at INSERT (#28, twelfth field test): the identity check
+    # usually finishes before this row exists, and writing the label
+    # afterwards was always too late for the round that renders the
+    # transcript on this very insert. Stamped here it is on the row before
+    # anything can read it. labels_updated_at is stamped too, so the live
+    # cursor treats it exactly like a later label write.
+    labels_json = _json_dumps(voice_labels) if voice_labels else ""
     cur = con.execute(
         "INSERT INTO messages(chat_id, speaker, content, usage_json, created_at, "
-        "import_uuid, voice_turn_id) VALUES(?,?,?,?,?,?,?)",
+        "import_uuid, voice_turn_id, voice_labels, labels_updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
         (chat_id, speaker, content, usage_json, now(), import_uuid,
-         voice_turn_id or ""),
+         voice_turn_id or "", labels_json, now() if labels_json else 0),
     )
     msg_id = cur.lastrowid
     for att_id in (attachment_ids or []):
