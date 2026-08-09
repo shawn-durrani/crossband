@@ -24,7 +24,7 @@ import { contextGauge } from './headerView'
 import { useEventStream } from './hooks/useEventStream'
 import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
-import { askFlag, flagCopy, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
+import { adoptRoomMode, askFlag, flagCopy, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
 import { mergeMessagesById } from './eventStream'
 import GuestStatusChip from './components/GuestStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
@@ -97,6 +97,12 @@ export default function App() {
   // roughly doubles voice spend while on, so every session starts off and the
   // choice is made knowingly each time (startVoice resets it).
   const [roomMode, setRoomMode] = useState(false)
+  // Who last set the session's room-mode flag (#28 room commands): 'server'
+  // (seeded from the chat at session start, or adopted from a server-side
+  // arm) or 'manual' (the user's own session-only toggle). adoptRoomMode
+  // (roomState.js) reads this so a spoken "solo mode" can switch an adopted
+  // session off without ever overriding a hand-set session-only toggle.
+  const roomModeSourceRef = useRef('server')
   // Room-mode roster/flags snapshot for the OPEN chat (#28 phase 2), plus
   // the remembered-voices list the correction menu offers. Seeded on chat
   // open, refetched on every content-free room_roster/room_flag live event.
@@ -203,13 +209,22 @@ export default function App() {
     api.roster(chatId).then((r) => {
       if (chatId === activeChatIdRef.current) {
         setRoomInfo(r)
-        // A spoken introduction flips room mode ON server-side; adopt it on
-        // the client too (#28 phase 4) so the session's capture profile and
-        // the toggle both reflect what is actually running - the parallel
-        // pass fires on the server flag regardless of this. One-directional:
-        // only the explicit override (roomModeOff) turns the mode off.
-        if (r.room_mode && voiceRef.current?.active && !voiceRef.current.roomMode) {
-          changeRoomMode(true)
+        // A spoken introduction or command flips room mode server-side;
+        // adopt it on the client too (#28 phases 4 and room commands) so
+        // the session's capture profile and the toggle both reflect what
+        // is actually running - the parallel pass fires on the server flag
+        // regardless of this. The adopt rule lives in roomState.js: an arm
+        // always adopts; a disarm ("solo mode" spoken mid-session) adopts
+        // only a server-sourced flag, never the user's own session-only
+        // toggle.
+        const verdict = adoptRoomMode(!!r.room_mode, {
+          active: !!voiceRef.current?.active,
+          roomMode: !!voiceRef.current?.roomMode,
+          source: roomModeSourceRef.current,
+        })
+        if (verdict !== null) {
+          roomModeSourceRef.current = 'server'
+          changeRoomMode(verdict)
         }
       }
     }).catch(() => {})
@@ -249,6 +264,7 @@ export default function App() {
     if (!activeChat) return
     try {
       mergeChat(await api.updateChat(activeChat.id, { room_mode: false }))
+      roomModeSourceRef.current = 'server' // flag now matches durable state
       changeRoomMode(false)
       refreshRoom(activeChat.id)
     } catch (e) {
@@ -351,6 +367,7 @@ export default function App() {
       // before, so a previous session's toggle never silently doubles a
       // fresh chat's spend.
       const chatRoomOn = !!roomInfo?.room_mode
+      roomModeSourceRef.current = 'server' // seeded from the durable flag
       setRoomMode(chatRoomOn)
       voiceRef.current.setRoomMode(chatRoomOn)
       await voiceRef.current.start()
@@ -369,6 +386,14 @@ export default function App() {
   function changeRoomMode(on) {
     setRoomMode(!!on)
     voiceRef.current?.setRoomMode(on)
+  }
+
+  // The dock/call-screen toggle is a deliberate session-only choice: mark
+  // the flag manual so a server-side disarm never overrides it (#28 room
+  // commands; adoptRoomMode in roomState.js).
+  function manualRoomMode(on) {
+    roomModeSourceRef.current = 'manual'
+    changeRoomMode(on)
   }
 
   // Pin-to-bottom only while the user is at the bottom; the moment they scroll
@@ -766,7 +791,7 @@ export default function App() {
                 onSilenceSecsChange={setSilenceSecs}
                 onVoiceRateChange={setVoiceRate}
                 onDockOpenChange={setVoiceDockOpen}
-                onRoomModeChange={changeRoomMode}
+                onRoomModeChange={manualRoomMode}
                 onFinalizeNow={() => voiceRef.current?.finalizeNow()}
                 onInterrupt={() => voiceRef.current?.interrupt()}
                 onStop={stopVoice}
@@ -889,7 +914,7 @@ export default function App() {
           onEnd={stopVoice}
           voice={voiceRef.current}
           roomMode={roomMode}
-          onRoomModeChange={changeRoomMode}
+          onRoomModeChange={manualRoomMode}
           rosterText={rosterText}
           rosterHint={rosterHint}
           askText={openAsk ? flagCopy(openAsk) : null}

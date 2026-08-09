@@ -492,6 +492,31 @@ def _volatile_system_parts(cfg):
             "and never announce that you're staying brief - either earn your place or "
             "pass with \"…\"."
         )
+    # The room-mode state line (#28, chat 198): seats verbally "confirmed" a
+    # mode switch that never happened, and could answer "is group mode on?"
+    # only by guessing - the stable-block explainer describes what labels
+    # MEAN, not what is on right now. One short line of ground truth fixes
+    # both. It is PER-ROUND state (a spoken command or introduction can flip
+    # it between rounds, and the roster moves), so it must ride HERE in the
+    # uncached volatile tail - never the stable block, whose byte-stability
+    # the cache pins in tests/test_cache_split.py enforce. Rendered only when
+    # the engine supplied the chat's mode (live rounds always do), so a bare
+    # cfg still yields an empty volatile block.
+    if "room_mode" in cfg:
+        if cfg.get("room_mode"):
+            names = [n for n in (cfg.get("room_roster_names") or [])
+                     if isinstance(n, str) and n.strip()]
+            roster_note = (f"in the room: {', '.join(names)}" if names
+                           else "nobody is named on the roster yet")
+            parts.append(
+                f"\n(Room state this round: room mode is ON; {roster_note}. "
+                "This line is ground truth when someone asks whether room/"
+                "group mode is on.)")
+        else:
+            parts.append(
+                "\n(Room state this round: room mode is OFF - spoken turns "
+                "are not being attributed by voice. This line is ground "
+                "truth when someone asks whether room/group mode is on.)")
     return parts
 
 

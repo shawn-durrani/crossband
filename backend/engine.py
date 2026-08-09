@@ -172,9 +172,18 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0):
             last_seen_id = messages[-1]["id"]
             labels_cursor = max([labels_cursor] + [
                 m.get("labels_updated_at") or 0.0 for m in messages])
+        # The room roster's present names (#28, chat 198): the volatile
+        # room-state line tells seats whether room mode is on and who is in
+        # the room. Read per seat like everything else here, so a mid-round
+        # arm/disarm or roster change is seen at the next seat's boundary.
+        # One indexed SELECT, only when the mode is actually on.
+        room_names = []
+        if chat["room_mode"]:
+            room_names = [r["name"] for r in
+                          db.get_room_roster(con, chat_id, present_only=True)]
         return {"chat": chat, "project": project, "roster": roster,
                 "names": names, "messages": messages, "last_seen_id": last_seen_id,
-                "labels_cursor": labels_cursor,
+                "labels_cursor": labels_cursor, "room_names": room_names,
                 "shared_instructions": db.get_setting(con, "shared_instructions")}
     finally:
         con.close()
@@ -514,7 +523,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # a room-mode chat has a diarization pass racing the round, so only
         # there may an unlabelled young turn honestly claim "name still
         # coming". Read per seat, so a mid-round arm is seen immediately.
+        # room_roster_names feeds the volatile room-state line (#28, chat
+        # 198) - the per-round ground truth seats answer "is group mode
+        # on?" from.
         round_cfg["room_mode"] = bool(chat["room_mode"])
+        round_cfg["room_roster_names"] = state["room_names"]
         memory_on = bool(chat["memory_enabled"])
         web_on = bool(chat["web_enabled"])
         code_on = bool(chat["code_enabled"])

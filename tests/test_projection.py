@@ -542,6 +542,67 @@ def test_room_labels_explainer_lives_in_the_stable_block(cfg):
         assert tell not in volatile
 
 
+# ---------- the volatile room-state line (#28, room commands) ----------
+#
+# Chat 198: seats verbally "confirmed" a mode switch that never happened,
+# and could answer "is group mode on?" only by guessing. The stable-block
+# explainer describes what labels MEAN; the CURRENT state is per-round (a
+# command or introduction can flip it between rounds, and the roster
+# moves), so it rides as one short line in the uncached volatile tail -
+# never the stable block, whose byte-stability the pins in
+# tests/test_cache_split.py enforce. Rendered only when the engine supplied
+# the chat's mode (live rounds always do), so a bare cfg keeps the volatile
+# block empty exactly as before.
+
+
+def test_room_state_line_rides_the_volatile_tail_when_on(cfg):
+    live_cfg = dict(cfg, room_mode=True, room_roster_names=["Shawn", "Alex"])
+    stable, volatile = split_system_prompt(
+        PARTICIPANT, ROSTER, live_cfg, None, "", False)
+    assert "Room state this round" in volatile
+    assert "room mode is ON" in volatile
+    assert "in the room: Shawn, Alex" in volatile
+    assert "Room state this round" not in stable
+
+
+def test_room_state_line_is_honest_about_an_empty_roster(cfg):
+    live_cfg = dict(cfg, room_mode=True, room_roster_names=[])
+    _, volatile = split_system_prompt(
+        PARTICIPANT, ROSTER, live_cfg, None, "", False)
+    assert "room mode is ON" in volatile
+    assert "nobody is named on the roster yet" in volatile
+
+
+def test_room_state_line_reports_off_as_ground_truth(cfg):
+    """Off is stated, not implied by absence: a seat asked "is group mode
+    on?" in an ordinary chat answers no from this line instead of guessing."""
+    live_cfg = dict(cfg, room_mode=False, room_roster_names=[])
+    stable, volatile = split_system_prompt(
+        PARTICIPANT, ROSTER, live_cfg, None, "", False)
+    assert "room mode is OFF" in volatile
+    assert "Room state this round" not in stable
+
+
+def test_no_room_state_line_without_the_engine_key(cfg):
+    """A cfg that never passed through the engine (no room_mode key) renders
+    no room line at all - the volatile block stays empty for bare callers,
+    the pin test_volatile_empty_when_no_ambient_or_predecessors also holds."""
+    stable, volatile = split_system_prompt(
+        PARTICIPANT, ROSTER, dict(cfg), None, "", False)
+    assert "Room state this round" not in stable + volatile
+    assert volatile == ""
+
+
+def test_room_roster_names_never_reach_the_transcript_turns(transcript, names, cfg):
+    """Same boundary as every system-only field: roster names enter through
+    the system channel, never as transcript turns."""
+    live_cfg = dict(cfg, room_mode=True,
+                    room_roster_names=["ROOMNAME_SENTINEL_XYZ"])
+    blob = json.dumps(build_anthropic_messages("claude", transcript, names,
+                                               live_cfg))
+    assert "ROOMNAME_SENTINEL_XYZ" not in blob
+
+
 def test_system_only_fields_are_real_and_reach_the_system_channel(cfg):
     """Positive control for the two leak tests above: proves the sentinels
     aren't silently unused anywhere -- they DO reach the model, just only

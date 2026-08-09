@@ -362,6 +362,34 @@ def test_openai_prefix_byte_stable_when_delegation_or_memory_summary_changes(cfg
 # ---------- the write-failure note, and why chat_summary stays put ----------
 
 
+def test_prefix_is_byte_stable_when_room_state_changes(cfg, monkeypatch):
+    """The volatile room-state line (#28, room commands): arming room mode,
+    disarming it, or the roster changing between rounds must not move a
+    single byte of the cached prefix - the line rides the volatile tail
+    only, for both delivery shapes."""
+    for seat in (SONNET, OPUS5):
+        a_client, _ = _drive(
+            monkeypatch, _cfg(cfg, room_mode=False, room_roster_names=[]),
+            ambient="same fact", preds=["gpt"], participant=seat)
+        b_client, _ = _drive(
+            monkeypatch, _cfg(cfg, room_mode=True,
+                              room_roster_names=["Alex", "Sam"]),
+            ambient="same fact", preds=["gpt"], participant=seat)
+        a, b = a_client.messages.captured_kwargs, b_client.messages.captured_kwargs
+        assert a["system"] == b["system"], seat["model"]
+
+        def prefix(kw):
+            msgs = [dict(m) for m in kw["messages"]]
+            if msgs[-1]["role"] == "system":      # system-turn shape
+                return msgs[:-1]
+            msgs[-1] = {**msgs[-1], "content": msgs[-1]["content"][:-1]}
+            return msgs                            # in-turn shape
+
+        assert prefix(a) == prefix(b), seat["model"]
+        # the room state DID land somewhere (not vacuous)
+        assert a["messages"][-1] != b["messages"][-1], seat["model"]
+
+
 def test_memory_write_warning_rides_the_volatile_tail(cfg):
     stable, volatile = providers.split_system_prompt(
         PARTICIPANT, ROSTER,

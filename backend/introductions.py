@@ -10,6 +10,11 @@ left") frees their roster slot. The owner's own anchor is seeded from the
 introduction utterance itself - the voice that spoke it is the owner's by
 design.
 
+The same scan also detects explicit room-mode COMMANDS (#28, chat 198):
+"group mode, please" / "room mode on" arms, "solo mode" / "just me now"
+disarms - spoken or typed, both arrive through /send. See the command
+lexicon below for why this lives here rather than in a second scanner.
+
 THE CORE LAW, inherited from phase 1: nothing here is ever awaited by
 dispatch. routers/chats.py fires scan_user_turn as a fire-and-forget task
 AFTER the user message is persisted; a slow or failed scan changes nothing
@@ -97,6 +102,96 @@ _DEPART_PATTERNS = [
 ]
 _INTRO_RE = re.compile("|".join(_INTRO_PATTERNS), re.IGNORECASE)
 _DEPART_RE = re.compile("|".join(_DEPART_PATTERNS), re.IGNORECASE)
+
+# ---- room-mode commands (#28, chat 198) ----
+#
+# "Group mode, please", spoken in a live voice chat, did NOTHING: it is not
+# an introduction, so the scan correctly logged no_prefilter_match, room
+# mode stayed off - and the seats then verbally agreed to a mode switch no
+# code was performing. The fix is a small command lexicon riding the SAME
+# post-commit fire-and-forget scan: a deterministic prefilter decides
+# whether the turn is command-shaped, one cheap utility call confirms it is
+# a command (not talk ABOUT the mode) and reads the direction, and a
+# confirmed command flips the chat's durable room mode through exactly the
+# control plumbing the introduction, sniff and PATCH paths already share.
+# Typed and spoken turns take the identical path - both arrive via /send.
+#
+# The arm/disarm split below is about SHAPES, not direction: "room mode
+# off" matches the mode-noun arm pattern too. The prefilter only decides
+# whether to spend one utility call; the model is the judge of direction.
+_MODE_NOUN = (r"(?:room|group|multi[\s-]*user|multi[\s-]*person|"
+              r"multi[\s-]*speaker)[\s-]*mode")
+_ARM_COMMAND_PATTERNS = [
+    # "group mode, please" / "room mode on" / "turn on multi-user mode" /
+    # "we're in group mode" / "switch to room mode": the mode noun is the tell.
+    rf"\b{_MODE_NOUN}\b",
+]
+_DISARM_COMMAND_PATTERNS = [
+    r"\bsolo[\s-]*mode\b",           # "solo mode (please)"
+    r"\bback to solo\b",
+    r"\bjust me (?:now|again)\b",    # "(it's) just me now" - also a departure
+]
+_COMMAND_RE = re.compile(
+    "|".join(_ARM_COMMAND_PATTERNS + _DISARM_COMMAND_PATTERNS), re.IGNORECASE)
+
+COMMAND_ARM = "arm"
+COMMAND_DISARM = "disarm"
+
+
+def command_prefilter(text: str) -> bool:
+    """Is this turn shaped like a room-mode command, worth one utility-model
+    confirmation? Same posture as prefilter(): cheap, bounded, over-inclusive
+    on purpose - a question ABOUT the mode also matches, and the model is
+    what separates a command from a mention."""
+    head = (text or "")[:600]
+    if not head.strip():
+        return False
+    return bool(_COMMAND_RE.search(head))
+
+
+def build_command_prompt(text: str) -> str:
+    """The command-confirmation prompt. Mirrors build_prompt's discipline:
+    the transcript text stays in the request, never in anything persisted,
+    and the model returns only a direction."""
+    return (
+        "You watch one message from a conversation with a voice assistant "
+        "and decide whether it asks the app to switch ROOM MODE (also "
+        "called group, multi-user or multi-person mode - several people "
+        "sharing one microphone) on or off. Direct requests and plain "
+        "announcements both count: 'group mode, please', 'room mode on', "
+        "'turn on multi-user mode', 'we're in group mode now' all mean ON; "
+        "'solo mode', 'room mode off', 'back to solo', 'it's just me now' "
+        "all mean OFF. Merely talking ABOUT the mode is NEITHER: a question "
+        "('is group mode on?', 'what does room mode cost?'), a recollection "
+        "('group mode worked well yesterday'), or a mention in passing must "
+        "return none.\n"
+        "Reply with ONLY JSON: {\"mode_command\": \"on\"|\"off\"|\"none\"}."
+        "\n\n"
+        f"Message: {text[:600]}"
+    )
+
+
+def parse_command_verdict(text) -> str:
+    """Parse the utility model's command verdict, defensively: anything that
+    is not the documented shape degrades to '' (no command) rather than
+    raising. Returns COMMAND_ARM, COMMAND_DISARM or ''."""
+    if not text:
+        return ""
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return ""
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    value = data.get("mode_command")
+    if value == "on":
+        return COMMAND_ARM
+    if value == "off":
+        return COMMAND_DISARM
+    return ""
 
 
 def prefilter(text: str) -> bool:
@@ -335,9 +430,12 @@ def owner_alias(name: str, owner: str) -> bool:
 # drawn from this allowlist and nothing else - never transcript text, never
 # a name. ask_raised and armed both imply room mode is on after the scan.
 SCAN_OUTCOMES = (
-    "no_prefilter_match",   # not introduction-shaped; no utility call made
-    "model_rejected",       # prefilter hit, but the model found nobody
+    "no_prefilter_match",   # neither introduction- nor command-shaped; no
+                            # utility call made
+    "model_rejected",       # a prefilter hit, but the model found nothing
     "armed",                # room mode flipped ON by this scan
+    "armed_by_command",     # room mode flipped ON by a mode command
+    "disarmed_by_command",  # room mode flipped OFF by a mode command
     "ask_raised",           # relationship-only, no remembered match: asking
     "roster_grew",          # already armed; people were added
     "roster_shrank",        # a departure freed roster slots
@@ -353,10 +451,12 @@ def _log_verdict(chat_id, outcome):
 
 
 def schedule_scan(chat_id, message_id, text, cfg):
-    """Fire the introduction scan for one persisted user turn and return
-    IMMEDIATELY - the caller (POST /send) never awaits it, and a failure to
-    even schedule must not break the send."""
-    if not prefilter(text):
+    """Fire the scan for one persisted user turn and return IMMEDIATELY - the
+    caller (POST /send) never awaits it, and a failure to even schedule must
+    not break the send. One scan covers BOTH detections (introductions and
+    room-mode commands), so every user turn still ends in exactly one
+    verdict line."""
+    if not prefilter(text) and not command_prefilter(text):
         _log_verdict(chat_id, "no_prefilter_match")
         return None
     task = asyncio.get_running_loop().create_task(
@@ -367,18 +467,41 @@ def schedule_scan(chat_id, message_id, text, cfg):
 
 
 async def scan_user_turn(chat_id, message_id, text, cfg):
-    """One user turn's scan: utility-model confirmation, then roster/room-mode
-    application. Every failure ends here (log only)."""
+    """One user turn's scan: the command confirmation first (#28, chat 198),
+    then the introduction confirmation, each gated on its own prefilter so a
+    turn normally pays for at most one utility call. A confirmed command's
+    outcome wins the verdict line when it changed anything; the rare turn
+    that is both a command and an introduction ("group mode on - this is
+    Dave") applies both. Every failure ends here (log only)."""
     try:
-        roster = await asyncio.to_thread(_present_names, chat_id)
-        prompt = build_prompt(text, cfg.get("user_name", "User"), roster)
-        reply = await llm_util.utility_complete(prompt, cfg, max_tokens=200)
-        verdict = parse_verdict(reply)
-        if not verdict["introductions"] and not verdict["departures"]:
-            _log_verdict(chat_id, "model_rejected")
-            return
-        outcome = await asyncio.to_thread(apply_scan, chat_id, verdict, cfg,
-                                          text)
+        outcome = None
+        command_confirmed = False
+        if command_prefilter(text):
+            reply = await llm_util.utility_complete(
+                build_command_prompt(text), cfg, max_tokens=60)
+            direction = parse_command_verdict(reply)
+            if direction:
+                command_confirmed = True
+                result = await asyncio.to_thread(apply_command, chat_id,
+                                                 direction, cfg)
+                if result != "no_change":
+                    outcome = result
+        if prefilter(text):
+            roster = await asyncio.to_thread(_present_names, chat_id)
+            prompt = build_prompt(text, cfg.get("user_name", "User"), roster)
+            reply = await llm_util.utility_complete(prompt, cfg,
+                                                    max_tokens=200)
+            verdict = parse_verdict(reply)
+            if verdict["introductions"] or verdict["departures"]:
+                intro_outcome = await asyncio.to_thread(apply_scan, chat_id,
+                                                        verdict, cfg, text)
+                if outcome is None:
+                    outcome = intro_outcome
+        if outcome is None:
+            # A confirmed command that changed nothing (arm while already
+            # armed, disarm while off) is an honest no_change; with nothing
+            # confirmed at all, the model rejected the turn.
+            outcome = "no_change" if command_confirmed else "model_rejected"
         _log_verdict(chat_id, outcome)
     except Exception:
         _log_verdict(chat_id, "scan_error")
@@ -561,3 +684,83 @@ def _seed_owner_anchor(chat_id, cfg):
             db.link_room_person(con, chat_id, owner, pid)
     finally:
         con.close()
+
+
+def apply_command(chat_id, direction, cfg):
+    """Apply a confirmed room-mode command (synchronous; runs on a worker
+    thread). Returns the outcome for the verdict line.
+
+    ARM is the introduction's control path without any names: the durable
+    flip plus diarize's live mirror, so a live session's pass machinery
+    starts at its next commit boundary. The OWNER joins the roster (linked
+    to their remembered anchors when those exist), which makes the pass run
+    ANCHORED rather than as the phase-1 ordinal pass - an unknown second
+    voice then raises the ask-fallback instead of a bare ordinal, and a
+    remembered person who speaks is re-identified through the normal
+    ask/introduction/correction flows. A SPOKEN command also seeds the
+    owner's anchor from the stashed utterance, exactly as an introduction
+    does - the voice that spoke the command is the owner's by design.
+
+    DISARM is the override-off semantics ("solo mode", "just me now"): the
+    durable flip off plus the live mirror, everyone still present marked
+    left (the phrase says the room is back to one person; the cap frees and
+    the roster chip disappears), and any open "who is speaking?" ask
+    resolved - it is moot once solo. Mismatch flags stay: they doubt past
+    turns, and going solo answers nothing about those."""
+    con = db.connect()
+    try:
+        chat = con.execute("SELECT * FROM chats WHERE id=?",
+                           (chat_id,)).fetchone()
+        if not chat:
+            return "no_change"
+        if direction == COMMAND_ARM:
+            if chat["room_mode"]:
+                return "no_change"
+            db.set_chat_room_mode(con, chat_id, True)
+            diarize.set_room_enabled(chat_id, True)
+            log.info("room mode ON via command: chat=%s", chat_id)
+            _roster_owner(con, chat_id, cfg)
+            outcome = "armed_by_command"
+        elif direction == COMMAND_DISARM:
+            if not chat["room_mode"]:
+                return "no_change"
+            db.set_chat_room_mode(con, chat_id, False)
+            diarize.set_room_enabled(chat_id, False)
+            departed = 0
+            for row in db.get_room_roster(con, chat_id, present_only=True):
+                if db.mark_room_person_left(con, chat_id, row["name"]):
+                    departed += 1
+            db.resolve_room_flags(con, chat_id, kind="unknown_voice")
+            log.info("room mode OFF via command: chat=%s departed=%d",
+                     chat_id, departed)
+            outcome = "disarmed_by_command"
+        else:
+            return "no_change"
+    finally:
+        con.close()
+    if outcome == "armed_by_command":
+        _seed_owner_anchor(chat_id, cfg)
+    # The wake-up bell for the roster chip and the client's room-mode adopt
+    # (the phase-2 plumbing). The roster writes above already rang it; this
+    # covers the flips that touched no roster row, so a connected client
+    # always refetches the snapshot and sees the new mode.
+    from . import events
+    events.notify_room_update()
+    return outcome
+
+
+def _roster_owner(con, chat_id, cfg):
+    """Put the owner on the roster for a command arm - linked to their
+    remembered anchors when they exist, anchor-pending otherwise. A command
+    names nobody, so the owner is the only person honestly known present;
+    anyone else joins by introduction, by voice match, or by answering the
+    ask."""
+    owner = cfg.get("user_name", "User")
+    person = anchors.store().find_by_name(owner)
+    pid = person["person_id"] if person else ""
+    present = {p["name"].lower()
+               for p in db.get_room_roster(con, chat_id, present_only=True)}
+    if owner.lower() not in present:
+        db.add_room_person(con, chat_id, owner, person_id=pid)
+    elif pid:
+        db.link_room_person(con, chat_id, owner, pid)

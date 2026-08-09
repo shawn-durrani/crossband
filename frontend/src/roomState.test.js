@@ -9,9 +9,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  askFlag, cleanPreferredName, displayName, flagCopy, FORGET_EXPLAINER,
-  mismatchByMessage, personSummary, reassignOptions, rosterChipText,
-  rosterTitle, SNIFF_EXPLAINER, sufficiencyProgress,
+  adoptRoomMode, askFlag, cleanPreferredName, displayName, flagCopy,
+  FORGET_EXPLAINER, mismatchByMessage, personSummary, reassignOptions,
+  rosterChipText, rosterTitle, SNIFF_EXPLAINER, sufficiencyProgress,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -191,4 +191,36 @@ test('the roster hint shows each learner\'s progress when the snapshot carries i
   // rows without the field (older snapshots) keep the bare name
   assert.match(rosterTitle([present('Shawn'), present('Alex', false)], 6),
     /Still learning: Alex -/)
+})
+
+// ── adoptRoomMode (#28 room commands) ───────────────────────────────────────
+//
+// A spoken "solo mode" flips the durable flag server-side; the live session
+// must follow it - or the doubled transcription keeps running for the rest
+// of the call - without ever overriding a session-only toggle the user set
+// by hand.
+
+const session = (roomMode, source, active = true) => ({ active, roomMode, source })
+
+test('a server-side arm is always adopted by a live session', () => {
+  assert.equal(adoptRoomMode(true, session(false, 'server')), true)
+  assert.equal(adoptRoomMode(true, session(false, 'manual')), true)
+})
+
+test('a server-side disarm is adopted only when the flag came from the server', () => {
+  assert.equal(adoptRoomMode(false, session(true, 'server')), false)
+  // a hand-set session-only toggle is the user's alone to switch off
+  assert.equal(adoptRoomMode(false, session(true, 'manual')), null)
+})
+
+test('a session already in step is left alone', () => {
+  assert.equal(adoptRoomMode(true, session(true, 'server')), null)
+  assert.equal(adoptRoomMode(false, session(false, 'server')), null)
+  assert.equal(adoptRoomMode(false, session(false, 'manual')), null)
+})
+
+test('no live session means nothing to adopt', () => {
+  assert.equal(adoptRoomMode(true, session(false, 'server', false)), null)
+  assert.equal(adoptRoomMode(true, null), null)
+  assert.equal(adoptRoomMode(false, undefined), null)
 })
