@@ -361,6 +361,15 @@ async def stt_stream_relay(ws: WebSocket):
                              for p in people}
                 names = [preferred.get(r["name"].lower(), r["name"])
                          for r in roster]
+                # Every REMEMBERED person's names ride the keyterm hints too
+                # (#28, sixth field test): pre-arm the roster is empty, so a
+                # known name got no transcription bias and arrived misspelt
+                # ("Rina"). Remembered people are exactly who is likely to
+                # speak in this house; the relay caps the list at the API's
+                # limit downstream. Preferred and given forms both help.
+                for p in people:
+                    names.append(preferred.get(p["name"].lower()) or p["name"])
+                    names.append(p["name"])
                 on = bool(row and row["room_mode"])
                 disarmed = bool(row and row["ambient_off"])
                 # Session-start sniff eligibility (#28, third field test):
