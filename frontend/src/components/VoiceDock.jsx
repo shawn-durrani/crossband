@@ -257,6 +257,11 @@ export default function VoiceDock({
                     {health.voices.map((v) => (v.done ? `${v.name} ✓` : `${v.name} ${v.label}`)).join(', ')}
                   </span>
                 )}
+                {(health.learning || []).map((line) => (
+                  <span key={`learn-${line.name}`} title={line.title}>
+                    {line.label}
+                  </span>
+                ))}
                 {(health.close || []).map((line) => (
                   <span
                     key={line}

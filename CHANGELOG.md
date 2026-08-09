@@ -4,6 +4,15 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The voice panel now answers "is it still learning?" and "why wasn't
+  that turn named?" (#28). Each remembered voice shows whether it is
+  still growing or refreshing in place, how many clips it holds and when
+  it last learned something - numbers that previously existed only in a
+  file on disk. And a turn that goes unnamed says which kind of unnamed:
+  too short to judge, heard but not recognised, or too close between two
+  known voices. Both are read from values the app already had, so
+  nothing new runs while you are speaking.
+
 - The AI seats now see who is speaking on the turn they are answering
   (#28). The voice check finished in time, but its label could only be
   written after your message row existed - and the reply starts rendering

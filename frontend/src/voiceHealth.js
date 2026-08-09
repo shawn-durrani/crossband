@@ -90,7 +90,28 @@ export function modeReadout(health) {
 // The live pulse: the most recent identification's path and latency.
 // "local · 227ms" or "cloud · 1.9s"; 'pending' while a session is live but
 // no decision has landed yet; null with no live session and nothing to say.
+// Why a turn went unnamed, in plain English (#28, thirteenth field test).
+// "Identity pending" hid two different problems: audio too poor to judge,
+// versus heard clearly but not sure who. The matcher already computes the
+// reason; this just says it.
+export const UNRESOLVED_COPY = {
+  too_short: ['too short to judge', 'That turn was too brief to identify a voice from.'],
+  below_threshold: ['voice not recognised', 'Heard clearly, but it did not match a remembered voice closely enough.'],
+  ambiguous: ['too close to call', 'It sat between two remembered voices, so it was left unnamed rather than guessed.'],
+  multi: ['more than one voice', 'Two people spoke over each other, so the turn went to the crosstalk split.'],
+  no_candidates: ['no voices learnt yet', 'Nobody in this room has enough voice banked to match against.'],
+  unavailable: ['matcher not ready', 'The on-device matcher was not available for that turn.'],
+  disabled: ['matching off', 'Voice identification is switched off.'],
+  error: ['check failed', 'The voice check did not complete for that turn.'],
+}
+
 export function pulseReadout(lastDecision, sessionActive = false) {
+  if (lastDecision && typeof lastDecision === 'object'
+      && lastDecision.path === 'unresolved') {
+    const [label, title] = UNRESOLVED_COPY[lastDecision.reason]
+      || ['not named', 'That turn was left unnamed.']
+    return { label, title, unresolved: true }
+  }
   if (!lastDecision || typeof lastDecision !== 'object'
       || typeof lastDecision.ms !== 'number'
       || (lastDecision.path !== 'local' && lastDecision.path !== 'cloud')) {
@@ -221,7 +242,48 @@ export function healthStrip({ health, people, roster, sufficientSeconds,
     pulse: pulseReadout(health.last_decision, !!sessionActive),
     voices: knownVoiceLines(people, sufficientSeconds, minShortClips),
     close: closeVoiceLines(people),
+    learning: learningLines(people, health.learning),
     chips: boundedChips(
       voiceChips(roster, people, sufficientSeconds, minShortClips), maxChips),
   }
+}
+
+// "Is it still learning?" answered in the app (#28, thirteenth field test).
+// Until now the only way to know whether a voice bank was still growing was
+// to read the store file by hand. Every number here is already in the
+// snapshot; this only phrases it.
+export function learningAge(seconds) {
+  if (typeof seconds !== 'number' || seconds < 0) return 'not yet'
+  if (seconds < 90) return 'just now'
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`
+  return `${Math.round(seconds / 86400)}d ago`
+}
+
+export function learningLines(people, learning) {
+  if (!Array.isArray(people) || !learning || typeof learning !== 'object') {
+    return []
+  }
+  return people
+    .map((p) => {
+      const l = learning[p && p.person_id]
+      if (!l || typeof l !== 'object') return null
+      const name = p.preferred_name || p.name
+      if (!name) return null
+      // At capacity the bank stops growing and starts REFRESHING: a better
+      // clip evicts a worse one. Saying "still learning" there would be a
+      // lie, and saying nothing was the old silence this fixes.
+      const what = l.at_capacity ? 'refreshing' : 'still learning'
+      const clips = `${l.clips || 0} clip${l.clips === 1 ? '' : 's'}`
+      return {
+        name,
+        label: `${name} · ${what} · ${clips}`,
+        title: `${clips}, ${Math.round(l.seconds || 0)}s banked, last learned `
+          + `${learningAge(l.last_learned_age_s)}. `
+          + (l.at_capacity
+            ? 'The bank is full, so new clips replace weaker ones rather than adding.'
+            : 'New clips are still being added as this voice is heard.'),
+      }
+    })
+    .filter(Boolean)
 }
