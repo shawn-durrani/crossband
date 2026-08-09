@@ -113,6 +113,51 @@ _STASH_MAX_CHATS = 8
 INTRO_STASH_SECONDS = 30
 INTRO_STASH_TTL_S = 180.0
 
+# ---- verdicts waiting for their message row (#28, twelfth field test) ----
+#
+# THE ORDERING BUG, and it was ordering all along rather than speed: the pass
+# can only write a label AFTER /send creates the row to write it on, but
+# /send dispatches the round in the same breath and the round renders its
+# transcript once, immediately. So the label for the turn a model is ANSWERING
+# landed microseconds too late, every single time. The models truthfully read
+# "identity pending" on the very turn the browser already showed as confirmed
+# - the browser gets a live update, the model's copy is frozen at dispatch.
+# No amount of making the pass faster could fix that: the label has to be ON
+# the row at INSERT, not written to it afterwards.
+#
+# So a finished verdict parks HERE, keyed by the client's turn id, and /send
+# claims it inside the same insert. Bounded and TTL'd (a verdict nobody claims
+# belongs to a dropped interjection); in-memory because this is a handoff
+# measured in hundreds of milliseconds, not state worth persisting.
+_PENDING_LABELS: dict = {}
+_PENDING_MAX = 32
+PENDING_LABEL_TTL_S = 30.0
+
+
+def park_label(turn_id, payload):
+    """Park a finished label for a turn whose row may not exist yet."""
+    if not turn_id or not payload:
+        return
+    now = time.monotonic()
+    for k, (_, at) in list(_PENDING_LABELS.items()):
+        if now - at > PENDING_LABEL_TTL_S:
+            _PENDING_LABELS.pop(k, None)
+    _PENDING_LABELS[turn_id] = (dict(payload), now)
+    while len(_PENDING_LABELS) > _PENDING_MAX:
+        _PENDING_LABELS.pop(next(iter(_PENDING_LABELS)))
+
+
+def claim_label(turn_id):
+    """Claim a parked label at insert time (single-use). None when the check
+    has not finished yet - the pass then labels the row the old way, exactly
+    as before, so this is a fast path and never a dependency."""
+    entry = _PENDING_LABELS.pop(turn_id or "", None)
+    if not entry:
+        return None
+    payload, at = entry
+    return payload if (time.monotonic() - at) <= PENDING_LABEL_TTL_S else None
+
+
 MISMATCH_MIN_WORDS = 4  # don't cross-check a grunt
 # Fast-path (#28 part 2) mismatch gate: with no batch words to count, use the
 # utterance duration as the "enough words to be worth cross-checking" proxy
@@ -896,6 +941,15 @@ async def _attach_until_deadline(chat_id, commit_ts, payload, session,
     time-window matching has no way to tell "not yet" from "never", so it
     genuinely has to keep looking until the window closes."""
     if turn_id:
+        # PARK FIRST (#28, twelfth field test). The row usually does not exist
+        # yet, and the moment it does, /send dispatches the round that renders
+        # the transcript - so a label written even microseconds after the
+        # insert is already too late for the model answering this turn.
+        # Parking lets the insert itself carry the label. The retry loop below
+        # still runs: it covers the id-less/older-client case and any insert
+        # that happened before the verdict was ready, and claiming is
+        # single-use so the two paths can never double-write.
+        park_label(turn_id, payload)
         deadline = time.monotonic() + min(ID_ATTACH_WINDOW_SECS,
                                           MATCH_WINDOW_SECS)
         while True:

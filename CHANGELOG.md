@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The AI seats now see who is speaking on the turn they are answering
+  (#28). The voice check finished in time, but its label could only be
+  written after your message row existed - and the reply starts rendering
+  in that same instant, so the models read "identity pending" on the very
+  turn your screen already showed as confirmed. They were reading a frozen
+  copy while the browser got a live update. The finished result now rides
+  the message as it is saved, so the name is there before anything reads
+  it. Nothing waits on it: if the check has not finished, behaviour is
+  exactly as before.
+
 - A forgotten voice can now be re-learnt just by talking (#28). If you
   cleared your voice records, every way back in needed something you no
   longer had: being recognised needs stored clips, the introduction flow
