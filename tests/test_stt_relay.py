@@ -172,8 +172,10 @@ def _capturing_relay(app, monkeypatch):
 
 def test_stt_url_biases_owner_and_roster_display_names(app, monkeypatch):
     """A chat with people in the room connects with keyterms = the owner's
-    user_name plus each present person's PREFERRED display name - the
-    correctable spelling, not the one first heard."""
+    user_name plus each present person's PREFERRED display name - and,
+    since the sixth field test (#28), every remembered person's GIVEN name
+    too, so a re-introduction is spelt right even before the roster
+    exists."""
     from urllib.parse import parse_qs, urlparse
 
     from backend import anchors, db
@@ -192,12 +194,15 @@ def test_stt_url_biases_owner_and_roster_display_names(app, monkeypatch):
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
     q = parse_qs(urlparse(seen["url"]).query)
-    assert q["keyterms"] == ["User", "Alex"]  # cfg user_name, then the roster
+    # cfg user_name, the present person's preferred name, then their given
+    # form from the remembered-people sweep (deduplicated downstream)
+    assert q["keyterms"] == ["User", "Alex", "Lex"]
 
 
 def test_stt_url_without_a_roster_biases_the_owner_name_only(app, monkeypatch):
-    """No roster: the only keyterm is the owner's user_name - the name the
-    introduction utterance itself needs spelt right."""
+    """No roster and nobody remembered: the only keyterm is the owner's
+    user_name - the name the introduction utterance itself needs spelt
+    right."""
     from urllib.parse import parse_qs, urlparse
 
     seen = _capturing_relay(app, monkeypatch)
@@ -210,6 +215,30 @@ def test_stt_url_without_a_roster_biases_the_owner_name_only(app, monkeypatch):
             ws.send_json({"done": True})
     q = parse_qs(urlparse(seen["url"]).query)
     assert q["keyterms"] == ["User"]
+
+
+def test_remembered_names_ride_the_keyterms_even_with_no_roster(app,
+                                                                monkeypatch):
+    """#28, sixth field test: pre-arm the roster is empty, so a REMEMBERED
+    name got no transcription bias and arrived misspelt ("Rina"). Every
+    remembered person's given and preferred names now ride the hints in
+    every session, roster or not."""
+    from urllib.parse import parse_qs, urlparse
+
+    from backend import anchors
+    store = anchors.store()
+    pid = store.ensure_person("Samantha")
+    store.set_preferred_name(pid, "Sam")
+    seen = _capturing_relay(app, monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            ws.send_json(_frame())
+            assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json({"done": True})
+    q = parse_qs(urlparse(seen["url"]).query)
+    assert q["keyterms"] == ["User", "Sam", "Samantha"]
 
 
 def test_keyterm_list_is_bounded_and_deduplicated():
