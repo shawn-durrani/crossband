@@ -120,6 +120,50 @@ test('chipData is as defensive as chipsForMessage', () => {
     { label: 'Shawn', display: 'Shawn', uncertain: false, corrected: false }])
 })
 
+// ── #28 PR-C: the owner's voice-confirmed chip ─────────────────────────────
+//
+// The ambient check now labels the owner's confidently-matched turns even
+// with room mode off, and the payload carries {"owner": true}. The chip
+// gains owner: true so the UI can render the quiet reassurance tick; the
+// key is only ever ADDED, so every pre-PR-C payload produces exactly the
+// chips it always did (the deepEqual pins above stay byte-identical).
+
+test('an owner-marked payload sets owner: true on its confident chip', () => {
+  assert.deepEqual(chipData(named(['Alex'], [], { owner: true })), [
+    { label: 'Alex', display: 'Alex', uncertain: false, corrected: false,
+      owner: true }])
+})
+
+test('payloads without the owner marker gain no owner key', () => {
+  for (const chip of chipData(named(['Alex'], []))) {
+    assert.ok(!('owner' in chip))
+  }
+  // junk marker values never set it either
+  for (const junk of ['yes', 1, null]) {
+    for (const chip of chipData(named(['Alex'], [], { owner: junk }))) {
+      assert.ok(!('owner' in chip))
+    }
+  }
+})
+
+test('an uncertain chip never carries the owner marker', () => {
+  // defensive: the backend never writes owner: true with uncertainty, but a
+  // hand-edited or future payload must not render confirmed uncertainty
+  const chips = chipData(named(['Alex'], ['Alex'], { owner: true }))
+  assert.equal(chips[0].uncertain, true)
+  assert.ok(!('owner' in chips[0]))
+})
+
+test('the owner chip title says voice confirmed, on this device', () => {
+  const title = chipTitle({ label: 'Alex', display: 'Alex', uncertain: false,
+    corrected: false, owner: true })
+  assert.match(title, /Voice confirmed/)
+  assert.match(title, /this device/)
+  // a correction still outranks the owner marker
+  assert.match(chipTitle({ label: 'Alex', uncertain: false, corrected: true,
+    owner: true }), /Corrected by you/)
+})
+
 test('chip titles state trust plainly, per state', () => {
   assert.match(chipTitle({ label: 'Shawn', uncertain: false, corrected: false }),
     /Matched to Shawn's remembered voice/)

@@ -294,7 +294,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                   key={chip.label}
                   type="button"
                   title={chipTitle(chip)}
-                  aria-label={`Spoken by ${chip.display || chip.label}${chip.uncertain ? ' (uncertain)' : ''}${reassignNames.length ? ' - tap to correct' : ''}`}
+                  aria-label={`Spoken by ${chip.display || chip.label}${chip.owner ? ' (voice confirmed)' : ''}${chip.uncertain ? ' (uncertain)' : ''}${reassignNames.length ? ' - tap to correct' : ''}`}
                   className={`text-[11px] px-1.5 py-0.5 rounded-full border bg-panel2 ${
                     chip.uncertain
                       ? 'border-dashed border-amber-700/70 text-amber-200/90'
@@ -303,6 +303,9 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                   onClick={() => reassignNames.length && setChipMenuOpen((o) => !o)}
                 >
                   {chip.display || chip.label}{chip.uncertain ? '?' : ''}
+                  {/* #28 PR-C: the owner's voice-confirmed tick - quiet
+                      reassurance on solo turns, decided in voiceChips.js */}
+                  {chip.owner ? ' ✓' : ''}
                 </button>
               ))}
               {chipMenuOpen && reassignNames.length > 0 && (

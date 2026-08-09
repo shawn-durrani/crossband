@@ -196,7 +196,8 @@ def test_transcript_builders_have_no_project_or_summary_parameters():
 
 from datetime import datetime  # noqa: E402
 
-from backend.providers import IN_ROOM_SUFFIX, UNIDENTIFIED_SPEAKER  # noqa: E402
+from backend.providers import (IN_ROOM_SUFFIX,  # noqa: E402
+                               UNIDENTIFIED_SPEAKER, VOICE_CONFIRMED_SUFFIX)
 
 
 def _labelled(msg, labels, uncertain=None, **extra):
@@ -278,13 +279,38 @@ def test_phase1_ordinal_labels_project_unattributed(names, cfg):
     assert UNIDENTIFIED_SPEAKER in head.lower()
 
 
-def test_owner_confident_label_renders_exactly_as_unlabelled(transcript, names, cfg):
-    """A turn the anchors confidently matched to the OWNER is today's
-    rendering, byte for byte - being recognised must not re-badge the owner."""
+def test_owner_confident_label_shows_the_voice_confirmed_head(transcript, names, cfg):
+    """#28 PR-C deliberately REPLACED the owner-confident-equals-unlabelled
+    pin that lived here: the ambient check voice-verifies the owner
+    constantly, and rendering that identically to an unlabelled turn made
+    seats say "identity pending" about a person already identified. A turn
+    confidently matched to the OWNER alone now projects the owner's name
+    with the voice-confirmed marker - in room-on and room-off cfgs alike -
+    while a turn with NO labels still renders byte-identically to history
+    (the surviving half, re-pinned below and in
+    test_unlabelled_chat_renders_byte_identically)."""
     plain = make_msg(1, "user", "hello everyone")
     matched = _labelled(dict(plain), [cfg["user_name"]], uncertain=[])
-    assert build_anthropic_messages("claude", [matched], names, cfg) == \
-        build_anthropic_messages("claude", [dict(plain)], names, cfg)
+    expected = f"{cfg['user_name']}{VOICE_CONFIRMED_SUFFIX}"
+    for mode_cfg in (cfg, dict(cfg, room_mode=True), dict(cfg, room_mode=False)):
+        text = build_anthropic_messages(
+            "claude", [dict(matched)], names, mode_cfg)[0]["content"][0]["text"]
+        assert LABEL_RE.match(text).group("name") == expected
+        items = build_openai_input("gpt", [dict(matched)], names, mode_cfg)
+        assert LABEL_RE.match(items[0]["content"][0]["text"]).group("name") \
+            == expected
+    # the marker never says "(in the room)" - the owner is not a guest
+    assert IN_ROOM_SUFFIX not in expected
+    # a CORRECTED-to-owner turn keeps the bare name: a human correction is
+    # not the on-device voice check the marker's explainer describes
+    corrected = _labelled(dict(plain), [cfg["user_name"]], uncertain=[],
+                          corrected=True)
+    assert _user_turn_head(corrected, cfg) == cfg["user_name"]
+    # and the byte-identity half SURVIVES: no labels means the historical
+    # rendering, exactly - being recognisable is not the same as being
+    # recognised on this turn
+    msgs = build_anthropic_messages("claude", [dict(plain)], names, cfg)
+    assert msgs[0]["content"][0]["text"] == _legacy_user_text(cfg, plain)
 
 
 def test_two_confident_voices_project_jointly(names, cfg):
@@ -538,6 +564,20 @@ def test_room_labels_explainer_lives_in_the_stable_block(cfg):
     for tell in ("Room voice labels", "never any audio",
                  "unidentified speaker", "two "
                  "voices spoke at once", "ask that person to repeat"):
+        assert tell in stable, tell
+        assert tell not in volatile
+
+
+def test_voice_confirmed_explainer_lives_in_the_stable_block(cfg):
+    """#28 PR-C: the seats are told what the owner's voice-confirmed head
+    means - the on-device check recognised the owner, in any mode - in the
+    same stable-block explainer as the other label meanings (constant text
+    varying only with the configured user name, so the cache-split pins
+    hold)."""
+    stable, volatile = split_system_prompt(
+        PARTICIPANT, ROSTER, dict(cfg), None, "", False)
+    for tell in (f"{cfg['user_name']} (voice confirmed)",
+                 "confidently recognised", "including with room mode off"):
         assert tell in stable, tell
         assert tell not in volatile
 

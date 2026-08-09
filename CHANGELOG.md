@@ -4,6 +4,17 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Your own voice is now shown as recognised, not hidden (#28). The app
+  has always quietly checked spoken turns against your remembered voice
+  - it is how a solo chat stays solo - but it kept the result to
+  itself, so the AI seats would say "identity pending" about the one
+  person already identified. When the on-device check is confident it
+  is you, the turn now carries your name with a "voice confirmed"
+  marker: the seats see it in any mode (room on, ambient, or solo) and
+  can answer "who is speaking?", and the turn shows a small tick as
+  quiet reassurance. Nothing else changes - your voice still never
+  switches room mode on, turns with no label render exactly as they
+  always have, and uncertain turns stay honestly uncertain.
 - Fix a voice-identification deadlock (#28). A two-part "enough voice
   learnt" rule shipped one build earlier also demanded a quota of short
   clips, which instantly marked every already-learnt voice as not-yet-

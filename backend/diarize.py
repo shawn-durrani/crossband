@@ -127,7 +127,9 @@ FAST_MISMATCH_MIN_SECONDS = 1.5
 # ~free - one on-device embed, ~33-59ms, offline - so the gate loses its
 # reason to exist. With ambient detection on, EVERY committed utterance in a
 # room-mode-OFF session gets a quiet LOCAL-ONLY check (never an ElevenLabs
-# call): the owner's own voice is a no-op, a remembered non-owner arms room
+# call): the owner's own voice never arms anything but DOES label the turn
+# (#28 PR-C: the owner's identity is shown, not hidden - a confident owner
+# match is a fact worth telling the seats), a remembered non-owner arms room
 # mode automatically, and a clear voice that matches nobody (only decidable
 # when the owner is itself sufficiently enrolled) arms and raises the
 # ask-fallback. Anything the matcher cannot decide defers - room mode stays
@@ -180,7 +182,8 @@ def owner_sufficient(people, owner_name) -> bool:
 
 # Ambient decisions, as a pure rule over a matcher verdict (unit-tested with
 # no I/O). `owner` is casefolded; `owner_ok` is owner_sufficient() for the
-# roster. Outcomes: "noop_owner" (owner spoke, nothing to do), "arm_known"
+# roster. Outcomes: "noop_owner" (owner spoke - label the turn as the owner,
+# voice-confirmed, but never arm; #28 PR-C), "arm_known"
 # (a remembered non-owner - arm and name), "arm_unknown" (a clear stranger,
 # only when the owner is enrolled so we know it is not them - arm and ask),
 # or "defer" (matcher could not decide, or could not rule out the owner).
@@ -984,6 +987,12 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # keys. No crosstalk marker - a confident single match is one voice.
     payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
                "source": "local"}
+    if name.casefold() == (cfg.get("user_name") or "User").casefold():
+        # #28 PR-C (the owner's identity is shown, not hidden): a confident
+        # OWNER match is marked so the chips can say "voice confirmed". The
+        # projection decides by name, so old payloads without this key still
+        # render the new head; consumers ignore unknown keys as ever.
+        payload["owner"] = True
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
                                              session, turn_id=turn_id)
     # Anchor food: a clean single-speaker utterance refreshes the matched
@@ -1028,6 +1037,23 @@ def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None):
                                  source="harvested-short") or changed
     if changed:
         voiceid.audit_banks_if_changed(cfg or {})
+
+
+async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
+                            cfg, verdict, turn_id=None):
+    """Label a room-off turn the ambient check confidently matched to the
+    OWNER (#28 PR-C: the owner's identity is shown, not hidden). The same
+    turn-id-targeted attach every label write uses, with the owner marker so
+    the chips can say "voice confirmed"; then the anchor top-up the noop
+    path always did. Nothing else: no arming, no roster, no ElevenLabs
+    call, no metering - a solo session stays solo, it just stops pretending
+    the app does not know who is speaking."""
+    payload = {"clusters": ["local"], "labels": [verdict["name"]],
+               "uncertain": [], "source": "local", "owner": True}
+    await _attach_until_deadline(chat_id, commit_ts, payload, session,
+                                 turn_id=turn_id)
+    await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"],
+                            pcm, sample_rate, cfg)
 
 
 async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
@@ -1081,8 +1107,10 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                       turn_id=None, speculative=None):
     """The ambient local check for one committed utterance (room mode off).
     Runs the on-device matcher against every sufficient remembered voice and
-    acts on the pure `ambient_decision`: owner's voice is a no-op (its anchor
-    is topped up), a remembered non-owner arms room mode and is named, and a
+    acts on the pure `ambient_decision`: the owner's voice labels the turn
+    as the owner, voice-confirmed, without arming anything (#28 PR-C; the
+    anchor is topped up as always), a remembered non-owner arms room mode
+    and is named, and a
     clear stranger - decidable only when the owner is itself enrolled - arms
     and raises the ask-fallback. Anything undecidable defers: room mode
     stays off and only the introduction/command/toggle doors remain (#28
@@ -1110,10 +1138,16 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         log.info("ambient check: chat=%s ms=%.0f decision=%s", chat_id,
                  (time.perf_counter() - t0) * 1000, decision)
         if decision == "noop_owner":
+            # #28 PR-C: the owner's identity is shown, not hidden. A
+            # confident owner match now LABELS the turn (owner-marked, so
+            # the chips can say "voice confirmed") - it still never arms,
+            # never rosters, never fires an ElevenLabs call, and still tops
+            # up the owner's anchor. Room-off solo chats therefore carry
+            # owner labels on confidently-matched turns.
             if voiceid.matched(verdict):
-                await asyncio.to_thread(_accumulate_fast_anchor,
-                                        verdict["person_id"], pcm,
-                                        sample_rate, cfg)
+                await _owner_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                                        session, cfg, verdict,
+                                        turn_id=turn_id)
             return
         if decision == "arm_known":
             await _arm_known_pass(chat_id, pcm, sample_rate, commit_ts,

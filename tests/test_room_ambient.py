@@ -6,11 +6,13 @@ now gets a quiet LOCAL-ONLY check. What these tests prove, in order:
 
 1. THE LATENCY PIN: the committed transcript arrives while the ambient
    check is deliberately wedged open - the live path never waits on it.
-2. The decision table, end to end through the relay: the owner's voice is a
-   no-op; a remembered non-owner arms room mode, joins the roster and names
-   the turn; a clear stranger (decidable only because the owner is enrolled)
-   arms, labels an ordinal, and raises the ask-fallback; an undecidable
-   verdict defers with room mode untouched.
+2. The decision table, end to end through the relay: the owner's voice
+   labels the turn as the owner, voice-confirmed, and arms NOTHING (#28
+   PR-C - it used to write no label at all; the owner's identity is shown,
+   not hidden); a remembered non-owner arms room mode, joins the roster and
+   names the turn; a clear stranger (decidable only because the owner is
+   enrolled) arms, labels an ordinal, and raises the ask-fallback; an
+   undecidable verdict defers with room mode untouched.
 3. AMBIENT IS LOCAL-ONLY: none of those decisions makes an ElevenLabs batch
    call.
 4. DISARM IS SACRED: "solo mode" sets a durable ambient-off (even with room
@@ -267,7 +269,14 @@ def test_committed_transcript_arrives_while_ambient_is_wedged(
 
 # ── 2. the decision table, end to end ───────────────────────────────────────
 
-def test_owner_voice_is_a_noop(app, relay, batch_calls, matcher):
+def test_owner_voice_labels_but_never_arms(app, relay, batch_calls, matcher):
+    """#28 PR-C deliberately updated this pin (formerly
+    test_owner_voice_is_a_noop, which asserted only that nothing armed):
+    the owner's identity is shown, not hidden. A confident owner match in a
+    room-off session now writes an owner-marked confident label on the turn
+    - so solo chats can answer "who is speaking?" - while everything the
+    old pin guaranteed still holds: no arm, no roster, no ElevenLabs
+    call."""
     _remember("Alex")  # the owner, sufficiently enrolled
     pid_owner = anchors.store().find_by_name("Alex")["person_id"]
     matcher["verdicts"] = [_verdict_match("Alex", pid_owner)]
@@ -277,11 +286,16 @@ def test_owner_voice_is_a_noop(app, relay, batch_calls, matcher):
             ws.send_json({"chat_id": chat["id"]})
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
-            assert _wait_for(lambda: matcher["calls"] >= 1)
+            msg = _insert_user_message(chat["id"])
+            labels = _wait_for(lambda: _message_labels(msg["id"]))
             ws.send_json({"done": True})
     on, _ = _chat_state(chat["id"])
     assert on is False
     assert _roster(chat["id"]) == []
+    parsed = json.loads(labels)
+    assert parsed["labels"] == ["Alex"]
+    assert parsed["uncertain"] == []
+    assert parsed["owner"] is True   # the chips' voice-confirmed marker
     assert batch_calls["calls"] == 0
 
 

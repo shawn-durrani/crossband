@@ -54,9 +54,13 @@ test('the mode line tells room on, solo and ambient apart', () => {
   const solo = modeReadout({ chat: { room_mode: false, ambient_off: true, roster_count: 0 } })
   assert.equal(solo.label, 'solo')
   assert.match(solo.title, /solo mode/)
-  assert.equal(
-    modeReadout({ chat: { room_mode: false, ambient_off: false, roster_count: 0 } }).label,
-    'ambient listening')
+  const ambient = modeReadout({ chat: { room_mode: false, ambient_off: false, roster_count: 0 } })
+  assert.equal(ambient.label, 'ambient listening')
+  // #28 PR-C: the ambient copy is honest about owner labels - the session
+  // stays solo, but the owner's turns are voice-confirmed, so the old
+  // "your own voice changes nothing" wording is gone
+  assert.match(ambient.title, /voice-confirmed/)
+  assert.doesNotMatch(ambient.title, /changes nothing/)
   // no chat block: no line
   assert.equal(modeReadout({ chat: null }), null)
   assert.equal(modeReadout(null), null)

@@ -207,14 +207,31 @@ still books when labelling fails, and the anchor prefix is cached per
 roster snapshot with two hard pins: a cache hit reads zero clip files,
 and any anchor mutation invalidates, whichever store instance wrote it.
 
+**The owner's identity is shown, not hidden (#28 PR-C).** The ambient
+check voice-verifies the owner constantly (it is how solo sessions stay
+solo), and the projection used to hide that on purpose: a confident
+owner match rendered byte-identically to an unlabelled turn. That pin
+is deliberately replaced. A room-off confident owner match now writes
+an owner-marked confident label on the turn (never arming, never
+rostering, never calling ElevenLabs, anchor top-up unchanged), the
+projection renders a confident owner-alone label as the owner's name
+plus the voice-confirmed marker in every mode - room on, ambient, or
+solo - the chips show a quiet voice-confirmed tick, and the
+stable-block explainer tells seats what the marker means, so "who is
+speaking?" is answerable in a solo chat. What survives, still pinned: a
+chat with NO labels renders byte-identically to history, uncertain
+labels still never become the owner or a guessed name, and the ambient
+no-arm and local-only guarantees hold unchanged.
+
 **Naming is law (#28).** Owner-set display names are locked: the rename
 UI and a spoken correction ("her name is spelt ...") both set a
 preferred name owner-set, and from then on no automated path - alias
 capture, introductions, anything - may change it. The preferred name is
 pinned to win on every surface a name renders or ships: the voice
 chips, the roster snapshot, the model-facing projection heads and
-crosstalk splits (with the owner-confident-equals-unlabelled
-byte-identity pin untouched, and uncertain labels still never leaking a
+crosstalk splits (the OWNER's head is the pinned exception: since PR-C
+it renders the bare configured name plus the voice-confirmed marker,
+never the preferred map, and uncertain labels still never leak a
 name), memory ingest's `guest:<preferred name>`, and the STT keyterm
 hints. Corrections match conservatively - the named target must resolve
 to exactly one known person, an unnamed correction falls back to the
@@ -318,16 +335,16 @@ week when it was maintained by hand.
 - (`test_mcp_servers_api.py`) Connections-page MCP management
 - (`test_mcp_servers_auth.py`) Host-level routes stay on the host
 - (`test_memory_attribution.py`) Guest speaker classes on memory ingest (#28 phase 3): owner turns stay `user`, confident guests go `guest:<preferred name>`, uncertain and open-flagged turns go `guest:unknown`, `SOURCE_APP` untouched
-- (`test_naming_law.py`) Naming is law (#28): owner-set preferred names are locked against every automated path and win on every surface (projection heads, ingest, chips via the store shape), spoken corrections set them conservatively, introduction variants re-identify instead of minting twins, the merge endpoint folds banks under keep-best-N with the oldest id surviving, and forget stays forgotten
+- (`test_naming_law.py`) Naming is law (#28): owner-set preferred names are locked against every automated path and win on every surface (projection heads, ingest, chips via the store shape - the owner's own head excepted since PR-C: bare cfg name plus the voice-confirmed marker), spoken corrections set them conservatively, introduction variants re-identify instead of minting twins, the merge endpoint folds banks under keep-best-N with the oldest id surviving, and forget stays forgotten
 - (`test_memory_client.py`) Memory client degradation
 - (`test_models_status.py`) GET /api/models/status
 - (`test_openai_client.py`) Keyless-local edge for the OpenAI-compatible adapter
 - (`test_prewarm.py`) Ambient recall fires at speech-end, the round adopts it only on a match
 - (`test_pricing_api.py`) Operator-editable rate cards
-- (`test_projection.py`) Characterization tests for the transcript projection, covering the load-bearing invariants, including room-mode voice labels (#28 phase 3) and the unlabelled-chat byte-identity gate
+- (`test_projection.py`) Characterization tests for the transcript projection, covering the load-bearing invariants, including room-mode voice labels (#28 phase 3), the unlabelled-chat byte-identity gate, and the owner's voice-confirmed head (#28 PR-C)
 - (`test_prompt_guardrail.py`) High-salience personal-claim guardrail
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
-- (`test_room_ambient.py`) Ambient room detection (#28): the local matcher runs on every committed utterance while room mode is off - the owner is a no-op, a remembered voice arms and names, a clear stranger (only when the owner is enrolled) arms and asks, undecidable defers - it never calls ElevenLabs, and "solo mode" sets a sacred durable disarm until an explicit re-enable clears it; since PR-B ambient is the ONLY automatic arming door
+- (`test_room_ambient.py`) Ambient room detection (#28): the local matcher runs on every committed utterance while room mode is off - the owner's turn is labelled voice-confirmed without arming anything (PR-C), a remembered voice arms and names, a clear stranger (only when the owner is enrolled) arms and asks, undecidable defers - it never calls ElevenLabs, and "solo mode" sets a sacred durable disarm until an explicit re-enable clears it; since PR-B ambient is the ONLY automatic arming door
 - (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N-per-length-class refresh, the two-part sufficiency bar, forget-deletes-audio, the prefix builder, the hygiene guard's quarantine/close-pair storage, the tap-to-correct audio cache
 - (`test_room_commands.py`) Room-mode commands (#28, chat 198): "group mode, please" arms and "solo mode" disarms through the same never-awaited scan, the verdict-line allowlist grows the command outcomes, talk ABOUT the mode changes nothing, and the engine feeds seats the per-round room state
 - (`test_room_identify.py`) Anchored identification (#28 phase 2): anchor-prefix requests with the roster+1 hint, name labels, cross-session re-identification, elimination and anchor accumulation, the unknown-voice ask-fallback, the mismatch flag that never mutates a label, tap-to-correct, roster/flag live events
@@ -378,10 +395,10 @@ week when it was maintained by hand.
 - (`spendView.test.js`) Tests for the Spend page: it must lead with an honest answer, not a table
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard
 - (`textQueue.test.js`) Invariant tests for per-chat text batching + pre-ingestion cancel
-- (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state
+- (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state, and the owner's voice-confirmed marker (#28 PR-C) is additive-only so old payloads render unchanged
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery
 - (`voiceGate.test.js`) Pure-function tests for the voice playback gate (a regression guard)
-- (`voiceHealth.test.js`) The voice health strip's derivations (#28): matcher-state readouts (degraded states say turns stay unnamed and arming is manual - never a cloud-fallback promise, which retired in PR-B), the room/solo/ambient mode line, the live pulse's exact "local · 227ms" formatting with 'pending' only during a live session, known-voice progress lines, and close-pair warnings
+- (`voiceHealth.test.js`) The voice health strip's derivations (#28): matcher-state readouts (degraded states say turns stay unnamed and arming is manual - never a cloud-fallback promise, which retired in PR-B), the room/solo/ambient mode line (whose ambient copy is honest that the owner's turns are voice-confirmed since PR-C), the live pulse's exact "local · 227ms" formatting with 'pending' only during a live session, known-voice progress lines, and close-pair warnings
 - (`voiceRecovery.test.js`) Tests for voice session recovery: a session must repair itself when the tab
 - (`voiceTrace.test.js`) Pure-function tests for the client-side voice latency trace
 - (`voiceView.test.js`) Tests for the voice call screen's state rules
