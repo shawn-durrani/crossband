@@ -11,7 +11,7 @@
 // - people: GET /api/voice/people's list - where the names come from,
 //   because the caller could already see them there.
 
-import { displayName, sufficiencyProgress } from './roomState.js'
+import { displayName, sufficiencyProgress, voiceChips } from './roomState.js'
 
 // How the matcher's state reads on the strip. 'ready' is the identity
 // path working; since #28 PR-B there is NO cloud identity fallback, so a
@@ -167,10 +167,53 @@ export function closeVoiceLines(people) {
   return out
 }
 
+// ---- the bounded chip row (#28, dock refinement) ------------------------
+//
+// The tray has a fixed width, so the chip row must have a fixed ceiling:
+// past MAX_DOCK_CHIPS the rest collapse into one "+N" whose title names
+// them. Bounding lives here, not in the components, so the desktop tray and
+// the mobile one-liner overflow by the same rule.
+export const MAX_DOCK_CHIPS = 4
+
+export function boundedChips(chips, max = MAX_DOCK_CHIPS) {
+  const all = (Array.isArray(chips) ? chips : []).filter(
+    (c) => c && typeof c === 'object' && c.name)
+  const n = Number(max)
+  const limit = Number.isFinite(n) && n > 0 ? Math.floor(n) : MAX_DOCK_CHIPS
+  const shown = all.slice(0, limit)
+  const rest = all.slice(limit)
+  return {
+    all,
+    shown,
+    hidden: rest.length,
+    more: rest.length ? `+${rest.length}` : '',
+    moreTitle: rest.length ? `Also: ${rest.map((c) => c.name).join(', ')}` : '',
+  }
+}
+
+// The mobile call screen's single line - "Listening · Shawn ✓ +1" - which
+// expands on tap into the same chips the desktop tray shows. `status` is
+// the already-derived status line (voiceView.statusFor); its trailing
+// ellipsis is dropped so the separators read as one sentence. With no
+// chips it is just the status, exactly as the call screen has always read.
+export function collapsedVoiceSummary(status, chips) {
+  const head = String(status || '').replace(/…+$/, '').trim()
+  const { shown, more } = boundedChips(chips, 1)
+  const parts = [head]
+  if (shown.length) parts.push(more ? `${shown[0].short} ${more}` : shown[0].short)
+  return parts.filter(Boolean).join(' · ')
+}
+
 // The assembled strip: everything the dock and the call screen render, or
 // null when there is nothing useful to show (no health snapshot yet).
-export function healthStrip({ health, people, sufficientSeconds, minShortClips,
-                              sessionActive }) {
+//
+// `chips` (#28, dock refinement) is the two-tier dock's status tier: one
+// bounded chip per person, replacing the unbounded prose run that used to
+// overflow the tray. `voices` and the readouts stay - they moved behind the
+// settings disclosure rather than away.
+export function healthStrip({ health, people, roster, sufficientSeconds,
+                              minShortClips, sessionActive,
+                              maxChips = MAX_DOCK_CHIPS }) {
   if (!health || typeof health !== 'object') return null
   return {
     matcher: matcherReadout(health.matcher),
@@ -178,5 +221,7 @@ export function healthStrip({ health, people, sufficientSeconds, minShortClips,
     pulse: pulseReadout(health.last_decision, !!sessionActive),
     voices: knownVoiceLines(people, sufficientSeconds, minShortClips),
     close: closeVoiceLines(people),
+    chips: boundedChips(
+      voiceChips(roster, people, sufficientSeconds, minShortClips), maxChips),
   }
 }

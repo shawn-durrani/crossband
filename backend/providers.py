@@ -342,7 +342,10 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         f"means the app's on-device voice check confidently recognised {user}'s own "
         f"voice on that turn - that label, not any hearing of yours, is how you know "
         f"it was {user} speaking, and it applies in any mode, including with room "
-        "mode off. A note under a turn saying two "
+        "mode off. A turn headed \"<name> (learning this voice)\" means the app worked "
+        "out who spoke by elimination - that person was the only one in the room - "
+        "while it is still learning their voice, so use the name but treat it as "
+        "likely rather than certain. A note under a turn saying two "
         "voices spoke at once means people talked over each other and the transcript may "
         "have lost or merged the quieter person's words - if the missing words matter, "
         "ask that person to repeat what they said. A best-effort split by voice under "
@@ -603,6 +606,11 @@ def _iso(ts):
 # - Confident named labels: the named person (or people - one utterance can
 #   confidently hold two voices), marked "(in the room)" so a human guest is
 #   never mistaken for an AI seat.
+# - A COLD-START label (#28): the named person plus "(learning this voice)".
+#   The app knows who spoke because the room could hold nobody else, and it
+#   is honest that the voice itself is not recognised yet. This is the one
+#   place a still-uncertain label speaks its name, and it is earned by
+#   elimination rather than guessed - see diarize.cold_start_person.
 # - Uncertain labels (ordinals, still-learning voices, elimination guesses):
 #   "unidentified speaker" - NEVER the owner, and never the guessed name.
 #   The chips may show "probably Alex"; the models must not be told Alex.
@@ -615,6 +623,13 @@ IN_ROOM_SUFFIX = " (in the room)"
 # or solo. Deliberately NOT "(in the room)": the owner is not a guest, and
 # the marker's whole point is that it applies with room mode off too.
 VOICE_CONFIRMED_SUFFIX = " (voice confirmed)"
+# The cold-start marker (#28). A turn the app placed by ELIMINATION - one
+# person in the room, a bank too thin to recognise them - is named, and the
+# suffix says exactly how much that name is worth: likely, and improving.
+# Deliberately not the pending head (the name is known) and deliberately not
+# "voice confirmed" (nothing was recognised); the seats got fourteen
+# "identity pending" heads in a row for a person the room could only contain.
+LEARNING_SUFFIX = " (learning this voice)"
 
 # Honest pending identity (#28, night test 4; meaning narrowed by PR-B).
 # A room-mode user turn whose label has not landed yet projects this head,
@@ -713,6 +728,17 @@ def _user_turn_head(msg, cfg, now=None):
               if isinstance(l, str) and _clean_head(l)]
     if not labels:
         return owner
+    if data.get("learning") is True and len(labels) == 1:
+        # Cold start (#28): named by elimination, still being learned. Read
+        # before the uncertain rules below on purpose - the label also rides
+        # `uncertain` so older consumers stay conservative, and without this
+        # branch the head would say "unidentified speaker" about the only
+        # person the room can hold. Preferred display name, like every other
+        # named head.
+        shown = _clean_head(_display_name(labels[0], cfg)) \
+            or _clean_head(labels[0])
+        if shown:
+            return shown + LEARNING_SUFFIX
     uncertain = {u for u in (data.get("uncertain") if isinstance(data.get("uncertain"), list) else [])
                  if isinstance(u, str)}
     named, any_unidentified = [], False

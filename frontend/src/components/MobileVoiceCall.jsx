@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Mic, MicOff, Users, X } from 'lucide-react'
+import { Check, ChevronDown, Mic, MicOff, Users, X } from 'lucide-react'
 import { orbStateFor, statusFor, showInterruptHint, displayPartial } from '../voiceView'
-import { AMBIENT_EXPLAINER } from '../roomState'
+import { AMBIENT_EXPLAINER, CHIP_CONFIRMED, CHIP_LEARNING } from '../roomState'
+import { collapsedVoiceSummary } from '../voiceHealth'
+
+// Chip state -> colour. The states themselves, their labels and their order
+// are derived in roomState.js (pure, node --test); this maps one to a class.
+const CHIP_CLASS = {
+  [CHIP_CONFIRMED]: 'border-emerald-800/80 text-emerald-200/90',
+  [CHIP_LEARNING]: 'border-dashed border-amber-700/70 text-amber-200/90',
+}
+const CHIP_FALLBACK = 'border-edge2 text-ink-dim'
 
 // Full-screen mobile voice "call" overlay. Rendered by App only while a voice
 // session is live (voiceState !== 'off'). Mobile-only: the wrapper is `sm:hidden`
@@ -21,6 +30,8 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                                           rosterText = '', rosterHint = '',
                                           askText = null, health = null }) {
   const [muted, setMuted] = useState(false)
+  // Voice identity: one line by default, the full picture on tap (#28).
+  const [voicesOpen, setVoicesOpen] = useState(false)
   // Transcript browsing: faded captions aren't gone - swipe up (or tap the
   // hint) to scroll back through everything said this session.
   const [browsing, setBrowsing] = useState(false)
@@ -126,49 +137,64 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
         </div>
       </div>
 
-      {/* The roster chip (#28 phase 2): the transparency cue that turns are
-          being attributed by voice, and to whom. Same copy as the desktop
-          dock (roomState.js). */}
-      {rosterText && (
-        <div className="px-4 pt-1 flex justify-center">
-          <span
-            className="inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border border-sky-800 text-sky-200 bg-sky-950/50 max-w-full"
-            title={rosterHint}
-          >
-            <Users size={13} />
-            <span className="truncate">{rosterText}</span>
-          </span>
-        </div>
-      )}
-      {/* The voice health strip (#28), same pure derivations as the desktop
-          dock (voiceHealth.js) - matcher state, mode, the last
-          identification's path/latency, and per-voice learning progress. */}
+      {/* Voice identity, ONE line (#28, the dock refinement). The roster
+          chip and the health strip used to be two separate floating rows of
+          unbounded prose on a phone-width screen; on mobile they collapse
+          into a single summary - "Listening · Alex ✓ +1" - that expands on
+          tap into exactly what the desktop tray shows. Every derivation
+          (the summary string, the chips, the "+N") comes from
+          voiceHealth.js / roomState.js. */}
       {health && (
-        <div className="px-4 pt-1 flex justify-center" role="status"
-             aria-label="Voice health">
-          <span className="text-[11px] text-ink-faint text-center max-w-full">
-            <span title={health.matcher.title}
-                  className={health.matcher.degraded ? 'text-amber-300/90' : ''}>
-              {health.matcher.label}
-            </span>
-            {health.mode && <span title={health.mode.title}> · {health.mode.label}</span>}
-            {health.pulse && <span title={health.pulse.title}> · {health.pulse.label}</span>}
-            {health.voices.length > 0 && (
-              <span title="Remembered voices, and how much clear speech has been learned for each">
-                {' · '}
-                {health.voices.map((v) => (v.done ? `${v.name} ✓` : `${v.name} ${v.label}`)).join(', ')}
+        <div className="px-4 pt-1 flex flex-col items-center gap-1">
+          <button
+            type="button"
+            className="text-xs text-ink-dim max-w-full truncate px-2 py-1"
+            aria-expanded={voicesOpen}
+            aria-label={voicesOpen ? 'Hide voice detail' : 'Show voice detail'}
+            title={rosterHint || undefined}
+            onClick={() => setVoicesOpen((o) => !o)}
+          >
+            {collapsedVoiceSummary(status, health.chips.all)}
+            <ChevronDown
+              size={12}
+              className={`inline ml-1 ${voicesOpen ? 'rotate-180' : ''}`}
+              aria-hidden="true"
+            />
+          </button>
+          {voicesOpen && (
+            <div className="flex flex-col items-center gap-1 max-w-full"
+                 role="status" aria-label={rosterText || 'Voice health'}>
+              <div className="flex flex-wrap justify-center gap-1">
+                {health.chips.all.map((chip) => (
+                  <span
+                    key={chip.key}
+                    className={`voice-chip ${CHIP_CLASS[chip.state] || CHIP_FALLBACK}`}
+                    title={chip.title}
+                  >
+                    {chip.state === CHIP_CONFIRMED && <Check size={11} aria-hidden="true" />}
+                    <span>{chip.label}</span>
+                  </span>
+                ))}
+              </div>
+              <span className="text-[11px] text-ink-faint text-center max-w-full">
+                <span title={health.matcher.title}
+                      className={health.matcher.degraded ? 'text-amber-300/90' : ''}>
+                  {health.matcher.label}
+                </span>
+                {health.mode && <span title={health.mode.title}> · {health.mode.label}</span>}
+                {health.pulse && <span title={health.pulse.title}> · {health.pulse.label}</span>}
+                {(health.close || []).map((line) => (
+                  <span
+                    key={line}
+                    className="text-amber-300/90"
+                    title="These voices' stored banks sit close together, so the matcher demands a wider winning margin before naming either - fewer names, never wrong ones."
+                  >
+                    {' · '}{line}
+                  </span>
+                ))}
               </span>
-            )}
-            {(health.close || []).map((line) => (
-              <span
-                key={line}
-                className="text-amber-300/90"
-                title="These voices' stored banks sit close together, so the matcher demands a wider winning margin before naming either - fewer names, never wrong ones."
-              >
-                {' · '}{line}
-              </span>
-            ))}
-          </span>
+            </div>
+          )}
         </div>
       )}
       {/* The ask-fallback, on the call screen where the answer is SPOKEN:

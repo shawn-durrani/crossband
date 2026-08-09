@@ -418,29 +418,55 @@ body {
   display: flex; flex-direction: column; align-items: flex-end;
   gap: var(--space-8);
 }
-.voice-dock .voice-controls {
-  display: flex; align-items: center; gap: var(--space-8);
-  /* One row, always: wrapping used to dump the end-session × onto its own
-     line inside the capsule whenever the stop button appeared (speaking
-     state), producing a lopsided two-story pill. The slider gives way first. */
-  flex-wrap: nowrap; justify-content: flex-end;
+/* ONE bounded container, two tiers (#28, the dock refinement). The dock used
+   to stack four independently-sized floating layers, the topmost of which was
+   a run of prose with no width limit - it overflowed the tray as soon as a
+   second voice existed. The panel now owns the width, so chips WRAP inside it
+   and no amount of text can displace the orb below it. */
+.voice-dock .voice-panel {
+  display: flex; flex-direction: column; gap: var(--space-8);
+  width: min(360px, calc(100vw - 40px));
   background: var(--t-panel);
   border: 1px solid var(--t-edge);
-  border-radius: var(--r-full);
-  padding: var(--space-4) 10px;
-  max-width: min(460px, calc(100vw - 40px));
+  border-radius: var(--r-md);
+  padding: var(--space-8) 10px;
   box-shadow: var(--shadow-pop);
 }
-.voice-dock .voice-controls input[type=range] { min-width: 44px; flex: 0 1 80px; }
-.voice-dock .voice-controls button, .voice-dock .voice-controls > span > .tabular-nums {
-  flex-shrink: 0;
+.voice-dock .voice-panel:empty { display: none; }
+/* Tier 1 - status: chips wrap leftward, the pulse holds the right edge. */
+.voice-tier-status { display: flex; align-items: flex-start; gap: var(--space-8); }
+.voice-chips { display: flex; flex-wrap: wrap; gap: var(--space-4); min-width: 0; }
+.voice-pulse {
+  flex-shrink: 0; margin-left: auto; white-space: nowrap;
+  font-size: var(--text-micro); color: var(--t-ink-faint);
 }
+.voice-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  font-size: var(--text-micro); line-height: 1.6;
+  border: 1px solid var(--t-edge2); border-radius: var(--r-full);
+  padding: 1px 8px;
+}
+.voice-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Tier 2 - controls. Wrapping is allowed HERE, unlike the old capsule, because
+   the panel bounds the width instead of the row having to. */
+.voice-tier-controls {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-8);
+}
+.voice-tier-controls > button { flex-shrink: 0; }
+/* The settings disclosure: the set-once sliders and the standing readouts. */
+.voice-settings {
+  display: flex; flex-direction: column; gap: var(--space-8);
+  border-top: 1px solid var(--t-edge2); padding-top: var(--space-8);
+}
+.voice-settings input[type=range] { min-width: 44px; }
 .voice-controls-toggle {
-  /* Collapsed form of the controls capsule: one small round button. */
+  /* Collapsed form of the controls tier: one small round button. It sits
+     INSIDE the panel now, so it carries no border or shadow of its own -
+     a bordered pill inside a bordered box reads as two trays. */
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: var(--r-full);
-  background: var(--t-panel); border: 1px solid var(--t-edge);
-  color: var(--t-ink-dim); box-shadow: var(--shadow-pop);
+  width: 28px; height: 28px; border-radius: var(--r-full);
+  background: transparent; border: none;
+  color: var(--t-ink-dim);
 }
 .voice-controls-toggle:hover { color: var(--t-ink); }
 .voice-controls-toggle:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }

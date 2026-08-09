@@ -35,6 +35,35 @@ Three things catch what the phrase lists miss:
 If a phrasing never triggers anything, the manual doors always work: the
 room-mode toggle in the voice dock, or typing the command.
 
+## Starting from nothing: cold-start enrolment
+
+Every route above assumes the app has something to work with. If your
+stored voice is empty - you forgot a person, or cleared your own record -
+none of them can help: being recognised needs stored clips, an
+introduction needs an introduction-shaped sentence, and correcting a name
+needs a name on the turn to correct.
+
+So there is one route that needs none of that. With room mode ON and
+exactly one person in the room whose voice is not yet learnt, a turn the
+matcher cannot place is worked out by elimination: there is nobody else
+it could be. The audio is stored towards learning that voice, and the
+turn is labelled with their name, marked "learning this voice" - a name
+worth using, not yet worth trusting. Once enough speech is stored, the
+voice is remembered and ordinary recognition takes over.
+
+It is deliberately narrow, because elimination is only sound when there
+is genuinely one candidate:
+
+- never with two or more people in the room (that is what the
+  ask-fallback is for),
+- never when two voices overlap on one turn,
+- never with room mode off, where the app cannot tell you from a
+  stranger with nothing on record,
+- and never instead of a confident match.
+
+The label is a normal label: tap it to correct it if the app got it
+wrong, and the correction feeds the right person instead.
+
 ## English bias, stated plainly
 
 Two separate things lean English:
@@ -74,10 +103,12 @@ an adult child) are exactly the case where the defaults may need moving.
 | `voice_id_min_short_clips` | `2` | The second half of that bar: how many short (one-to-two-second) clips the stored voice must include, so quick interjections ("yes", "hang on") can be recognised, not just full sentences. |
 | `room_roster_max` | `6` | How many people the room can hold at once. |
 
-When tuning, change one knob at a time and check the voice health strip
-in the voice dock first: it shows whether the matcher is ready, how the
-last turn was identified and how fast, each voice's learning progress,
-and a warning when two stored voices sound close.
+When tuning, change one knob at a time and check the voice dock first.
+Its top row shows one chip per person - a tick once their voice is
+remembered, "learning 4s" while it is still being learnt - plus how fast
+the last turn was identified. The matcher's own state, the session mode
+and any "sound close" warning sit behind the settings button beside the
+controls.
 
 ## Similar-voice households
 
@@ -113,12 +144,13 @@ is built to fail towards silence there rather than towards mix-ups:
 
 ## What to check when identification misbehaves
 
-1. The voice health strip (voice dock, or the mobile call screen). Is
-   the matcher `ready`? A `fetching` or `unavailable` matcher means no
-   turns are named and nothing arms automatically until it recovers.
-2. Remembered voices (settings). Does each person show "voice
-   remembered", or are they still learning? Are clips set aside? Is
-   there a "sound close" warning?
+1. The voice dock's settings button (or, on a phone, tapping the one-line
+   summary open). Is the matcher `ready`? A `fetching` or `unavailable`
+   matcher means no turns are named and nothing arms automatically until
+   it recovers.
+2. The chips on the dock's top row, and Remembered voices (settings).
+   Does each person show a tick, or are they still learning? Are clips
+   set aside? Is there a "sound close" warning?
 3. The knobs above, one at a time.
 4. If a name is wrong, tap the name on the turn and correct it. The
    correction is law: no automated step will change it back.

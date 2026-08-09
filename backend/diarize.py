@@ -164,7 +164,18 @@ def ambient_eligible(people, cfg) -> bool:
     match against. Computed once at session open, off the audio path, into a
     session flag - the per-commit path is then a plain bool. With nobody
     remembered, the common no-household case costs nothing and behaves exactly
-    as before ambient existed."""
+    as before ambient existed.
+
+    A COLD owner (#28, cold-start) is deliberately NOT eligible, and the bar
+    stays where it is. With no sufficient voice there is nothing to match
+    against, so identify_utterance can only answer "no_candidates" and
+    ambient_decision can only defer: the check would embed audio on every
+    committed utterance to reach a foregone conclusion. It could not arm
+    either (with an empty bank it cannot tell the owner from a stranger) and
+    it must not bank (same reason), so a cold session would gain nothing it
+    could honestly show. Cold-start enrolment therefore lives on the ARMED
+    path only - see cold_start_person - where the roster proves who is in
+    the room."""
     return bool(voiceid.enabled(cfg)) and any(
         p.get("sufficient") for p in people or [])
 
@@ -195,6 +206,50 @@ def ambient_decision(verdict, owner, owner_ok) -> str:
     if owner_ok and verdict and verdict.get("reason") == "below_threshold":
         return "arm_unknown"
     return "defer"
+
+
+# ---- cold-start enrolment (#28) -----------------------------------------
+#
+# THE DEADLOCK this breaks. Every enrolment door needs something a person
+# who has just forgotten their voice does not have: a confident match needs
+# a bank, the introduction scan needs an introduction-shaped sentence, and
+# tap-to-correct needs a label to tap. So an empty bank stayed empty - the
+# matcher deferred on every turn ("below_threshold" or "no_candidates" over
+# and over), nothing accumulated, and the seats said "identity pending"
+# forever.
+#
+# The way out is elimination, not recognition. In an ARMED room with
+# exactly ONE person on the roster whose bank cannot yet identify them, an
+# utterance the matcher could not place can only be theirs: there is nobody
+# else in the room for it to belong to. That is enough to bank the audio
+# and to tell the seats a name, honestly marked as still being learned.
+#
+# The guards are what keep it conservative:
+# - a MULTI verdict never qualifies. Overlapping speech is the one thing
+#   elimination cannot survive, and it has its own path.
+# - two or more present people never qualify. With a second person in the
+#   room the audio could be either, and that is exactly what the
+#   ask-fallback exists for.
+# - a confident MATCH never qualifies (it is not a defer): a named turn
+#   already has a better answer, and the normal accumulation path takes it.
+# - a matcher that FAILED outright (verdict None) never qualifies: banking
+#   is cheap to get wrong and free to skip, so an unknown state skips.
+COLD_START_SOURCE = "cold-start"
+
+
+def cold_start_person(verdict, solo_pending):
+    """Who this unplaceable utterance can only belong to, or None (pure,
+    unit-tested). `solo_pending` is _room_plan's by-elimination candidate:
+    the name of the ONE present person whose bank is insufficient, and None
+    whenever the roster does not hold exactly that. `verdict` is the local
+    matcher's answer for this utterance."""
+    if not solo_pending:
+        return None
+    if not verdict or verdict.get("status") != voiceid.DEFER:
+        return None
+    if verdict.get("reason") == voiceid.MULTI:
+        return None
+    return solo_pending
 
 
 def set_room_enabled(chat_id, on: bool):
@@ -655,9 +710,12 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
       verdict) -> the one surviving ElevenLabs job runs: batch diarize with
       the anchor prefix, for per-word crosstalk splitting (the phase-4
       machinery, unchanged from there);
-    - ANY other defer -> the turn stays unresolved. No EL call fires because
-      the matcher deferred - a solo utterance can never trigger one, and a
-      wrong cloud-asserted name is structurally impossible;
+    - ANY other defer -> COLD START (#28) when the roster leaves exactly one
+      possible speaker whose bank cannot identify them yet: the turn is
+      labelled as that person, marked still-learning, and the audio is
+      banked. Otherwise the turn stays unresolved. No EL call fires either
+      way because the matcher deferred - a solo utterance can never trigger
+      one, and a wrong cloud-asserted name is structurally impossible;
     - matcher disabled/unavailable -> same as a defer: unresolved, silent.
 
     `speculative` is the silence-start head start's claimed entry (#28
@@ -676,7 +734,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # to do. The phase-1 no-roster ordinal pass retired with the rest of
         # the cloud identity path (#28 PR-B).
         return
-    prefix_pcm, segments, pending, num_speakers = plan
+    prefix_pcm, segments, pending, num_speakers, solo_pending = plan
     if not voiceid.enabled(cfg):
         # The matcher is switched off: no local identity, and (#28 PR-B) no
         # cloud identity either - turns stay unlabelled, room mode itself
@@ -701,6 +759,25 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             log.debug("voiceid fast-label failure detail", exc_info=True)
         return
     if not voiceid.is_multi(verdict):
+        cold = cold_start_person(verdict, solo_pending)
+        if cold:
+            # COLD START (#28): the matcher could not place this utterance,
+            # but only one person is in the room and their bank cannot yet
+            # identify them - so it is theirs by elimination. Bank it, and
+            # tell the seats a name marked as still being learned. Still NO
+            # ElevenLabs call: elimination is free.
+            ms = (time.perf_counter() - t0) * 1000
+            record_decision(chat_id, DECISION_LOCAL, ms)
+            # Content-free, like every log on this path: no name, no words.
+            log.info("diarize pass (cold-start): chat=%s ms=%.0f reason=%s",
+                     chat_id, ms, (verdict or {}).get("reason", "error"))
+            try:
+                await _cold_start_pass(chat_id, pcm, sample_rate, commit_ts,
+                                       session, cfg, cold, turn_id=turn_id)
+            except Exception:
+                log.info("cold-start enrolment failed: chat=%s", chat_id)
+                log.debug("cold-start failure detail", exc_info=True)
+            return
         # THE RETIREMENT PIN (#28 PR-B): a deferred verdict leaves the turn
         # unresolved, full stop. The projection's pending head ages out into
         # today's unlabelled rendering; no ElevenLabs call fires.
@@ -840,10 +917,11 @@ async def _attach_until_deadline(chat_id, commit_ts, payload, session,
 
 def _room_plan(chat_id, sample_rate):
     """Roster snapshot for one pass (worker thread): the anchor prefix for
-    every SUFFICIENT present person, the names still pending an anchor, and
-    the num_speakers hint (present + 1 - the plus-one is what lets an
-    unannounced voice surface as an unmatched cluster). None when the chat
-    has no roster - the phase-1 pass then runs untouched."""
+    every SUFFICIENT present person, the names still pending an anchor, the
+    num_speakers hint (present + 1 - the plus-one is what lets an
+    unannounced voice surface as an unmatched cluster), and the cold-start
+    candidate. None when the chat has no roster - the phase-1 pass then runs
+    untouched."""
     con = db.connect()
     try:
         present = db.get_room_roster(con, chat_id, present_only=True)
@@ -865,7 +943,12 @@ def _room_plan(chat_id, sample_rate):
             pending.append(row["name"])
     prefix_pcm, segments = store.build_prefix(ids, sample_rate)
     num_speakers = min(32, len(present) + 1)
-    return prefix_pcm, segments, pending, num_speakers
+    # The cold-start candidate (#28): exactly one person present, and their
+    # bank cannot identify them yet (a non-empty `pending` with one present
+    # row means that row IS the pending one). Derived here from the roster
+    # read the pass already did, so the defer path costs no extra I/O.
+    solo_pending = present[0]["name"] if len(present) == 1 and pending else None
+    return prefix_pcm, segments, pending, num_speakers, solo_pending
 
 
 async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
@@ -1037,6 +1120,57 @@ def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None):
                                  source="harvested-short") or changed
     if changed:
         voiceid.audit_banks_if_changed(cfg or {})
+
+
+# ---------- the cold-start enrolment pass (#28) ----------
+
+async def _cold_start_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                           name, turn_id=None):
+    """Label and bank one by-elimination turn (see cold_start_person).
+
+    The payload is deliberately BOTH things at once: the label names the
+    person (so the seats stop being told "identity pending" about someone
+    the room can only contain), and the same name rides `uncertain` so every
+    consumer that predates this change keeps treating it as a guess. The new
+    `learning` marker is what upgrades that guess into an honest state - the
+    projection heads the turn "<name> (learning this voice)" and the chip
+    says learning - and, being an added key, it changes nothing for payloads
+    written before it existed.
+
+    Order matches every other label pass: the attach FIRST (it is what the
+    seats are waiting on), then the banking on a worker thread. Tap-to-
+    correct's audio is remembered, so a wrong elimination is one tap from
+    being fixed."""
+    payload = {"clusters": ["local"], "labels": [name], "uncertain": [name],
+               "learning": True, "source": COLD_START_SOURCE}
+    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                             session, turn_id=turn_id)
+    await asyncio.to_thread(_bank_cold_start, chat_id, name, pcm, sample_rate,
+                            cfg)
+    if target_id:
+        from . import anchors
+        anchors.remember_audio(target_id, pcm, sample_rate, 1)
+
+
+def _bank_cold_start(chat_id, name, pcm, sample_rate, cfg):
+    """Add this utterance to the by-elimination person's bank (worker
+    thread), creating their anchor-store entry the first time. The clip
+    still has to clear the ordinary quality gate - a cold start is a reason
+    to accumulate, never a reason to accept noise - and an accepted clip
+    re-runs the pairwise hygiene audit and ends 'anchor pending' on the
+    roster row, exactly as the introduction path does. `source` records how
+    the clip was earned, so the store stays explainable."""
+    from . import anchors
+    store = anchors.store()
+    pid = store.ensure_person(name)
+    if not store.add_clip(pid, pcm, sample_rate, source=COLD_START_SOURCE):
+        return
+    voiceid.audit_banks_if_changed(cfg or {})
+    con = db.connect()
+    try:
+        db.link_room_person(con, chat_id, name, pid)
+    finally:
+        con.close()
 
 
 async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,

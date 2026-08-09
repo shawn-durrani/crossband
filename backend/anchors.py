@@ -447,8 +447,11 @@ class AnchorStore:
         """Offer one utterance's audio as an anchor clip. Applies the quality
         gate, the trim cap and the keep-best-N refresh; evicted clips have
         their files deleted. Returns True if the clip was accepted.
-        `source`: 'introduction' | 'accumulated' | 'correction' - recorded so
-        the store stays explainable."""
+        `source`: 'introduction' | 'accumulated' | 'harvested-short' |
+        'correction' | 'cold-start' - recorded so the store stays
+        explainable. 'cold-start' (#28) is the by-elimination clip banked
+        for the only person in an armed room whose bank cannot identify
+        them yet."""
         pcm = trim_clip(pcm or b"", sample_rate)
         q = clip_quality(pcm, sample_rate)
         if not accepts_clip(q):

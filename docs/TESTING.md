@@ -249,6 +249,30 @@ keep-best-N, the oldest person_id surviving, roster rows re-pointing,
 and the survivor answering to both names. A forgotten person's name
 reappearing creates a fresh record: forget stays forgotten.
 
+**Cold-start enrolment (#28).** Someone whose voice bank is empty used
+to be stuck: a confident match needs clips, the introduction scan needs
+an introduction-shaped sentence, and tap-to-correct needs a label to
+tap - so the matcher deferred on every turn, nothing accumulated, and
+the seats were told "identity pending" over and over about the only
+person in the room. The way out is elimination rather than
+recognition, and the guards are what the tests pin. In an armed room
+holding exactly ONE person whose bank cannot identify them yet, a
+non-multi defer banks the utterance to that person
+(`source='cold-start'`, subject to the ordinary quality gate), links
+their roster row, labels the turn as them and stamps a local pulse -
+with no ElevenLabs call, because elimination is free. Four shapes must
+never qualify and each has its own pin: an overlapping-speech "multi"
+verdict, two or more people present, a confident match, and a matcher
+that failed outright. The learning state is pinned end to end: the
+payload carries `learning` beside a name that also rides `uncertain`
+(so consumers written before the marker keep treating it as a guess),
+the projection heads the turn "<name> (learning this voice)" rather
+than the pending head or the voice-confirmed one, a marker on anything
+but a single label falls through to the ordinary uncertain path, the
+chip says "· learning" and explains that the name came from
+elimination, and the stable-block explainer tells seats to use the
+name but treat it as likely rather than certain.
+
 **The voice health strip (#28).** GET /api/voice/health is pinned
 content-free - states, counts and milliseconds, never a name and never
 transcript text - and the per-chat last-decision record (which path
@@ -256,7 +280,13 @@ identified the last turn, and how fast) is bounded and written only
 from inside the never-awaited background passes, so the zero-latency
 law is untouched by construction. The strip's readouts (matcher state,
 room/ambient/solo mode, the live pulse, per-voice learning progress)
-derive in a pure frontend module.
+derive in a pure frontend module - as does the two-tier dock's status
+row: one chip per person in the three states the app can honestly claim
+(remembered, part-learned, nothing banked yet), ordered
+best-known-first, bounded so the row wraps instead of overflowing, with
+the remainder collapsing into a "+N" that still names them, and the
+mobile call screen's one-line summary ("Listening · Alex ✓ +1") built
+from the same chips.
 
 **Cost and provenance.** Metered, subscription-equivalent and unknown
 never merge; provenance is stamped at write time and cannot be
@@ -346,6 +376,7 @@ week when it was maintained by hand.
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
 - (`test_room_ambient.py`) Ambient room detection (#28): the local matcher runs on every committed utterance while room mode is off - the owner's turn is labelled voice-confirmed without arming anything (PR-C), a remembered voice arms and names, a clear stranger (only when the owner is enrolled) arms and asks, undecidable defers - it never calls ElevenLabs, and "solo mode" sets a sacred durable disarm until an explicit re-enable clears it; since PR-B ambient is the ONLY automatic arming door
 - (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N-per-length-class refresh, the two-part sufficiency bar, forget-deletes-audio, the prefix builder, the hygiene guard's quarantine/close-pair storage, the tap-to-correct audio cache
+- (`test_room_cold_start.py`) Cold-start enrolment (#28): the by-elimination decision table (every non-multi defer banks when exactly one present person cannot be identified yet; a "multi" verdict, a second person in the room, a confident match and a failed matcher never do), the roster derivation and its exit condition once the bank is sufficient, run_pass banking under `source='cold-start'` with a local pulse and no ElevenLabs call, the quality gate still deciding what lands in the bank, and the learning state reaching the seats as "<name> (learning this voice)" with its stable-block explainer
 - (`test_room_commands.py`) Room-mode commands (#28, chat 198): "group mode, please" arms and "solo mode" disarms through the same never-awaited scan, the verdict-line allowlist grows the command outcomes, talk ABOUT the mode changes nothing, and the engine feeds seats the per-round room state
 - (`test_room_identify.py`) Anchored identification (#28 phase 2): anchor-prefix requests with the roster+1 hint, name labels, cross-session re-identification, elimination and anchor accumulation, the unknown-voice ask-fallback, the mismatch flag that never mutates a label, tap-to-correct, roster/flag live events
 - (`test_room_intro.py`) Introduction detection (#28 phase 2): the send-never-waits pin, the lexical prefilter gating utility spend, confirmed introductions/departures driving room mode and the roster, the cap, owner-anchor seeding, the third-field-test arming phrasings, alias capture, the per-scan verdict line
@@ -389,16 +420,16 @@ week when it was maintained by hand.
 - (`messageCost.test.js`) Tests for the chat surface's cost labelling: it must not present
 - (`modelReadout.test.js`) Tests for the per-seat model-status readout: it must not misread on a narrow
 - (`rateCards.test.js`) Tests for owner-entered rate cards: an owner must be able to price a model
-- (`roomState.test.js`) Room-mode roster/flag state (#28 phase 2): the "In the room" chip names exactly the present people, ask/mismatch copy never claims a label changed, the correction menu's options, remembered-voice summaries with the two-part learning bar and set-aside clips (PR-B), preferred display names (#28 phase 3)
+- (`roomState.test.js`) Room-mode roster/flag state (#28 phase 2): the "In the room" chip names exactly the present people, ask/mismatch copy never claims a label changed, the correction menu's options, remembered-voice summaries with the two-part learning bar and set-aside clips (PR-B), preferred display names (#28 phase 3), and the dock's per-person chips - three honest states (remembered/part-learned/nothing banked), a tick beside the name rather than swapped label text, best-known-first order, and the room as the source when there is one
 - (`runningState.test.js`) Tests for per-chat running-task state
 - (`speculative.test.js`) The silence-start hint's firing rule (#28 PR-B): once per silence gap after the confirmation window, re-armed by resumed speech, never outside an utterance
 - (`spendView.test.js`) Tests for the Spend page: it must lead with an honest answer, not a table
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard
 - (`textQueue.test.js`) Invariant tests for per-chat text batching + pre-ingestion cancel
-- (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state, and the owner's voice-confirmed marker (#28 PR-C) is additive-only so old payloads render unchanged
+- (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state, and the owner's voice-confirmed marker (#28 PR-C) and the cold-start learning marker (#28) are additive-only so old payloads render unchanged - one shared rule decides the tick, the "· learning" tag and the bare "?"
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery
 - (`voiceGate.test.js`) Pure-function tests for the voice playback gate (a regression guard)
-- (`voiceHealth.test.js`) The voice health strip's derivations (#28): matcher-state readouts (degraded states say turns stay unnamed and arming is manual - never a cloud-fallback promise, which retired in PR-B), the room/solo/ambient mode line (whose ambient copy is honest that the owner's turns are voice-confirmed since PR-C), the live pulse's exact "local · 227ms" formatting with 'pending' only during a live session, known-voice progress lines, and close-pair warnings
+- (`voiceHealth.test.js`) The voice health strip's derivations (#28): matcher-state readouts (degraded states say turns stay unnamed and arming is manual - never a cloud-fallback promise, which retired in PR-B), the room/solo/ambient mode line (whose ambient copy is honest that the owner's turns are voice-confirmed since PR-C), the live pulse's exact "local · 227ms" formatting with 'pending' only during a live session, known-voice progress lines, close-pair warnings, the bounded chip row with its "+N" overflow, and the mobile call screen's collapsed one-liner ("Listening · Alex ✓ +1")
 - (`voiceRecovery.test.js`) Tests for voice session recovery: a session must repair itself when the tab
 - (`voiceTrace.test.js`) Pure-function tests for the client-side voice latency trace
 - (`voiceView.test.js`) Tests for the voice call screen's state rules
