@@ -529,6 +529,12 @@ _CORRECTION_PATTERNS = [
     r"\bcall (?:her|him|them) \w+",              # "call her Sam" ("call me" is
                                                  # an introduction shape)
     r"\bshould be spel(?:t|led)\b",
+    # Pronunciation notes (#28, names collapse by voice): "Matteo is the
+    # spelling but it's pronounced Mateo" declares two forms of one name -
+    # neither of the shapes above matches it, so it died at the prefilter.
+    r"\bpronounced\b",
+    r"\b(?:is|'s) the spelling\b",
+    r"\bthe spelling is\b",
 ]
 _CORRECTION_RE = re.compile("|".join(_CORRECTION_PATTERNS), re.IGNORECASE)
 
@@ -554,15 +560,21 @@ def build_correction_prompt(text: str, user_name: str, known_names: list) -> str
         "You watch one message from a voice conversation and decide whether "
         "it CORRECTS how a person's name is spelt or what they should be "
         "called: 'her name is spelt Aleks', 'it's actually spelt with a K', "
-        "'call her Sam', 'my name is spelt Matteo'. Merely mentioning or "
+        "'call her Sam', 'my name is spelt Matteo'. A message may instead "
+        "DECLARE two forms of one person's name - a written spelling plus "
+        "how it is pronounced or another name they go by: 'Matteo is the "
+        "spelling but it's pronounced Mateo'. Merely mentioning or "
         "introducing a name is NOT a correction; neither is correcting "
         "anything other than a person's name.\n"
         f"The device owner is {user_name}. People already known: {known}.\n"
         "Reply with ONLY JSON: {\"corrections\": [{\"who\": ..., \"name\": "
-        "...}]}. `name` is the corrected name exactly as the message spells "
-        "it (assemble it from spelled-out letters when given letter by "
-        "letter). `who` is the person being corrected as previously known: "
-        "one of the known names when the message says or implies which, "
+        "..., \"also\": ...}]}. `name` is the corrected name exactly as the "
+        "message spells it (assemble it from spelled-out letters when given "
+        "letter by letter); for a two-form declaration it is the WRITTEN "
+        "spelling. `also` is the second form of a two-form declaration (the "
+        "pronunciation, or the other name), else \"\". `who` is the person "
+        "being corrected as previously known: one of the known names when "
+        "the message says or implies which, "
         f"\"{CORRECTION_TARGET_OWNER}\" when the speaker corrects their own "
         "name ('my name is...'), or \"\" when the message does not say who. "
         "Empty list when the message corrects nobody's name. Never invent "
@@ -575,7 +587,11 @@ def parse_correction_verdict(text) -> list:
     """Parse the utility model's correction verdict, defensively: anything
     off-shape degrades to [] rather than raising. Returns a bounded list of
     {"who": str, "name": str} with cleaned names; `who` may be '', the
-    owner marker, or a cleaned name."""
+    owner marker, or a cleaned name. A two-form alias declaration (#28,
+    names collapse by voice) carries an extra "also" key - the second form
+    - included only when it survives cleaning, is not a relationship noun
+    and actually differs from the name, so single-form entries keep their
+    historical shape exactly."""
     if not text:
         return []
     m = re.search(r"\{.*\}", text, re.DOTALL)
@@ -600,7 +616,12 @@ def parse_correction_verdict(text) -> list:
             who = CORRECTION_TARGET_OWNER
         else:
             who = _clean_name(raw_who)
-        out.append({"who": who, "name": name})
+        parsed = {"who": who, "name": name}
+        also = _clean_name(entry.get("also"))
+        if also and not relationship_noun(also) \
+                and also.casefold() != name.casefold():
+            parsed["also"] = also
+        out.append(parsed)
         if len(out) >= MAX_NAMES_PER_TURN:
             break
     return out
@@ -666,6 +687,8 @@ SCAN_OUTCOMES = (
     "roster_grew",          # already armed; people were added
     "roster_shrank",        # a departure freed roster slots
     "name_corrected",       # a spoken correction set a preferred name
+    "alias_recorded",       # a two-form declaration ("X is the spelling,
+                            # pronounced Y") put both names on one person
     "correction_unmatched", # a correction confirmed, but no unambiguous
                             # target person - nothing changed, by design
     "no_change",            # a confirmed verdict that changed nothing
@@ -725,7 +748,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             verdict = parse_verdict(reply)
             if verdict["introductions"] or verdict["departures"]:
                 intro_outcome = await asyncio.to_thread(apply_scan, chat_id,
-                                                        verdict, cfg, text)
+                                                        verdict, cfg, text,
+                                                        message_id)
                 if outcome is None:
                     outcome = intro_outcome
         if correction_prefilter(text):
@@ -806,13 +830,41 @@ def _recent_confident_speaker(con, chat_id, owner) -> str:
     return ""
 
 
+def _resolve_by_declared_names(name, also, owner, people, roster_names):
+    """Resolve an alias declaration's target from its own two names (#28,
+    names collapse by voice): each form is looked up exactly as a `who`
+    would be (owner alias, exact identity/preferred/merged, confident
+    variant). Returns the identity name when the forms agree on ONE known
+    person, '' when neither form is known (the caller may then fall back to
+    the recent speaker), and None when the forms name two DIFFERENT people
+    - that is ambiguity, and ambiguity does nothing."""
+    hits = []
+    for candidate in (name, also):
+        got = resolve_correction_target(candidate, owner, people,
+                                        roster_names, recent_speaker="")
+        if got and got.casefold() not in {h.casefold() for h in hits}:
+            hits.append(got)
+    if len(hits) > 1:
+        return None
+    return hits[0] if hits else ""
+
+
 def apply_corrections(chat_id, corrections, cfg):
     """Apply confirmed name corrections (synchronous; worker thread). For
     each: resolve the target person conservatively (resolve_correction_target
     above), then set their preferred display name OWNER-SET - the spoken
     correction carries the same authority as the rename UI, and locks the
-    name against every automated path. Returns the scan outcome. Content-free
-    logging: counts only, never names."""
+    name against every automated path.
+
+    ALIAS DECLARATIONS (#28, names collapse by voice) are the exception to
+    the owner-set stamp: "Matteo is the spelling but it's pronounced Mateo"
+    is a statement that BOTH forms are this one person, not a rename fight.
+    Both names are recorded as merged names (so find_by_name, keyterms and
+    future introductions resolve either), and the declared spelling becomes
+    the preferred display name only while no owner-set name exists -
+    set_preferred_name with owner_set=False refuses a locked name, so a
+    name the owner has already chosen stays exactly as chosen. Returns the
+    scan outcome. Content-free logging: counts only, never names."""
     store = anchors.store()
     people = store.people()
     owner = cfg.get("user_name", "User")
@@ -823,26 +875,45 @@ def apply_corrections(chat_id, corrections, cfg):
         recent = _recent_confident_speaker(con, chat_id, owner)
     finally:
         con.close()
-    applied = 0
+    applied = aliased = 0
     for corr in corrections:
         target = resolve_correction_target(corr["who"], owner, people,
                                            roster_names, recent_speaker=recent)
+        also = corr.get("also") or ""
+        if also and not corr["who"]:
+            # An unattributed alias declaration: its own two names are
+            # stronger evidence than the most recent speaker, so try them
+            # first. Two different known people is ambiguity - stop; two
+            # unknown forms fall back to the recent-speaker target above.
+            by_names = _resolve_by_declared_names(corr["name"], also, owner,
+                                                  people, roster_names)
+            if by_names is None:
+                continue
+            if by_names:
+                target = by_names
         if not target:
             continue
         person = store.find_by_name(target)
         pid = person["person_id"] if person else store.ensure_person(target)
-        if store.set_preferred_name(pid, corr["name"], owner_set=True):
+        if also:
+            changed = store.add_merged_name(pid, corr["name"])
+            changed = store.add_merged_name(pid, also) or changed
+            changed = store.set_preferred_name(pid, corr["name"],
+                                               owner_set=False) or changed
+            if changed:
+                aliased += 1
+        elif store.set_preferred_name(pid, corr["name"], owner_set=True):
             applied += 1
-    log.info("name corrections applied: chat=%s applied=%d of=%d",
-             chat_id, applied, len(corrections))
-    if applied:
+    log.info("name corrections applied: chat=%s applied=%d aliases=%d of=%d",
+             chat_id, applied, aliased, len(corrections))
+    if applied or aliased:
         from . import events
         events.notify_room_update()
-        return "name_corrected"
+        return "name_corrected" if applied else "alias_recorded"
     return "correction_unmatched"
 
 
-def apply_scan(chat_id, verdict, cfg, text=""):
+def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
     """Apply a confirmed verdict (synchronous; runs on a worker thread):
 
     - introductions: flip room mode on (durably AND in diarize's in-process
@@ -864,13 +935,19 @@ def apply_scan(chat_id, verdict, cfg, text=""):
       diacritics, an edit or two), or whose utterance voice-matches an
       enrolled non-owner bank, RE-IDENTIFIES that person instead of minting
       a twin; a close-but-not-confident name keeps the new person and
-      raises one merge-question flag.
+      raises one merge-question flag. A voice-match re-identification also
+      RECORDS the introduced spelling on the matched person (#28,
+      fourteenth field test - names collapse by voice), so find_by_name,
+      keyterms and future introductions resolve the new spelling without
+      needing the voice door again.
     - departures: mark the named people left (the cap frees).
 
     Returns the scan's outcome, one of SCAN_OUTCOMES - the verdict line the
     caller logs. `text` is the utterance (for the remembered-name match only
-    - nothing from it is persisted or logged). Content-free logging
-    throughout: counts, never names or text."""
+    - nothing from it is persisted or logged); `message_id` is the persisted
+    user turn, which is how the voice-match arm finds the utterance's own
+    audio in an ARMED room (#28, fourteenth field test). Content-free
+    logging throughout: counts, never names or text."""
     flipped = ask = False
     added = departed = 0
     con = db.connect()
@@ -879,6 +956,11 @@ def apply_scan(chat_id, verdict, cfg, text=""):
                            (chat_id,)).fetchone()
         if not chat:
             return "no_change"
+        # Whether the room was armed BEFORE this scan touched anything: it
+        # decides where the voice-match arm finds the introduction's audio,
+        # and whether the stash may be trusted as the owner's (#28,
+        # fourteenth field test - see the seed gate below).
+        armed_before = bool(chat["room_mode"])
         owner = cfg.get("user_name", "User")
         # The owner's roster identity is the `user_name` SETTING (#28 phase
         # 3): a transcription of the owner's own name - however it was spelt
@@ -942,8 +1024,9 @@ def apply_scan(chat_id, verdict, cfg, text=""):
             # enrolled non-owner bank? A confident match means the person
             # speaking IS someone we remember, whatever the transcriber made
             # of their name - re-identify them instead of minting a twin.
-            voice_person = _voice_matched_person(chat_id, people, cfg,
-                                                 owner) if new else None
+            voice_person = _voice_matched_person(
+                chat_id, people, cfg, owner, message_id=message_id,
+                armed=armed_before) if new else None
             seed_owner = True
             for name in new[:allowed]:
                 known = store.find_by_name(name)
@@ -971,6 +1054,14 @@ def apply_scan(chat_id, verdict, cfg, text=""):
                     seed_owner = False
                     log.info("introduction voice-matched a remembered "
                              "person: chat=%s", chat_id)
+                    # Names collapse by voice (#28, fourteenth field test):
+                    # the introduced spelling matched nobody by spelling
+                    # but the voice is this remembered person's - record
+                    # the spelling on them so keyterms, find_by_name and
+                    # future introductions resolve it directly.
+                    if store.add_merged_name(known["person_id"], name):
+                        log.info("introduced spelling recorded on the "
+                                 "voice-matched person: chat=%s", chat_id)
                 roster_name = known["name"] if known else name
                 pid = known["person_id"] if (known and known["sufficient"]) else ""
                 alias = aliases.get(name)
@@ -1002,7 +1093,18 @@ def apply_scan(chat_id, verdict, cfg, text=""):
                 # ambiguous. An UNNAMED introduction resolves nothing - the
                 # ask it just raised must stand.
                 db.resolve_room_flags(con, chat_id, kind="unknown_voice")
-            _seed_owner_anchor(chat_id, cfg)
+            if not armed_before:
+                # The stash is the ROOM-OFF path's memory of the utterance
+                # that spoke the introduction. In a chat that was ALREADY
+                # armed, nothing has been stashed since arming - whatever
+                # sits there is pre-arm audio whose speaker is unknowable,
+                # and the fourteenth field test's log shows exactly that:
+                # a guest's pre-arm utterance was banked as the OWNER's
+                # anchor because her introduction arrived after ambient had
+                # armed the room. Seeding is gated on THIS scan having
+                # armed the room, when the stash is plausibly the
+                # introduction utterance itself.
+                _seed_owner_anchor(chat_id, cfg)
         for name in departs:
             if db.mark_room_person_left(con, chat_id, name):
                 departed += 1
@@ -1050,20 +1152,35 @@ def _raise_merge_question(con, chat_id, new_name, existing_person):
                         suspected=display)
 
 
-def _voice_matched_person(chat_id, people, cfg, owner):
+def _voice_matched_person(chat_id, people, cfg, owner, message_id=None,
+                          armed=False):
     """Does the introduction utterance's audio confidently match an enrolled
-    NON-owner voice? Peeks the stashed utterance (never consumes it - the
-    owner-anchor seed path still owns that decision), runs the local matcher
-    against every sufficient person, and returns the matched person dict or
-    None. Every doubt is None: this is an extra door to re-identification,
-    never a required one. Runs on the scan's worker thread."""
+    NON-owner voice? Runs the local matcher against every sufficient person
+    and returns the matched person dict or None. Every doubt is None: this
+    is an extra door to re-identification, never a required one. Runs on
+    the scan's worker thread.
+
+    WHERE THE AUDIO COMES FROM (#28, fourteenth field test). Room off: the
+    stashed utterance, peeked, never consumed - the owner-anchor seed path
+    still owns that decision. ARMED room: nothing is stashed once room mode
+    is on, so any stash is stale pre-arm audio that did NOT speak this
+    introduction - that night the scan judged the wrong utterance and the
+    match was missed. The label passes remember each labelled utterance's
+    audio per message id, and that is the audio that actually spoke the
+    introduction; a multi-voice utterance is trusted for nobody."""
     from . import voiceid
     if not voiceid.enabled(cfg):
         return None
-    stashed = diarize.peek_stashed_utterance(chat_id)
-    if not stashed:
-        return None
-    pcm, sample_rate = stashed
+    if armed:
+        entry = anchors.peek_audio(message_id) if message_id else None
+        if not entry or entry[2] != 1:
+            return None
+        pcm, sample_rate = entry[0], entry[1]
+    else:
+        stashed = diarize.peek_stashed_utterance(chat_id)
+        if not stashed:
+            return None
+        pcm, sample_rate = stashed
     candidates = [{"person_id": p["person_id"], "name": p["name"]}
                   for p in people if p.get("sufficient")]
     if not candidates:

@@ -370,6 +370,12 @@ async def stt_stream_relay(ws: WebSocket):
                 for p in people:
                     names.append(preferred.get(p["name"].lower()) or p["name"])
                     names.append(p["name"])
+                    # Merged-away spellings ride too (#28, names collapse
+                    # by voice): a person the store knows under a second
+                    # spelling should have every form biased, or the
+                    # transcriber re-mints the very spelling drift the
+                    # merge just resolved.
+                    names.extend(p["merged_names"])
                 on = bool(row and row["room_mode"])
                 disarmed = bool(row and row["ambient_off"])
                 # Ambient local check (#28): room off, not disarmed, matcher

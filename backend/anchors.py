@@ -68,6 +68,7 @@ SUFFICIENT_SECONDS = 6.0   # accepted seconds needed before identification is tr
 PREFIX_PERSON_SECONDS = 2.5  # roughly how much of each person rides the prefix
 ENROLL_CLIPS = 3           # best N clips averaged into a local voice-id embedding (#28 part 2)
 MAX_PREFERRED_CHARS = 40   # display-name bound, matching the roster's
+MERGED_NAMES_MAX = 8       # spellings one person answers to, bounded (#28)
 PREFIX_CACHE_MAX = 8       # built-prefix snapshots kept per store (#28)
 # Quarantined clips (#28 PR-B, the hygiene guard): clips the pairwise audit
 # set aside are KEPT ON DISK but excluded from matching. Bounded per person;
@@ -397,6 +398,41 @@ class AnchorStore:
             person["preferred_name"] = preferred
             if owner_set:
                 person["preferred_owner_set"] = True
+            self._save(data)
+        return True
+
+    def add_merged_name(self, person_id: str, name: str) -> bool:
+        """Record another identity name this person answers to (#28: names
+        collapse by voice). The door the fourteenth field test demanded: an
+        introduction spelt a remembered person's name in a way no spelling
+        rule could bridge (four edits apart), but the introducer's VOICE
+        confidently matched - so the introduced spelling lands here, and
+        find_by_name, the variant rule, keyterm biasing and future
+        introductions all resolve it to this person instead of minting a
+        twin. Also the alias-declaration door ("Matteo is the spelling but
+        it's pronounced Mateo" puts both forms on one person).
+
+        Conservative and idempotent: a name already covering this person
+        (identity, preferred or merged, case-insensitively) is refused, and
+        the list is bounded at MERGED_NAMES_MAX - a runaway transcriber
+        cannot grow it forever. Returns True when the name was recorded."""
+        name = (name or "").strip()[:MAX_PREFERRED_CHARS].strip()
+        if not name or not re.search(r"[A-Za-z]", name):
+            return False
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id)
+            if person is None:
+                return False
+            merged = list(person.get("merged_names") or [])
+            covered = [person.get("name", ""),
+                       person.get("preferred_name", "")] + merged
+            if any(n and n.strip().casefold() == name.casefold()
+                   for n in covered):
+                return False
+            if len(merged) >= MERGED_NAMES_MAX:
+                return False
+            person["merged_names"] = merged + [name]
             self._save(data)
         return True
 

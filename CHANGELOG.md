@@ -4,6 +4,38 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A remembered voice is now recognised the moment they speak, even in a
+  room that is already listening for several people (#28). Before this,
+  turning room mode on quietly narrowed recognition to the people
+  already listed as present - so a household member the app knew
+  perfectly well could talk all evening and never be named, because
+  they were never on the list and could not get on it without being
+  named. Recognition now checks everyone the app remembers, and a
+  recognised person joins the room on their first turn. Everything
+  stays on this device and nothing new runs while you are speaking.
+
+- A brand-new guest can now be learnt while you are in the room (#28).
+  Learning a new voice by elimination used to require them to be the
+  only person present. Now it is enough that everyone else in the room
+  is already recognisable: a clear turn that matches nobody known is
+  put towards the one person still being learnt, labelled with their
+  name and marked "learning this voice". The same cautions hold - never
+  when voices overlap, never over a confident match, and poor audio is
+  still rejected.
+
+- An introduction under an unfamiliar spelling now sticks to the right
+  person (#28). If someone the app remembers is introduced under a
+  spelling too different for any spelling rule ("Samantha" for a
+  remembered "Sam" is fine; a wholly different rendering was not), the
+  app now checks the introduction's own voice - including when room
+  mode is already on, where it previously judged leftover audio from
+  before the room opened (and could even bank a guest's words as the
+  owner's voice; that door is closed). The new spelling is kept on the
+  person's record, so it is transcribed and resolved correctly from
+  then on. And saying "Matteo is the spelling but it's pronounced
+  Mateo" now records both forms on one person without overriding any
+  name you have set yourself.
+
 - The voice panel now answers "is it still learning?" and "why wasn't
   that turn named?" (#28). Each remembered voice shows whether it is
   still growing or refreshing in place, how many clips it holds and when

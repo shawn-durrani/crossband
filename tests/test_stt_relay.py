@@ -241,6 +241,29 @@ def test_remembered_names_ride_the_keyterms_even_with_no_roster(app,
     assert q["keyterms"] == ["User", "Sam", "Samantha"]
 
 
+def test_merged_spellings_ride_the_keyterms_too(app, monkeypatch):
+    """#28, names collapse by voice: a spelling merged onto a remembered
+    person (an introduction the voice matched, or a two-form declaration)
+    biases the transcriber as well - otherwise it happily re-mints the
+    very spelling drift the merge just resolved."""
+    from urllib.parse import parse_qs, urlparse
+
+    from backend import anchors
+    store = anchors.store()
+    pid = store.ensure_person("Samantha")
+    assert store.add_merged_name(pid, "Sammy")
+    seen = _capturing_relay(app, monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            ws.send_json(_frame())
+            assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json({"done": True})
+    q = parse_qs(urlparse(seen["url"]).query)
+    assert q["keyterms"] == ["User", "Samantha", "Sammy"]
+
+
 def test_keyterm_list_is_bounded_and_deduplicated():
     """Pure rule: the ElevenLabs caps are enforced before the URL is built -
     at most 50 terms of at most 20 characters, case-insensitively unique,

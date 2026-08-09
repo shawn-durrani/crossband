@@ -115,9 +115,13 @@ def test_cloud_pass_records_the_decision(app, monkeypatch):
         diarize, "_room_plan",
         # The 5th item is _room_plan's cold-start candidate (#28): None
         # here, so these pins keep testing the plain defer/multi paths.
+        # The 6th is the remembered-first candidate list (#28, fourteenth
+        # field test) - the plan tuple grew when the armed pass's
+        # candidates became every sufficient remembered person.
         lambda *a, **k: (b"\x00\x40" * 16000,
                          [{"person_id": "p1", "name": "Sam",
-                           "start": 0.0, "end": 1.0}], [], 2, None))
+                           "start": 0.0, "end": 1.0}], [], 2, None,
+                         [{"person_id": "p1", "name": "Sam"}]))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         session = diarize.RoomSession(enabled=True)
@@ -145,9 +149,13 @@ def test_deferred_verdict_records_the_reason_and_no_cloud(app, monkeypatch):
         diarize, "_room_plan",
         # The 5th item is _room_plan's cold-start candidate (#28): None
         # here, so these pins keep testing the plain defer/multi paths.
+        # The 6th is the remembered-first candidate list (#28, fourteenth
+        # field test) - the plan tuple grew when the armed pass's
+        # candidates became every sufficient remembered person.
         lambda *a, **k: (b"\x00\x40" * 16000,
                          [{"person_id": "p1", "name": "Sam",
-                           "start": 0.0, "end": 1.0}], [], 2, None))
+                           "start": 0.0, "end": 1.0}], [], 2, None,
+                         [{"person_id": "p1", "name": "Sam"}]))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         session = diarize.RoomSession(enabled=True)

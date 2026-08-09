@@ -157,7 +157,14 @@ the local check runs on the buffered utterance while the silence window
 counts down, a fresh verdict labels the commit with no re-embed (one
 matcher call per turn, pinned), resumed speech discards the stale
 verdict, and a cached match on someone outside the consuming pass's
-candidates re-checks instead of smuggling the name through.
+candidates re-checks instead of smuggling the name through. Since
+remembered-first matching (fourteenth field test, below) the armed
+pass's candidates are the hint's own list - every sufficient
+remembered person - so a cached match on a remembered but not yet
+rostered person is trusted and seats them (that pin is deliberately
+rewritten from its old opposite), and the narrowing case that still
+re-checks (a person no longer among the candidates) is pinned at the
+unit seam.
 
 **Room-mode commands (chat 198).** "Group mode, please" used to do
 nothing: it is not an introduction, so the scan (correctly) logged
@@ -237,17 +244,31 @@ hints. Corrections match conservatively - the named target must resolve
 to exactly one known person, an unnamed correction falls back to the
 most recent confidently-labelled speaker, and ambiguity does nothing
 rather than guessing - with the verdict-line allowlist grown by the
-correction outcomes. Variants merge instead of duplicating: an
-introduction name that is confidently a folded-form variant (case,
-diacritics, edit distance scaled by name length) of a remembered person
-re-identifies them, a confident voice match on the introduction
-utterance re-identifies even an unalike name (and never seeds the
-owner's anchor from the guest's audio), a close-but-not-confident name
-raises one merge-question flag, and the rename endpoint returns the
-conflict so the UI can offer the merge - banks folding under
-keep-best-N, the oldest person_id surviving, roster rows re-pointing,
-and the survivor answering to both names. A forgotten person's name
-reappearing creates a fresh record: forget stays forgotten.
+correction outcomes. A two-form declaration ("X is the spelling but
+it's pronounced Y", fourteenth field test) is an alias statement, not a
+rename: its own prefilter shapes are pinned, both forms land on ONE
+person as merged names, the declared spelling becomes the display name
+only while no owner-set name exists (an owner's chosen name is never
+fought), two known people named in one declaration do nothing, and the
+verdict line says alias_recorded. Variants merge instead of
+duplicating: an introduction name that is confidently a folded-form
+variant (case, diacritics, edit distance scaled by name length) of a
+remembered person re-identifies them, a confident voice match on the
+introduction utterance re-identifies even an unalike name (and never
+seeds the owner's anchor from the guest's audio) and records the
+introduced spelling as a merged name - so keyterms, find_by_name and
+future introductions resolve the new spelling directly, and merged
+spellings ride the STT keyterm hints. In an ARMED room the voice-match
+arm judges the introduction turn's own remembered audio, never the
+stale pre-arm stash (which no longer seeds the owner's anchor once the
+room is armed - the fourteenth field test's log shows a guest's
+pre-arm utterance being banked as the owner's). A
+close-but-not-confident name raises one merge-question flag, and the
+rename endpoint returns the conflict so the UI can offer the merge -
+banks folding under keep-best-N, the oldest person_id surviving,
+roster rows re-pointing, and the survivor answering to both names. A
+forgotten person's name reappearing creates a fresh record: forget
+stays forgotten.
 
 **Cold-start enrolment (#28).** Someone whose voice bank is empty used
 to be stuck: a confident match needs clips, the introduction scan needs
@@ -256,14 +277,17 @@ tap - so the matcher deferred on every turn, nothing accumulated, and
 the seats were told "identity pending" over and over about the only
 person in the room. The way out is elimination rather than
 recognition, and the guards are what the tests pin. In an armed room
-holding exactly ONE person whose bank cannot identify them yet, a
-non-multi defer banks the utterance to that person
-(`source='cold-start'`, subject to the ordinary quality gate), links
-their roster row, labels the turn as them and stamps a local pulse -
-with no ElevenLabs call, because elimination is free. Four shapes must
-never qualify and each has its own pin: an overlapping-speech "multi"
-verdict, two or more people present, a confident match, and a matcher
-that failed outright. The learning state is pinned end to end: the
+where exactly ONE present person's bank cannot identify them yet -
+and, since remembered-first (fourteenth field test), every OTHER
+present person's can, so the owner being present and identified no
+longer blocks a new guest from learning - a non-multi defer banks the
+utterance to that person (`source='cold-start'`, subject to the
+ordinary quality gate), links their roster row, labels the turn as
+them and stamps a local pulse - with no ElevenLabs call, because
+elimination is free. Four shapes must never qualify and each has its
+own pin: an overlapping-speech "multi" verdict, two or more
+unidentifiable people present, a confident match, and a matcher that
+failed outright. The learning state is pinned end to end: the
 payload carries `learning` beside a name that also rides `uncertain`
 (so consumers written before the marker keep treating it as a guess),
 the projection heads the turn "<name> (learning this voice)" rather
@@ -272,6 +296,24 @@ but a single label falls through to the ordinary uncertain path, the
 chip says "· learning" and explains that the name came from
 elimination, and the stable-block explainer tells seats to use the
 name but treat it as likely rather than certain.
+
+**Remembered-first matching (#28, fourteenth field test).** An armed
+room must recognise everyone the store remembers, not just the present
+roster. The live failure: two fully-sufficient remembered voices, and
+every one of the guest's turns deferred below_threshold - the armed
+fast path built its candidates from the roster, and the guest could
+not be rostered without being recognised nor recognised without being
+rostered. The pins: a sufficient remembered NON-rostered person
+speaking in an armed room is named and seated on that first utterance
+(certain local label, linked present row, no ElevenLabs call - this
+test fails against the roster-as-candidates code by construction); the
+armed pass, the ambient check and the speculative check share ONE
+candidate construction (every sufficient remembered person) so the
+paths cannot drift apart again; past the roster cap the turn is still
+named while the roster holds; an already-seated match adds no
+duplicate row; and a remembered match answers the open
+who-is-speaking ask exactly as a naming introduction does. The EL
+crosstalk prefix stays roster-scoped - presence, not memory.
 
 **The voice health strip (#28).** GET /api/voice/health is pinned
 content-free - states, counts and milliseconds, never a name and never
@@ -365,7 +407,7 @@ week when it was maintained by hand.
 - (`test_mcp_servers_api.py`) Connections-page MCP management
 - (`test_mcp_servers_auth.py`) Host-level routes stay on the host
 - (`test_memory_attribution.py`) Guest speaker classes on memory ingest (#28 phase 3): owner turns stay `user`, confident guests go `guest:<preferred name>`, uncertain and open-flagged turns go `guest:unknown`, `SOURCE_APP` untouched
-- (`test_naming_law.py`) Naming is law (#28): owner-set preferred names are locked against every automated path and win on every surface (projection heads, ingest, chips via the store shape - the owner's own head excepted since PR-C: bare cfg name plus the voice-confirmed marker), spoken corrections set them conservatively, introduction variants re-identify instead of minting twins, the merge endpoint folds banks under keep-best-N with the oldest id surviving, and forget stays forgotten
+- (`test_naming_law.py`) Naming is law (#28): owner-set preferred names are locked against every automated path and win on every surface (projection heads, ingest, chips via the store shape - the owner's own head excepted since PR-C: bare cfg name plus the voice-confirmed marker), spoken corrections set them conservatively, two-form declarations ("X is the spelling but it's pronounced Y") record both names on one person without fighting an owner-set name, introduction variants re-identify instead of minting twins (a voice match recording the introduced spelling as a merged name, judged in an armed room against the introduction turn's own audio and never the stale pre-arm stash - which no longer seeds the owner's anchor once armed), the merge endpoint folds banks under keep-best-N with the oldest id surviving, and forget stays forgotten
 - (`test_memory_client.py`) Memory client degradation
 - (`test_models_status.py`) GET /api/models/status
 - (`test_openai_client.py`) Keyless-local edge for the OpenAI-compatible adapter
@@ -376,13 +418,14 @@ week when it was maintained by hand.
 - (`test_reasoning_policy.py`) The reasoning-effort policy must be AUTHORITATIVE at the actual request-kwargs level, not just in the translation helpers (tests/test_effort.py covers those in isolation)
 - (`test_room_ambient.py`) Ambient room detection (#28): the local matcher runs on every committed utterance while room mode is off - the owner's turn is labelled voice-confirmed without arming anything (PR-C), a remembered voice arms and names, a clear stranger (only when the owner is enrolled) arms and asks, undecidable defers - it never calls ElevenLabs, and "solo mode" sets a sacred durable disarm until an explicit re-enable clears it; since PR-B ambient is the ONLY automatic arming door
 - (`test_room_anchors.py`) The durable voice-anchor store (#28 phase 2): owner-only file permissions, the clip quality gate and keep-best-N-per-length-class refresh, the two-part sufficiency bar, forget-deletes-audio, the prefix builder, the hygiene guard's quarantine/close-pair storage, the tap-to-correct audio cache
-- (`test_room_cold_start.py`) Cold-start enrolment (#28): the by-elimination decision table (every non-multi defer banks when exactly one present person cannot be identified yet; a "multi" verdict, a second person in the room, a confident match and a failed matcher never do), the roster derivation and its exit condition once the bank is sufficient, run_pass banking under `source='cold-start'` with a local pulse and no ElevenLabs call, the quality gate still deciding what lands in the bank, and the learning state reaching the seats as "<name> (learning this voice)" with its stable-block explainer Also pins the insert-time label handoff: a finished verdict rides the message row at INSERT, so the round that renders the transcript in the same breath cannot read a stale pending head.
+- (`test_room_cold_start.py`) Cold-start enrolment (#28): the by-elimination decision table (every non-multi defer banks when exactly one present person cannot be identified yet; a "multi" verdict, a second unidentifiable person in the room, a confident match and a failed matcher never do), the roster derivation and its exit condition once the bank is sufficient, run_pass banking under `source='cold-start'` with a local pulse and no ElevenLabs call, the quality gate still deciding what lands in the bank, and the learning state reaching the seats as "<name> (learning this voice)" with its stable-block explainer Also pins the insert-time label handoff: a finished verdict rides the message row at INSERT, so the round that renders the transcript in the same breath cannot read a stale pending head.
 - (`test_room_commands.py`) Room-mode commands (#28, chat 198): "group mode, please" arms and "solo mode" disarms through the same never-awaited scan, the verdict-line allowlist grows the command outcomes, talk ABOUT the mode changes nothing, and the engine feeds seats the per-round room state
 - (`test_room_identify.py`) Anchored identification (#28 phase 2): anchor-prefix requests with the roster+1 hint, name labels, cross-session re-identification, elimination and anchor accumulation, the unknown-voice ask-fallback, the mismatch flag that never mutates a label, tap-to-correct, roster/flag live events
 - (`test_room_intro.py`) Introduction detection (#28 phase 2): the send-never-waits pin, the lexical prefilter gating utility spend, confirmed introductions/departures driving room mode and the roster, the cap, owner-anchor seeding, the third-field-test arming phrasings, alias capture, the per-scan verdict line
 - (`test_room_mode.py`) Room mode's identity passes (#28): toggle-off byte-for-byte identity on the realtime relay, the commit-boundary tee, the never-awaited pass, the PR-B retirement pins (no EL call on solo or deferred turns; the crosstalk split alone is metered), exact turn-id labelling, and the live-events push
+- (`test_room_remembered_first.py`) Remembered-first matching (#28, fourteenth field test): a sufficient remembered non-rostered person is named and rostered on their first armed-room utterance, the armed/ambient/speculative candidate lists share one construction, the roster cap still holds with the turn named anyway, a remembered match answers the open ask, and the generalised cold start banks to the one unidentifiable present person while everyone else is sufficient
 - (`test_room_sniff.py`) The EL sniff's retirement (#28 PR-B): the sniff machinery is structurally gone, the eighth field test's false split/arm/name conditions fire zero EL calls, matcher-unavailable means manual-only arming, and the sniff's old job (a remembered voice arming a fresh chat) is covered by the ambient local check
-- (`test_room_speculative.py`) Speculative identity at silence-start (#28 PR-B): the content-free hint sends no byte upstream, the check is never awaited, a fresh verdict labels the commit with one matcher call, stale and out-of-candidate verdicts re-check, and a disarmed chat schedules nothing
+- (`test_room_speculative.py`) Speculative identity at silence-start (#28 PR-B): the content-free hint sends no byte upstream, the check is never awaited, a fresh verdict labels the commit with one matcher call, a stale verdict re-checks, a cached match on a remembered non-rostered person is trusted and seats them (remembered-first, fourteenth field test), and a disarmed chat schedules nothing
 - (`test_rounds.py`) Detached rounds
 - (`test_secret_scan.py`) Guardrail for scripts/secret-scan.sh, the ONE scanner that runs both as the local pre-commit hook and, through this test, in CI
 - (`test_setup.py`) Setup router
