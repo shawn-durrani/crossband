@@ -159,6 +159,15 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                 {health.voices.map((v) => (v.done ? `${v.name} ✓` : `${v.name} ${v.label}`)).join(', ')}
               </span>
             )}
+            {(health.close || []).map((line) => (
+              <span
+                key={line}
+                className="text-amber-300/90"
+                title="These voices' stored banks sit close together, so the matcher demands a wider winning margin before naming either - fewer names, never wrong ones."
+              >
+                {' · '}{line}
+              </span>
+            ))}
           </span>
         </div>
       )}
