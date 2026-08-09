@@ -162,13 +162,25 @@ def select_keep(clips: list) -> list:
 
 def is_sufficient(clips: list) -> bool:
     """The hard requirement: enough accepted audio to trust identification.
-    Two-part since #28 PR-B (eighth field test): the seconds bar AND at
-    least MIN_SHORT_CLIPS short clips, so a person is only 'sufficient' once
-    second-long interjections have something like themselves to match.
-    Quarantined clips count for neither part."""
+
+    The seconds bar ALONE (#28, tenth field test). PR-B briefly made this
+    two-part (seconds AND short clips), which instantly reclassified every
+    existing bank as insufficient and deadlocked the system: no candidates,
+    so no matches, so no accumulation, so never sufficient again. The
+    short-clip requirement lives on as `short_ready` (a progress indicator
+    and a short-utterance precision aid), never as a gate on matching -
+    and confident long matches now HARVEST short slices from their own
+    audio (harvest_short_slice), so the short class fills itself.
+    Quarantined clips count for nothing."""
     live = active_clips(clips)
-    if sum(c["seconds"] for c in live) < SUFFICIENT_SECONDS:
-        return False
+    return sum(c["seconds"] for c in live) >= SUFFICIENT_SECONDS
+
+
+def is_short_ready(clips: list) -> bool:
+    """The short-utterance readiness indicator (#28 PR-B's second bar,
+    demoted from gate to signal): enough short clips that second-long
+    interjections have something like themselves to match."""
+    live = active_clips(clips)
     return sum(1 for c in live if is_short(c)) >= MIN_SHORT_CLIPS
 
 
@@ -305,10 +317,11 @@ class AnchorStore:
                 "created_at": p.get("created_at", 0),
                 "clip_count": len(clips),
                 "seconds": round(sum(c["seconds"] for c in clips), 1),
-                # Short-clip progress (#28 PR-B): the second half of the
-                # two-part sufficiency bar, so the UI can say honestly which
-                # part is still missing.
+                # Short-clip progress (#28 PR-B, demoted to a signal by the
+                # tenth field test): readiness for second-long interjections,
+                # shown in the UI, never a gate on matching.
                 "short_clips": sum(1 for c in clips if is_short(c)),
+                "short_ready": is_short_ready(all_clips),
                 # Hygiene guard surfacing (#28 PR-B): clips the pairwise
                 # audit set aside (kept on disk, excluded from matching),
                 # and which other people this person's voice sits close to.

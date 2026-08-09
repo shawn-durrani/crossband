@@ -74,22 +74,29 @@ def test_keep_policy_keeps_the_best_n_per_length_class():
     assert len(anchors.select_keep(longs)) == anchors.KEEP_CLIPS
 
 
-def test_sufficiency_is_a_two_part_bar():
-    """#28 PR-B (eighth field test): seconds alone no longer suffice - the
-    bank must also hold MIN_SHORT_CLIPS short clips, so second-long
-    interjections have something like themselves to match against."""
+def test_sufficiency_is_the_seconds_bar_and_short_readiness_is_a_signal():
+    """#28, tenth field test: PR-B's two-part gate deadlocked existing banks
+    (no candidates -> no matches -> no accumulation -> never sufficient).
+    Sufficiency is the SECONDS bar alone again; short-clip readiness is the
+    separate is_short_ready signal, and confident long matches harvest their
+    own short slices so it fills without a ceremony."""
     two = [{"seconds": 2.0}, {"seconds": 2.0}]
     assert not anchors.is_sufficient(two)                      # seconds short
-    assert anchors.is_sufficient(two + [{"seconds": 2.0}])     # 6s + 3 shorts
-    # seconds met by LONG clips only: still insufficient - no shorts
+    assert anchors.is_sufficient(two + [{"seconds": 2.0}])     # 6s
+    # seconds met by LONG clips only: SUFFICIENT (the unbrick), but not
+    # short-ready until MIN_SHORT_CLIPS short clips exist
     longs = [{"seconds": 4.0}, {"seconds": 4.0}]
-    assert not anchors.is_sufficient(longs)
-    assert not anchors.is_sufficient(longs + [{"seconds": 1.5}])  # 1 short
-    assert anchors.is_sufficient(longs + [{"seconds": 1.5},
-                                          {"seconds": 1.2}])      # 2 shorts
-    # quarantined clips count for neither half
+    assert anchors.is_sufficient(longs)
+    assert not anchors.is_short_ready(longs)
+    assert not anchors.is_short_ready(longs + [{"seconds": 1.5}])  # 1 short
+    assert anchors.is_short_ready(longs + [{"seconds": 1.5},
+                                           {"seconds": 1.2}])      # 2 shorts
+    # quarantined clips count for neither measure
     assert not anchors.is_sufficient(
-        longs + [{"seconds": 1.5}, {"seconds": 1.2, "quarantined": True}])
+        [{"seconds": 4.0}, {"seconds": 4.0, "quarantined": True}])
+    assert not anchors.is_short_ready(
+        longs + [{"seconds": 1.5, "quarantined": True},
+                 {"seconds": 1.2, "quarantined": True}])
 
 
 def test_configure_sufficiency_applies_and_guards_the_knobs():

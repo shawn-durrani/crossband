@@ -4,6 +4,14 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Fix a voice-identification deadlock (#28). A two-part "enough voice
+  learnt" rule shipped one build earlier also demanded a quota of short
+  clips, which instantly marked every already-learnt voice as not-yet-
+  learnt - and because an unlearnt voice is never matched, and only a
+  match banks more voice, nothing could recover. Learning is back to the
+  seconds bar; short-clip readiness is a separate progress hint, and a
+  confident match on a longer turn quietly banks a short slice of its own
+  audio so quick interjections become recognisable without any ceremony.
 - The cloud no longer guesses who is speaking (#28). Voice
   identification is now local or honestly uncertain, full stop: the
   on-device matcher names a turn, or the turn stays unnamed - no cloud
