@@ -9,8 +9,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  assignVoiceOrdinals, chipData, chipsForMessage, chipTitle, CHIP_EXPLAINER,
-  CROSSTALK_NOTE, crosstalkNote, crosstalkSegments, displayLabel,
+  assignVoiceOrdinals, chipData, chipsForMessage, chipSuffix, chipTitle,
+  CHIP_EXPLAINER, CROSSTALK_NOTE, crosstalkNote, crosstalkSegments,
+  displayLabel,
 } from './voiceChips.js'
 
 const labelled = (labels, clusters = ['s0', 's1'], speaker = 'user') => ({
@@ -277,4 +278,55 @@ test('crosstalk segments carry the preferred display name too', () => {
   assert.deepEqual(crosstalkSegments(msg, PEOPLE), [
     { label: 'Mateo', display: 'Matteo', text: 'over here', uncertain: false },
   ])
+})
+
+// ---- the learning chip (#28, cold-start enrolment) ----------------------
+//
+// A turn placed by ELIMINATION - one person in the room, their voice not
+// learned yet - carries {"learning": true} beside a name that also rides
+// `uncertain`. What these pin: the chip picks the marker up, says
+// "learning" rather than the bare "?", explains WHY the name is there, and
+// a payload from before the marker existed renders exactly as it always did.
+
+const learning = (name = 'Alex') => ({
+  id: 1, speaker: 'user', content: 'right, where were we',
+  voice_labels: JSON.stringify({
+    clusters: ['local'], labels: [name], uncertain: [name],
+    learning: true, source: 'cold-start',
+  }),
+})
+
+test('a cold-start turn chips as learning, not as a bare guess', () => {
+  const [chip] = chipData(learning('Alex'))
+  assert.equal(chip.learning, true)
+  assert.equal(chip.uncertain, true)   // still a guess to every older reader
+  assert.equal(chipSuffix(chip), ' · learning')
+})
+
+test('the learning title says the name came from elimination', () => {
+  const [chip] = chipData(learning('Sam'))
+  assert.match(chipTitle(chip), /only person in the room/)
+  assert.match(chipTitle(chip), /still being learned/)
+  assert.match(chipTitle(chip), /Tap to correct/)
+})
+
+test('the chip suffix is one rule for all three states', () => {
+  assert.equal(chipSuffix({ owner: true }), ' ✓')
+  assert.equal(chipSuffix({ learning: true, uncertain: true }), ' · learning')
+  assert.equal(chipSuffix({ uncertain: true }), '?')
+  assert.equal(chipSuffix({}), '')
+  assert.equal(chipSuffix(null), '')
+})
+
+test('payloads written before the learning marker are untouched', () => {
+  // The key is only ever ADDED (never learning: false), so an ordinary
+  // uncertain chip keeps the rendering and the copy it always had.
+  const [chip] = chipData({
+    id: 2, speaker: 'user', content: 'hi',
+    voice_labels: JSON.stringify({ clusters: ['s0'], labels: ['Sam'],
+                                   uncertain: ['Sam'] }),
+  })
+  assert.equal(chip.learning, undefined)
+  assert.equal(chipSuffix(chip), '?')
+  assert.match(chipTitle(chip), /Probably Sam/)
 })

@@ -669,6 +669,10 @@ export default function App() {
     ? healthStrip({
         health: voiceHealth,
         people: voicePeople,
+        // The roster feeds the per-person chips (#28, the dock refinement):
+        // in a room the chips describe who is IN it; with no roster they
+        // fall back to the remembered voices. Rule in roomState.js.
+        roster: roomInfo?.roster,
         sufficientSeconds: roomInfo?.sufficient_seconds,
         minShortClips: roomInfo?.min_short_clips,
         sessionActive: true,

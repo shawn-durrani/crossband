@@ -4,6 +4,34 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A forgotten voice can now be re-learnt just by talking (#28). If you
+  cleared your voice records, every way back in needed something you no
+  longer had: being recognised needs stored clips, the introduction flow
+  needs an introduction-shaped sentence, and correcting a name needs a
+  name on the turn to correct. So the app deferred on every turn, learnt
+  nothing, and told the AI seats "identity pending" over and over. Now,
+  when room mode is on and you are the only person in the room, a turn
+  the app cannot place is worked out by elimination - there is nobody
+  else it could be - so it is banked towards learning your voice and the
+  turn is labelled with your name, marked "learning this voice". After a
+  few turns your voice is remembered again and ordinary recognition
+  takes over. It is deliberately narrow: never with two people in the
+  room, never when two voices overlap on one turn, and never with room
+  mode off. The label is still one tap from being corrected, and no
+  cloud call is involved.
+- The voice dock is one panel with two rows, not four floating layers
+  (#28). The status line used to be an ever-growing run of text that
+  spilled out of its tray as soon as a second voice existed. It is now
+  one chip per person - a green tick beside the name once their voice is
+  remembered, "learning 4s" while it is still being learnt, plain while
+  nothing has been heard - and the chips wrap, collapsing into a "+2"
+  when there are more than four, with the live speed reading kept small
+  on the right. The controls you touch per turn (microphone mode, the
+  room toggle, send, stop, end) stay on one row; the pause and speed
+  sliders, which you set once, move behind a settings button along with
+  the matcher and mode readouts. Nothing was removed. On a phone the
+  whole thing is a single line - "Listening · Alex ✓ +1" - that opens on
+  a tap.
 - Fix the cause of "identity pending" on the owner's own voice (#28).
   Two faults compounded. A tap-correction naming you could mint a SECOND
   person holding copies of your own voice clips, so the matcher found two

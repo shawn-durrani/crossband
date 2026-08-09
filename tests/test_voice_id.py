@@ -514,11 +514,16 @@ def _run(coro):
         if False else asyncio.run(coro)
 
 
-def _plan():
-    # (prefix_pcm, segments, pending, num_speakers) as _room_plan returns
+def _plan(solo_pending=None):
+    # (prefix_pcm, segments, pending, num_speakers, solo_pending) as
+    # _room_plan returns. The fifth item arrived with cold-start enrolment
+    # (#28): the ONE present person whose bank cannot identify them yet, or
+    # None when the roster is not that shape. Defaulting it to None keeps
+    # every pin below asserting exactly what it always did - with no
+    # by-elimination candidate, cold start cannot fire.
     return (b"\x00\x40" * 16000,
             [{"person_id": "p1", "name": "Alex", "start": 0.0, "end": 1.0}],
-            [], 2)
+            [], 2, solo_pending)
 
 
 def test_run_pass_fast_match_skips_batch(monkeypatch):

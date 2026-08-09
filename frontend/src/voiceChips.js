@@ -116,8 +116,26 @@ export function chipData(msg, people = []) {
       corrected: data.corrected === true,
     }
     if (data.owner === true && !chip.uncertain) chip.owner = true
+    // #28 cold start: the backend placed this turn by ELIMINATION (one
+    // person in the room, their voice not learned yet) and marked the
+    // payload {"learning": true}. The name still rides `uncertain`, so a
+    // consumer that has never heard of this key keeps the old cautious
+    // rendering; the key only ever gets ADDED, never learning: false.
+    if (data.learning === true) chip.learning = true
     return chip
   })
+}
+
+// What a chip shows after the name, decided here rather than in the JSX so
+// the three states can never drift apart across surfaces: the owner's quiet
+// tick, the cold-start "learning" tag, or the bare "?" every other
+// uncertain label has always carried.
+export function chipSuffix(chip) {
+  if (!chip) return ''
+  if (chip.owner) return ' ✓'
+  if (chip.learning) return ' · learning'
+  if (chip.uncertain) return '?'
+  return ''
 }
 
 // Plain-English explainer for the chips, shared by every surface that shows
@@ -199,6 +217,13 @@ export function chipTitle(chip) {
     // identification of a guest - say so plainly.
     return `Voice confirmed: this turn matched ${shown}'s own voice, `
       + 'checked on this device.'
+  }
+  if (chip.learning) {
+    // #28 cold start: say WHY the name is there - elimination, not
+    // recognition - so trust in it is calibrated rather than assumed.
+    return `${shown} was the only person in the room, so this turn is `
+      + 'theirs. Their voice is still being learned, and this turn helps. '
+      + 'Tap to correct if wrong.'
   }
   if (chip.uncertain) {
     return `Probably ${shown} - their voice is still being learned, so `

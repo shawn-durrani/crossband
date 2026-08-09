@@ -99,6 +99,99 @@ export function sufficiencyProgress(person, sufficientSeconds, minShortClips) {
   }
 }
 
+// ---- per-person voice chips for the dock (#28, dock refinement) ----------
+//
+// The dock's status tier used to be one unbounded run of prose ("matcher
+// ready · ambient listening · local · 227ms · Alex 3.2s of 6s of clear
+// speech heard, Sam ✓") that overflowed its tray the moment a second voice
+// existed. It becomes one CHIP per person instead: a name, a state, and
+// nothing else, so the row wraps instead of spilling. Every decision here -
+// which state, what the chip says, what the collapsed one-liner says, the
+// order - is derived in this module and merely rendered by the components.
+//
+// The three states are the three honest things the app can know about a
+// person's voice:
+// - confirmed: their bank clears the bar, so a turn of theirs is named on
+//   its own evidence. Shown as a tick beside the name (the owner asked for
+//   a tick beside the name rather than swapped label text).
+// - learning:  some of their voice is banked but not enough yet, so their
+//   turns lean on elimination and stay uncertain. Shows the progress.
+// - pending:   nothing of their voice is banked at all.
+export const CHIP_CONFIRMED = 'confirmed'
+export const CHIP_LEARNING = 'learning'
+export const CHIP_PENDING = 'pending'
+
+// Order of the chips: confirmed, then learning, then pending, each group
+// keeping its source order (roster order, then remembered order). It reads
+// best-known-first, which is also what the collapsed mobile line needs,
+// and a person's rank changes only when they cross a bar - not per turn.
+const CHIP_RANK = { [CHIP_CONFIRMED]: 0, [CHIP_LEARNING]: 1, [CHIP_PENDING]: 2 }
+
+// Under a second of banked speech is not progress worth a number; it reads
+// as "learning 0s", which says less than the neutral pending state does.
+const LEARNING_MIN_SECONDS = 1
+
+// One person's chip, or null when there is no name to show. Works for
+// roster rows (anchor_seconds/anchor_short_clips) and remembered-voice
+// people (seconds/short_clips) alike, exactly like sufficiencyProgress.
+export function voicePersonChip(person, sufficientSeconds, minShortClips) {
+  if (!person || typeof person !== 'object') return null
+  // Trimmed here rather than in displayName: a chip is a fixed-width badge,
+  // and a whitespace-only name would render an empty one instead of nothing.
+  const name = displayName(person).trim()
+  if (!name) return null
+  const key = (typeof person.person_id === 'string' && person.person_id)
+    || name.toLowerCase()
+  const secs = Math.max(0, Number(person.seconds ?? person.anchor_seconds) || 0)
+  if (person.sufficient) {
+    return {
+      key, name, state: CHIP_CONFIRMED, label: name, short: `${name} ✓`,
+      title: `${name}'s voice is remembered - turns they speak are named `
+        + 'automatically.',
+    }
+  }
+  const prog = sufficiencyProgress(person, sufficientSeconds, minShortClips)
+  if (secs >= LEARNING_MIN_SECONDS) {
+    const shown = Math.round(secs)
+    return {
+      key, name, state: CHIP_LEARNING,
+      label: `${name} · learning ${shown}s`, short: `${name} ${shown}s`,
+      title: `${name}'s voice is still being learned - ${prog ? prog.label : ''}`
+        + '. Their turns stay uncertain until then.',
+    }
+  }
+  return {
+    key, name, state: CHIP_PENDING, label: name, short: name,
+    title: `None of ${name}'s voice has been learned yet, so their turns `
+      + 'cannot be named by voice. A turn can still be theirs by elimination '
+      + 'when nobody else is in the room, and every such turn teaches it.',
+  }
+}
+
+// The chips this session should show, ordered and de-duplicated.
+//
+// Source, and why: the people in the ROOM when there is a roster - those
+// are exactly who turns are being attributed between. With no roster (room
+// mode off) it falls back to the remembered voices, which is honest for a
+// different reason: with the mode off, every spoken turn is still checked
+// against precisely that set, so a chip there means "this voice would be
+// recognised", not "this person is here". Either way a chip only ever
+// describes what the app can do with a voice.
+export function voiceChips(roster, people, sufficientSeconds, minShortClips) {
+  const present = (roster || []).filter((p) => p && p.status !== 'left')
+  const source = present.length ? present : (people || [])
+  const out = []
+  const seen = new Set()
+  for (const p of source) {
+    const chip = voicePersonChip(p, sufficientSeconds, minShortClips)
+    if (!chip || seen.has(chip.key)) continue
+    seen.add(chip.key)
+    out.push(chip)
+  }
+  // Array.prototype.sort is stable, so equal ranks keep their source order.
+  return out.sort((a, b) => CHIP_RANK[a.state] - CHIP_RANK[b.state])
+}
+
 // Hover/long-press detail for the chip: what the mode costs, plus honesty
 // about whose voice is still being learned - with each learner's progress
 // toward the bar when the snapshot carries it, so patience is an informed

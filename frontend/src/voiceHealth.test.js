@@ -12,8 +12,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  closeVoiceLines, healthStrip, knownVoiceLines, matcherReadout, modeReadout,
-  pulseReadout,
+  boundedChips, closeVoiceLines, collapsedVoiceSummary, healthStrip,
+  knownVoiceLines, matcherReadout, modeReadout, pulseReadout,
 } from './voiceHealth.js'
 
 test('matcher readouts cover every state and mark the degraded ones', () => {
@@ -143,4 +143,78 @@ test('the strip assembles all blocks, and nothing without a snapshot', () => {
   assert.deepEqual(strip.voices, [{ name: 'Sam', done: true, label: 'remembered' }])
   assert.deepEqual(strip.close, [])
   assert.equal(healthStrip({ health: null, people: [], sessionActive: true }), null)
+})
+
+// ---- the bounded chip row and the collapsed line (#28, dock refinement) --
+//
+// The tray's status used to be one unbounded run of prose that overflowed
+// as soon as a second voice existed. What these pin: the row has a hard
+// ceiling and the rest collapse into a "+N" that still names them; the
+// mobile one-liner is exactly "<status> · <first chip> +N"; and the strip
+// hands the components a ready-made bounded row, so the two surfaces can
+// never overflow by different rules.
+
+const chip = (name, state = 'confirmed') =>
+  ({ key: name.toLowerCase(), name, state, label: name, short: `${name} ✓`, title: '' })
+
+test('the chip row is bounded, and the overflow still names who is missing', () => {
+  const all = ['Alex', 'Sam', 'Dave', 'Mateo'].map((n) => chip(n))
+  const bounded = boundedChips(all, 2)
+  assert.deepEqual(bounded.shown.map((c) => c.name), ['Alex', 'Sam'])
+  assert.equal(bounded.hidden, 2)
+  assert.equal(bounded.more, '+2')
+  assert.equal(bounded.moreTitle, 'Also: Dave, Mateo')
+  // The default ceiling fits all four, and nothing hidden means no "+N" at
+  // all - an empty badge is noise.
+  assert.equal(boundedChips(all).more, '')
+  const few = boundedChips(all.slice(0, 2), 4)
+  assert.equal(few.more, '')
+  assert.equal(few.moreTitle, '')
+})
+
+test('the bounded row survives junk and silly limits', () => {
+  assert.deepEqual(boundedChips(null).shown, [])
+  assert.deepEqual(boundedChips([null, {}, chip('Alex')]).shown.map((c) => c.name),
+                   ['Alex'])
+  assert.equal(boundedChips([chip('Alex'), chip('Sam')], 0).shown.length, 2)
+  assert.equal(boundedChips([chip('Alex')], 1).shown.length, 1)
+})
+
+test('the mobile one-liner reads "Listening · Alex ✓ +1"', () => {
+  assert.equal(
+    collapsedVoiceSummary('Listening…', [chip('Alex'), chip('Sam')]),
+    'Listening · Alex ✓ +1')
+  // one voice, no overflow badge
+  assert.equal(collapsedVoiceSummary('Listening…', [chip('Alex')]),
+               'Listening · Alex ✓')
+  // no voices: the line is exactly the status the screen always showed
+  assert.equal(collapsedVoiceSummary('Listening…', []), 'Listening')
+  assert.equal(collapsedVoiceSummary('Thinking…', null), 'Thinking')
+  assert.equal(collapsedVoiceSummary('', [chip('Alex')]), 'Alex ✓')
+})
+
+test('the strip hands over a ready-bounded chip row', () => {
+  const strip = healthStrip({
+    health: { matcher: 'ready', chat: { room_mode: true, roster_count: 2 },
+              last_decision: null },
+    roster: [{ person_id: 'a', name: 'Alex', status: 'present', sufficient: true,
+               anchor_seconds: 9 },
+             { person_id: 's', name: 'Sam', status: 'present', sufficient: false,
+               anchor_seconds: 4 }],
+    people: [],
+    sufficientSeconds: 6,
+    sessionActive: true,
+  })
+  assert.deepEqual(strip.chips.shown.map((c) => c.label),
+                   ['Alex', 'Sam · learning 4s'])
+  assert.equal(strip.chips.more, '')
+  // and the bound is honoured from the strip too
+  const many = healthStrip({
+    health: { matcher: 'ready', chat: null, last_decision: null },
+    roster: ['Alex', 'Sam', 'Dave', 'Mateo'].map((n) => (
+      { person_id: n, name: n, status: 'present', sufficient: true })),
+    people: [], sufficientSeconds: 6, sessionActive: true, maxChips: 2,
+  })
+  assert.equal(many.chips.shown.length, 2)
+  assert.equal(many.chips.more, '+2')
 })

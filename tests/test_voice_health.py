@@ -113,9 +113,11 @@ def test_cloud_pass_records_the_decision(app, monkeypatch):
                          "score": 0.4, "reason": "multi"})
     monkeypatch.setattr(
         diarize, "_room_plan",
+        # The 5th item is _room_plan's cold-start candidate (#28): None
+        # here, so these pins keep testing the plain defer/multi paths.
         lambda *a, **k: (b"\x00\x40" * 16000,
                          [{"person_id": "p1", "name": "Sam",
-                           "start": 0.0, "end": 1.0}], [], 2))
+                           "start": 0.0, "end": 1.0}], [], 2, None))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         session = diarize.RoomSession(enabled=True)
@@ -138,9 +140,11 @@ def test_deferred_verdict_records_no_decision_and_no_cloud(app, monkeypatch):
                          "score": 0.2, "reason": "below_threshold"})
     monkeypatch.setattr(
         diarize, "_room_plan",
+        # The 5th item is _room_plan's cold-start candidate (#28): None
+        # here, so these pins keep testing the plain defer/multi paths.
         lambda *a, **k: (b"\x00\x40" * 16000,
                          [{"person_id": "p1", "name": "Sam",
-                           "start": 0.0, "end": 1.0}], [], 2))
+                           "start": 0.0, "end": 1.0}], [], 2, None))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         session = diarize.RoomSession(enabled=True)

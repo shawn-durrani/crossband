@@ -12,6 +12,7 @@ import {
   adoptRoomMode, AMBIENT_EXPLAINER, askFlag, cleanPreferredName, displayName,
   flagCopy, FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
   reassignOptions, rosterChipText, rosterTitle, sufficiencyProgress,
+  CHIP_CONFIRMED, CHIP_LEARNING, CHIP_PENDING, voiceChips, voicePersonChip,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -312,4 +313,95 @@ test('no live session means nothing to adopt', () => {
   assert.equal(adoptRoomMode(true, session(false, 'server', false)), null)
   assert.equal(adoptRoomMode(true, null), null)
   assert.equal(adoptRoomMode(false, undefined), null)
+})
+
+// ---- per-person voice chips for the dock (#28, the dock refinement) ------
+//
+// What these pin: the three states are decided by what the app actually
+// knows about a voice (remembered, part-learned, nothing yet); the chip
+// text says the same thing on every surface; the order is best-known-first
+// and stable; and the source is the ROOM when there is one, the remembered
+// voices when there is not.
+
+const chipPerson = (name, extra = {}) =>
+  ({ person_id: name.toLowerCase(), name, status: 'present', ...extra })
+
+test('a remembered voice is a confirmed chip - a tick beside the name', () => {
+  const chip = voicePersonChip(chipPerson('Alex', { sufficient: true, seconds: 9 }), 6, 3)
+  assert.equal(chip.state, CHIP_CONFIRMED)
+  // The name is NOT rewritten: the owner asked for a tick beside the name
+  // rather than swapped label text, so the label stays exactly the name.
+  assert.equal(chip.label, 'Alex')
+  assert.equal(chip.short, 'Alex ✓')
+  assert.match(chip.title, /remembered/)
+})
+
+test('a part-learned voice shows progress in seconds', () => {
+  const chip = voicePersonChip(
+    chipPerson('Sam', { sufficient: false, seconds: 4.4, short_clips: 0 }), 6, 3)
+  assert.equal(chip.state, CHIP_LEARNING)
+  assert.equal(chip.label, 'Sam · learning 4s')
+  assert.equal(chip.short, 'Sam 4s')
+  assert.match(chip.title, /still being learned/)
+})
+
+test('a voice with nothing banked yet is neutral, not a fake progress bar', () => {
+  // Under a second reads as "learning 0s", which says less than nothing -
+  // the neutral state is the honest one, and it is exactly where a cold
+  // owner starts, before their first turn is banked by elimination.
+  for (const seconds of [0, 0.4]) {
+    const chip = voicePersonChip(chipPerson('Dave', { sufficient: false, seconds }), 6, 3)
+    assert.equal(chip.state, CHIP_PENDING, String(seconds))
+    assert.equal(chip.label, 'Dave')
+    assert.equal(chip.short, 'Dave')
+  }
+})
+
+test('roster rows and remembered people both derive a chip', () => {
+  // Roster rows carry anchor_seconds; remembered people carry seconds.
+  const row = voicePersonChip(
+    { name: 'Sam', status: 'present', sufficient: false, anchor_seconds: 3.2 }, 6, 3)
+  assert.equal(row.label, 'Sam · learning 3s')
+  // and the preferred spelling wins wherever one is set (#28: naming is law)
+  const renamed = voicePersonChip(
+    { name: 'Dave', preferred_name: 'Mateo', sufficient: true, seconds: 9 }, 6, 3)
+  assert.equal(renamed.name, 'Mateo')
+})
+
+test('junk people produce no chip rather than a crash', () => {
+  assert.equal(voicePersonChip(null, 6, 3), null)
+  assert.equal(voicePersonChip({}, 6, 3), null)
+  assert.equal(voicePersonChip({ name: '   ' }, 6, 3), null)
+})
+
+test('chips read best-known-first and keep source order within a state', () => {
+  const roster = [
+    chipPerson('Dave', { sufficient: false, anchor_seconds: 0 }),
+    chipPerson('Sam', { sufficient: false, anchor_seconds: 4 }),
+    chipPerson('Alex', { sufficient: true, anchor_seconds: 9 }),
+    chipPerson('Mateo', { sufficient: true, anchor_seconds: 8 }),
+  ]
+  assert.deepEqual(voiceChips(roster, [], 6, 3).map((c) => c.name),
+                   ['Alex', 'Mateo', 'Sam', 'Dave'])
+})
+
+test('chips describe the room when there is one, the remembered voices when there is not', () => {
+  const roster = [chipPerson('Sam', { sufficient: true, anchor_seconds: 9 })]
+  const people = [{ person_id: 'alex', name: 'Alex', sufficient: true, seconds: 9 }]
+  // A roster means a room: the chips are who is IN it.
+  assert.deepEqual(voiceChips(roster, people, 6, 3).map((c) => c.name), ['Sam'])
+  // No roster (room mode off): every spoken turn is still checked against
+  // the remembered voices, so those are what a chip can honestly describe.
+  assert.deepEqual(voiceChips([], people, 6, 3).map((c) => c.name), ['Alex'])
+  // Someone who has left the room is not in it.
+  assert.deepEqual(
+    voiceChips([{ name: 'Sam', status: 'left', sufficient: true }], people, 6, 3)
+      .map((c) => c.name), ['Alex'])
+  assert.deepEqual(voiceChips(null, null, 6, 3), [])
+})
+
+test('the same person never chips twice', () => {
+  const roster = [chipPerson('Sam', { sufficient: true }),
+                  chipPerson('Sam', { sufficient: true })]
+  assert.equal(voiceChips(roster, [], 6, 3).length, 1)
 })
