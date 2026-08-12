@@ -90,8 +90,11 @@ from one step.
 - Once served over the tailnet, every `/api/*` route is reachable from **any**
   device on your tailnet, not just your phone, because the tailnet is the whole
   fence.
-  If a producer on another machine posts to `/api/ingest`, set `ingest_token`
-  (see [SECURITY.md](../SECURITY.md)) so that route needs a bearer token.
+  `ingest_token` (see [SECURITY.md](../SECURITY.md)) is the machine
+  side-channel's bearer for `/api/ingest` AND the deploy-notice route - and it
+  is not just a tailnet concern: once an owner password is enrolled, every
+  machine producer needs it, loopback included (#62), because those producers
+  have no browser session.
 - Nothing is exposed to the public internet, and no provider (Meta, Twilio, etc.)
   sits in the path. Your conversation goes only to the AI providers you configured.
 

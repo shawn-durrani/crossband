@@ -28,6 +28,14 @@ the login surface requires a session, loopback included. Stated
 plainly: an install whose owner never enrols keeps the old
 anything-on-loopback model.
 
+One deliberate exception (#62): machine-side tooling has no cookie
+jar, so a configured `ingest_token` (env: `CROSSBAND_INGEST_TOKEN`)
+passes the gate as a bearer on exactly two routes - `POST /api/ingest`
+and `POST /api/chats/{id}/notice`, the machine side-channel. A missing
+or wrong bearer is still refused, the token buys nothing beyond those
+two path shapes, and an install that never configures one keeps the
+session-only rule everywhere.
+
 - **Loopback by default.** The server binds `127.0.0.1` and refuses to
   bind anywhere else.
 - **Tailnet only, if you widen it.** `tailscale serve` puts the UI on
