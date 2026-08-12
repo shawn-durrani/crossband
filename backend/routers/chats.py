@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from .. import accounting, context_weight, db, diarize, engine, introductions, rounds
+from .. import accounting, auth, context_weight, db, diarize, engine, introductions, rounds
 
 router = APIRouter(tags=["chats"])
 
@@ -203,12 +203,20 @@ class NoticeIn(BaseModel):
 
 
 @router.post("/api/chats/{chat_id}/notice")
-async def post_notice(chat_id: int, body: NoticeIn):
+async def post_notice(chat_id: int, body: NoticeIn, request: Request):
     """Tooling notices - the mirror image of slash commands: machine-side
     tooling on this computer (deploy watchers, schedulers, anything local)
     reports a status line INTO a chat. Persists as speaker='system', never
     runs a round, and the models see it next round (it's ground truth).
     Core assigns no meaning to the content. Loopback-only like all /api/*.
+
+    Auth (#62): producers authenticate with the SAME ingest_token as
+    /api/ingest - one machine side-channel, one credential. When a token is
+    configured it is required here outright (mirroring /api/ingest), and a
+    valid bearer also passes the browser gate, which otherwise locked every
+    machine producer out the moment a password was enrolled. No token
+    configured = the historical posture: gate decides, loopback open only
+    before enrolment.
 
     This is the exact out-of-band path the global events bus was built for: it
     went straight to the database with no way to wake an already-connected
@@ -219,6 +227,9 @@ async def post_notice(chat_id: int, body: NoticeIn):
     must run ON the event loop - a plain `def` route runs in FastAPI's
     threadpool instead, where touching the events bus's asyncio primitives
     from a different thread would be unsafe. See backend/events.py."""
+    token = getattr(request.app.state.settings, "ingest_token", "") or ""
+    if token and not auth.machine_token_ok(request):
+        raise HTTPException(401, "machine token required")
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "Empty notice")

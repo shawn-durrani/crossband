@@ -5,6 +5,7 @@ import contextlib
 import fcntl
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 
@@ -45,6 +46,10 @@ from .routers import setup as setup_router
 from .routers import voice as voice_router
 
 log = logging.getLogger("crossband")
+
+# The deploy-notice route shape, for the machine side-channel's gate
+# exemption (#62). Kept in lockstep with routers/chats.py's route.
+_NOTICE_PATH_RE = re.compile(r"^/api/chats/\d+/notice$")
 
 
 LOCK_WAIT_S = 10.0
@@ -290,6 +295,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse(status_code=403, content={
                 "detail": "cross-site requests to the API are not allowed"})
+        # The machine side-channel (#62): /api/ingest and the deploy-notice
+        # route authenticate with the ingest token, not a browser session -
+        # local tooling has no cookie jar, and the gate below silently locked
+        # both routes out the moment a password was enrolled. A valid bearer
+        # on exactly these two shapes passes the gate; the routes themselves
+        # re-check it, and everything else still needs a session.
+        if (path == "/api/ingest" or _NOTICE_PATH_RE.match(path)) \
+                and auth.machine_token_ok(request):
+            return await call_next(request)
         # The browser gate (#25). Once a password is enrolled, every /api
         # route outside the login surface needs a session - loopback
         # included. Before enrolment, loopback keeps its historical open

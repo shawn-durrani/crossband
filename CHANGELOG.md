@@ -4,6 +4,15 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Deploy notices reach the chat again on a password-protected install
+  (#62). The browser gate locked out the machine side-channel the moment
+  a password was enrolled: the deploy watcher's progress notices - and
+  any `/api/ingest` producer - got 401s, so a working deploy was
+  indistinguishable from a dead one. The existing `ingest_token` is now
+  the machine credential for both routes: a valid bearer passes the gate
+  on exactly those two paths, an invalid or missing one is still
+  rejected, and browser-session protection is unchanged everywhere else.
+
 - Stable guest names on the memory wire, and the owner's name harder to
   mishear into a guest (#56). Two fixes from the first real multi-human
   sessions: a guest's name now crosses to the memory service as the one

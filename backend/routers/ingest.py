@@ -8,8 +8,10 @@ contract is the firewall that keeps producer logic out of this repo.
 
 Trust model: loopback is the primary boundary, like every /api/* route.
 CROSSBAND_INGEST_TOKEN (optional, default off) adds a bearer check for producers
-arriving via the tailnet proxy - mirroring Membro's MEMORY_AUTH_TOKEN. This
-is the app's first optional auth surface; it guards exactly one route.
+arriving via the tailnet proxy - mirroring Membro's MEMORY_AUTH_TOKEN. Since
+the browser gate (#25) it is also how any producer gets past the session wall
+once a password is enrolled: the same token authenticates the deploy-notice
+route (#62), so it guards the machine side-channel as a whole, not one route.
 
 The speaker is stored namespaced (`ext:<source>`) - speaker flows into the
 transcript the models read, so an un-namespaced producer calling itself
@@ -22,7 +24,7 @@ import re
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import db
+from .. import auth, db
 
 router = APIRouter(tags=["ingest"])
 
@@ -46,11 +48,8 @@ class IngestIn(BaseModel):
 @router.post("/api/ingest")
 async def ingest(body: IngestIn, request: Request):
     token = getattr(request.app.state.settings, "ingest_token", "") or ""
-    if token:
-        got = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
-        import hmac
-        if not hmac.compare_digest(got, token):
-            raise HTTPException(401, "ingest token required")
+    if token and not auth.machine_token_ok(request):
+        raise HTTPException(401, "ingest token required")
     if not SOURCE_RE.match(body.source):
         raise HTTPException(400, "source must be short lowercase [a-z0-9_-]")
     if body.priority not in ("normal", "high"):
