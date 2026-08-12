@@ -983,23 +983,30 @@ async def leave_chat_job(chat_id, cfg, memory):
                    for f in db.get_room_flags(c, chat_id, open_only=True)
                    if f.get("message_id")}
         c.close()
-        preferred = {}
+        identity = {}
         try:
             from . import anchors
             for p in anchors.store().people():
-                preferred[p["name"].casefold()] = p["preferred_name"]
-                # Merged-away identity names (#28: naming is law): a label
-                # written before a merge still ingests under the survivor's
-                # preferred name.
+                # #56: the WIRE name is the identity name (the anchor-store
+                # key), the one string "names are law" keeps stable - never
+                # the preferred display name, which is cosmetic and freely
+                # correctable. The memory ledger keys a guest's provenance
+                # on the literal wire string forever, so a preferred-name
+                # edit must never fork one person's history into two guests
+                # there. Labels written under a preferred spelling or a
+                # merged-away name resolve here to the one survivor.
+                identity[p["name"].casefold()] = p["name"]
+                if p.get("preferred_name"):
+                    identity[p["preferred_name"].casefold()] = p["name"]
                 for merged in p.get("merged_names") or []:
-                    preferred[merged.casefold()] = p["preferred_name"]
+                    identity[merged.casefold()] = p["name"]
         except Exception:
             log.warning("anchor store unreadable during handoff - guest "
                         "names ingest as spoken", exc_info=True)
         owner = cfg.get("user_name", "User")
         for m in msgs:
             m["speaker"] = memory_client_mod.ingest_speaker(
-                m, flagged, owner, preferred)
+                m, flagged, owner, identity)
         return msgs
 
     def _advance(last_id):

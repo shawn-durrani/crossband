@@ -491,17 +491,27 @@ def owner_alias(name: str, owner: str) -> bool:
     The owner's roster identity comes from the `user_name` setting, never
     from audio (#28 phase 3, field-test defect 3): a self-introduction
     transcribed as 'Shaun' must not mint a second roster person beside
-    'Shawn'. Conservative on purpose - exact match (ignoring case and
-    punctuation), or names at least three letters long within one edit of
-    each other. A genuinely distinct guest wrongly caught here still
-    surfaces later through the unknown-voice ask, which is the honest
-    fallback; a phantom owner-double on the roster has no such correction."""
+    'Shawn'. Exact match (ignoring case and punctuation), one edit between
+    short names, or - since #56 - ANY verdict the variant rule gives against
+    the owner's name. Deliberately the most owner-biased check in the file:
+    a genuinely distinct guest wrongly caught here still surfaces later
+    through the unknown-voice ask or the manual doors, which are honest
+    fallbacks; a phantom owner-double on the roster has no such correction."""
     a, b = _letters(name), _letters(owner)
     if not a or not b:
         return False
     if a == b:
         return True
-    return len(a) >= 3 and len(b) >= 3 and _within_one_edit(a, b)
+    if len(a) >= 3 and len(b) >= 3 and _within_one_edit(a, b):
+        return True
+    # #56: the field case this closes. A transcriber's favourite spelling of
+    # the owner's name can sit TWO folded edits away ("Sean" beside "Shawn")
+    # and sailed past the one-edit line above, straight onto the roster as a
+    # guest. The variant rule already knows how much alikeness is plausible
+    # for a name's length; both its verdicts (confident AND close) count as
+    # the owner here, because this check's failure modes are asymmetric in
+    # exactly the way the docstring states.
+    return bool(name_variant(name, owner))
 
 
 # ---- spoken name corrections (#28: naming is law) ----
