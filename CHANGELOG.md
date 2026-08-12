@@ -4,6 +4,15 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Auto (hands-free) voice turns no longer wait forever for silence that
+  never comes (#60). Sustained background noise - road noise, wind, a
+  fan - could keep the mic reading "still speaking" indefinitely, so a
+  turn was never sent. A turn now bounds itself: past 12s it finalizes
+  at the next real gap in the audio (even a brief one), and past 20s it
+  finalizes unconditionally either way. Ordinary quiet-room pauses,
+  barge-in, and push-to-talk are unchanged - the cap only ever fires
+  after the normal silence timeout would already have.
+
 - The room button in the voice tray is now an indicator (#28). The room
   switches itself on whenever it is needed - a voice it recognises or
   cannot place, a spoken introduction, a "group mode" command - so a

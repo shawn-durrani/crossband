@@ -3,6 +3,7 @@ import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
+import { shouldForceEndpoint } from './turnPolicy.js'
 import { VoiceTrace } from './voiceTrace.js'
 
 // Hands-free voice session: open mic with VAD auto-send (no push-to-talk),
@@ -740,7 +741,17 @@ export default class VoiceController {
         this._specFired = spec.fired
         if (spec.fire) this._sttSend({ speculative: true })
         // Auto mode sends after a pause; manual mode waits for finalizeNow().
-        if (!this.manualMode && now - this.lastVoice > this.silenceMs) this._finalizeUtterance()
+        if (!this.manualMode && now - this.lastVoice > this.silenceMs) {
+          this._finalizeUtterance()
+        } else if (!this.manualMode &&
+                   shouldForceEndpoint({ turnMs: now - this.speechStart, voiced })) {
+          // #60: sustained background noise (road/wind/fan) can keep frames
+          // reading voiced, or keep RMS above the calibrated floor, so the
+          // silence gap above never opens and the turn would listen forever.
+          // Bounded fallback: send what's captured so far instead of waiting
+          // indefinitely - see turnPolicy.js for the two-tier policy.
+          this._finalizeUtterance()
+        }
       }
     }
     requestAnimationFrame(tick)
