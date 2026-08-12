@@ -4,6 +4,18 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- An AI participant can never be seated as a person in the room (#65).
+  Agents are addressed by name in nearly every spoken sentence, and one
+  introduction-shaped mishearing ("This is Claude...") could seat the
+  agent on the roster - after which by-elimination learning banked HUMAN
+  voices under the agent's name until the phantom was a remembered voice,
+  and forgetting it just let the still-pending seat mint a fresh one.
+  Participant names now get the same spelt-by-ear protection the owner's
+  name has (variants like "Clyde" for "Claude" included), the seating
+  chokepoint refuses the exact names whatever path asked, and
+  `scripts/repair_participant_voices.py` repairs the phantom voices and
+  seats an affected install already has.
+
 - Deploy notices reach the chat again on a password-protected install
   (#62). The browser gate locked out the machine side-channel the moment
   a password was enrolled: the deploy watcher's progress notices - and

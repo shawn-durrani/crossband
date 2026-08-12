@@ -264,10 +264,12 @@ def parse_verdict(text) -> dict:
     return out
 
 
-def build_prompt(text: str, user_name: str, roster_names: list) -> str:
+def build_prompt(text: str, user_name: str, roster_names: list,
+                 participant_names: list | None = None) -> str:
     """The confirmation prompt. The model only ever returns names - the
     transcript text stays in the request, never in anything persisted."""
     present = ", ".join(roster_names) if roster_names else "(nobody yet)"
+    agents = ", ".join(participant_names or [])
     return (
         "You watch one message from a voice conversation and decide whether "
         "it INTRODUCES another human who is physically present and may "
@@ -296,8 +298,11 @@ def build_prompt(text: str, user_name: str, roster_names: list) -> str:
         "when the message is neither. Never invent a name that is not in "
         f"the message, and never return {user_name} themselves - the "
         "owner is already known, including when the transcript spells "
-        "their name slightly differently.\n\n"
-        f"Message: {text[:1200]}"
+        "their name slightly differently."
+        + (f" Never return the AI participants ({agents}): they are "
+           "software in this chat, not people in the room, and the owner "
+           "talks to and about them by name constantly." if agents else "")
+        + f"\n\nMessage: {text[:1200]}"
     )
 
 
@@ -512,6 +517,32 @@ def owner_alias(name: str, owner: str) -> bool:
     # the owner here, because this check's failure modes are asymmetric in
     # exactly the way the docstring states.
     return bool(name_variant(name, owner))
+
+
+def participant_alias(name: str, participants) -> bool:
+    """Is `name` plausibly an AI PARTICIPANT's name as the transcriber spelt
+    it? The #65 boundary: agents are addressed by name in nearly every
+    sentence of a voice session, so an introduction-shaped turn ("This is
+    Claude...") can hand the seating path a participant's name - and a
+    seated participant becomes a pending anchor that by-elimination will
+    happily fund with HUMAN audio, minting a remembered "voice" for a piece
+    of software. Same treatment per participant as owner_alias gives the
+    owner (exact, one edit, the variant rule both verdicts), with the same
+    asymmetry argument: a real guest who happens to be caught here still
+    surfaces through the unknown-voice ask; a phantom agent seat
+    self-reinforces and has no honest correction path."""
+    return any(owner_alias(name, p) for p in participants if p)
+
+
+def _participant_names(con) -> list:
+    """Every configured participant's slug and display name, for the #65
+    boundary. ALL participants, not just this chat's: an agent that is not
+    in the round is still software, never a person in the room."""
+    rows = con.execute("SELECT slug, name FROM participants").fetchall()
+    out = []
+    for r in rows:
+        out.extend(n for n in (r["slug"], r["name"]) if n)
+    return out
 
 
 # ---- spoken name corrections (#28: naming is law) ----
@@ -752,7 +783,9 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
                     outcome = result
         if prefilter(text):
             roster = await asyncio.to_thread(_present_names, chat_id)
-            prompt = build_prompt(text, cfg.get("user_name", "User"), roster)
+            agents = await asyncio.to_thread(_all_participant_names)
+            prompt = build_prompt(text, cfg.get("user_name", "User"), roster,
+                                  participant_names=agents)
             reply = await llm_util.utility_complete(prompt, cfg,
                                                     max_tokens=200)
             verdict = parse_verdict(reply)
@@ -794,6 +827,15 @@ def _present_names(chat_id) -> list:
     try:
         return [r["name"] for r in db.get_room_roster(con, chat_id,
                                                       present_only=True)]
+    finally:
+        con.close()
+
+
+def _all_participant_names() -> list:
+    """Worker-thread wrapper over _participant_names for the prompt path."""
+    con = db.connect()
+    try:
+        return _participant_names(con)
     finally:
         con.close()
 
@@ -982,6 +1024,16 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
         if len(intros) < len(raw_intros):
             log.info("owner-alias introduction dropped: chat=%s n=%d",
                      chat_id, len(raw_intros) - len(intros))
+        # The participant boundary (#65): an AI participant's name - however
+        # the transcriber spelt it - must never reach the roster. A seated
+        # agent becomes a pending anchor, and by-elimination then banks HUMAN
+        # audio under it until the phantom is a remembered voice.
+        pnames = _participant_names(con)
+        before = len(intros)
+        intros = [n for n in intros if not participant_alias(n, pnames)]
+        if len(intros) < before:
+            log.info("participant-alias introduction dropped: chat=%s n=%d",
+                     chat_id, before - len(intros))
         # Naming hygiene (#28 phase 4): strip relationship nouns. "Sam" and
         # "Wife" in one verdict is the proper name plus its echo; "Wife"
         # alone is an unnamed introduction, resolved below.

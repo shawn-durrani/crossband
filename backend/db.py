@@ -867,8 +867,16 @@ def get_room_roster(con, chat_id, present_only=False):
 
 def add_room_person(con, chat_id, name, person_id=""):
     """Append one person to a chat's roster (or re-mark a previously-left row
-    present). Returns the row. Cap enforcement is the CALLER's job
-    (introductions.apply_scan) - this is a thin writer."""
+    present). Returns the row, or None for a refused name. Cap enforcement is
+    the CALLER's job (introductions.apply_scan) - this is a thin writer, with
+    ONE refusal of its own (#65): an AI participant's exact slug or display
+    name never becomes a roster person, whatever path asked. Spelt-by-ear
+    variants are the scan layer's job (participant_alias); this is the
+    last-ditch guard under every seat writer."""
+    if con.execute(
+            "SELECT 1 FROM participants WHERE lower(slug)=lower(?) "
+            "OR lower(name)=lower(?)", (name, name)).fetchone():
+        return None
     row = con.execute(
         "SELECT * FROM room_roster WHERE chat_id=? AND lower(name)=lower(?)",
         (chat_id, name)).fetchone()

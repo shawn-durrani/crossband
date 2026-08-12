@@ -436,6 +436,78 @@ def test_owner_alias_is_dropped_but_the_real_guest_still_joins(app):
         assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]
 
 
+# ── the participant boundary: an AI is never a person in the room (#65) ─────
+#
+# Field failure: a user turn the transcriber rendered as "This is Claude..."
+# seated the AI participant on the roster; by-elimination then banked HUMAN
+# audio under that pending seat until "Claude" was a remembered voice that
+# re-seated itself in every session. Agents are addressed by name in nearly
+# every sentence of a voice chat, so participant names get the same
+# spelt-by-ear treatment the owner's name gets, and the seat writer itself
+# refuses the exact names as a last-ditch guard.
+
+def test_participant_alias_truth_table():
+    participants = ["claude", "Claude", "gpt", "GPT"]
+    yes = ["Claude", "claude", "Claud", "Clyde", "Cloud", "GPT", "gpt"]
+    no = ["Clark", "Alex", "Sam", "Dave", "Kat", ""]
+    for name in yes:
+        assert introductions.participant_alias(name, participants), name
+    for name in no:
+        assert not introductions.participant_alias(name, participants), name
+    assert not introductions.participant_alias("Claude", [])
+
+
+def test_participant_intro_is_dropped_but_the_real_guest_still_joins(app):
+    """'This is Claude...' beside a real guest: the guest joins, the AI never
+    does, and a spelt-by-ear variant of the AI's name is dropped too. Uses
+    the DEFAULT seeded participants (claude/gpt) - the out-of-the-box
+    install is the one that must be protected."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        introductions.apply_scan(
+            chat["id"],
+            {"introductions": ["Claude", "Alex"], "departures": []},
+            {"user_name": "Shawn", "room_roster_max": 6})
+        assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]
+        introductions.apply_scan(
+            chat["id"],
+            {"introductions": ["Clyde"], "departures": []},
+            {"user_name": "Shawn", "room_roster_max": 6})
+        assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]
+
+
+def test_participant_only_intro_changes_nothing(app):
+    """An introduction verdict naming ONLY the AI participant leaves the
+    room exactly as it was: no seat, and room mode stays off."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        introductions.apply_scan(
+            chat["id"],
+            {"introductions": ["Claude"], "departures": []},
+            {"user_name": "Shawn", "room_roster_max": 6})
+        assert _roster(chat["id"]) == []
+
+
+def test_seat_writer_refuses_exact_participant_names(app):
+    """The last-ditch guard: db.add_room_person refuses a participant's
+    exact slug or display name no matter which path asked, so no voice-path
+    caller can seat an AI even if the scan layer is bypassed. Runs against
+    the DEFAULT seeded participants."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        con = db.connect()
+        try:
+            assert db.add_room_person(con, chat["id"], "claude") is None
+            assert db.add_room_person(con, chat["id"], "Claude") is None
+            assert db.add_room_person(con, chat["id"], "CLAUDE") is None
+            assert db.add_room_person(con, chat["id"], "gpt") is None
+            row = db.add_room_person(con, chat["id"], "Alex")
+            assert row and row["name"] == "Alex"
+        finally:
+            con.close()
+        assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]
+
+
 # ── naming hygiene: a relationship noun is never a name (#28 phase 4) ───────
 #
 # Second-field-test defect 1: "this is me, Sam, [the owner]'s wife" minted a

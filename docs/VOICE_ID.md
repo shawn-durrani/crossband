@@ -74,6 +74,18 @@ is genuinely one candidate:
 The label is a normal label: tap it to correct it if the app got it
 wrong, and the correction feeds the right person instead.
 
+Elimination is also only as sound as the roster it reads. The app's own
+AI participants are addressed by name in nearly every spoken sentence,
+and one introduction-shaped mishearing ("This is Claude...") used to be
+enough to seat one as a person - after which elimination would happily
+learn a HUMAN voice under the AI's name, clip by clip, until the phantom
+was a remembered voice. Worse, forgetting the phantom did not end it:
+the seat stayed present and pending by design, so the next unplaceable
+turn minted a fresh phantom against it. Since #65 an AI participant's
+name - including spelt-by-ear variants, with the same tolerance the
+owner's name gets - is dropped before seating, and the seat writer
+refuses the exact names outright as a final guard.
+
 ## English bias, stated plainly
 
 Two separate things lean English:
