@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 import httpx
 
 from . import diagnostics
+from .memory_client import MemorySearchError
 
 USER_AGENT = "crossband/1.0 (local research assistant)"
 
@@ -1191,7 +1192,13 @@ async def search_history(args, cfg, memory, origin_agent=None):
     query = (args.get("query") or "").strip()
     if not query:
         return "Error: empty query"
-    hits = await memory.search(query, limit=20)
+    try:
+        hits = await memory.search(query, limit=20)
+    except MemorySearchError:
+        # A broken search must never read the same as an empty archive
+        # (issue #63) - memory_client already logged the bounded, content-
+        # free detail; the model just needs to know not to trust silence.
+        return "Error: memory search failed - unable to confirm whether any matching messages exist."
     if not hits:
         return "No matching messages in any past chat."
     lines = []

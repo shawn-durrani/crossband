@@ -3,6 +3,7 @@ exception handling, memory tools refusing without a service."""
 
 import asyncio
 
+from backend.memory_client import MemorySearchError
 from backend.tools import _clean_event_date, run_tool
 
 
@@ -11,9 +12,10 @@ def run(coro):
 
 
 class FakeMemory:
-    def __init__(self, quarantined=False, fail=False):
+    def __init__(self, quarantined=False, fail=False, search_fails=False):
         self.quarantined = quarantined
         self.fail = fail
+        self.search_fails = search_fails
         self.saved = []
         self.recalled = []
         self.searched = []
@@ -32,6 +34,8 @@ class FakeMemory:
 
     async def search(self, query, limit=20):
         self.searched.append(query)
+        if self.search_fails:
+            raise MemorySearchError("memory /search request failed: HTTPStatusError")
         return [{"conversation_id": "c1", "speaker": "user",
                  "content": "we discussed espresso", "created_at": "2026-05-01T10:00:00+10:00"}]
 
@@ -120,6 +124,19 @@ def test_recall_and_search_formatting(cfg):
                        origin_agent="claude", memory=mem))
     assert "we discussed espresso" in out
     assert out.startswith("[2026-05-01]")
+
+
+def test_search_history_failure_is_not_reported_as_empty(cfg):
+    """Regression for #63: a broken/unreachable-post-probe search must read
+    as an explicit error, never as "No matching messages" - the two are not
+    interchangeable to a model deciding what it does or doesn't know."""
+    mem = FakeMemory(search_fails=True)
+    out = run(run_tool("search_history", {"query": "espresso"}, cfg,
+                       origin_agent="claude", memory=mem))
+    assert out.startswith("Error:")
+    assert "No matching messages" not in out
+    # the failure detail Membro/httpx produced never leaks into the reply
+    assert "espresso" not in out
 
 
 def test_format_facts_handles_numeric_timestamps():

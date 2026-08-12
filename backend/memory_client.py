@@ -6,12 +6,18 @@ The service is optional: probe() checks GET /health and caches availability for
 when absent, every method degrades to a harmless no-op and the app runs fully
 memoryless. All access goes through the versioned HTTP contract - never the
 service's database.
+
+search() is the one exception to "degrade quietly": once the service is
+reachable, a failed or malformed /search response raises MemorySearchError
+rather than returning [], because an empty list there would be
+indistinguishable from a genuine no-results search (issue #63).
 """
 
 import asyncio
 import datetime
 import json
 import logging
+import os
 import re
 import time
 
@@ -140,6 +146,16 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
     return f"guest:{wire}" if wire else GUEST_UNKNOWN
 
 
+class MemorySearchError(Exception):
+    """The service was reachable (probe() said so) but /search itself did
+    not behave: an error status, a transport failure, or a response that
+    doesn't carry the "hits" list the contract promises. Distinct from a
+    genuine zero-result search, and distinct from the service simply being
+    absent (that path still degrades to [] - see search() below). The
+    message is a bounded, content-free summary - never the response body,
+    which may carry verbatim transcript text."""
+
+
 class MemoryClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8901", timeout: float = 5.0):
         self.base_url = base_url.rstrip("/")
@@ -230,16 +246,39 @@ class MemoryClient:
             return []
 
     async def search(self, query: str, limit: int = 20) -> list[dict]:
+        """POST /search - verbatim transcript search, gated behind the same
+        owner MEMORY_AUTH_TOKEN as membro's other exact-row reads (unlike
+        /recall and /summary, which stay open). An absent service still
+        degrades to [] (that's the documented no-memory posture); anything
+        else that goes wrong once the service IS reachable - a bad/missing
+        token, a transport failure, or a response that doesn't carry the
+        "hits" list - raises MemorySearchError instead of quietly looking
+        like zero results."""
         if not await self.probe():
             return []
+        headers = {}
+        token = os.environ.get("MEMORY_AUTH_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         try:
             r = await self._client.post(self.api + "/search",
-                                        json={"query": query, "limit": limit})
+                                        json={"query": query, "limit": limit},
+                                        headers=headers)
             r.raise_for_status()
-            return r.json().get("hits", [])
+            data = r.json()
         except Exception as e:
-            log.warning("memory /search failed: %s", e)
-            return []
+            # Bounded and content-free: exception text from httpx/json is a
+            # status/URL/parse summary, never the response body.
+            log.warning("memory /search failed: %s: %s", type(e).__name__, e)
+            raise MemorySearchError(
+                f"memory /search request failed: {type(e).__name__}") from e
+        hits = data.get("hits") if isinstance(data, dict) else None
+        if not isinstance(hits, list):
+            log.warning("memory /search returned an unexpected shape "
+                        "(keys=%s)",
+                        sorted(data.keys()) if isinstance(data, dict) else type(data).__name__)
+            raise MemorySearchError("memory /search returned an unexpected response shape")
+        return hits
 
     # ---------- writes ----------
 
