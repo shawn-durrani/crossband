@@ -403,6 +403,7 @@ week when it was maintained by hand.
 - (`test_integrations.py`) Unified integration status
 - (`test_lifecycle.py`) Model onboarding lifecycle
 - (`test_llm_util.py`) backend.llm_util
+- (`test_machine_surface.py`) Machine side-channel vs the browser gate (#62): the ingest token authenticates `/api/ingest` and the deploy-notice route past an enrolled gate, wrong/missing bearers stay 401, the token buys nothing else, unconfigured installs keep the historical posture
 - (`test_mcp_client.py`) MCP client layer
 - (`test_mcp_servers_api.py`) Connections-page MCP management
 - (`test_mcp_servers_auth.py`) Host-level routes stay on the host

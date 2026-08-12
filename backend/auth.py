@@ -132,6 +132,19 @@ def request_session_ok(request) -> bool:
     return session_ok(request.app, request.cookies.get(SESSION_COOKIE))
 
 
+def machine_token_ok(request) -> bool:
+    """The machine side-channel's credential (`/api/ingest` and the deploy
+    notice route): True only when an `ingest_token` is configured AND this
+    request bears it. Local tooling has no cookie jar, so once the browser
+    gate is enrolled this bearer is its only way in. An unconfigured token
+    is never permission - it just leaves the route to the gate's posture."""
+    token = getattr(request.app.state.settings, "ingest_token", "") or ""
+    if not token:
+        return False
+    got = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    return hmac.compare_digest(got, token)
+
+
 def revoke_session(app, sid: str | None) -> None:
     app.state.auth_sessions.pop(sid or "", None)
 

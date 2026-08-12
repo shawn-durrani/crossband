@@ -117,7 +117,7 @@ allow/deny lists only together with that document.
 | key | default | what it does |
 |---|---|---|
 | `mcp_servers` | `{}` | MCP servers the resident MODELS may call: name → `{command, args, label?}` (stdio). Private by placement, so configure it in `config.local.json`. Optional `label` is a trusted, operator-written display string shown in the work-status chip while that server is in flight, e.g. `"Checking job listings"`; omitted servers get a generic "Working on it" fallback, never a guess. |
-| `ingest_token` | `""` | Bearer token for `POST /api/ingest`. Empty = loopback-trust only; set one only if a producer posts from beyond loopback. |
+| `ingest_token` | `""` | Bearer token for the machine side-channel: `POST /api/ingest` AND `POST /api/chats/{id}/notice`, one credential for both (`Authorization: Bearer <token>`, env: `CROSSBAND_INGEST_TOKEN`). Once the owner password is enrolled this is the ONLY way local producers (deploy watcher, schedulers) reach either route - everything else needs a browser session, and tooling has no cookie jar. Empty = the historical posture: loopback trust before enrolment, nothing after. |
 | `slash_commands` | `[]` | Composer suggestion chips for `/` messages: `{insert, label, hint}`. Crossband assigns no meaning to any command: `/` messages go to your tooling, and no model replies. |
 
 ## Research tool caps
