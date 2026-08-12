@@ -84,7 +84,7 @@ def _wire_name(name: str) -> str:
 
 
 def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
-                   preferred_names=None) -> str:
+                   identity_names=None) -> str:
     """The speaker class one message carries into /ingest.
 
     - a non-user message (model slug, system) passes through untouched;
@@ -102,8 +102,14 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
     - any uncertain or ordinal label: "guest:unknown" - never the owner,
       never the guessed name;
     - confident labels that are all the owner: "user";
-    - exactly one confident guest name: "guest:<preferred name>" (the
-      correctable display name, falling back to the label itself);
+    - exactly one confident guest name: "guest:<identity name>" (#56). The
+      wire string is PERMANENT PROVENANCE - the memory ledger keys a
+      guest's history on it forever - so it carries the anchor-store
+      identity name, the one string "names are law" keeps stable, resolved
+      through `identity_names` (labels written under a preferred spelling
+      or a merged-away name map back to the one survivor). The cosmetic,
+      correctable preferred name stays a DISPLAY concern and never rides
+      the wire; a label no map covers falls back to itself, as spoken;
     - anything else (several people confidently sharing one turn): the turn
       is not attributable to one speaker, so it fails safe to
       "guest:unknown"."""
@@ -129,8 +135,8 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
     if len(distinct) != 1:
         return GUEST_UNKNOWN
     name = distinct[0]
-    preferred = (preferred_names or {}).get(name.casefold()) or name
-    wire = _wire_name(preferred) or _wire_name(name)
+    identity = (identity_names or {}).get(name.casefold()) or name
+    wire = _wire_name(identity) or _wire_name(name)
     return f"guest:{wire}" if wire else GUEST_UNKNOWN
 
 

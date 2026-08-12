@@ -6,12 +6,15 @@ What these tests pin, in order:
 1. OWNER-SET LOCK. set_preferred_name marks the record owner-set; once set,
    every automated path (alias capture, anything calling with
    owner_set=False) is refused, and only another owner action changes it.
-2. THE PREFERRED NAME WINS EVERYWHERE. The projection's turn head and
-   crosstalk tail speak the preferred name (the OWNER's head is the one
-   exception: since #28 PR-C it renders the bare cfg name plus the
-   voice-confirmed marker, never the preferred map), memory ingest resolves
-   merged-away names to guest:<preferred>, and the roster snapshot already
-   carries display_name (pinned in test_room_identify).
+2. THE PREFERRED NAME WINS EVERY DISPLAY SURFACE. The projection's turn
+   head and crosstalk tail speak the preferred name (the OWNER's head is
+   the one exception: since #28 PR-C it renders the bare cfg name plus the
+   voice-confirmed marker, never the preferred map), and the roster
+   snapshot already carries display_name (pinned in test_room_identify).
+   The ONE non-display surface is the memory wire, and it is the exception
+   by design (#56): ingest resolves merged-away and preferred spellings to
+   the stable identity name, because the ledger keys guest provenance on
+   that string forever and a cosmetic rename must never fork it.
 3. SPOKEN CORRECTIONS. "her name is spelt ..." rides the same never-awaited
    scan: the prefilter gates one utility call, a confirmed correction sets
    the preferred name owner-set, matching is conservative (roster/remembered
@@ -250,12 +253,31 @@ def test_crosstalk_tail_speaks_the_preferred_name():
     assert "Mateo:" not in tail
 
 
-def test_ingest_resolves_merged_names_to_the_preferred_name():
+def test_ingest_resolves_merged_names_to_the_identity_name():
+    # #56: the wire carries the anchor-store identity name, not the display
+    # name. A label written before a merge (or under a preferred spelling)
+    # still ingests under the ONE surviving identity, so the memory ledger
+    # never sees the same person fork into two guest strings.
     msg = {"speaker": "user", "id": 7,
            "voice_labels": json.dumps({"labels": ["Samm"], "uncertain": []})}
     speaker = memory_client.ingest_speaker(
         msg, frozenset(), "Alex", {"samm": "Sam"})
     assert speaker == "guest:Sam"
+
+
+def test_owner_alias_catches_the_two_edit_transcription():
+    # #56, the field case: "Sean" is two folded edits from "Shawn" and is a
+    # transcriber's entirely plausible spelling of that sound - it minted a
+    # roster guest. Any variant-rule verdict against the owner's name now
+    # counts as the owner; a genuinely different name still does not.
+    oa = introductions.owner_alias
+    assert oa("Sean", "Shawn")           # two edits, same sound (#56)
+    assert oa("Shaun", "Shawn")          # one edit: already caught
+    assert oa("shawn.", "Shawn")         # punctuation/case only
+    assert not oa("Dave", "Shawn")
+    assert not oa("Priya", "Shawn")
+    assert not oa("", "Shawn")
+    assert not oa("Sean", "")
 
 
 # ── 3. spoken corrections ───────────────────────────────────────────────────

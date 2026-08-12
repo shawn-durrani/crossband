@@ -66,12 +66,18 @@ def test_case_1_owner_turns_stay_user_exactly_as_today():
     assert ingest_speaker(_msg(7, "system"), set(), "Shawn") == "system"
 
 
-def test_case_2_confident_guest_turn_carries_their_preferred_name():
+def test_case_2_confident_guest_turn_carries_their_identity_name():
     m = _msg(1, "user", ["Lex"], [])
     assert ingest_speaker(m, set(), "Shawn") == "guest:Lex"
-    # the correctable display name wins when one is set
+    # #56: the wire string is permanent provenance in the memory ledger, so
+    # it carries the stable identity name. A label stamped under a preferred
+    # spelling or a merged-away name resolves back to the one survivor; the
+    # cosmetic preferred name never rides the wire.
     assert ingest_speaker(m, set(), "Shawn",
-                          {"lex": "Alex"}) == "guest:Alex"
+                          {"lex": "Alexis"}) == "guest:Alexis"
+    assert ingest_speaker(_msg(2, "user", ["Mateo"], []), set(), "Shawn",
+                          {"mateo": "Matteo", "matteo": "Matteo"}
+                          ) == "guest:Matteo"
 
 
 def test_case_3_uncertain_turn_is_never_the_owner_and_never_the_guess():
@@ -203,7 +209,10 @@ def test_handoff_resolves_speakers_and_source_app_is_untouched(app):
                                  "crosstalk": True, "overlap": True})
     m_model = db.insert_message(con, chat_id, "claude", "a reply")
     con.close()
-    # Lex's correctable display name is Alex - the ingest must use it
+    # Lex's correctable display name is Alex. Display surfaces speak "Alex";
+    # the WIRE stays "Lex" (#56): the ledger keys guest provenance on this
+    # string forever, so it carries the stable identity name, and a cosmetic
+    # preferred-name edit can never fork Lex's history into two guests.
     pid = anchors.store().ensure_person("Lex")
     assert anchors.store().set_preferred_name(pid, "Alex")
 
@@ -219,7 +228,7 @@ def test_handoff_resolves_speakers_and_source_app_is_untouched(app):
     speakers = {int(m["external_id"]): m["speaker"]
                 for m in payload["messages"]}
     assert speakers[m_owner["id"]] == "user"
-    assert speakers[m_guest["id"]] == "guest:Alex"
+    assert speakers[m_guest["id"]] == "guest:Lex"
     assert speakers[m_uncertain["id"]] == GUEST_UNKNOWN
     assert speakers[m_flagged["id"]] == GUEST_UNKNOWN
     assert speakers[m_crosstalk["id"]] == GUEST_UNKNOWN

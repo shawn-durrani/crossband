@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Stable guest names on the memory wire, and the owner's name harder to
+  mishear into a guest (#56). Two fixes from the first real multi-human
+  sessions: a guest's name now crosses to the memory service as the one
+  stable identity name (never the cosmetic preferred spelling, which
+  stays a display concern), so renaming how a name is shown can no
+  longer split one person's history into two guests in the ledger; and
+  a transcription of the owner's own name up to two letters off (the
+  "Sean" for "Shawn" case) is now recognised as the owner everywhere a
+  name could join the roster, instead of minting a phantom guest.
+
 - Auto (hands-free) voice turns no longer wait forever for silence that
   never comes (#60). Sustained background noise - road noise, wind, a
   fan - could keep the mic reading "still speaking" indefinitely, so a
