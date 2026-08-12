@@ -469,6 +469,7 @@ week when it was maintained by hand.
 - (`spendView.test.js`) Tests for the Spend page: it must lead with an honest answer, not a table
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard
 - (`textQueue.test.js`) Invariant tests for per-chat text batching + pre-ingestion cancel
+- (`turnPolicy.test.js`) Bounded active-turn endpointing (#60): a normal-length turn never forces regardless of voicing, an unvoiced frame past the soft cap forces now (the continuous-noise fix), a voiced frame past the soft cap holds to avoid premature truncation, and the hard cap forces unconditionally either way
 - (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state, and the owner's voice-confirmed marker (#28 PR-C) and the cold-start learning marker (#28) are additive-only so old payloads render unchanged - one shared rule decides the tick, the "· learning" tag and the bare "?"
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery
 - (`voiceGate.test.js`) Pure-function tests for the voice playback gate (a regression guard)
