@@ -151,12 +151,48 @@ def test_confirmed_introduction_flips_room_mode_and_grows_the_roster(
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         _send(c, chat["id"], "my wife Alex is here with us")
-        assert _wait_for(lambda: _chat_room_mode(chat["id"]))
-        roster = _roster(chat["id"])
+        # Wait on the roster - the LAST thing the scan writes - not the
+        # room-mode flag, which commits first and can win the race (#71):
+        # anchor-store I/O (people list, voice-match, variant matching) runs
+        # between the two commits, so asserting on room_mode alone can catch
+        # the scan mid-flight with room mode on and nobody in the roster yet.
+        roster = _wait_for(lambda: _roster(chat["id"]))
         assert [p["name"] for p in roster] == ["Alex"]
         assert roster[0]["person_id"] == ""  # anchor pending - nothing heard yet
+        assert _chat_room_mode(chat["id"]) is True
         # the live mirror the STT relay reads at commit boundaries
         assert diarize.room_enabled(chat["id"]) is True
+
+
+def test_room_mode_commit_can_precede_the_roster_row(app, utility, monkeypatch):
+    """Regression guard for #71: room_mode and the roster row are two
+    separate commits inside the scan, with anchor-store work (people list,
+    voice-match, variant matching) running in between - so a reader CAN
+    observe room_mode on with an empty roster mid-scan. Widen that gap
+    deterministically and prove two things: (a) the gap is real, so a test
+    (or any consumer) that reads the roster immediately after room_mode can
+    race it, and (b) waiting on the roster - the scan's last write, per the
+    fixed test above - always converges regardless of the gap's width."""
+    gate = threading.Event()
+    real_add_room_person = db.add_room_person
+
+    def widened_add_room_person(*a, **kw):
+        gate.wait(2)
+        return real_add_room_person(*a, **kw)
+
+    monkeypatch.setattr(introductions.db, "add_room_person",
+                        widened_add_room_person)
+    utility["verdict"] = {"introductions": ["Alex"], "departures": []}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "my wife Alex is here with us")
+        # room_mode is the FIRST commit - it lands while the roster write is
+        # still gated, catching the exact window the old test could race.
+        assert _wait_for(lambda: _chat_room_mode(chat["id"]))
+        assert _roster(chat["id"]) == []
+        gate.set()  # release the gated roster write
+        roster = _wait_for(lambda: _roster(chat["id"]))
+        assert [p["name"] for p in roster] == ["Alex"]
 
 
 def test_group_introduction_names_several_people(app, utility):
