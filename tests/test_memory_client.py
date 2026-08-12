@@ -1,12 +1,18 @@
 """Memory client degradation: with the service absent (unroutable port) every
 read is a harmless empty value, writes are no-ops, and the app never raises.
-Contract-version gating: a major mismatch is treated as absent."""
+Contract-version gating: a major mismatch is treated as absent.
+
+search() is the one read that must NOT degrade quietly once the service is
+reachable (issue #63): a bad/missing owner token, a transport failure, or an
+unexpected response shape all raise MemorySearchError rather than looking
+like a genuine zero-result search."""
 
 import asyncio
 
 import httpx
+import pytest
 
-from backend.memory_client import MemoryClient
+from backend.memory_client import MemoryClient, MemorySearchError
 
 
 def run(coro):
@@ -153,4 +159,109 @@ def test_ingest_carries_attachments_and_placeholder():
     assert len(msgs) == 2  # empty no-attachment message still dropped
     assert msgs[0]["attachments"] == [att]
     assert msgs[1]["content"] == "(sent attached file(s))"
+    run(c.aclose())
+
+
+# ---------- /search: current contract is POST /v1/search, owner-token gated,
+# {"hits": [...]} on success (verified live against a running Membro) ----------
+
+def test_search_sends_bearer_token_and_preserves_hits(monkeypatch):
+    """Success path: with MEMORY_AUTH_TOKEN set, search() sends it as
+    Authorization: Bearer <token> and returns the "hits" list untouched."""
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "s3cr3t-owner-token")
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.1"})
+    sent = {}
+
+    async def fake_post(url, json=None, headers=None):
+        sent["url"], sent["body"], sent["headers"] = url, json, headers
+        return httpx.Response(200, json={"hits": [
+            {"conversation_id": "c1", "speaker": "user",
+             "content": "we discussed espresso",
+             "created_at": "2026-05-01T10:00:00+10:00"},
+        ]}, request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    hits = run(c.search("espresso", limit=5))
+    assert sent["url"].endswith("/search")
+    assert sent["body"] == {"query": "espresso", "limit": 5}
+    assert sent["headers"]["Authorization"] == "Bearer s3cr3t-owner-token"
+    assert hits == [{"conversation_id": "c1", "speaker": "user",
+                      "content": "we discussed espresso",
+                      "created_at": "2026-05-01T10:00:00+10:00"}]
+    run(c.aclose())
+
+
+def test_search_without_token_sends_no_auth_header(monkeypatch):
+    monkeypatch.delenv("MEMORY_AUTH_TOKEN", raising=False)
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.1"})
+    sent = {}
+
+    async def fake_post(url, json=None, headers=None):
+        sent["headers"] = headers
+        return httpx.Response(200, json={"hits": []},
+                              request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    assert run(c.search("anything")) == []
+    assert "Authorization" not in sent["headers"]
+    run(c.aclose())
+
+
+def test_search_401_raises_instead_of_empty_list(monkeypatch):
+    """A missing/rejected owner token must be observable, not read as
+    "no matching messages" (the original #63 failure mode)."""
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "wrong-token")
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.1"})
+
+    async def fake_post(url, json=None, headers=None):
+        return httpx.Response(401, json={"error": {"code": "401",
+                              "message": "owner token required"}},
+                              request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    with pytest.raises(MemorySearchError):
+        run(c.search("anything"))
+    run(c.aclose())
+
+
+def test_search_transport_failure_raises(monkeypatch):
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "s3cr3t-owner-token")
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.1"})
+
+    async def failing_post(url, json=None, headers=None):
+        raise httpx.ReadTimeout("boom")
+
+    c._client.post = failing_post
+    with pytest.raises(MemorySearchError):
+        run(c.search("anything"))
+    run(c.aclose())
+
+
+def test_search_unexpected_shape_raises_not_empty(monkeypatch):
+    """A response-shape mismatch (renamed/missing field) must not silently
+    read as zero results either."""
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "s3cr3t-owner-token")
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.1"})
+
+    async def fake_post(url, json=None, headers=None):
+        return httpx.Response(200, json={"results": []},  # renamed field
+                              request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    with pytest.raises(MemorySearchError):
+        run(c.search("anything"))
+    run(c.aclose())
+
+
+def test_search_absent_service_still_degrades_to_empty(monkeypatch):
+    """Unlike the reachable-but-broken cases above, a genuinely absent
+    service is the documented no-memory posture, not a failure."""
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "s3cr3t-owner-token")
+    c = make_client()  # unroutable port: probe() fails, search() never posts
+    assert run(c.search("anything")) == []
     run(c.aclose())

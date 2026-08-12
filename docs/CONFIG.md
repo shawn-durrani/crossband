@@ -88,6 +88,7 @@ supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 | key | default | what it does |
 |---|---|---|
 | `memory_url` | `http://127.0.0.1:8901` | Where to probe for [Membro](https://github.com/shawn-durrani/membro). Present → memory features light up; absent → fully functional memoryless. Re-probed every 30s, so start order doesn't matter. |
+| `MEMORY_AUTH_TOKEN` (env, not a config key) | unset | Membro's owner token. `/recall` and `/summary` stay open, but Membro's `/search` (verbatim transcript search, the `search_history` tool) is owner-gated even on loopback, so the client sends it as `Authorization: Bearer <token>` when set. Same variable `code_mcp`'s `membro-admin` entry resolves via `${MEMORY_AUTH_TOKEN}` (see [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md)) - one token, put once in Crossband's `.env`. Without it, `search_history` reports a failure rather than silently reading as "no history". |
 
 ## Coding guest + GitHub (the `code` toggle)
 
