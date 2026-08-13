@@ -4,6 +4,14 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A stopped deploy watcher stops looking identical to a queued deploy
+  (#58). Machine tooling now acknowledges each slash command it reads
+  (the notice route gains `ack_command_id`); a command nobody acks
+  within `slash_ack_timeout_s` (default 2 minutes, 0 = off) gets one
+  system line saying nothing picked it up, and a restart inside the
+  window re-arms the timer. Crossband still assigns no meaning to any
+  command - it only learns whether SOMETHING read it.
+
 - An AI participant can never be seated as a person in the room (#65).
   Agents are addressed by name in nearly every spoken sentence, and one
   introduction-shaped mishearing ("This is Claude...") could seat the

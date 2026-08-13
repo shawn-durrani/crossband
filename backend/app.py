@@ -245,6 +245,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.reflection_sweep = engine.spawn(
             engine.reflection_sweep_loop(settings.as_cfg, memory))
         app.state.mcp_task = engine.spawn(app.state.mcp.run())
+        # #58: a restart inside a slash command's ack window must not eat the
+        # dead-man warning - re-arm timers for recent unacked commands.
+        chats_router.rearm_command_deadmen(app)
         try:
             yield
         finally:

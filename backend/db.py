@@ -18,7 +18,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 16  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28)
+SCHEMA_VERSION = 17  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -198,6 +198,14 @@ CREATE TABLE IF NOT EXISTS inbound_events(
   message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
   created_at REAL NOT NULL,
   UNIQUE(source, dedupe_key)
+);
+CREATE TABLE IF NOT EXISTS command_acks(
+  -- Machine tooling acknowledging a slash command it consumed (#58): the
+  -- watcher names the command's message id on its first notice, and the
+  -- dead-man warning for that command stands down. Core still assigns no
+  -- meaning to any command - this records only that SOMETHING read it.
+  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  acked_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS guest_jobs(
   -- Async Claude Code guest execution: a guest run is a BACKGROUND job,
@@ -899,6 +907,27 @@ def add_room_person(con, chat_id, name, person_id=""):
     from . import events  # lazy, same circularity reason as insert_message
     events.notify_room_update()
     return out
+
+
+def ack_command(con, chat_id, message_id) -> bool:
+    """Record that machine tooling consumed a slash command (#58). True only
+    when the id names a USER message in THIS chat - strict on purpose, so a
+    producer bug can never ack a message across chats or ack model text."""
+    row = con.execute(
+        "SELECT 1 FROM messages WHERE id=? AND chat_id=? AND speaker='user'",
+        (message_id, chat_id)).fetchone()
+    if not row:
+        return False
+    con.execute(
+        "INSERT OR IGNORE INTO command_acks(message_id, acked_at) VALUES(?,?)",
+        (message_id, now()))
+    con.commit()
+    return True
+
+
+def command_acked(con, message_id) -> bool:
+    return bool(con.execute("SELECT 1 FROM command_acks WHERE message_id=?",
+                            (message_id,)).fetchone())
 
 
 def mark_room_person_left(con, chat_id, name):

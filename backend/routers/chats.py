@@ -198,8 +198,92 @@ def delete_chat(chat_id: int):
     return {"ok": True}
 
 
+# ---------- slash-command dead-man (#58) ----------
+#
+# Crossband stores slash commands and deliberately assigns them no meaning;
+# an external producer consumes them. That leaves one blind spot: a stopped
+# producer is indistinguishable from a working one, because both look like
+# silence. The producer therefore ACKS each command it reads (the notice
+# route's ack_command_id), and Crossband arms one timer per stored command -
+# no ack inside the window means one system line saying nothing picked it
+# up. The command's MEANING still lives entirely outside this repo.
+
+_DEADMAN_TASKS: set = set()
+
+
+def arm_command_deadman(app, chat_id, message_id, delay=None):
+    """One fire-and-forget timer per stored slash command. Returns the task
+    (or None when the feature is off) so tests can await it."""
+    timeout = float(getattr(app.state.settings, "slash_ack_timeout_s", 120.0)
+                    or 0)
+    if timeout <= 0:
+        return None
+    task = asyncio.get_running_loop().create_task(
+        _command_deadman(chat_id, message_id,
+                         timeout if delay is None else delay, timeout))
+    _DEADMAN_TASKS.add(task)
+    task.add_done_callback(_DEADMAN_TASKS.discard)
+    return task
+
+
+async def _command_deadman(chat_id, message_id, delay, timeout):
+    try:
+        await asyncio.sleep(delay)
+        con = db.connect()
+        try:
+            # Same posture as the notice route: run ON the loop so
+            # insert_message's events-bus notify is thread-safe.
+            if db.command_acked(con, message_id):
+                return
+            db.insert_message(con, chat_id, "system", (
+                "⚠️ Nothing on this machine acknowledged this command within "
+                f"{int(timeout)}s. The tooling that consumes it (e.g. the "
+                "deploy watcher) may be stopped - its own log is the source "
+                "of truth."))
+            log.info("slash command unacked after %ss: chat=%s msg=%s",
+                     int(timeout), chat_id, message_id)
+        finally:
+            con.close()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("command dead-man failed: chat=%s msg=%s",
+                      chat_id, message_id)
+
+
+def rearm_command_deadmen(app):
+    """Startup sweep: re-arm timers for recent slash commands nobody acked,
+    so a restart inside the window cannot eat the warning. The rare restart
+    that lands AFTER a warning was already posted re-warns once - a
+    duplicate line is the safe direction to fail."""
+    timeout = float(getattr(app.state.settings, "slash_ack_timeout_s", 120.0)
+                    or 0)
+    if timeout <= 0:
+        return
+    con = db.connect()
+    try:
+        rows = con.execute(
+            "SELECT m.id, m.chat_id, m.created_at FROM messages m "
+            "LEFT JOIN command_acks a ON a.message_id = m.id "
+            "WHERE m.speaker='user' AND m.created_at > ? "
+            "AND substr(ltrim(m.content), 1, 1) = '/' "
+            "AND a.message_id IS NULL",
+            (db.now() - 2 * timeout,)).fetchall()
+    finally:
+        con.close()
+    for r in rows:
+        remaining = max(1.0, r["created_at"] + timeout - db.now())
+        arm_command_deadman(app, r["chat_id"], r["id"], delay=remaining)
+    if rows:
+        log.info("re-armed %d slash-command dead-man timer(s)", len(rows))
+
+
 class NoticeIn(BaseModel):
     text: str
+    # #58: the user message (a slash command) this notice consumes. Recording
+    # the ack stands the dead-man warning down; core still assigns no meaning
+    # to the command itself.
+    ack_command_id: int | None = None
 
 
 @router.post("/api/chats/{chat_id}/notice")
@@ -237,6 +321,13 @@ async def post_notice(chat_id: int, body: NoticeIn, request: Request):
     if not con.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone():
         con.close()
         raise HTTPException(404)
+    if body.ack_command_id is not None:
+        # Strict on purpose: acking a message that is not a user message in
+        # THIS chat is a producer bug worth failing loudly, not absorbing.
+        if not db.ack_command(con, chat_id, body.ack_command_id):
+            con.close()
+            raise HTTPException(400, "ack_command_id does not name a user "
+                                     "message in this chat")
     msg = db.insert_message(con, chat_id, "system", text[:2000])
     con.close()
     return msg
@@ -309,6 +400,10 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
     # streaming (it's a side-channel note, not a barge-in), so no Round is
     # registered and the active round's re-attach buffer is untouched.
     if body.text.lstrip().startswith("/"):
+        # #58: arm the dead-man - if no machine tooling acks this message
+        # within the window, one system line says nothing picked it up, so a
+        # stopped watcher stops looking identical to a queued deploy.
+        arm_command_deadman(request.app, chat_id, user_msg["id"])
         async def slash_gen():
             yield engine.sse({"type": "user_saved", "message": user_msg})
             yield engine.sse({"type": "done"})
