@@ -26,6 +26,10 @@ covers.
    from your phone over Tailscale. Nothing exposed to the internet.
 6. [docs/OPERATIONS.md](OPERATIONS.md): keeping a live instance up. The
    launchd supervisor, logs, restart-on-crash, reboot survival, backups.
+7. [docs/PRODUCERS.md](PRODUCERS.md): the machine-tooling side-channel, if
+   you want your own deploy watcher or scheduler talking to chats. Slash
+   commands out, notices and events in, the acknowledgement contract, the
+   bearer credential, and what a producer must never do.
 
 Companion memory service (optional, auto-detected):
 [Membro](https://github.com/shawn-durrani/membro), whose own README covers
