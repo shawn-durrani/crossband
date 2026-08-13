@@ -58,6 +58,16 @@ def active(chat_id: int) -> Round | None:
     return r if r and not r.done else None
 
 
+def latest(chat_id: int) -> Round | None:
+    """The chat's most recent round, DONE OR NOT - its buffer lives until
+    the next round starts (#64). This is what lets a voice client speak a
+    narration whose round finished before the client could react: a
+    single-narrator hand-back persists its reply as the round's LAST act,
+    so by the time the new_message event reaches the client, active() is
+    already None and a replay of this buffer is the only way to voice it."""
+    return _rounds.get(chat_id)
+
+
 def active_chat_ids() -> list[int]:
     """Chat ids with a round still generating - the source of truth for the
     running-task indicators. Because rounds are DETACHED (they keep

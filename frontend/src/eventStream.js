@@ -94,6 +94,24 @@ export function shouldVoiceAttach(eventChatId, activeChatId, { streaming, voiceA
     && voiceActive === true && !streaming
 }
 
+// May this speaker's message justify replaying a FINISHED round aloud (#64)?
+// The hand-back narrator persists its reply as the round's last act, so the
+// round is done before the client can ask - the fix replays the last round's
+// buffer. That replay must only ever be triggered by a message that could
+// have COME from a round: a participant's turn. The message-speaker universe
+// is closed - user, system, participant slugs, 'claude-code' (guest job
+// output), and namespaced producers (ext:*, guest:*) - so everything that is
+// not a participant is named here, and a message that could not have come
+// from a round (a deploy notice, a guest job result landing mid-job) can
+// never resurrect an old round out of nowhere.
+export function voiceReplaySpeakerEligible(speaker) {
+  if (!speaker || typeof speaker !== 'string') return false
+  if (speaker === 'user' || speaker === 'system') return false
+  if (speaker === 'claude-code') return false
+  if (speaker.includes(':')) return false
+  return true
+}
+
 // --- Deferred hydration queue ---------------------------------------------
 // A live `new_message` for the OPEN chat that arrives WHILE a round is
 // streaming is suppressed by shouldHydrateActiveChat AND shouldVoiceAttach

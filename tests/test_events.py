@@ -48,7 +48,7 @@ def test_stream_endpoint_wiring(tmp_path, monkeypatch):
 
     async def fake_stream(since, heartbeat_secs=25):
         captured["since"] = since
-        yield 'data: {"type": "new_message", "chat_id": 1, "id": 42}\n\n'
+        yield 'data: {"type": "new_message", "chat_id": 1, "id": 42, "speaker": "user"}\n\n'
 
     monkeypatch.setattr(events_router.events, "stream", fake_stream)
     with TestClient(make_app(tmp_path), base_url="http://127.0.0.1") as c:
@@ -57,7 +57,7 @@ def test_stream_endpoint_wiring(tmp_path, monkeypatch):
         assert r.headers["content-type"].startswith("text/event-stream")
         assert captured["since"] == 7
         assert json.loads(r.text.splitlines()[0][6:]) == {
-            "type": "new_message", "chat_id": 1, "id": 42}
+            "type": "new_message", "chat_id": 1, "id": 42, "speaker": "user"}
 
 
 def test_stream_endpoint_defaults_since_to_zero(tmp_path, monkeypatch):
@@ -160,7 +160,8 @@ def test_reconnect_from_watermark_skips_already_seen(db_app):
         got = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
         await gen.aclose()
         assert json.loads(got[6:]) == {
-            "type": "new_message", "chat_id": chat_id, "id": second["id"]}
+            "type": "new_message", "chat_id": chat_id, "id": second["id"],
+            "speaker": second["speaker"]}
 
     asyncio.run(go())
 
@@ -175,9 +176,14 @@ def test_global_channel_never_carries_content(db_app):
         con.close()
 
         gen = events.stream(since=0, heartbeat_secs=25)
-        got = json.loads((await asyncio.wait_for(gen.__anext__(), timeout=1.0))[6:])
+        raw = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+        got = json.loads(raw[6:])
         await gen.aclose()
-        assert set(got) == {"type", "chat_id", "id"}
+        # speaker joined the payload (#64): a slug is metadata, not content -
+        # the guard's real teeth are that no TEXT ever rides this stream.
+        assert set(got) == {"type", "chat_id", "id", "speaker"}
+        assert got["speaker"] == "system"
+        assert "secret sauce" not in raw and "deployed" not in raw
 
     asyncio.run(go())
 
@@ -321,4 +327,5 @@ def test_deploy_restart_scenario(tmp_path):
             return got
 
         got = asyncio.run(reconnect())
-        assert got == {"type": "new_message", "chat_id": chat["id"], "id": deployed["id"]}
+        assert got == {"type": "new_message", "chat_id": chat["id"], "id": deployed["id"],
+                       "speaker": "system"}

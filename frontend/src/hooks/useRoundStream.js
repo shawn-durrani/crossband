@@ -3,6 +3,7 @@ import { api, streamSSE } from '../api'
 import { participantInfo } from '../speakers'
 import { mergeGuestJob } from '../guestJobs'
 import { eventBelongsToActiveChat } from '../streamGuard'
+import { voiceReplaySpeakerEligible } from '../eventStream'
 import { createBatch, addFragment, cancelBatch, flipBatch, combineFragments } from '../textQueue'
 
 // The round loop's client side: everything between "the user hit Send" and
@@ -247,20 +248,32 @@ export function useRoundStream({
   // attach to a round we've NEVER fed to voice (guarded by tailedRounds), so
   // tailing from the buffer start (after=0) voices the whole narration exactly
   // once - nothing was spoken yet.
-  async function voiceAttachRound(chatId) {
+  async function voiceAttachRound(chatId, speaker) {
     if (voiceAttachInFlight.current || streamingRef.current) return
     voiceAttachInFlight.current = true
     try {
-      const { round_id } = await api.activeRound(chatId).catch(() => ({}))
+      const { round_id, last_round_id } =
+        await api.activeRound(chatId).catch(() => ({}))
+      // #64: a single-narrator hand-back finishes its round with the very
+      // message whose event brought us here, so the ACTIVE id is usually
+      // already null. The last round's buffer outlives completion; replaying
+      // it is what turns the narration into speech. Two guards keep that
+      // safe: tailedRounds makes each round voice at most once (a round we
+      // streamed live is never replayed), and the replay path only fires for
+      // a message a round could have produced - a participant's turn, per
+      // voiceReplaySpeakerEligible - so a deploy notice or a guest job
+      // result can never resurrect an old round aloud.
+      const target = round_id
+        || (voiceReplaySpeakerEligible(speaker) ? last_round_id : null)
       // Re-check the world after the await: still this chat, still in voice, not
       // a round we already fed, and not one we started/aborted out of.
       if (chatId !== activeChatIdRef.current || !voiceActiveRef.current) return
-      if (streamingRef.current || !round_id || tailedRounds.current.has(round_id)) return
-      tailedRounds.current.add(round_id)
+      if (streamingRef.current || !target || tailedRounds.current.has(target)) return
+      tailedRounds.current.add(target)
       const ctrl = new AbortController()
       try {
         await streamSSE(
-          `/api/chats/${chatId}/round/stream?round_id=${round_id}&after=0`,
+          `/api/chats/${chatId}/round/stream?round_id=${target}&after=0`,
           null,
           (ev) => { if (chatId === activeChatIdRef.current) voiceRef.current?.onEvent(ev) },
           ctrl.signal, 'GET')

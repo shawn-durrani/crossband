@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Claude Code's findings are spoken when it returns (#64). The hand-back
+  narrator's round finishes with the very message that announces it, so
+  the voice client always arrived after the round was gone and the
+  narration landed as silent text - the "you'll have to repeat yourself"
+  gap from the first field days. The last round's buffer now stays
+  discoverable until the next round starts, and a voice-active client
+  replays it aloud exactly once. The replay can only ever be triggered
+  by a participant's own message: notices, guest job output and external
+  events can never resurrect an old round out loud.
+
 - Fix a contaminated voice without deleting anything (#90). The first
   real audition found recordings of one person filed under another; the
   panel can now create a person by name (no voice needed - they start

@@ -54,7 +54,7 @@ export function useEventStream({
     if (voiceAttachEligible(ev.type)
         && shouldVoiceAttach(ev.chat_id, activeChatIdRef.current,
                              { streaming: streamingRef.current, voiceActive: voiceActiveRef.current })) {
-      cb.current.onVoiceAttach(ev.chat_id)
+      cb.current.onVoiceAttach(ev.chat_id, ev.speaker)
     }
     if (shouldHydrateActiveChat(ev.chat_id, activeChatIdRef.current, streamingRef.current)) {
       // Anchored on the EVENT's id, not just the local high-water mark:

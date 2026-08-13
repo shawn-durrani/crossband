@@ -675,8 +675,14 @@ def get_messages_after(con, since, chat_id=None):
     attachments/tool_events shape as get_chat_messages, scoped to one chat -
     what the frontend fetches for the chat it's actually looking at."""
     if chat_id is None:
+        # speaker is metadata, not content (#64): the voice client uses it to
+        # decide whether a message could belong to a round worth replaying
+        # aloud (a participant's narration) or never could (system notices,
+        # guest job output, external ingest). Transcript text still never
+        # rides this stream.
         return [dict(r) for r in con.execute(
-            "SELECT id, chat_id FROM messages WHERE id > ? ORDER BY id", (since,))]
+            "SELECT id, chat_id, speaker FROM messages WHERE id > ? ORDER BY id",
+            (since,))]
     msgs = [dict(r) for r in con.execute(
         "SELECT * FROM messages WHERE chat_id=? AND id > ? ORDER BY id",
         (chat_id, since))]
