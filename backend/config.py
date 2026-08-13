@@ -282,6 +282,11 @@ class Settings(BaseModel):
     # any command. Entries: {"insert": "/deploy crossband #", "label": "...",
     # "hint": "..."}. Empty (default) = no suggestion UI.
     slash_commands: list = Field(default_factory=list)
+    # Dead-man warning for slash commands (#58): if no machine tooling acks a
+    # "/" message (via the notice route's ack_command_id) within this many
+    # seconds, ONE system line says nothing picked it up - so a stopped
+    # watcher stops being indistinguishable from a queued deploy. 0 = off.
+    slash_ack_timeout_s: float = 120.0
     code_max_turns: int = 50       # SDK turn cap for one guest visit
     code_timeout_s: float = 600.0  # wall-clock cap for one guest visit
     # Guest auth: false (default) = the machine's own Claude Code login
