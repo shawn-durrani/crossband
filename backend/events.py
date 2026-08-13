@@ -238,7 +238,8 @@ def _sse(payload: dict) -> str:
 
 async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
     """The global SSE generator behind GET /api/events/stream. Yields
-    `{"type": "new_message", "chat_id", "id"}` - never message content, by
+    `{"type": "new_message", "chat_id", "id", "speaker"}` (speaker is a slug,
+    metadata for the voice replay gate, #64) - never message content, by
     deliberate design - for every message inserted anywhere with id > `since`. Runs forever until the client disconnects (Starlette cancels
     this generator; `_wait_for_wakeup`'s finally cleans up the waiter either
     way - nothing to catch here).
@@ -285,7 +286,8 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
             con.close()
         for r in rows:
             last = r["id"]
-            yield _sse({"type": "new_message", "chat_id": r["chat_id"], "id": r["id"]})
+            yield _sse({"type": "new_message", "chat_id": r["chat_id"],
+                        "id": r["id"], "speaker": r["speaker"]})
         for j in jobs:
             job_cursor = max(job_cursor, j["updated_at"])
             yield _sse(guest_job_event(j))

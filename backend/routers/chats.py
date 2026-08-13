@@ -484,9 +484,19 @@ async def active_round(chat_id: int):
     touches the voice pipeline, so text arrives and audio never does. Returns
     {"round_id": null} when the chat is idle."""
     r = rounds.active(chat_id)
-    if not r:
-        return {"round_id": None}
-    return {"round_id": r.round_id, "count": len(r.events)}
+    # #64: the single-narrator hand-back persists its reply as the round's
+    # LAST act, so the round is usually DONE before the client's new_message
+    # reaction asks here - and the narration went silently to text. The
+    # latest round's buffer outlives completion (until the next round), so
+    # report it too; the client replays it through the voice pipeline,
+    # guarded by its own already-tailed set.
+    last = rounds.latest(chat_id)
+    out = {"round_id": None,
+           "last_round_id": last.round_id if last else None,
+           "last_count": len(last.events) if last else 0}
+    if r:
+        out.update({"round_id": r.round_id, "count": len(r.events)})
+    return out
 
 
 @router.post("/api/chats/{chat_id}/round/abort")

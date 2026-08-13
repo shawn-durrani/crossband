@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   mergeMessagesById, highestId, hydrateCursor, nextBackoffDelay, INITIAL_BACKOFF_MS,
-  shouldHydrateActiveChat, shouldVoiceAttach, voiceAttachEligible,
+  shouldHydrateActiveChat, shouldVoiceAttach, voiceAttachEligible, voiceReplaySpeakerEligible,
   shouldDeferEvent, queuePendingEvent, drainPendingQueue,
 } from './eventStream.js'
 
@@ -215,4 +215,20 @@ test('end-to-end: an event deferred mid-round is drained exactly once after it e
   for (const ev of drained.events) onEvent(ev, /* streaming */ false)
   assert.deepEqual(hydrated, [301]) // rendered exactly once, no reload needed
   assert.deepEqual(queue, [])
+})
+
+
+test('finished-round replay fires only for speakers a round could produce', () => {
+  // participants: the only unnamespaced class that is not user/system/claude-code
+  assert.equal(voiceReplaySpeakerEligible('claude'), true)
+  assert.equal(voiceReplaySpeakerEligible('gpt'), true)
+  // everything else in the message-speaker universe must never resurrect a
+  // finished round aloud: the owner, notices, guest job output, producers
+  assert.equal(voiceReplaySpeakerEligible('user'), false)
+  assert.equal(voiceReplaySpeakerEligible('system'), false)
+  assert.equal(voiceReplaySpeakerEligible('claude-code'), false)
+  assert.equal(voiceReplaySpeakerEligible('ext:deploy-watcher'), false)
+  assert.equal(voiceReplaySpeakerEligible('guest:Sam'), false)
+  assert.equal(voiceReplaySpeakerEligible(''), false)
+  assert.equal(voiceReplaySpeakerEligible(undefined), false)
 })

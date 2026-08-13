@@ -109,3 +109,37 @@ def test_handback_round_is_discoverable_and_streams_voiceable_events(app, monkey
         return await chats_router.active_round(cid)
     # (round already drained above → now idle, proving it clears cleanly)
     assert asyncio.run(endpoint())["round_id"] is None
+
+
+def test_finished_handback_is_still_voiceable_via_last_round(app, monkeypatch):
+    """#64's actual field failure: the single-narrator hand-back persists its
+    reply as the round's LAST act, so by the time the client's new_message
+    reaction asks active_round, the round is done and the narration went
+    silently to text. The last round's buffer must stay discoverable and
+    replayable until the next round starts."""
+    monkeypatch.setattr(engine.providers, "stream_reply",
+                        fake_stream(["Deploy finished, ", "all healthy."]))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        cid = c.post("/api/chats", json={}).json()["id"]
+
+    handback = engine.make_handback(app.state.settings, app.state.memory, None)
+
+    async def go():
+        await handback(cid, "result")
+        r = rounds.active(cid)
+        await r.task                      # round DONE before the client reacts
+        res = await chats_router.active_round(cid)
+        # active is honestly null; the finished round is still named
+        assert res["round_id"] is None
+        assert res["last_round_id"] == r.round_id
+        assert res["last_count"] == len(r.events)
+        # ...and its buffer replays in full, then ENDS (no hang)
+        chunks = []
+        async for chunk in r.tail(0):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(go())
+    text = "".join(chunks)
+    assert "speaker_start" in text and "speaker_end" in text
+    rounds._rounds.clear()
