@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { clipRow, DELETE_CLIP_EXPLAINER, needsEar, sourceLabel } from './voiceClips.js'
+
+test('every known capture path has a plain-English label', () => {
+  assert.equal(sourceLabel('accumulated'), 'captured live')
+  assert.equal(sourceLabel('cold-start'), 'learnt by elimination')
+  assert.equal(sourceLabel('introduction'), 'from an introduction')
+  assert.equal(sourceLabel('correction'), 'from your correction')
+  assert.equal(sourceLabel('harvested-short'), 'short interjection sample')
+})
+
+test('an unknown source renders as itself, never a guess', () => {
+  assert.equal(sourceLabel('field-test-9'), 'field-test-9')
+  assert.equal(sourceLabel(''), 'unknown')
+  assert.equal(sourceLabel(undefined), 'unknown')
+})
+
+test('only elimination-earned clips are flagged for a closer listen', () => {
+  assert.equal(needsEar({ source: 'cold-start' }), true)
+  assert.equal(needsEar({ source: 'accumulated' }), false)
+  assert.equal(needsEar({ source: 'introduction' }), false)
+})
+
+test('clipRow derives duration, badge state and keeps the file token', () => {
+  const row = clipRow({ file: 'a-1.wav', source: 'cold-start', seconds: 2.84,
+                        added_at: 1755000000, quarantined: true })
+  assert.equal(row.file, 'a-1.wav')
+  assert.equal(row.duration, '2.8s')
+  assert.equal(row.source, 'learnt by elimination')
+  assert.equal(row.needsEar, true)
+  assert.equal(row.quarantined, true)
+  assert.ok(row.when.length > 0)
+})
+
+test('a clip with no timestamp renders an empty when, not epoch', () => {
+  assert.equal(clipRow({ file: 'x', source: 'accumulated', seconds: 1 }).when, '')
+})
+
+test('the delete explainer says what actually happens', () => {
+  assert.match(DELETE_CLIP_EXPLAINER, /re-learns/)
+  assert.match(DELETE_CLIP_EXPLAINER, /known but unlearnt/)
+})

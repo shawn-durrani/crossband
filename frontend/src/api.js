@@ -145,6 +145,16 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ into: intoId, name }),
     }).then(json),
+  // Clip audition (#68): metadata list, an audio URL for a plain <audio>
+  // element (same-origin, the session cookie rides along), delete one clip.
+  voiceClips: (personId) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/clips`).then(json),
+  voiceClipAudioUrl: (personId, fname) =>
+    `/api/voice/people/${encodeURIComponent(personId)}/clips/` +
+    `${encodeURIComponent(fname)}/audio`,
+  deleteVoiceClip: (personId, fname) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/clips/` +
+    `${encodeURIComponent(fname)}`, { method: 'DELETE' }).then(json),
   // The voice health strip's content-free snapshot (#28): matcher state,
   // counts, mode flags and the last identification's path/latency.
   voiceHealth: (chatId) => fetch(

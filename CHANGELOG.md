@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Hear what a remembered voice was built from (#68). Each person in the
+  remembered-voices panel now lists their stored recordings - how each
+  was earned in plain English, when, how long, whether the hygiene audit
+  set it aside - with play and per-recording delete. Elimination-earned
+  clips carry a "listen closely" flag, because that capture path is the
+  one that has banked the wrong person before. Playback never changes
+  anchor state; deleting a recording re-derives the voice from what
+  remains, and deleting the last one leaves the person known but
+  unlearnt. Recordings are served only to the authenticated owner.
+
 - A stopped deploy watcher stops looking identical to a queued deploy
   (#58). Machine tooling now acknowledges each slash command it reads
   (the notice route gains `ack_command_id`); a command nobody acks
