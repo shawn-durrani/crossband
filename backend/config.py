@@ -222,6 +222,11 @@ class Settings(BaseModel):
     # runner-up before it is claimed. The hygiene guard widens it further,
     # automatically, for enrolled pairs whose voices sound close.
     voice_id_margin: float = 0.12
+    # #81: while anyone on the roster is anchor-pending, the naming bar
+    # rises by this much - the person most likely to be speaking has no
+    # bank to score against, so borderline matches to remembered people
+    # defer instead of confidently stealing a new guest's turns. 0 = off.
+    voice_id_pending_extra: float = 0.08
     # The two-part anchor sufficiency bar (#28 PR-B): accepted seconds AND a
     # minimum number of short (~1-2s) clips before a voice counts as
     # identifiable - so second-long interjections have something like

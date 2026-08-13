@@ -170,7 +170,7 @@ def matcher(monkeypatch):
     an unexpected extra call is honest rather than a crash."""
     state = {"verdicts": [], "calls": 0, "gate": None}
 
-    def fake_identify(pcm, sample_rate, candidates, cfg):
+    def fake_identify(pcm, sample_rate, candidates, cfg, pending_present=False):
         if state["gate"] is not None:
             state["gate"].wait(10)
         state["calls"] += 1

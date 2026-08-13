@@ -519,6 +519,19 @@ def owner_alias(name: str, owner: str) -> bool:
     return bool(name_variant(name, owner))
 
 
+def voice_match_name_compatible(introduced: str, person: dict) -> bool:
+    """#81's gate on the introduction voice-arm: may a voice match rebind an
+    introduction to this remembered person? Only when the introduced name is
+    a plausible spelling of ANY of their names (identity, preferred, merged)
+    - both variant verdicts count, because voice AND a near-name agreeing is
+    as sure as this system gets. A name that is nobody's spelling means the
+    arm's match contradicts the owner's own ears, and silently rebinding is
+    exactly how two different humans merge into one record."""
+    names = [person.get("name"), person.get("preferred_name")]
+    names += list(person.get("merged_names") or [])
+    return any(name_variant(introduced, n) for n in names if n)
+
+
 def participant_alias(name: str, participants) -> bool:
     """Is `name` plausibly an AI PARTICIPANT's name as the transcriber spelt
     it? The #65 boundary: agents are addressed by name in nearly every
@@ -1107,23 +1120,40 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                         log.info("introduction variant re-identified a "
                                  "remembered person: chat=%s", chat_id)
                 if known is None and voice_person is not None:
-                    known = voice_person
-                    variant = None
-                    # The stashed utterance is the GUEST's voice, not the
-                    # owner's - claiming it as the owner's anchor would be
-                    # exactly the cross-contamination the sixth field test
-                    # found. Discard it instead.
-                    seed_owner = False
-                    log.info("introduction voice-matched a remembered "
-                             "person: chat=%s", chat_id)
-                    # Names collapse by voice (#28, fourteenth field test):
-                    # the introduced spelling matched nobody by spelling
-                    # but the voice is this remembered person's - record
-                    # the spelling on them so keyterms, find_by_name and
-                    # future introductions resolve it directly.
-                    if store.add_merged_name(known["person_id"], name):
-                        log.info("introduced spelling recorded on the "
-                                 "voice-matched person: chat=%s", chat_id)
+                    if voice_match_name_compatible(name, voice_person):
+                        known = voice_person
+                        variant = None
+                        # The stashed utterance is the GUEST's voice, not the
+                        # owner's - claiming it as the owner's anchor would be
+                        # exactly the cross-contamination the sixth field test
+                        # found. Discard it instead.
+                        seed_owner = False
+                        log.info("introduction voice-matched a remembered "
+                                 "person: chat=%s", chat_id)
+                        # Names collapse by voice (#28, fourteenth field
+                        # test): the introduced spelling matched nobody by
+                        # spelling but the voice is this remembered person's
+                        # AND the name is plausibly theirs (#81) - record
+                        # the spelling on them so keyterms, find_by_name and
+                        # future introductions resolve it directly.
+                        if store.add_merged_name(known["person_id"], name):
+                            log.info("introduced spelling recorded on the "
+                                     "voice-matched person: chat=%s", chat_id)
+                    else:
+                        # #81: the voice arm says "sounds like a remembered
+                        # person" while the owner's own ears just heard a
+                        # name that is no spelling of theirs. An explicit
+                        # introduction outranks an implicit match: seat the
+                        # new person under the introduced name (anchor-
+                        # pending, like any introduction), surface the
+                        # suspicion as the merge question, and never fold
+                        # dissimilar names together without the owner. The
+                        # contested audio seeds nobody.
+                        seed_owner = False
+                        _raise_merge_question(con, chat_id, name, voice_person)
+                        log.info("introduction voice-match contradicts the "
+                                 "introduced name: chat=%s new person "
+                                 "seated, merge question raised", chat_id)
                 roster_name = known["name"] if known else name
                 pid = known["person_id"] if (known and known["sufficient"]) else ""
                 alias = aliases.get(name)

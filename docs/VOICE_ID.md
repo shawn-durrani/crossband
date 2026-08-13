@@ -74,6 +74,16 @@ is genuinely one candidate:
 The label is a normal label: tap it to correct it if the app got it
 wrong, and the correction feeds the right person instead.
 
+An explicit introduction outranks an implicit voice match. When someone
+introduces themselves under a name that is a plausible spelling of a
+remembered person's (any of their recorded forms), a confident voice match
+still re-identifies them silently - that is the same human. When the name is
+NOBODY'S spelling, the introduction wins: the new person is seated under the
+name the owner's own ears heard, and the voice resemblance becomes a merge
+question instead of a silent rebind - because "sounds like Sam" has banked
+the wrong person before, and one tap on an ask is cheaper than an afternoon
+of stolen turns.
+
 Elimination is also only as sound as the roster it reads. The app's own
 AI participants are addressed by name in nearly every spoken sentence,
 and one introduction-shaped mishearing ("This is Claude...") used to be
@@ -121,6 +131,7 @@ an adult child) are exactly the case where the defaults may need moving.
 |---|---|---|
 | `voice_id_threshold` | `0.5` | How similar a voice must be to a stored one before it can be named at all. Raise it and fewer, more certain names appear; lower it and more turns get named, less certainly. |
 | `voice_id_margin` | `0.12` | How clearly the best match must beat the second-best before it is trusted. This is the knob that protects similar-sounding households; the hygiene guard widens it automatically for any two stored voices it finds sitting close together. |
+| `voice_id_pending_extra` | `0.08` | How much HIGHER the naming bar sits while anyone in the room is still unlearnt. The person most likely to be speaking has no stored voice to score against, so a borderline resemblance to a remembered person is exactly how a new guest's turns get stolen - and how her own voice never gets its first clip. Turns caught by this raised bar defer honestly instead of guessing. `0` turns it off. |
 | `voice_id_sufficient_seconds` | `6.0` | How much clear speech must be stored before a person's voice is trusted for identification at all. Below the bar their turns stay uncertain. |
 | `voice_id_min_short_clips` | `2` | The second half of that bar: how many short (one-to-two-second) clips the stored voice must include, so quick interjections ("yes", "hang on") can be recognised, not just full sentences. |
 | `room_roster_max` | `6` | How many people the room can hold at once. |

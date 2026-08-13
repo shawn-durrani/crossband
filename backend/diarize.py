@@ -824,7 +824,8 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # prefix, which is about who is PRESENT.
     candidates = remembered
     verdict = await _utterance_verdict(chat_id, pcm, sample_rate, candidates,
-                                       cfg, speculative)
+                                       cfg, speculative,
+                                       pending_present=bool(pending))
     if voiceid.matched(verdict):
         record_decision(chat_id, DECISION_LOCAL,
                         (time.perf_counter() - t0) * 1000)
@@ -925,7 +926,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
 
 
 async def _utterance_verdict(chat_id, pcm, sample_rate, candidates, cfg,
-                             speculative=None):
+                             speculative=None, pending_present=False):
     """The local matcher's verdict for one committed utterance, reusing the
     speculative head start when it is fresh (#28 PR-B). Returns a verdict
     dict, or None when the matcher itself failed (treated as a defer by
@@ -947,12 +948,18 @@ async def _utterance_verdict(chat_id, pcm, sample_rate, candidates, cfg,
                 _speculative_fresh, speculative, pcm):
             if not voiceid.matched(verdict):
                 return verdict
-            if verdict.get("person_id") in {c["person_id"]
-                                            for c in candidates}:
+            # #81: the speculative check ran without roster context, so its
+            # MATCH cleared only the ordinary bar. While someone is
+            # anchor-pending the naming bar is higher - recompute strictly
+            # rather than let a head start smuggle a borderline match past
+            # the pending-present defer.
+            if not pending_present and verdict.get("person_id") in {
+                    c["person_id"] for c in candidates}:
                 return verdict
     try:
         return await asyncio.to_thread(
-            voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
+            voiceid.identify_utterance, pcm, sample_rate, candidates, cfg,
+            pending_present)
     except Exception:
         log.info("voiceid identify failed: chat=%s", chat_id)
         log.debug("voiceid identify failure detail", exc_info=True)

@@ -839,3 +839,21 @@ def test_apply_scan_returns_its_outcome():
     assert introductions.apply_scan(
         999999, {"introductions": ["Alex"], "departures": []},
         {"user_name": "Shawn"}) == "no_change"
+
+
+def test_voice_match_name_compatible_truth_table():
+    """#81: when may the introduction voice-arm rebind silently? Only when
+    the introduced name is a plausible spelling of one of the matched
+    person's names - identity, preferred, or merged - with both variant
+    verdicts counting. Anything else is two humans until the owner says
+    otherwise."""
+    person = {"name": "Sonja", "preferred_name": "Sonny",
+              "merged_names": ["Sonje"]}
+    yes = ["Sonja", "sonja", "Sanya", "Sonny", "Sonje"]
+    no = ["Faye", "Dave", "Alex", ""]
+    for n in yes:
+        assert introductions.voice_match_name_compatible(n, person), n
+    for n in no:
+        assert not introductions.voice_match_name_compatible(n, person), n
+    assert not introductions.voice_match_name_compatible(
+        "Anything", {"name": None, "merged_names": []})

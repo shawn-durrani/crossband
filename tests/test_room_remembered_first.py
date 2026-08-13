@@ -88,7 +88,7 @@ def sam_matcher(monkeypatch):
     candidate list omits the speaker. Records each call's candidate names."""
     state = {"calls": []}
 
-    def fake_identify(pcm, sample_rate, candidates, cfg):
+    def fake_identify(pcm, sample_rate, candidates, cfg, pending_present=False):
         state["calls"].append([c["name"] for c in candidates])
         sam = next((c for c in candidates if c["name"] == "Sam"), None)
         if sam:
@@ -289,7 +289,7 @@ def test_stale_speculative_match_outside_the_candidates_reruns(
     runs fresh."""
     ran = {"n": 0}
 
-    def fresh_identify(pcm, sample_rate, candidates, cfg):
+    def fresh_identify(pcm, sample_rate, candidates, cfg, pending_present=False):
         ran["n"] += 1
         return {"status": voiceid.DEFER, "person_id": None, "name": None,
                 "score": 0.2, "reason": "below_threshold"}

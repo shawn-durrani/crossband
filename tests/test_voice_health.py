@@ -172,7 +172,7 @@ def test_ambient_local_check_records_the_decision(app, monkeypatch):
     with TestClient(app, base_url="http://127.0.0.1") as c:
         pid = _mint_sufficient("Alex")  # the owner, sufficiently enrolled
 
-        def fake_identify(pcm, sample_rate, candidates, cfg):
+        def fake_identify(pcm, sample_rate, candidates, cfg, pending_present=False):
             return {"status": "match", "person_id": pid, "name": "Alex",
                     "score": 0.8, "reason": "match"}
 
