@@ -4,6 +4,19 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- An explicit introduction outranks an implicit voice match (#81). Two
+  changes from the first real contamination: a confident voice match may
+  re-identify an introduction silently only when the introduced name is
+  a plausible spelling of the matched person's (otherwise the new person
+  is seated under their own name and the resemblance becomes a merge
+  question); and while anyone in the room is still unlearnt, the naming
+  bar rises (`voice_id_pending_extra`) so a borderline resemblance to a
+  remembered person defers honestly instead of stealing the unlearnt
+  person's turns - which is what lets their own voice bank its first
+  clip. This deliberately reverses the fourteenth field test's silent
+  collapse for dissimilar names; variant spellings keep collapsing
+  silently.
+
 - The machine-producer contract is documented (#59): docs/PRODUCERS.md
   is the complete public interface for a deploy watcher, scheduler or
   any local tooling that consumes slash commands and reports back -

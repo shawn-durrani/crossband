@@ -96,6 +96,17 @@ MATCH_MARGIN = 0.12
 # >= MIN_STRONG_WINDOWS windows above the threshold. A two-speaker utterance
 # splits cleanly into two winners (calib.py concat mixes); a single speaker only
 # ever has one winner, its impostors staying well under the threshold.
+# The pending-present bump (#81). When someone on the roster is still
+# anchor-pending, the open-set risk changes shape: the very person most
+# likely to be speaking has NO bank to score against, so a borderline
+# cosine to a remembered person is exactly how a new guest's turns get
+# confidently mislabelled as someone else - and her own seat never banks a
+# first clip. Raising the naming bar by this much while a pending seat
+# exists keeps genuine matches (measured 0.63-0.73 on this machine) passing
+# and pushes the borderline impostor case to an honest defer, which is what
+# lets elimination bank the pending person. Overridable via
+# voice_id_pending_extra; 0 disables.
+PENDING_EXTRA_THRESHOLD = 0.08
 WINDOW_SECONDS = 1.5
 WINDOW_HOP_SECONDS = 0.75
 MIN_STRONG_WINDOWS = 2
@@ -210,7 +221,7 @@ def window_multi_voice(window_embs, enrolled, threshold,
 
 def classify_utterance(whole_emb, window_embs, enrolled, threshold=DEFAULT_THRESHOLD,
                        margin=MATCH_MARGIN, min_strong=MIN_STRONG_WINDOWS,
-                       close_pairs=()):
+                       close_pairs=(), pending_extra=0.0):
     """THE DECISION, pure and fully testable with synthetic vectors.
 
     - no enrolled candidates -> defer ("no_candidates")
@@ -238,6 +249,12 @@ def classify_utterance(whole_emb, window_embs, enrolled, threshold=DEFAULT_THRES
         return _defer(MULTI, best_score)
     if best_score < threshold:
         return _defer("below_threshold", best_score)
+    if pending_extra and best_score < threshold + pending_extra:
+        # #81: over the ordinary bar, under the pending-present one. Named
+        # distinctly so the trace says WHY the room deferred: someone
+        # unlearnt is in the roster, and this score is exactly the shape a
+        # new guest mislabelled as a remembered person takes.
+        return _defer("pending_present", best_score)
     required = margin
     if second >= 0.0:
         second_pid, _, _ = best_two(whole_emb,
@@ -356,6 +373,17 @@ def _margin(cfg) -> float:
     except (TypeError, ValueError):
         return MATCH_MARGIN
     return m if 0.0 < m < 1.0 else MATCH_MARGIN
+
+
+def _pending_extra(cfg) -> float:
+    """The pending-present bump knob (#81; voice_id_pending_extra). Same
+    guard shape as the others; 0.0 is a valid value (feature off)."""
+    try:
+        raw = (cfg or {}).get("voice_id_pending_extra")
+        e = PENDING_EXTRA_THRESHOLD if raw is None else float(raw)
+    except (TypeError, ValueError):
+        return PENDING_EXTRA_THRESHOLD
+    return e if 0.0 <= e < 0.5 else PENDING_EXTRA_THRESHOLD
 
 
 def _model_url(cfg) -> str:
@@ -614,7 +642,8 @@ def _enrolled_embeddings(candidates, sample_rate, ex):
 
 # ================= the public entry point =================================
 
-def identify_utterance(pcm, sample_rate, candidates, cfg):
+def identify_utterance(pcm, sample_rate, candidates, cfg,
+                       pending_present=False):
     """Name a confident single enrolled speaker for one utterance, or defer.
 
     `candidates`: [{"person_id", "name"}, ...] - the SUFFICIENT people the
@@ -669,7 +698,9 @@ def identify_utterance(pcm, sample_rate, candidates, cfg):
     except Exception:
         log.debug("voiceid: close-pair read failed", exc_info=True)
     return classify_utterance(whole, windows, enrolled, _threshold(cfg),
-                              margin=_margin(cfg), close_pairs=close)
+                              margin=_margin(cfg), close_pairs=close,
+                              pending_extra=_pending_extra(cfg)
+                              if pending_present else 0.0)
 
 
 # ================= the bank audit (#28 PR-B, impure half) =================

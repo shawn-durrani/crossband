@@ -671,3 +671,34 @@ def test_integration_real_extractor_embeds(tmp_path, monkeypatch):
     emb = voiceid._embed(ex, voiceid._pcm_to_float(pcm), 16000)
     assert emb is not None and len(emb) > 0
     assert abs(sum(x * x for x in emb) - 1.0) < 1e-4   # L2-normalised
+
+
+# ── the pending-present bump (#81) ───────────────────────────────────────────
+
+def test_pending_extra_defers_the_borderline_match():
+    """Over the ordinary bar, under the pending-present one: exactly the
+    shape a new guest mislabelled as a remembered person takes - defers,
+    named distinctly, so elimination can bank the pending person."""
+    enr = _enr(p1=("Alex", [1, 0, 0]))
+    q = voiceid.l2_normalize([0.66, 0.75, 0.0])   # cosine ~0.66 to Alex... 
+    v = voiceid.classify_utterance(q, [], enr, threshold=0.6,
+                                   pending_extra=0.08)
+    assert v["status"] == "defer" and v["reason"] == "pending_present"
+    # the same score names confidently once nobody is pending
+    v2 = voiceid.classify_utterance(q, [], enr, threshold=0.6)
+    assert v2["status"] == "match" and v2["name"] == "Alex"
+
+
+def test_pending_extra_never_blocks_a_strong_match():
+    enr = _enr(p1=("Alex", [1, 0, 0]))
+    q = voiceid.l2_normalize([0.98, 0.05, 0.0])
+    v = voiceid.classify_utterance(q, [], enr, threshold=0.6,
+                                   pending_extra=0.08)
+    assert v["status"] == "match" and v["name"] == "Alex"
+
+
+def test_pending_extra_zero_is_the_old_behaviour():
+    enr = _enr(p1=("Alex", [1, 0, 0]))
+    q = voiceid.l2_normalize([0.66, 0.75, 0.0])
+    v = voiceid.classify_utterance(q, [], enr, threshold=0.6, pending_extra=0.0)
+    assert v["status"] == "match"

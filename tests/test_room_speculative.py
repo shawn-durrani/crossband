@@ -107,7 +107,7 @@ def matcher(monkeypatch):
     serves a FIFO of verdicts, and can be wedged open."""
     state = {"verdicts": [], "calls": [], "gate": None}
 
-    def fake_identify(pcm, sample_rate, candidates, cfg):
+    def fake_identify(pcm, sample_rate, candidates, cfg, pending_present=False):
         if state["gate"] is not None:
             state["gate"].wait(10)
         state["calls"].append((len(pcm), [c["name"] for c in candidates]))
