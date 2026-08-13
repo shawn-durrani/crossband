@@ -4,6 +4,14 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Who-said-what survives compression, enforced (#22). The rolling
+  summary that replaces old turns must keep the [Speaker] tags the fold
+  demands: a summary that drops them is refused outright and the
+  original turns stay in context (costlier, never wrong), so one agent
+  can no longer read another's point back as its own after a fold. The
+  live transcript each agent receives was already fully labelled; the
+  fold was the one door provenance could quietly die through.
+
 - An explicit introduction outranks an implicit voice match (#81). Two
   changes from the first real contamination: a confident voice match may
   re-identify an introduction silently only when the introduced name is

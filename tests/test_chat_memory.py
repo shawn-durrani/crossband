@@ -130,3 +130,103 @@ def test_user_renamed_chat_never_retitled(app, monkeypatch):
     assert row["title"] == "My Name For It"
     assert row["title_upto"] == -1
     assert calls == []
+
+
+# ── attribution survives compression, enforced (#22) ────────────────────────
+#
+# Compression is where who-said-what quietly dies: the fold prompt demands
+# [Speaker] tags, but a prompt is guidance - a summary that ignored it used to
+# replace the original turns and ride back in as trusted context, which is how
+# one agent later reads another's point as its own. The floor is structural
+# now: a tag-free summary is REFUSED, the originals stay in context, and the
+# scripted replay below catches a regression mechanically rather than by ear.
+
+def _mk_big_chat(con, cfg):
+    """Enough transcript weight that maybe_summarize actually folds."""
+    now = db.now()
+    cid = con.execute(
+        "INSERT INTO chats(title, memory_enabled, created_at, updated_at) "
+        "VALUES('t', 0, ?, ?)", (now, now)).lastrowid
+    body = "x" * 4000
+    speakers = ["user", "claude", "gpt"]
+    for i in range(30):
+        con.execute(
+            "INSERT INTO messages(chat_id, speaker, content, created_at) "
+            "VALUES(?, ?, ?, ?)",
+            (cid, speakers[i % 3], f"turn {i}: {body}", now + i))
+    con.commit()
+    return cid
+
+
+def _fold_once(app, monkeypatch, reply):
+    cfg = dict(app.state.settings.as_cfg())
+    cfg["summary_threshold_chars"] = 1000
+    cfg["keep_recent_messages"] = 4
+    con = db.connect()
+    try:
+        cid = _mk_big_chat(con, cfg)
+        _patch_utility(monkeypatch, reply=reply)
+        chat = dict(con.execute("SELECT * FROM chats WHERE id=?", (cid,)).fetchone())
+        messages = [dict(r) for r in con.execute(
+            "SELECT * FROM messages WHERE chat_id=? ORDER BY id", (cid,))]
+        for m in messages:
+            m["attachments"] = []
+        summary, recent = asyncio.run(
+            chat_memory.maybe_summarize(con, chat, messages, cfg))
+        after = dict(con.execute("SELECT * FROM chats WHERE id=?", (cid,)).fetchone())
+        return summary, recent, after, len(messages)
+    finally:
+        con.close()
+
+
+def test_tagged_summary_folds_and_advances(app, monkeypatch):
+    reply = ("[Alex] asked for the deploy to wait. [Claude] proposed the "
+             "rollback plan; [GPT] disagreed on timing.")
+    summary, recent, after, total = _fold_once(app, monkeypatch, reply)
+    assert summary == reply
+    assert after["summary"] == reply
+    assert after["summary_upto"] > 0
+    assert len(recent) == 4                      # only the keep-tail remains
+
+
+def test_tagfree_summary_is_refused_originals_stay(app, monkeypatch):
+    """The scripted replay the issue asks for: a summary that lost every
+    speaker tag never replaces the turns it summarised."""
+    reply = ("The group discussed the deploy and someone proposed a rollback "
+             "plan; timing was disputed and a decision is pending.")
+    summary, recent, after, total = _fold_once(app, monkeypatch, reply)
+    assert not after["summary"]                   # nothing replaced
+    assert summary == after["summary"] or not summary
+    assert after["summary_upto"] == 0             # watermark never advanced
+    assert len(recent) == total                   # every original still live
+
+
+def test_single_voice_fold_needs_only_that_voice(app, monkeypatch):
+    assert chat_memory.summary_attribution_ok(
+        "[Alex] listed the tasks for the week.", {"Alex"})
+    assert not chat_memory.summary_attribution_ok(
+        "Tasks were listed for the week.", {"Alex"})
+
+
+def test_attribution_floor_truth_table():
+    labels = {"Alex", "Claude", "GPT"}
+    ok = chat_memory.summary_attribution_ok
+    # two distinct folded voices tagged: enough
+    assert ok("[Alex] asked X. [GPT] answered Y.", labels)
+    # one tag for three voices: single-voice mush, refused
+    assert not ok("[Claude] did everything, apparently.", labels)
+    # tags naming nobody in the fold do not count
+    assert not ok("[Narrator] recaps. [Someone] agreed.", labels)
+    # no labels folded (empty chunk): vacuously fine
+    assert ok("anything", set())
+
+
+def test_fold_labels_use_display_names(app):
+    cfg = {"user_name": "Alex"}
+    names = {"claude": "Claude", "gpt": "GPT"}
+    msgs = [{"speaker": "user", "content": "hi"},
+            {"speaker": "claude", "content": "hello"},
+            {"speaker": "gpt", "content": "  "},          # blank: not counted
+            {"speaker": "ext:watch", "content": "note"}]
+    assert chat_memory.fold_labels(msgs, names, cfg) == {"Alex", "Claude",
+                                                         "ext:watch"}

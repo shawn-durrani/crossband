@@ -381,7 +381,7 @@ week when it was maintained by hand.
 - (`test_passkeys.py`) Passkey unlock: per-origin enrolment, discoverable-credential ceremonies, replay/clone refusal
 - (`test_boundary.py`) Localhost trust boundary
 - (`test_cache_split.py`) Claude-chat prompt-cache layout
-- (`test_chat_memory.py`) Auto-title refresh triggers
+- (`test_chat_memory.py`) Auto-title refresh triggers, and #22: the attribution floor - a tag-free summary is refused and never replaces the turns it summarised, the truth table for the two-distinct-voices rule, and fold labels using display names
 - (`test_config.py`) Config layering
 - (`test_context_provenance.py`) A live incident where a participant treated a legitimate Crossband context-refresh block (including the voice-mode delivery constraints) as untrusted/injected content, refused to follow it, and later denied being in a live voice call at all
 - (`test_context_weight.py`) Conversation weight counts attachments, not just text

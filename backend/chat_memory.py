@@ -3,10 +3,15 @@ memory distillation. Ported from the predecessor's memory.py - the CHAT-side
 parts only. The durable user-fact ledger, summary generation, and history
 search live in Membro, the companion memory service (see memory_client.py)."""
 
+import logging
+import re
+
 from . import attachments as att_mod
 from . import config as config_mod
 from . import context_weight, db
 from .llm_util import utility_complete_with_usage
+
+log = logging.getLogger("crossband.chat_memory")
 
 # chat auto-titling (see maybe_title_chat)
 TITLE_MIN_MESSAGES = 2    # need at least one exchange before titling
@@ -47,6 +52,45 @@ async def _run_utility(con, chat_id, kind, prompt, cfg, max_tokens):
                          result.output_tokens, cost, provenance=provenance)
     con.commit()
     return result.text
+
+
+def fold_labels(messages, names, cfg) -> set:
+    """The display labels of everyone who actually spoke in a fold chunk -
+    the same names the transcript and the tag instruction use, so the
+    validator below judges the summary against exactly the vocabulary the
+    utility model was told to tag with."""
+    out = set()
+    for m in messages:
+        if not (m.get("content") or "").strip():
+            continue
+        if m["speaker"] == "user":
+            out.add(cfg["user_name"])
+        else:
+            out.add(names.get(m["speaker"], m["speaker"]))
+    return out
+
+
+def summary_attribution_ok(summary: str, labels: set) -> bool:
+    """#22's structural floor: may this updated summary REPLACE the original
+    turns? Compression is where who-said-what quietly dies - the fold prompt
+    demands [Speaker] tags, but a prompt is guidance, and a summary that
+    ignored it used to become trusted context anyway. This check is
+    deliberately mechanical, not semantic: it proves the tag discipline was
+    followed at all, not that every line is correctly attributed.
+
+    - one voice folded: at least one tag naming that voice;
+    - several voices folded: tags naming at least two distinct folded
+      voices, so the summary cannot be single-voice mush that hands one
+      participant everyone's statements.
+
+    Tags naming nobody in the fold don't count. A failing summary is
+    REFUSED: the originals stay in context (costlier, never wrong)."""
+    if not labels:
+        return True
+    tagged = {m.group(1).strip() for m in re.finditer(r"\[([^\[\]]{1,60})\]",
+                                                      summary or "")}
+    hits = {l for l in labels if l in tagged}
+    return len(hits) >= min(2, len(labels))
 
 
 def transcript_text(messages, names, cfg):
@@ -101,6 +145,15 @@ async def maybe_summarize(con, chat, messages, cfg):
     new_summary = await _run_utility(con, chat["id"], "summarize", prompt, cfg, 2000)
     if new_summary is None:
         # No utility model available - keep going with the full transcript.
+        return chat["summary"], recent
+    if not summary_attribution_ok(new_summary, fold_labels(to_fold, names, cfg)):
+        # #22: the summary dropped the speaker tags, so folding it in would
+        # erase who-said-what and inject the mush back as trusted context.
+        # Refuse: keep the original turns (costlier, never wrong) and let a
+        # later round try again. Content-free log, counts only.
+        log.info("summary fold REFUSED, attribution tags missing: chat=%s "
+                 "folded=%d speakers=%d", chat["id"], len(to_fold),
+                 len(fold_labels(to_fold, names, cfg)))
         return chat["summary"], recent
 
     con.execute(
