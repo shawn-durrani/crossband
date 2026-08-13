@@ -545,6 +545,8 @@ class AnchorStore:
             "seconds": round(float(c.get("seconds", 0)), 1),
             "score": round(float(c.get("score", 0)), 1),
             "quarantined": bool(c.get("quarantined")),
+            # #90: owner-reassigned clips say so - the strongest provenance.
+            "moved": bool(c.get("moved_at")),
         } for c in sorted(person.get("clips", []),
                           key=lambda c: c.get("added_at", 0), reverse=True)]
 
@@ -561,6 +563,37 @@ class AnchorStore:
             return None
         path = self.root / fname
         return path if path.is_file() else None
+
+    def move_clip(self, person_id: str, fname: str, to_person_id: str) -> bool:
+        """Refile ONE clip under the person it actually belongs to (#90):
+        the owner heard it and it is someone else's voice. The audio stays
+        on disk untouched; only the index changes hands. Both banks
+        re-derive from what remains on their next read.
+
+        A quarantine flag is cleared by the move: the hygiene audit judged
+        the clip against the WRONG owner, and the next audit re-evaluates
+        it against the right one. The move is stamped (moved_at/moved_from)
+        because owner-reassigned is the strongest provenance a clip can
+        carry - stronger than any automated capture path."""
+        if person_id == to_person_id:
+            return False
+        with self._lock:
+            data = self._load()
+            src = data["people"].get(person_id)
+            dst = data["people"].get(to_person_id)
+            if src is None or dst is None:
+                return False
+            clip = next((c for c in src.get("clips", [])
+                         if c.get("file") == fname), None)
+            if clip is None:
+                return False
+            src["clips"] = [c for c in src["clips"] if c.get("file") != fname]
+            clip.pop("quarantined", None)
+            clip["moved_from"] = person_id
+            clip["moved_at"] = time.time()
+            dst.setdefault("clips", []).append(clip)
+            self._save(data)
+        return True
 
     def delete_clip(self, person_id: str, fname: str) -> bool:
         """Delete ONE clip from a person's bank (#68): the owner heard it

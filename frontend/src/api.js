@@ -155,6 +155,23 @@ export const api = {
   deleteVoiceClip: (personId, fname) => fetch(
     `/api/voice/people/${encodeURIComponent(personId)}/clips/` +
     `${encodeURIComponent(fname)}`, { method: 'DELETE' }).then(json),
+  // Reassignment tools (#90): a person with no voice yet, a clip refiled
+  // under the person it belongs to, another spelling for the same person.
+  createVoicePerson: (name) => fetch('/api/voice/people', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }).then(json),
+  moveVoiceClip: (personId, fname, to) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/clips/` +
+    `${encodeURIComponent(fname)}/move`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to }),
+    }).then(json),
+  addVoiceAlias: (personId, name) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/alias`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).then(json),
   // The voice health strip's content-free snapshot (#28): matcher state,
   // counts, mode flags and the last identification's path/latency.
   voiceHealth: (chatId) => fetch(

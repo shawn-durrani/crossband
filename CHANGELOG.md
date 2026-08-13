@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Fix a contaminated voice without deleting anything (#90). The first
+  real audition found recordings of one person filed under another; the
+  panel can now create a person by name (no voice needed - they start
+  unlearnt), move a recording to the person it actually belongs to
+  (audio untouched, a stale set-aside cleared, both voices re-learn
+  from what they hold), and record another spelling of a name - a
+  misspelling worth keeping or the phonetic form - beside the display
+  name. Owner-reassigned recordings say "reassigned by you" in the
+  list. The AI-participant boundary (#77) holds at every new door.
+
 - Hear what a remembered voice was built from (#68). Each person in the
   remembered-voices panel now lists their stored recordings - how each
   was earned in plain English, when, how long, whether the hygiene audit
