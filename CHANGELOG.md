@@ -4,6 +4,13 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The machine-producer contract is documented (#59): docs/PRODUCERS.md
+  is the complete public interface for a deploy watcher, scheduler or
+  any local tooling that consumes slash commands and reports back -
+  trust rules, the acknowledgement contract, notice conventions, the
+  bearer credential, and the operational expectations the fleet's own
+  outages taught. No behaviour change.
+
 - Claude Code's findings are spoken when it returns (#64). The hand-back
   narrator's round finishes with the very message that announces it, so
   the voice client always arrived after the round was gone and the
