@@ -12,6 +12,7 @@ Fresh schema (PRAGMA user_version = 1); no legacy migrations.
 import os
 import shutil
 import sqlite3
+import tarfile
 import time
 from pathlib import Path
 
@@ -353,7 +354,42 @@ def backup_database():
         except OSError:
             pass
     _mirror_snapshot(dest)
+    _backup_voice_anchors(dest.name.replace("chat-", "").replace(".db", ""))
     return str(dest)
+
+
+def _backup_voice_anchors(stamp: str):
+    """#33: the learned voices ride the same snapshot cycle as the database.
+    voice_anchors/ (the clip files and their index) was in no backup at all,
+    so losing the data directory forgot every learned voice while the chats
+    survived. Each cycle tars the whole directory as voices-<stamp>.tar
+    beside the DB snapshot, owner-only, same retention, same mirror.
+
+    Best-effort and point-in-time like any file backup: a clip evicted
+    mid-tar can leave one dangling index entry in the copy, which the store
+    already tolerates on read (clip_path checks the file). Never blocks or
+    breaks a startup."""
+    src = DATA_DIR / "voice_anchors"
+    try:
+        if not src.is_dir() or not any(src.iterdir()):
+            return
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        dest = BACKUP_DIR / f"voices-{stamp}.tar"
+        tmp = BACKUP_DIR / f".voices-{stamp}.tar.part"
+        with tarfile.open(tmp, "w") as tar:
+            tar.add(src, arcname="voice_anchors")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, dest)
+        kept = sorted(f for f in os.listdir(BACKUP_DIR)
+                      if f.startswith("voices-") and f.endswith(".tar"))
+        for old_f in kept[:-BACKUP_KEEP]:
+            try:
+                os.remove(BACKUP_DIR / old_f)
+            except OSError:
+                pass
+        _mirror_snapshot(dest)
+    except Exception:
+        pass
 
 
 def _mirror_snapshot(snapshot_path):
@@ -364,8 +400,10 @@ def _mirror_snapshot(snapshot_path):
     try:
         os.makedirs(MIRROR_DIR, exist_ok=True)
         shutil.copy2(snapshot_path, MIRROR_DIR / Path(snapshot_path).name)
+        prefix = "voices-" if Path(snapshot_path).name.startswith("voices-") \
+            else "chat-"
         kept = sorted(f for f in os.listdir(MIRROR_DIR)
-                      if f.startswith("chat-") and f.endswith(".db"))
+                      if f.startswith(prefix))
         for old in kept[:-MIRROR_KEEP]:
             try:
                 os.remove(MIRROR_DIR / old)

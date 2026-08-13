@@ -4,6 +4,13 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Learned voices are backed up (#33). voice_anchors/ was in no backup
+  at all: losing the data directory forgot every learned voice while
+  the chats survived. Every snapshot cycle now writes a
+  voices-<stamp>.tar beside the database copy - owner-only, same
+  retention, same optional mirror - and restoring is untarring it back
+  into data/.
+
 - Who-said-what survives compression, enforced (#22). The rolling
   summary that replaces old turns must keep the [Speaker] tags the fold
   demands: a summary that drops them is refused outright and the

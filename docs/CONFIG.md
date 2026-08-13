@@ -139,7 +139,7 @@ allow/deny lists only together with that document.
 
 | key | default | what it does |
 |---|---|---|
-| `backup_keep` | `14` | Snapshots retained in `data/backups/`. |
+| `backup_keep` | `14` | Snapshots retained in `data/backups/`. Each cycle writes the database (`chat-<stamp>.db`) AND the learned voices (`voices-<stamp>.tar` of `voice_anchors/`, #33) - restore the voices by untarring into `data/`. |
 | `backup_interval_hours` | `6` | Snapshot cadence (plus one at every startup, before anything touches the DB). |
 | `backup_mirror_dir` | `""` | Optional second directory that receives **completed** snapshots only, never the live DB, because sync daemons watching a live WAL cause lock hangs. |
 | `backup_mirror_keep` | `7` | Snapshots retained in the mirror. |
