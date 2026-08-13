@@ -225,6 +225,94 @@ def merge_person(person_id: str, request: Request, body: dict = Body(...)):
     return {"ok": True, "person_id": survivor}
 
 
+@router.post("/api/voice/people")
+def create_person(request: Request, body: dict = Body(...)):
+    """Create a remembered person by name, no voice required (#90) - they
+    start anchor-pending, exactly as a spoken introduction would leave
+    them. Two refusals: an AI participant's name (the #77 boundary holds at
+    every door, spelt-by-ear variants included), and a name that already
+    belongs to someone (409 with the existing person, so the UI can offer
+    them instead of minting a twin)."""
+    name = introductions._clean_name(body.get("name", ""))
+    if not name:
+        raise HTTPException(400, "a name is required")
+    con = db.connect()
+    try:
+        pnames = introductions._participant_names(con)
+    finally:
+        con.close()
+    if introductions.participant_alias(name, pnames):
+        raise HTTPException(400, "an AI participant's name can never be a "
+                                 "person in the room")
+    store = anchors.store()
+    existing = store.find_by_name(name)
+    if existing:
+        raise HTTPException(status_code=409, detail={
+            "conflict": {"person_id": existing["person_id"],
+                         "display_name": existing.get("preferred_name")
+                         or existing["name"]}})
+    pid = store.ensure_person(name)
+    from .. import events
+    events.notify_room_update()
+    log.info("person created by owner: person=%s", pid)
+    return {"ok": True, "person_id": pid}
+
+
+@router.post("/api/voice/people/{person_id}/alias")
+def add_person_alias(person_id: str, body: dict = Body(...)):
+    """Record another spelling for a person (#90): a transcriber's
+    misspelling worth keeping, or a phonetic form beside the written one
+    ("Catriona", said "Cat"). It joins their identity names - find_by_name,
+    re-introductions and the STT keyterms all resolve it - without touching
+    the owner-set display name. A spelling that belongs to someone else is
+    refused with the conflict, so folding two people stays the merge
+    endpoint's explicit, consented job."""
+    name = introductions._clean_name(body.get("name", ""))
+    if not name:
+        raise HTTPException(400, "a name is required")
+    con = db.connect()
+    try:
+        pnames = introductions._participant_names(con)
+    finally:
+        con.close()
+    if introductions.participant_alias(name, pnames):
+        raise HTTPException(400, "an AI participant's name can never be a "
+                                 "person in the room")
+    store = anchors.store()
+    existing = store.find_by_name(name)
+    if existing and existing["person_id"] != person_id:
+        raise HTTPException(status_code=409, detail={
+            "conflict": {"person_id": existing["person_id"],
+                         "display_name": existing.get("preferred_name")
+                         or existing["name"]}})
+    if not store.add_merged_name(person_id, name):
+        # already one of their names, or no such person - the former is a
+        # harmless no-op, the latter a 404.
+        if store.clips_of(person_id) is None:
+            raise HTTPException(404, "no such remembered voice")
+    from .. import events
+    events.notify_room_update()
+    return {"ok": True}
+
+
+@router.post("/api/voice/people/{person_id}/clips/{fname}/move")
+def move_person_clip(person_id: str, fname: str, body: dict = Body(...)):
+    """Refile one clip under the person it actually belongs to (#90). The
+    audio is untouched on disk; the index changes hands, a stale quarantine
+    clears, and both banks re-derive from what remains."""
+    to = str(body.get("to", "") or "")
+    if not to:
+        raise HTTPException(400, "'to' person_id is required")
+    if to == person_id:
+        raise HTTPException(400, "that clip is already theirs")
+    if not anchors.store().move_clip(person_id, fname, to):
+        raise HTTPException(404, "no such clip or person")
+    from .. import events
+    events.notify_room_update()
+    log.info("clip moved by owner: from=%s to=%s", person_id, to)
+    return {"ok": True}
+
+
 @router.get("/api/voice/people/{person_id}/clips")
 def get_person_clips(person_id: str):
     """The audition list (#68): every stored clip's metadata - source, when

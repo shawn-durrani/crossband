@@ -28,8 +28,8 @@ export function clipRow(clip) {
   const secs = Number(clip.seconds || 0)
   return {
     file: clip.file,
-    source: sourceLabel(clip.source),
-    needsEar: needsEar(clip),
+    source: clip.moved ? 'reassigned by you' : sourceLabel(clip.source),
+    needsEar: needsEar(clip) && !clip.moved,
     quarantined: Boolean(clip.quarantined),
     duration: `${secs.toFixed(1)}s`,
     when: clip.added_at
@@ -38,6 +38,15 @@ export function clipRow(clip) {
         })
       : '',
   }
+}
+
+// Where a clip may be refiled (#90): every OTHER remembered person, by
+// display name - the row's own person is never a target.
+export function moveTargets(people, currentPersonId) {
+  return (people || [])
+    .filter((p) => p.person_id !== currentPersonId)
+    .map((p) => ({ person_id: p.person_id,
+                   name: p.preferred_name || p.name }))
 }
 
 export const DELETE_CLIP_EXPLAINER =

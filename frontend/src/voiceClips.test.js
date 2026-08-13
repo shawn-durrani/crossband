@@ -1,7 +1,27 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { clipRow, DELETE_CLIP_EXPLAINER, needsEar, sourceLabel } from './voiceClips.js'
+import { clipRow, DELETE_CLIP_EXPLAINER, moveTargets, needsEar,
+         sourceLabel } from './voiceClips.js'
+
+test('a reassigned clip says so and drops the closer-listen flag', () => {
+  const row = clipRow({ file: 'a', source: 'cold-start', seconds: 2,
+                        moved: true })
+  assert.equal(row.source, 'reassigned by you')
+  assert.equal(row.needsEar, false)
+})
+
+test('move targets are every other person by display name', () => {
+  const people = [
+    { person_id: 'a-1', name: 'Catriona', preferred_name: 'Cat' },
+    { person_id: 'b-2', name: 'Alex' },
+  ]
+  assert.deepEqual(moveTargets(people, 'a-1'),
+                   [{ person_id: 'b-2', name: 'Alex' }])
+  assert.deepEqual(moveTargets(people, 'b-2'),
+                   [{ person_id: 'a-1', name: 'Cat' }])
+  assert.deepEqual(moveTargets([], 'a-1'), [])
+})
 
 test('every known capture path has a plain-English label', () => {
   assert.equal(sourceLabel('accumulated'), 'captured live')

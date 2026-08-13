@@ -49,7 +49,7 @@ def test_clip_list_is_metadata_only_newest_first(app):
         clips = r.json()["clips"]
         assert len(clips) == 3
         assert set(clips[0]) == {"file", "source", "added_at", "seconds",
-                                 "score", "quarantined"}
+                                 "score", "quarantined", "moved"}
         assert [c_["added_at"] for c_ in clips] == sorted(
             (c_["added_at"] for c_ in clips), reverse=True)
         assert c.get("/api/voice/people/nobody-000000/clips").status_code == 404
@@ -105,6 +105,95 @@ def test_delete_removes_exactly_one_and_recomputes(app):
         # deleting it again: gone is gone
         assert c.delete(f"/api/voice/people/{pid}/clips/{doomed}"
                         ).status_code == 404
+
+
+def test_create_person_by_name(app):
+    """#90: a person can exist before any voice - anchor-pending, exactly
+    as an introduction leaves them. Participant names are refused at this
+    door too, and a taken name offers the existing person."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        r = c.post("/api/voice/people", json={"name": "Faye"})
+        assert r.status_code == 200
+        pid = r.json()["person_id"]
+        assert c.get(f"/api/voice/people/{pid}/clips").json()["clips"] == []
+
+        assert c.post("/api/voice/people", json={"name": ""}).status_code == 400
+        # the #77 boundary holds at every door, variants included
+        assert c.post("/api/voice/people",
+                      json={"name": "Claude"}).status_code == 400
+        assert c.post("/api/voice/people",
+                      json={"name": "Clyde"}).status_code == 400
+        r = c.post("/api/voice/people", json={"name": "faye"})
+        assert r.status_code == 409
+        assert r.json()["detail"]["conflict"]["person_id"] == pid
+
+
+def test_move_clip_refiles_without_touching_audio(app):
+    """#90: the live contamination case end to end - a clip banked under
+    the wrong person moves to the right one; audio untouched, quarantine
+    cleared, both banks re-derive."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        kat = _grow("Sam", clips=4)          # 8s: sufficient
+        faye = c.post("/api/voice/people",
+                      json={"name": "Alex"}).json()["person_id"]
+        clips = c.get(f"/api/voice/people/{kat}/clips").json()["clips"]
+        wrong = clips[0]["file"]
+        # simulate the hygiene audit having set it aside under the wrong owner
+        store = anchors.store()
+        with store._lock:
+            data = store._load()
+            for c_ in data["people"][kat]["clips"]:
+                if c_["file"] == wrong:
+                    c_["quarantined"] = True
+            store._save(data)
+        path = store.clip_path(kat, wrong)
+
+        r = c.post(f"/api/voice/people/{kat}/clips/{wrong}/move",
+                   json={"to": faye})
+        assert r.status_code == 200
+        assert path.exists()                                  # audio untouched
+        src = c.get(f"/api/voice/people/{kat}/clips").json()["clips"]
+        dst = c.get(f"/api/voice/people/{faye}/clips").json()["clips"]
+        assert wrong not in [x["file"] for x in src]
+        moved = next(x for x in dst if x["file"] == wrong)
+        assert moved["quarantined"] is False                  # re-judged later
+        assert moved["moved"] is True                         # owner provenance
+        # audio now serves through the NEW person, not the old one
+        assert c.get(f"/api/voice/people/{faye}/clips/{wrong}/audio"
+                     ).status_code == 200
+        assert c.get(f"/api/voice/people/{kat}/clips/{wrong}/audio"
+                     ).status_code == 404
+
+        assert c.post(f"/api/voice/people/{kat}/clips/{wrong}/move",
+                      json={"to": faye}).status_code == 404   # already gone
+        assert c.post(f"/api/voice/people/{faye}/clips/{wrong}/move",
+                      json={"to": faye}).status_code == 400   # to itself
+        assert c.post(f"/api/voice/people/{faye}/clips/{wrong}/move",
+                      json={"to": "nobody-000000"}).status_code == 404
+
+
+def test_alias_records_another_spelling_without_renaming(app):
+    """#90: a phonetic or misspelt form joins a person's identity names;
+    the display name is untouched, a spelling that belongs to someone else
+    offers the conflict, and the participant boundary holds here too."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        pid = _grow("Catriona", clips=1)
+        r = c.post(f"/api/voice/people/{pid}/alias", json={"name": "Kat"})
+        assert r.status_code == 200
+        me = [p for p in anchors.store().people() if p["person_id"] == pid][0]
+        assert "Kat" in me["merged_names"]
+        assert me["preferred_name"] == "Catriona"       # display untouched
+        # resolving by the new spelling finds the same person
+        assert anchors.store().find_by_name("kat")["person_id"] == pid
+
+        other = _grow("Dave", clips=1)
+        r = c.post(f"/api/voice/people/{other}/alias", json={"name": "Kat"})
+        assert r.status_code == 409                     # someone else's name
+        assert r.json()["detail"]["conflict"]["person_id"] == pid
+        assert c.post(f"/api/voice/people/{other}/alias",
+                      json={"name": "Clyde"}).status_code == 400
+        assert c.post("/api/voice/people/nobody-000000/alias",
+                      json={"name": "Zed"}).status_code == 404
 
 
 def test_deleting_the_last_clip_leaves_person_known_but_unlearnt(app):

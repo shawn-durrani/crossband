@@ -12,7 +12,7 @@ import { AudioLines, ChevronDown, ChevronRight, Ear, Pause, Pencil, Play,
 import { api } from '../api.js'
 import { cleanPreferredName, FORGET_EXPLAINER, personSummary,
          sufficiencyProgress } from '../roomState.js'
-import { clipRow, DELETE_CLIP_EXPLAINER } from '../voiceClips.js'
+import { clipRow, DELETE_CLIP_EXPLAINER, moveTargets } from '../voiceClips.js'
 
 export default function RememberedVoices() {
   const [open, setOpen] = useState(false)
@@ -34,6 +34,49 @@ export default function RememberedVoices() {
   const [playing, setPlaying] = useState(null)       // file token or null
   const [clipConfirm, setClipConfirm] = useState(null)
   const audioRef = useRef(null)
+  // Reassignment tools (#90): the new-person input, and which clip's
+  // move-target select is open.
+  const [newPerson, setNewPerson] = useState(null)   // null closed, '' open
+  const [movingFile, setMovingFile] = useState(null)
+
+  async function createPerson() {
+    const name = cleanPreferredName(newPerson || '')
+    if (!name) return
+    try {
+      await api.createVoicePerson(name)
+      setNewPerson(null)
+      await load()
+    } catch (e) {
+      setError(`Could not create: ${e.message}`)
+    }
+  }
+
+  async function addAlias(personId) {
+    const name = cleanPreferredName(draft)
+    if (!name) return
+    setEditing(null)
+    setDraft('')
+    try {
+      await api.addVoiceAlias(personId, name)
+      await load()
+    } catch (e) {
+      setError(`Could not add the spelling: ${e.message}`)
+    }
+  }
+
+  async function moveClip(personId, file, to) {
+    setMovingFile(null)
+    if (!to) return
+    if (playing === file) stopAudio()
+    try {
+      await api.moveVoiceClip(personId, file, to)
+      const d = await api.voiceClips(personId)
+      setClips(d.clips || [])
+      await load()                       // both banks' counts moved
+    } catch (e) {
+      setError(`Could not move clip: ${e.message}`)
+    }
+  }
 
   function stopAudio() {
     if (audioRef.current) {
@@ -157,6 +200,41 @@ export default function RememberedVoices() {
       {open && (
         <div className="px-3 pb-3 space-y-2">
           {error && <div className="text-xs text-red-400">{error}</div>}
+          {/* #90: a person can exist before any voice - the destination for
+              clips that were banked under the wrong name. */}
+          {newPerson === null ? (
+            <button
+              className="text-[11px] text-ink-dim hover:text-ink border border-edge rounded px-2 py-1"
+              onClick={() => setNewPerson('')}
+            >
+              + New person
+            </button>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <input
+                className="bg-transparent border border-edge rounded px-2 py-1 text-sm text-ink w-40"
+                value={newPerson}
+                maxLength={40}
+                autoFocus
+                placeholder="Their name"
+                onChange={(e) => setNewPerson(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') createPerson() }}
+              />
+              <button
+                className="text-xs text-ink-dim hover:text-ink border border-edge rounded px-2 py-1 disabled:opacity-40"
+                disabled={!cleanPreferredName(newPerson)}
+                onClick={createPerson}
+              >
+                Create
+              </button>
+              <button
+                className="text-xs text-ink-dim hover:text-ink px-1"
+                onClick={() => setNewPerson(null)}
+              >
+                cancel
+              </button>
+            </div>
+          )}
           {mergeOffer && (
             <div className="text-xs border border-sky-800 bg-sky-950/40 rounded-lg px-3 py-2 space-y-1.5">
               <div className="text-sky-200">
@@ -215,6 +293,14 @@ export default function RememberedVoices() {
                         onClick={() => rename(p.person_id)}
                       >
                         Save
+                      </button>
+                      <button
+                        className="text-xs text-ink-dim hover:text-ink border border-edge rounded px-2 py-1 disabled:opacity-40"
+                        title="Keep the current name and record this as another spelling of it - a misspelling worth keeping, or how it's pronounced. Transcripts and introductions under either form resolve to the same person."
+                        disabled={!cleanPreferredName(draft)}
+                        onClick={() => addAlias(p.person_id)}
+                      >
+                        Add as spelling
                       </button>
                       <button
                         className="text-xs text-ink-dim hover:text-ink px-1"
@@ -307,6 +393,32 @@ export default function RememberedVoices() {
                               </span>
                             )}
                             <span className="text-ink-faint">{row.when}</span>
+                            {/* #90: refile under the person it belongs to */}
+                            {movingFile === row.file ? (
+                              <select
+                                className="bg-panel2 border border-edge rounded px-1 py-0.5 text-[11px] text-ink"
+                                autoFocus
+                                defaultValue=""
+                                aria-label="Move this recording to another person"
+                                onBlur={() => setMovingFile(null)}
+                                onChange={(e) => moveClip(p.person_id, row.file, e.target.value)}
+                              >
+                                <option value="" disabled>this is actually…</option>
+                                {moveTargets(people, p.person_id).map((t) => (
+                                  <option key={t.person_id} value={t.person_id}>
+                                    {t.name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <button
+                                className="text-ink-faint hover:text-ink"
+                                title="This recording is someone else's voice - move it to the right person. Nothing is deleted; both voices re-learn from what they hold."
+                                onClick={() => setMovingFile(row.file)}
+                              >
+                                move
+                              </button>
+                            )}
                             {clipConfirm === row.file ? (
                               <span className="inline-flex items-center gap-1.5">
                                 <button
