@@ -5,12 +5,14 @@
 // is enough to identify them - and each has a Forget button that DELETES the
 // audio from disk. All wording and derivations live in ../roomState.js
 // (pure, unit-tested); this file is markup and wiring only.
-import { useEffect, useState } from 'react'
-import { AudioLines, ChevronDown, ChevronRight, Pencil, Trash2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { AudioLines, ChevronDown, ChevronRight, Ear, Pause, Pencil, Play,
+         Trash2 } from 'lucide-react'
 
 import { api } from '../api.js'
 import { cleanPreferredName, FORGET_EXPLAINER, personSummary,
          sufficiencyProgress } from '../roomState.js'
+import { clipRow, DELETE_CLIP_EXPLAINER } from '../voiceClips.js'
 
 export default function RememberedVoices() {
   const [open, setOpen] = useState(false)
@@ -25,6 +27,63 @@ export default function RememberedVoices() {
   // backend refused and returned the conflict, and the merge affordance
   // asks before folding two people together. {personId, name, conflict}.
   const [mergeOffer, setMergeOffer] = useState(null)
+  // Clip audition (#68): which person's clips are open, their rows, which
+  // file is playing, and which is pending delete confirmation.
+  const [clipsFor, setClipsFor] = useState(null)     // person_id or null
+  const [clips, setClips] = useState([])
+  const [playing, setPlaying] = useState(null)       // file token or null
+  const [clipConfirm, setClipConfirm] = useState(null)
+  const audioRef = useRef(null)
+
+  function stopAudio() {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    setPlaying(null)
+  }
+
+  async function toggleClips(personId) {
+    stopAudio()
+    setClipConfirm(null)
+    if (clipsFor === personId) { setClipsFor(null); setClips([]); return }
+    try {
+      const d = await api.voiceClips(personId)
+      setClips(d.clips || [])
+      setClipsFor(personId)
+    } catch (e) {
+      setError(`Could not load clips: ${e.message}`)
+    }
+  }
+
+  function playClip(personId, file) {
+    if (playing === file) { stopAudio(); return }
+    stopAudio()
+    // A plain same-origin <audio> fetch: the session cookie rides along,
+    // and playback never touches anchor state (pinned by a backend test).
+    const a = new Audio(api.voiceClipAudioUrl(personId, file))
+    a.onended = () => setPlaying((f) => (f === file ? null : f))
+    a.onerror = () => {
+      setError('Could not play that clip.')
+      setPlaying((f) => (f === file ? null : f))
+    }
+    audioRef.current = a
+    setPlaying(file)
+    a.play().catch(() => setPlaying(null))
+  }
+
+  async function deleteClip(personId, file) {
+    setClipConfirm(null)
+    if (playing === file) stopAudio()
+    try {
+      await api.deleteVoiceClip(personId, file)
+      const d = await api.voiceClips(personId)
+      setClips(d.clips || [])
+      await load()                       // counts and sufficiency moved
+    } catch (e) {
+      setError(`Could not delete clip: ${e.message}`)
+    }
+  }
 
   async function load() {
     try {
@@ -198,6 +257,84 @@ export default function RememberedVoices() {
                         className="h-full rounded-full bg-sky-700"
                         style={{ width: `${Math.round(prog.fraction * 100)}%` }}
                       />
+                    </div>
+                  )}
+                  {/* Clip audition (#68): hear exactly what this voice was
+                      built from, and delete a recording that is wrong. */}
+                  <button
+                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-ink-dim hover:text-ink"
+                    aria-expanded={clipsFor === p.person_id}
+                    onClick={() => toggleClips(p.person_id)}
+                    title="Listen to the stored recordings this voice was learnt from"
+                  >
+                    <Ear size={11} />
+                    {clipsFor === p.person_id ? 'hide clips' : 'listen to clips'}
+                  </button>
+                  {clipsFor === p.person_id && (
+                    <div className="mt-1.5 space-y-1">
+                      {clips.length === 0 && (
+                        <div className="text-[11px] text-ink-faint">
+                          No recordings stored - this person is known but
+                          their voice is unlearnt.
+                        </div>
+                      )}
+                      {clips.map((c) => {
+                        const row = clipRow(c)
+                        return (
+                          <div key={row.file}
+                               className="flex items-center gap-2 text-[11px] text-ink-dim">
+                            <button
+                              className="text-ink-mid hover:text-ink"
+                              aria-label={playing === row.file
+                                ? 'Pause this recording' : 'Play this recording'}
+                              onClick={() => playClip(p.person_id, row.file)}
+                            >
+                              {playing === row.file
+                                ? <Pause size={12} /> : <Play size={12} />}
+                            </button>
+                            <span className="tabular-nums">{row.duration}</span>
+                            <span>{row.source}</span>
+                            {row.needsEar && (
+                              <span className="text-amber-300/90"
+                                    title="Never voice-verified: banked because they were the only unlearnt person in the room. Worth a listen.">
+                                listen closely
+                              </span>
+                            )}
+                            {row.quarantined && (
+                              <span className="text-amber-300/90"
+                                    title="Set aside by the hygiene audit - stored but not used for matching.">
+                                set aside
+                              </span>
+                            )}
+                            <span className="text-ink-faint">{row.when}</span>
+                            {clipConfirm === row.file ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <button
+                                  className="text-red-400 hover:text-red-300 border border-red-900 rounded px-1.5 py-0.5"
+                                  onClick={() => deleteClip(p.person_id, row.file)}
+                                >
+                                  Delete recording
+                                </button>
+                                <button
+                                  className="text-ink-dim hover:text-ink"
+                                  onClick={() => setClipConfirm(null)}
+                                >
+                                  keep
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                className="text-ink-faint hover:text-red-400"
+                                title={DELETE_CLIP_EXPLAINER}
+                                aria-label="Delete this recording"
+                                onClick={() => setClipConfirm(row.file)}
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>

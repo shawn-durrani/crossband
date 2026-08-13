@@ -527,6 +527,62 @@ class AnchorStore:
                     self._delete_file(c["file"])
         return True
 
+    def clips_of(self, person_id: str) -> list | None:
+        """One person's clip METADATA for the audition panel (#68): file
+        token, source, timestamps, seconds, quality score, quarantine state.
+        None for an unknown person. No audio leaves here - the panel fetches
+        each clip's bytes separately, and only after this list has proven
+        the file token belongs to this person."""
+        with self._lock:
+            data = self._load()
+        person = data["people"].get(person_id)
+        if person is None:
+            return None
+        return [{
+            "file": c["file"],
+            "source": c.get("source", "?"),
+            "added_at": c.get("added_at", 0),
+            "seconds": round(float(c.get("seconds", 0)), 1),
+            "score": round(float(c.get("score", 0)), 1),
+            "quarantined": bool(c.get("quarantined")),
+        } for c in sorted(person.get("clips", []),
+                          key=lambda c: c.get("added_at", 0), reverse=True)]
+
+    def clip_path(self, person_id: str, fname: str) -> Path | None:
+        """Resolve a clip file token to its on-disk path, ONLY when the index
+        says that clip belongs to that person - the client's file token is
+        never trusted as a path (#68). None otherwise."""
+        with self._lock:
+            data = self._load()
+        person = data["people"].get(person_id)
+        if person is None:
+            return None
+        if not any(c.get("file") == fname for c in person.get("clips", [])):
+            return None
+        path = self.root / fname
+        return path if path.is_file() else None
+
+    def delete_clip(self, person_id: str, fname: str) -> bool:
+        """Delete ONE clip from a person's bank (#68): the owner heard it
+        and it is wrong. The file goes from disk, the index entry goes, and
+        everything derived - sufficiency, capacity, the anchor prefix -
+        recomputes from what remains on its next read. Deleting the last
+        clip leaves the person known but unlearnt (anchor pending), exactly
+        the state a fresh introduction produces."""
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id)
+            if person is None:
+                return False
+            clips = person.get("clips", [])
+            keep = [c for c in clips if c.get("file") != fname]
+            if len(keep) == len(clips):
+                return False
+            person["clips"] = keep
+            self._save(data)
+            self._delete_file(fname)
+        return True
+
     def forget(self, person_id: str) -> bool:
         """Delete a remembered person: every clip file AND the index entry.
         This is the privacy contract behind the roster UI's forget button -

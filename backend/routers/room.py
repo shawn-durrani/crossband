@@ -225,6 +225,45 @@ def merge_person(person_id: str, request: Request, body: dict = Body(...)):
     return {"ok": True, "person_id": survivor}
 
 
+@router.get("/api/voice/people/{person_id}/clips")
+def get_person_clips(person_id: str):
+    """The audition list (#68): every stored clip's metadata - source, when
+    it was banked, seconds, quality score, whether the hygiene audit set it
+    aside. Read-only; no audio in this response. Session-gated like every
+    /api route: clips are the most personal thing the app stores."""
+    clips = anchors.store().clips_of(person_id)
+    if clips is None:
+        raise HTTPException(404, "no such remembered voice")
+    return {"clips": clips}
+
+
+@router.get("/api/voice/people/{person_id}/clips/{fname}/audio")
+def get_person_clip_audio(person_id: str, fname: str):
+    """One clip's audio, for the owner's ear (#68). The file token must be
+    listed in THIS person's index - a token is never trusted as a path - and
+    playback is read-only with respect to anchor state. Clips are stored as
+    WAV, so this is a straight file response."""
+    from fastapi.responses import FileResponse
+    path = anchors.store().clip_path(person_id, fname)
+    if path is None:
+        raise HTTPException(404, "no such clip")
+    return FileResponse(path, media_type="audio/wav")
+
+
+@router.delete("/api/voice/people/{person_id}/clips/{fname}")
+def delete_person_clip(person_id: str, fname: str):
+    """Delete ONE clip the owner heard and judged wrong (#68). The anchor's
+    sufficiency and capacity recompute from what remains; deleting the last
+    clip leaves the person known but unlearnt, the same state a fresh
+    introduction produces."""
+    if not anchors.store().delete_clip(person_id, fname):
+        raise HTTPException(404, "no such clip")
+    from .. import events
+    events.notify_room_update()
+    log.info("clip deleted by owner: person=%s", person_id)
+    return {"ok": True}
+
+
 @router.delete("/api/voice/people/{person_id}")
 def forget_person(person_id: str):
     """Forget a remembered voice: deletes the person's anchor AUDIO from disk
