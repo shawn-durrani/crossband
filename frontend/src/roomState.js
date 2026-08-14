@@ -372,3 +372,15 @@ export const AMBIENT_EXPLAINER =
 export const FORGET_EXPLAINER =
   'Forget deletes this person\'s stored voice audio from this computer. '
   + 'They can be re-learned only by being introduced and heard again.'
+
+// #83: a bank that crossed sufficiency with no human ever standing behind
+// it (no introduction, no owner correction) is exactly the phantom shape
+// from the #65 incident - surface it for the owner's ear. Returns null
+// when there is nothing to ask.
+export function auditionNotice(person) {
+  if (!person || !person.needs_audition) return null
+  const name = person.preferred_name || person.name
+  return person.id_paused
+    ? `Learnt without an introduction - not naming or seating anyone until you listen and confirm this is really ${name}.`
+    : `Learnt without an introduction - listen to the clips and confirm this is really ${name}.`
+}

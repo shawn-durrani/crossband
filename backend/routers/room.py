@@ -313,6 +313,17 @@ def move_person_clip(person_id: str, fname: str, body: dict = Body(...)):
     return {"ok": True}
 
 
+@router.post("/api/voice/people/{person_id}/audition")
+def confirm_audition(person_id: str):
+    """The owner listened and confirmed this bank is who it claims (#83):
+    restores the identification rights an unvouched sufficiency crossing
+    withholds. No negative route - a wrong bank gets the existing tools
+    (reassign clips, merge, forget)."""
+    if not anchors.store().confirm_audition(person_id):
+        raise HTTPException(404, "no such person")
+    return {"ok": True}
+
+
 @router.get("/api/voice/people/{person_id}/clips")
 def get_person_clips(person_id: str):
     """The audition list (#68): every stored clip's metadata - source, when

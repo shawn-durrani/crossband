@@ -47,7 +47,10 @@ def loud_pcm(seconds, sample_rate=16000):
 def _mint_sufficient(name):
     store = anchors.store()
     pid = store.ensure_person(name)
-    for _ in range(3):
+    # #83: remembered = introduced once, then accumulated (see
+    # test_audition_gate.py for the unvouched-bank pause).
+    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
+    for _ in range(2):
         assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
     return pid
 

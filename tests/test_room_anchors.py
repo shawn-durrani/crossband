@@ -247,7 +247,10 @@ def test_prefix_segments_tile_for_multiple_people(store):
     a = store.ensure_person("Shawn")
     b = store.ensure_person("Bea")
     for pid in (a, b):
-        for _ in range(3):
+        # #83: vouch the bank (remembered = introduced), or the prefix
+        # rightly refuses it.
+        store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
+        for _ in range(2):
             store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
     pcm, segments = store.build_prefix([a, b], 16000)
     assert [s["name"] for s in segments] == ["Shawn", "Bea"]
@@ -287,7 +290,11 @@ def _count_clip_reads(store):
 
 def _sufficient_person(store, name):
     pid = store.ensure_person(name)
-    for _ in range(3):
+    # #83: the first clip is the introduction that vouched the bank - an
+    # accumulation-only sufficient bank is deliberately paused out of the
+    # prefix now (test_audition_gate.py owns that behaviour).
+    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
+    for _ in range(2):
         assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
     return pid
 

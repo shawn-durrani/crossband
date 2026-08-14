@@ -143,6 +143,9 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     }).then(json),
+  confirmAudition: (personId) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/audition`,
+    { method: 'POST' }).then(json),
   forgetVoice: (personId) => fetch(`/api/voice/people/${encodeURIComponent(personId)}`, {
     method: 'DELETE',
   }).then(json),

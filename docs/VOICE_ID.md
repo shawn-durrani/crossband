@@ -164,6 +164,31 @@ is built to fail towards silence there rather than towards mix-ups:
   corrected audio to the right person as ground truth, which is the
   fastest way to pull two confusable voices apart.
 
+## The owner's ear (#83)
+
+The pairwise hygiene audit catches MIXED banks; it cannot catch a bank that
+is wholly someone else's voice under the wrong name (the #65 phantoms were
+exactly that, and scored clean). The one shape both phantoms shared: they
+crossed the sufficiency line without a single voice introduction or owner
+correction - cold start and accumulation only.
+
+So a bank is now VOUCHED the moment a human stands behind it (an
+introduction banks into it, or the owner corrects a turn into it; the
+stamp is person-level and survives clip rotation and merges). A sufficient
+bank nobody vouched for asks for the owner's ear in the remembered-voices
+panel: listen to its clips and confirm. Until then, a bank whose
+sufficiency crossing was observed post-upgrade is PAUSED - dropped from
+the remembered-first candidate lists (armed, ambient and speculative
+paths share one construction, so none can drift), so it can neither name
+nor seat anyone in a session. The one exception is a person already
+seated in the live chat - the session still learning them by elimination,
+or a seat a human placed - who keeps being identified: the pause guards
+RE-seating, not the seat. A real person unlocks a paused bank instantly
+by introducing themselves (the introduction vouches the bank).
+Banks already sufficient when this shipped keep working while flagged -
+pausing the installed base on upgrade would be a regression, not a
+safeguard.
+
 ## Scale bounds
 
 - Roster cap: 6 people at once by default (`room_roster_max`). The cap
