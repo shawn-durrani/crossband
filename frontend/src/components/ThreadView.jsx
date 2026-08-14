@@ -84,7 +84,7 @@ export default function ThreadView({
               voicePeople={voicePeople}
               onDiscard={onDiscard}
               hasLaterReplies={messages.some((m2) =>
-                m2.id > msg.id && m2.speaker !== 'user' && m2.speaker !== 'system')}
+                m2.id > m.id && m2.speaker !== 'user' && m2.speaker !== 'system')}
               onReassign={onReassign}
             />
           ))}
