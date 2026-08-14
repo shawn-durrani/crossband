@@ -815,6 +815,7 @@ export default function App() {
               onOpenDrawer={() => setDrawerOpen(true)}
               onCopyChat={copyWholeChat}
               onStartVoice={startVoice}
+              onEndVoice={stopVoice}
               onToggleParticipant={toggleParticipant}
               onToggleVoice={toggleVoice}
               onToggleWeb={toggleWeb}
