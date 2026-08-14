@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, ChevronDown, Folder, Settings, Plus, X, Upload, Download, PanelLeftClose, Users, Archive, ArchiveRestore, BarChart3, Plug, Lock } from 'lucide-react'
+import { AudioLines, ChevronRight, ChevronDown, Folder, Settings, Plus, X, Upload, Download, PanelLeftClose, Users, Archive, ArchiveRestore, BarChart3, Plug, Lock } from 'lucide-react'
 import { api } from '../api'
 import { isChatRunning } from '../runningState'
 
@@ -68,7 +68,7 @@ function ChatRow({ chat, active, running, unread, onSelect, onDelete, onArchive 
 export default function Sidebar({
   projects, chats, activeChatId, runningChats, unreadChats,
   onSelectChat, onNewChat, onNewProject, onDeleteChat, onArchiveChat, onDeleteProject, onEditProject, onMoveChat,
-  onManageModels, onOpenIntegrations, onOpenImport, onOpenExport, onOpenCost, theme, onToggleTheme, onCollapse,
+  onManageModels, onOpenIntegrations, onOpenImport, onOpenExport, onOpenCost, onOpenVoices, theme, onToggleTheme, onCollapse,
 }) {
   const [collapsed, setCollapsed] = useState({})
   const [showArchived, setShowArchived] = useState(false)
@@ -245,6 +245,13 @@ export default function Sidebar({
           onClick={onManageModels}
         >
           <Users size={15} className="text-ink-dim" /> Models
+        </button>
+        <button
+          className="w-full inline-flex items-center gap-2 text-left text-sm text-ink-mid hover:text-ink rounded-lg px-2.5 py-1.5 hover:bg-panel"
+          title="Who the app can recognise by voice - listen to stored clips, fix names, move recordings, confirm or forget a voice"
+          onClick={onOpenVoices}
+        >
+          <AudioLines size={15} className="text-ink-dim" /> Voices
         </button>
         <button
           className="w-full inline-flex items-center gap-2 text-left text-sm text-ink-mid hover:text-ink rounded-lg px-2.5 py-1.5 hover:bg-panel"
