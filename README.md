@@ -68,9 +68,10 @@ are validated before they are saved and never echoed back.
 
 `config.json` holds defaults that ship with the repo.
 `config.local.json` holds your machine's settings and is gitignored.
-Environment variables starting `CROSSBAND_` override both. Everything is
-documented in [docs/CONFIG.md](docs/CONFIG.md), which is generated from
-the code and guarded by a test, so it cannot drift.
+Environment variables starting `CROSSBAND_` override both. Every setting is
+documented in [docs/CONFIG.md](docs/CONFIG.md), and a test asserts that
+every one of them appears there, so none can go missing. The descriptions
+are hand-written.
 
 Pre-v0.2 installs used the `MMC_` prefix; those variables still apply
 until v0.3, and every use logs the exact rename at startup. See below.

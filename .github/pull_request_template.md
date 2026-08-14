@@ -9,7 +9,7 @@
 - [ ] Tests green **keyless**: `env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY .venv/bin/python -m pytest tests/ -q`
 - [ ] No real personal data anywhere in the diff; every name in it is invented (see the roster below)
 - [ ] Frontend changed? `npm run build` in `frontend/` (the served dist must match)
-- [ ] DECISIONS.md entry in this same PR if this changes behaviour; docs updated if they now lie
+- [ ] CHANGELOG.md entry under Unreleased in this same PR if this is user-visible; docs updated if they now lie
 - [ ] New UI surfaces have a plain-English "what is this & why it matters" explainer
 
 ## Synthetic roster

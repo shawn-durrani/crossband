@@ -45,7 +45,7 @@ Persists as `speaker='system'`; models see it next round as ground truth;
 core assigns no meaning to the text.
 
 ```json
-{"text": "[14:02] ⏳ Deploy request received — checking crossband #61…",
+{"text": "[14:02] ⏳ Deploy request received, checking crossband #61…",
  "ack_command_id": 9152}
 ```
 
