@@ -679,3 +679,13 @@ def test_a_chat_switch_is_tracked_separately_not_reported_as_a_break(cfg, monkey
     assert other["cache_prefix"]["changed"] == ["first-call"]   # chat 2's own first
     back = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
     assert back["cache_prefix"]["changed"] == []                # chat 1 held
+
+
+def test_voice_instruction_keeps_numbers_as_digits():
+    # #66: "plain spoken language" made models spell numbers as words in the
+    # PERSISTENT transcript ("issue sixty-three") - unreadable at a glance and
+    # unmatchable against the backlog. One rule, no voice special-case:
+    # digits everywhere; TTS reads digits naturally, and transcript and audio
+    # must never diverge.
+    assert "DIGITS" in providers.VOICE_INSTRUCTION
+    assert "spelled out" in providers.VOICE_INSTRUCTION

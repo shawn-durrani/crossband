@@ -46,7 +46,10 @@ VOICE_INSTRUCTION = (
     "Give the single most useful point, then ask if they want more - never deliver "
     "everything at once; a spoken paragraph that takes two minutes to listen to is "
     "a failure even if the content is good. The other AI will add their own angle, "
-    "so don't cover everything yourself."
+    "so don't cover everything yourself. Numbers stay DIGITS - issue and PR "
+    "references, ports, versions, amounts (#61, PR 57, port 8902, $40) - never "
+    "spelled out as words: the transcript is read later and must match what is "
+    "spoken, and text-to-speech reads digits naturally."
 )
 
 

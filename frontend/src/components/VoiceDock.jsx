@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, ChevronDown, CornerDownLeft, Hand, Settings2, Square, Timer, Users, X } from 'lucide-react'
+import { Check, ChevronDown, CornerDownLeft, Hand, Mic, MicOff, Settings2, Square, Timer, Users, X } from 'lucide-react'
 import { AMBIENT_EXPLAINER, CHIP_CONFIRMED, CHIP_LEARNING } from '../roomState'
 
 // The in-session voice controls, docked bottom-right of the thread.
@@ -66,6 +66,7 @@ export default function VoiceDock({
   rosterText, rosterHint, onRoomModeOff, health,
   onPttModeChange, onSilenceSecsChange, onVoiceRateChange, onDockOpenChange,
   onRoomModeChange, onFinalizeNow, onInterrupt, onStop,
+  muted = false, onToggleMute,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   if (voiceState === 'off') return null
@@ -201,6 +202,23 @@ export default function VoiceDock({
               onClick={() => setSettingsOpen((o) => !o)}
             >
               <Settings2 size={13} />
+            </button>
+            {/* #67: the one unmistakable "stop listening" control at
+                desktop width - real mute (mic track disabled at the source,
+                VAD frozen; the models keep talking). Amber when muted so
+                the state reads at a glance. */}
+            <button
+              title={muted ? 'Unmute - start listening again' : 'Mute - stop listening (models keep talking)'}
+              aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
+              aria-pressed={muted}
+              className={`text-xs inline-flex items-center gap-1 rounded-full px-2 py-1.5 border ${
+                muted ? 'border-amber-400/60 text-amber-300 bg-amber-400/10'
+                      : 'border-edge2 text-ink-dim hover:text-ink'
+              }`}
+              onClick={onToggleMute}
+            >
+              {muted ? <MicOff size={14} /> : <Mic size={14} />}
+              {muted && <span>muted</span>}
             </button>
             <button
               title="End voice session"
