@@ -335,10 +335,10 @@ export default class VoiceController {
         if (this.active && this.state === 'transcribing') this._state('listening')
       } else if (msg.error) {
         this.onError?.(`Realtime STT: ${msg.error}`)
-        this._fallbackToBatch()
+        this._fallbackToBatch(`relay error: ${msg.error}`)
       }
     }
-    ws.onerror = () => this._fallbackToBatch()
+    ws.onerror = () => this._fallbackToBatch('websocket error')
     ws.onclose = () => {
       this.sttWs = null
       // A socket we did NOT close is a dropped connection - a backgrounded tab
@@ -413,13 +413,17 @@ export default class VoiceController {
     }
   }
 
-  // A realtime failure must never break a live session - drop to the batch recorder.
-  _fallbackToBatch() {
+  // A realtime failure must never break a live session - drop to the batch
+  // recorder. #21: the cause travels with the fallback - the banner used to
+  // say only that realtime was unavailable, leaving nothing to debug with.
+  _fallbackToBatch(cause = 'unknown') {
     if (!this.sttRealtime) return
     this.sttRealtime = false
+    this.sttFallbackCause = cause
+    console.warn('[voice] realtime STT fell back to batch:', cause)
     this._closeSttStream()
     if (this.active && this.state === 'transcribing') this._state('listening')
-    this.onSttFallback?.()
+    this.onSttFallback?.(cause)
   }
 
   _sttSend(obj) {
@@ -1083,7 +1087,9 @@ export default class VoiceController {
         this.sink.defaultPlaybackRate = this.playbackRate || 1
         this.sink.playbackRate = this.playbackRate || 1
         return player.play(
-          (err) => this.onError?.(playbackFailureMessage(err)),
+          (err) => this.onError?.(playbackFailureMessage(err, {
+            mobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || ''),
+          })),
           // AUDIBLE start (the element's 'playing' event) - the true end of the
           // end-to-end latency, not the earlier play() invocation above.
           () => this._trace.speakerMark(slug, 'playback', this._traceMeta(slug)),

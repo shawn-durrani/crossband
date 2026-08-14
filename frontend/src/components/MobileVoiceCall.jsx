@@ -36,12 +36,14 @@ const MODE_CLASS = {
 export default function MobileVoiceCall({ voiceState, held = 0, participants, roster = [],
                                           activeIds = [], onToggleParticipant, captions,
                                           captionHistory = [], speakingSlug, onEnd, voice,
+                                          muted = false, onToggleMute,
                                           partial = null, banner = null, onDismissBanner,
                                           roomMode = false, onRoomModeChange,
                                           onRoomModeOff,
                                           rosterText = '', rosterHint = '',
                                           askText = null, health = null }) {
-  const [muted, setMuted] = useState(false)
+  // #67: muted is lifted to App - one truth across the call screen, the
+  // desktop dock and the page strip.
   // Voice identity: one line by default, the full picture on tap (#28).
   const [voicesOpen, setVoicesOpen] = useState(false)
   // Transcript browsing: faded captions aren't gone - swipe up (or tap the
@@ -78,13 +80,7 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
   const status = statusFor({ held, muted, voiceState, speakerName: speaker?.name })
   const livePartial = displayPartial(partial)
 
-  const toggleMute = () => {
-    // Real mute: voice.setMuted() disables the mic track at the source (the
-    // track emits silence, so nothing is detected, recorded, or streamed) and
-    // freezes the VAD. The models keep talking; the app stops listening.
-    setMuted((m) => !m)
-    voice?.setMuted?.(!muted)
-  }
+  const toggleMute = onToggleMute
 
   return (
     <div className="mvc sm:hidden" role="dialog" aria-label="Voice call" aria-live="polite">

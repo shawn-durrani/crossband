@@ -13,8 +13,13 @@ test('decode failure suggests a reload', () => {
 })
 
 test('unknown failures name the error and point at routing', () => {
+  // #21: AbortError is the routine cut-off after an interruption - it must
+  // not print a device checklist, and never the mobile silent-switch copy.
   const m = playbackFailureMessage({ name: 'AbortError' })
-  assert.match(m, /AbortError/)
-  assert.match(m, /silent switch|volume|Bluetooth/i)
+  assert.match(m, /cut off mid-reply/i)
+  assert.ok(!/silent switch/i.test(m))
+  // the generic failure names the platform's own hardware, not the phone's
+  assert.match(playbackFailureMessage({ name: 'ZError' }, { mobile: true }), /silent switch/i)
+  assert.ok(!/silent switch/i.test(playbackFailureMessage({ name: 'ZError' })))
   assert.match(playbackFailureMessage(undefined), /Voice playback failed/)
 })

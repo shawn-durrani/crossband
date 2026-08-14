@@ -4,6 +4,25 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Voice survives the models menu (#69). Opening any full page (models,
+  connections, spend) no longer reads as the end of the call: capture
+  and playback continue, and a compact strip keeps mute, end and the
+  way back in reach at every width.
+- A real mute at desktop width (#67). One unmistakable control in the
+  voice dock: the mic track is disabled at the source, the models keep
+  talking, and the muted state reads at a glance (amber, on every
+  voice surface - dock, call screen and strip agree).
+- Numbers stay digits (#66). The voice-mode brevity instruction was
+  read as "spell numbers as words", which leaked into the persistent
+  transcript ("issue sixty-three"). One rule now, no voice
+  special-case: #61, PR 57, port 8902 - text-to-speech reads digits
+  naturally, and the transcript must match what is spoken.
+- Voice failures say why (#21). The realtime-transcription fallback
+  banner names its cause (relay error, socket error) and logs it; a
+  reply cut off mid-playback says so instead of printing the iPhone
+  silent-switch checklist on a desktop Mac, and the generic playback
+  failure names your platform's own hardware.
+
 - A voice bank nobody vouched for must earn your ear (#83). The #65
   phantom banks were internally consistent and passed every automated
   check; their one common shape was crossing the sufficiency line with

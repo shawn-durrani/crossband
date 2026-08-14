@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { eraseLink } from './voiceDiscard.js'
+import { voiceSurface } from './voiceSurface.js'
 import Sidebar from './components/Sidebar'
 import Composer from './components/Composer'
 import ProjectModal from './components/ProjectModal'
@@ -14,6 +15,7 @@ import MobileVoiceCall from './components/MobileVoiceCall'
 import ChatHeader from './components/ChatHeader'
 import ThreadView from './components/ThreadView'
 import VoiceDock from './components/VoiceDock'
+import VoiceStrip from './components/VoiceStrip'
 import VoiceController from './voice'
 import { useCaptions } from './captions'
 import { participantInfo } from './speakers'
@@ -94,6 +96,10 @@ export default function App() {
   const [silenceSecs, setSilenceSecs] = useState(() => Number(localStorage.getItem('voice_silence_secs')) || 2.0)
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('voice_rate')) || 1.0)
   const [voiceDockOpen, setVoiceDockOpen] = useState(() => localStorage.getItem('voice_dock_open') !== '0')
+  // #67: mute is APP state, not per-surface state - the dock, the mobile
+  // call screen and the page strip must all show the same truth about
+  // whether the mic is live.
+  const [voiceMuted, setVoiceMuted] = useState(false)
   useEffect(() => { localStorage.setItem('voice_dock_open', voiceDockOpen ? '1' : '0') }, [voiceDockOpen])
   // Room mode (#28 phase 1): per-SESSION, deliberately NOT persisted - it
   // roughly doubles voice spend while on, so every session starts off and the
@@ -374,7 +380,11 @@ export default function App() {
           // rounds ignore mere disconnects), then drop our stream. Safe to
           // capture once here - stopRound reads only live refs ( step 4).
           onInterruptRound: stopRound,
-          onSttFallback: () => setBanner('Realtime transcription unavailable - using standard transcription this session.'),
+          // #21: the cause rides the banner - "unavailable" alone left
+          // nothing to debug with when the relay died mid-session.
+          onSttFallback: (cause) => setBanner('Realtime transcription unavailable'
+            + (cause && cause !== 'unknown' ? ` (${cause})` : '')
+            + ' - using standard transcription this session.'),
           // orb tint follows the AUDIO: whoever's reply is currently playing
           onSpeaker: (slug) => setSpeakingSlug(slug),
         })
@@ -393,6 +403,8 @@ export default function App() {
       roomModeSourceRef.current = 'server' // seeded from the durable flag
       setRoomMode(chatRoomOn)
       voiceRef.current.setRoomMode(chatRoomOn)
+      setVoiceMuted(false)
+      voiceRef.current.setMuted(false)
       await voiceRef.current.start()
       // Seed the health strip (#28) the moment the session is live; the
       // room events and label writes keep it fresh from here.
@@ -425,8 +437,19 @@ export default function App() {
     }
   }
 
+  function toggleMute() {
+    // Real mute (#67): the mic track is disabled at the source - the track
+    // emits silence, nothing is detected, recorded, or streamed - and the
+    // VAD freezes. The models keep talking; the app stops listening.
+    setVoiceMuted((m) => {
+      voiceRef.current?.setMuted(!m)
+      return !m
+    })
+  }
+
   function stopVoice() {
     setVoicePartial(null)
+    setVoiceMuted(false)
     voiceRef.current?.stop()
   }
 
@@ -888,6 +911,8 @@ export default function App() {
                 onFinalizeNow={() => voiceRef.current?.finalizeNow()}
                 onInterrupt={() => voiceRef.current?.interrupt()}
                 onStop={stopVoice}
+                muted={voiceMuted}
+                onToggleMute={toggleMute}
               />
             </ThreadView>
             {/* Global context indicator: thin bar atop the composer. Same
@@ -988,9 +1013,22 @@ export default function App() {
           </div>
         )}
       </main>
+      {/* #69: while a full page (models menu, connections, spend) is open,
+          voice KEEPS RUNNING and the call surfaces give way to the compact
+          strip - visible at every width, because the desktop dock unmounts
+          with the chat view. */}
+      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost }) === 'strip' && (
+        <VoiceStrip
+          voiceState={voiceState}
+          muted={voiceMuted}
+          onToggleMute={toggleMute}
+          onEnd={stopVoice}
+          onBack={leavePages}
+        />
+      )}
       {/* Mobile-only full-screen voice "call" overlay (sm:hidden inside the
           component). Desktop keeps the in-thread .voice-dock above, untouched. */}
-      {voiceState !== 'off' && (
+      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost }) === 'call' && (
         <MobileVoiceCall
           banner={banner}
           onDismissBanner={() => setBanner(null)}
@@ -1005,6 +1043,8 @@ export default function App() {
           speakingSlug={speakingSlug}
           partial={voicePartial}
           onEnd={stopVoice}
+          muted={voiceMuted}
+          onToggleMute={toggleMute}
           voice={voiceRef.current}
           roomMode={roomMode}
           onRoomModeChange={manualRoomMode}
