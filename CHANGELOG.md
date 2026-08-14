@@ -4,6 +4,13 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Fixed: every existing chat rendered as a blank screen (a regression
+  shipped earlier today with the discard affordance - two undefined
+  names in the message list crashed the whole app the moment a chat
+  with messages rendered). The frontend now lints for exactly this
+  (no-undef, gating npm test and CI), so a free identifier can never
+  reach a build again.
+
 - Learned voices now have a durable home (membro#33, slice 2). A
   background sync uploads accepted clips to membro's person records
   (the first pass after this deploy backfills everyone), rebuilds
