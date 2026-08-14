@@ -4,6 +4,12 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The discard banner now hands you the erase link (#111). When a
+  discarded voice turn already reached memory, the banner links
+  straight to Membro's danger zone, prefilled with that exact message
+  and a preview - instead of telling you a copy exists and leaving you
+  to find it. Same-host link, so it works from the phone.
+
 - A captured voice turn can be discarded by its owner (#106). Live
   capture can transcribe audio never meant for the chat; hovering your
   own voice turn now offers a discard that removes it from the chat

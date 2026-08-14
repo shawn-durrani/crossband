@@ -66,7 +66,13 @@ def test_ingested_watermark_is_reported_honestly(app):
         con.commit()
         con.close()
         r = c.post(f"/api/chats/{chat['id']}/messages/{m['id']}/discard")
-        assert r.json() == {"ok": True, "ingested": True}
+        # #111: an ingested discard also names the copy the way memory knows
+        # it, so the UI hands the owner membro's erase deep link instead of
+        # a dead end. A clean discard (test above) carries no ref.
+        assert r.json() == {"ok": True, "ingested": True,
+                            "memory_ref": {"source_app": "multi-model-chat",
+                                           "conversation": str(chat["id"]),
+                                           "message": str(m["id"])}}
         assert m["id"] not in _ids(chat["id"])
 
 
