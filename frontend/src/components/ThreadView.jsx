@@ -15,7 +15,7 @@ import Message from './Message'
 // effect, all of which are app state rather than presentation.
 export default function ThreadView({
   messages, participants, chatParticipants, examplePrompts,
-  mismatchFlags = {}, roomRoster = [], voicePeople = [], onReassign,
+  mismatchFlags = {}, roomRoster = [], voicePeople = [], onReassign, onDiscard,
   streaming, roundProgress, canContinue, contRounds,
   atBottom, newCount, scrollRef,
   onScroll, onJumpToBottom, onContinue, onContRoundsChange, onPickPrompt,
@@ -82,6 +82,9 @@ export default function ThreadView({
               mismatchFlag={mismatchFlags[m.id]}
               roomRoster={roomRoster}
               voicePeople={voicePeople}
+              onDiscard={onDiscard}
+              hasLaterReplies={messages.some((m2) =>
+                m2.id > msg.id && m2.speaker !== 'user' && m2.speaker !== 'system')}
               onReassign={onReassign}
             />
           ))}

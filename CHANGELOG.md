@@ -4,6 +4,15 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A captured voice turn can be discarded by its owner (#106). Live
+  capture can transcribe audio never meant for the chat; hovering your
+  own voice turn now offers a discard that removes it from the chat
+  and from everything the models see from then on, with honest confirm
+  copy about what cannot be undone - replies that already exist stay,
+  and a copy that already reached memory stays there (the ledger is
+  append-only; membro-side deletion is its own owner surface). The
+  audit line is content-free.
+
 - No control with a mic icon can leave the microphone running (#108).
   The header chip that shapes reply style stops dressing as a voice
   kill switch: it is now "concise replies", icon-free, and says

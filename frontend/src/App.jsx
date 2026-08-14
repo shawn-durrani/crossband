@@ -401,6 +401,22 @@ export default function App() {
     }
   }
 
+  // #106: owner-discard of a captured voice turn - the row goes, the UI
+  // updates, and the response's honesty (already ingested or not) surfaces
+  // as a banner only when there is something to know.
+  async function discardTurn(messageId) {
+    try {
+      const r = await api.discardTurn(activeChatIdRef.current, messageId)
+      setMessages((m) => m.filter((x) => x.id !== messageId))
+      if (r?.ingested) {
+        setBanner('Discarded from the chat. A copy had already reached '
+          + 'memory - it stays there (memory is append-only).')
+      }
+    } catch (e) {
+      setBanner(`Could not discard: ${e.message}`)
+    }
+  }
+
   function stopVoice() {
     setVoicePartial(null)
     voiceRef.current?.stop()
@@ -830,6 +846,7 @@ export default function App() {
               roomRoster={roomInfo?.roster || []}
               voicePeople={voicePeople}
               onReassign={reassignSpeaker}
+              onDiscard={discardTurn}
               examplePrompts={EXAMPLE_PROMPTS}
               streaming={streaming}
               roundProgress={roundProgress}

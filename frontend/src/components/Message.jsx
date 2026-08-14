@@ -203,9 +203,10 @@ function UsageFooter({ usageJson, speaker }) {
 }
 
 function Message({ msg, prev, participants, mismatchFlag, roomRoster,
-                   voicePeople, onReassign }) {
+                   voicePeople, onReassign, onDiscard, hasLaterReplies }) {
   const info = participantInfo(msg.speaker, participants)
   const isUser = info.isUser
+  const [discardConfirm, setDiscardConfirm] = useState(null)
   // Tap-to-correct menu on a labelled user turn (#28 phase 2).
   const [chipMenuOpen, setChipMenuOpen] = useState(false)
   // How many characters of this message the PREVIOUS render already showed -
@@ -282,6 +283,35 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
     const ctSegments = crosstalkSegments(msg, voicePeople)
     return (
       <div className={`group flex items-center justify-end gap-2 ${gapClass}`}>
+        {/* #106: a captured voice turn is discardable by its owner - the
+            affordance, the honest confirm copy (voiceDiscard.js, pure) and
+            the deletion all speak plainly about what cannot be undone. */}
+        {canDiscard(msg) && onDiscard && (
+          discardConfirm === msg.id ? (
+            <span className="flex items-center gap-1.5 text-[11px]">
+              <span className="text-ink-faint max-w-[16rem] text-right leading-tight">
+                {discardWarnings({ hasLaterReplies }).join(' ')}
+              </span>
+              <button
+                className="text-red-400 hover:text-red-300 border border-red-900 rounded px-1.5 py-0.5 shrink-0"
+                onClick={() => onDiscard(msg.id)}
+              >
+                Discard turn
+              </button>
+              <button className="text-ink-dim hover:text-ink shrink-0"
+                      onClick={() => setDiscardConfirm(null)}>keep</button>
+            </span>
+          ) : (
+            <button
+              className="opacity-0 group-hover:opacity-100 text-ink-faint hover:text-red-400"
+              title="Discard this captured voice turn - removes it from the chat and from future model context"
+              aria-label="Discard this voice turn"
+              onClick={() => setDiscardConfirm(msg.id)}
+            >
+              <Trash2 size={13} />
+            </button>
+          )
+        )}
         {msg.content && (
           <CopyButton text={msg.content} className="opacity-0 group-hover:opacity-100" />
         )}
