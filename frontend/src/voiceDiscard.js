@@ -24,3 +24,14 @@ export function discardWarnings({ hasLaterReplies }) {
            + 'append-only); this stops any future copy.')
   return out
 }
+
+// #111: turn the discard response's memory ref into membro's erase deep
+// link. Same host the browser is already on (so it works from the phone),
+// membro's fixed port, ref segments encoded. Null when there is nothing to
+// link (not ingested, or an older server without the ref).
+export function eraseLink(ref, hostname) {
+  if (!ref || !ref.source_app || !ref.conversation || !ref.message) return null
+  if (!hostname) return null
+  const seg = (s) => encodeURIComponent(String(s))
+  return `http://${hostname}:8901/#erase=${seg(ref.source_app)}/${seg(ref.conversation)}/${seg(ref.message)}`
+}

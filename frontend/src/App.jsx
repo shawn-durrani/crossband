@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
+import { eraseLink } from './voiceDiscard.js'
 import Sidebar from './components/Sidebar'
 import Composer from './components/Composer'
 import ProjectModal from './components/ProjectModal'
@@ -409,8 +410,15 @@ export default function App() {
       const r = await api.discardTurn(activeChatIdRef.current, messageId)
       setMessages((m) => m.filter((x) => x.id !== messageId))
       if (r?.ingested) {
-        setBanner('Discarded from the chat. A copy had already reached '
-          + 'memory - it stays there (memory is append-only).')
+        // #111: hand the owner the next step, not a dead end - membro's
+        // eraser deep link lands prefilled with a preview.
+        const url = eraseLink(r.memory_ref, window.location.hostname)
+        setBanner(url
+          ? (<span>Discarded from the chat. A copy had already reached memory -{' '}
+              <a href={url} target="_blank" rel="noreferrer" className="underline">erase it there</a>
+              {' '}(opens Membro, prefilled).</span>)
+          : 'Discarded from the chat. A copy had already reached '
+            + 'memory - it stays there (memory is append-only).')
       }
     } catch (e) {
       setBanner(`Could not discard: ${e.message}`)

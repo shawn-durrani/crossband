@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from .. import accounting, auth, context_weight, db, diarize, engine, introductions, rounds
+from .. import accounting, auth, context_weight, db, diarize, engine, introductions, memory_client, rounds
 
 router = APIRouter(tags=["chats"])
 
@@ -314,7 +314,15 @@ async def discard_turn(chat_id: int, message_id: int):
         con.close()
     log.info("voice turn discarded by owner: chat=%s msg=%s ingested=%s",
              chat_id, message_id, ingested)
-    return {"ok": True, "ingested": ingested}
+    out = {"ok": True, "ingested": ingested}
+    if ingested:
+        # #111: how the copy is named in memory. Backend-owned so the
+        # frontend never hardcodes the historical wire value; the banner
+        # turns this into membro's #erase= deep link.
+        out["memory_ref"] = {"source_app": memory_client.SOURCE_APP,
+                             "conversation": str(chat_id),
+                             "message": str(message_id)}
+    return out
 
 
 class NoticeIn(BaseModel):
