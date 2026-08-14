@@ -20,7 +20,14 @@ APIs that only understand two-party conversations.
   worktree, read-only by default. Opt-in implement mode branches, tests,
   pushes and opens a PR; it can never merge.
 - **Voice.** Speech in and out through the backend, so the key stays
-  server-side. Works from a phone over your own tailnet.
+  server-side. Works from a phone over your own tailnet. Every voice the
+  app has learned is managed on its own Voices page: listen to the
+  stored clips, fix names, move a recording to the right person, or
+  forget someone entirely.
+- **A model can stay silent, honestly.** A reply of exactly [pass] is
+  removed before anyone sees or hears it, so "add nothing" is a real
+  option instead of an invented angle - and the first model to answer a
+  direct question is never allowed to take it.
 - **Room mode names known voices, locally and fast.** When more than one
   person is in the room, a known voice is identified on-device in a
   fraction of a second, so the models see who spoke on the turn itself -

@@ -41,7 +41,9 @@ def test_pile_on_rule_names_high_relational_cost_situations(cfg):
 
 def test_pile_on_rule_still_permits_a_genuine_pass(cfg):
     text = _prompt(cfg)
-    assert "bare \"…\" only when BOTH are low" in text
+    # #98: the genuine-pass outlet is the invisible [pass] now, not a
+    # persisted ellipsis row
+    assert "Reply [pass] only when BOTH are low" in text
     assert "already been correctly answered" in text or "already correctly answered" in text
 
 
