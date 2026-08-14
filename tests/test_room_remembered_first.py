@@ -108,7 +108,11 @@ def loud_pcm(seconds, sample_rate=16000):
 def _remember(name, clips=3):
     store = anchors.store()
     pid = store.ensure_person(name)
-    for _ in range(clips):
+    # #83: remembered = introduced once, then accumulated - an
+    # accumulation-only bank rightly has no remembered-first rights now
+    # (test_audition_gate.py owns that behaviour).
+    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
+    for _ in range(clips - 1):
         assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
     return pid
 

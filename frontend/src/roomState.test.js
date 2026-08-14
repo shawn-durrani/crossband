@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   adoptRoomMode, AMBIENT_EXPLAINER, askFlag, cleanPreferredName, displayName,
+  auditionNotice,
   flagCopy, FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
   reassignOptions, rosterChipText, rosterTitle, sufficiencyProgress,
   CHIP_CONFIRMED, CHIP_LEARNING, CHIP_PENDING, voiceChips, voicePersonChip,
@@ -453,4 +454,17 @@ test('the tray renders no room on/off control - only the indicator (#28)', () =>
     assert.match(src, /switch on now/, name)
     assert.match(src, /switch off for this chat/, name)
   }
+})
+
+test('the audition ask (#83): only unvouched sufficient banks, honest about pausing', () => {
+  assert.equal(auditionNotice(null), null)
+  assert.equal(auditionNotice({ needs_audition: false }), null)
+  const paused = auditionNotice({ needs_audition: true, id_paused: true,
+    name: 'Alex', preferred_name: 'Alex' })
+  assert.match(paused, /not naming or seating anyone/)
+  assert.match(paused, /Alex/)
+  const legacy = auditionNotice({ needs_audition: true, id_paused: false,
+    name: 'Sam' })
+  assert.match(legacy, /listen to the clips/)
+  assert.ok(!/not naming/.test(legacy))
 })

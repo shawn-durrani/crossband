@@ -4,6 +4,15 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A voice bank nobody vouched for must earn your ear (#83). The #65
+  phantom banks were internally consistent and passed every automated
+  check; their one common shape was crossing the sufficiency line with
+  no introduction and no correction. Such a bank now asks you to listen
+  and confirm in the remembered-voices panel, and a new one is paused -
+  it can neither name nor seat anyone until you confirm (or someone
+  introduces themselves, which vouches it). Banks that were already
+  sufficient keep working while flagged.
+
 - The discard banner now hands you the erase link (#111). When a
   discarded voice turn already reached memory, the banner links
   straight to Membro's danger zone, prefilled with that exact message

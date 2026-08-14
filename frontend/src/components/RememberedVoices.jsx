@@ -10,6 +10,7 @@ import { AudioLines, ChevronDown, ChevronRight, Ear, Pause, Pencil, Play,
          Trash2 } from 'lucide-react'
 
 import { api } from '../api.js'
+import { auditionNotice } from '../roomState.js'
 import { cleanPreferredName, FORGET_EXPLAINER, personSummary,
          sufficiencyProgress } from '../roomState.js'
 import { clipRow, DELETE_CLIP_EXPLAINER, moveTargets } from '../voiceClips.js'
@@ -48,6 +49,15 @@ export default function RememberedVoices() {
       await load()
     } catch (e) {
       setError(`Could not create: ${e.message}`)
+    }
+  }
+
+  async function confirmAudition(personId) {
+    try {
+      await api.confirmAudition(personId)
+      await load()
+    } catch (e) {
+      setError(`Could not confirm: ${e.message}`)
     }
   }
 
@@ -328,6 +338,21 @@ export default function RememberedVoices() {
                       aside because they matched another voice better. */}
                   {s.setAside && (
                     <div className="text-[11px] text-amber-300/90 mt-0.5">{s.setAside}</div>
+                  )}
+                  {/* The owner's ear (#83): a bank that crossed sufficiency
+                      without an introduction or correction is the phantom
+                      shape - ask before (or while) it names anyone. */}
+                  {auditionNotice(p) && (
+                    <div className="text-[11px] text-amber-300/90 mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span>{auditionNotice(p)}</span>
+                      <button
+                        className="border border-edge rounded px-1.5 py-0.5 text-ink-dim hover:text-ink"
+                        title="I listened to the clips and this voice is who the name says"
+                        onClick={() => confirmAudition(p.person_id)}
+                      >
+                        Yes, this is {p.preferred_name || p.name}
+                      </button>
+                    </div>
                   )}
                   {prog && !prog.done && (
                     <div

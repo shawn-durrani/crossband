@@ -185,6 +185,40 @@ def is_short_ready(clips: list) -> bool:
     return sum(1 for c in live if is_short(c)) >= MIN_SHORT_CLIPS
 
 
+VOUCH_SOURCES = ("introduction", "correction")
+
+
+def bank_vouched(person: dict) -> bool:
+    """A human has stood behind this bank (#83): someone voice-introduced
+    into it, the owner corrected a turn into it, the owner auditioned it -
+    or a clip of a vouching source is still present (legacy banks predate
+    the person-level stamps)."""
+    if person.get("vouched_at") or person.get("audition_confirmed_at"):
+        return True
+    return any(c.get("source") in VOUCH_SOURCES
+               for c in person.get("clips", []))
+
+
+def needs_audition(person: dict) -> bool:
+    """Sufficient, and nobody human ever stood behind it: ask for the
+    owner's ear (#83). The phantom banks (#65) were exactly this shape and
+    passed every automated check - internal consistency cannot catch a bank
+    that is wholly someone ELSE'S voice under the wrong name."""
+    return (is_sufficient(person.get("clips", []))
+            and not bank_vouched(person))
+
+
+def identification_paused(person: dict) -> bool:
+    """Excluded from the anchor prefix and matcher enrolment until the
+    owner auditions (#83). Applies only to banks whose sufficiency CROSSING
+    was observed (the stamp exists only post-#83): a pre-existing
+    sufficient bank keeps working while it awaits the owner's ear, because
+    pausing the whole installed base on upgrade would be a regression, not
+    a safeguard."""
+    return (bool(person.get("sufficiency_crossed_at"))
+            and needs_audition(person))
+
+
 def trim_clip(pcm: bytes, sample_rate: int) -> bytes:
     """Cap a clip at MAX_CLIP_SECONDS (keep the head - utterance starts are
     where the cleanest single-speaker audio usually is)."""
@@ -339,6 +373,12 @@ class AnchorStore:
                 "quarantined_count": len(all_clips) - len(clips),
                 "close_to": list(close.get(pid, [])),
                 "sufficient": is_sufficient(all_clips),
+                # #83: has a human ever stood behind this bank, does it
+                # need the owner's ear, and is identification paused until
+                # then (only for crossings observed post-#83).
+                "vouched": bank_vouched(p),
+                "needs_audition": needs_audition(p),
+                "id_paused": identification_paused(p),
             })
         return out
 
@@ -371,6 +411,20 @@ class AnchorStore:
                                    "created_at": time.time(), "clips": []}
             self._save(data)
         return pid
+
+    def confirm_audition(self, person_id: str) -> bool:
+        """The owner listened and confirmed the bank is who it claims
+        (#83). Restores the identification rights an unvouched sufficiency
+        crossing withholds. The negative outcome needs no method - a wrong
+        bank gets the existing tools (reassign clips, merge, forget)."""
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id)
+            if person is None:
+                return False
+            person["audition_confirmed_at"] = time.time()
+            self._save(data)
+        return True
 
     def set_preferred_name(self, person_id: str, preferred: str,
                            owner_set: bool = True) -> bool:
@@ -467,6 +521,15 @@ class AnchorStore:
                            if c.get("quarantined")][:QUARANTINE_MAX]
             kept = select_keep(active_clips(merged)) + quarantined
             survivor["clips"] = kept
+            # #83: vouching survives a merge - either side's human stamp
+            # carries, and the earliest of each stamp stands.
+            for key in ("vouched_at", "audition_confirmed_at",
+                        "sufficiency_crossed_at"):
+                if gone.get(key) and (not survivor.get(key)
+                                      or gone[key] < survivor[key]):
+                    survivor[key] = gone[key]
+            if gone.get("vouched_by") and not survivor.get("vouched_by"):
+                survivor["vouched_by"] = gone["vouched_by"]
             # close-pair records naming the forgotten id are stale
             data["close_pairs"] = [
                 p for p in (data.get("close_pairs") or [])
@@ -509,6 +572,7 @@ class AnchorStore:
                 return False
             fname = self._write_clip(pcm, sample_rate, person_id)
             clips = person.get("clips", [])
+            was_sufficient = is_sufficient(clips)
             clips.append({"file": fname, "seconds": q["seconds"],
                           "rms": q["rms"], "score": q["score"],
                           "sample_rate": sample_rate, "source": source,
@@ -519,6 +583,19 @@ class AnchorStore:
             quarantined = [c for c in clips if c.get("quarantined")]
             kept = select_keep(active_clips(clips))
             person["clips"] = kept + quarantined
+            # #83: person-level provenance, rotation-proof. A bank is
+            # VOUCHED the moment a human stands behind a clip in it -
+            # introduction or owner correction - even if that clip is later
+            # rotated out. The moment a bank crosses sufficiency is
+            # recorded too: crossing with nobody having vouched is exactly
+            # the phantom shape (#65), and such a bank must earn the
+            # owner's ear before remembered-first may re-seat it.
+            if source in VOUCH_SOURCES and not person.get("vouched_at"):
+                person["vouched_at"] = time.time()
+                person["vouched_by"] = source
+            if (not was_sufficient and is_sufficient(person["clips"])
+                    and not person.get("sufficiency_crossed_at")):
+                person["sufficiency_crossed_at"] = time.time()
             self._save(data)
             kept_files = {c["file"] for c in kept} | {c["file"]
                                                       for c in quarantined}

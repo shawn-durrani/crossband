@@ -204,7 +204,11 @@ def _setup_room(client, sufficient=(), pending=()):
     store = anchors.store()
     for name in sufficient:
         pid = store.ensure_person(name)
-        for _ in range(3):
+        # #83: a remembered-sufficient person IS an introduced person - the
+        # first clip carries the introduction that vouched the bank.
+        assert store.add_clip(pid, loud_pcm(2.0), 16000,
+                              source="introduction")
+        for _ in range(2):
             assert store.add_clip(pid, loud_pcm(2.0), 16000,
                                   source="accumulated")
         db.add_room_person(con, chat["id"], name, person_id=pid)

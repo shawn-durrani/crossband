@@ -1077,7 +1077,9 @@ def _room_plan(chat_id, sample_rate):
     # defer path costs no extra I/O.
     solo_pending = pending[0] if len(pending) == 1 else None
     return (prefix_pcm, segments, pending, num_speakers, solo_pending,
-            remembered_candidates(people))
+            remembered_candidates(people, {row["person_id"]
+                                           for row in present
+                                           if row["person_id"]}))
 
 
 async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
@@ -1572,7 +1574,7 @@ async def run_speculative(chat_id, pcm, sample_rate, cfg):
         return None
 
 
-def remembered_candidates(people=None):
+def remembered_candidates(people=None, rostered_ids=frozenset()):
     """EVERY sufficient remembered person as matcher candidates - THE
     candidate semantics, shared verbatim by the armed pass (#28
     remembered-first), the ambient room-off check and the speculative
@@ -1580,12 +1582,22 @@ def remembered_candidates(people=None):
     The fourteenth field test was exactly such a drift: the armed path had
     narrowed its candidates to the present roster, and a remembered guest
     became unrecognisable the moment room mode armed. Reads the store when
-    `people` is None - call it on a worker thread then."""
+    `people` is None - call it on a worker thread then.
+
+    #83: a sufficient bank nobody vouched for (see anchors.needs_audition)
+    has no remembered-first rights - it can neither name nor seat anyone
+    in a session until the owner auditions it. `rostered_ids` is the one
+    exception: a person already SEATED in this chat (the session still
+    learning them by elimination, or a seat a human put there) keeps
+    being identified, because the pause guards RE-seating, not the seat."""
     if people is None:
         from . import anchors
         people = anchors.store().people()
     return [{"person_id": p["person_id"], "name": p["name"]}
-            for p in people if p.get("sufficient")]
+            for p in people
+            if p.get("sufficient")
+            and (not p.get("id_paused")
+                 or p["person_id"] in rostered_ids)]
 
 
 def _arm_known(chat_id, matched, cfg):
