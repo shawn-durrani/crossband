@@ -28,6 +28,10 @@ jobs:
       # every chat at runtime)
       - run: cd frontend && npm ci --ignore-scripts && npm run lint
       - run: node --test frontend/src/*.test.js
+      # the render smoke: mounts the REAL message list against fixture
+      # messages - any render-time crash fails CI instead of blanking
+      # every chat in production (2026-08-14)
+      - run: cd frontend && node scripts/render-smoke.mjs
   audit:
     runs-on: ubuntu-latest
     steps:

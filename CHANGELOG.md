@@ -4,6 +4,11 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The message list now has a render test (follow-through on today's
+  blank-chat fix): the real chat view renders against realistic
+  fixture messages in the test suite and CI, so a crash-on-render can
+  never again reach production unseen. Verified to catch today's bug.
+
 - Fixed: every existing chat rendered as a blank screen (a regression
   shipped earlier today with the discard affordance - two undefined
   names in the message list crashed the whole app the moment a chat
