@@ -38,7 +38,9 @@ def _prompt(cfg, **extra):
 
 def test_round_predecessors_block_defaults_to_pass(cfg):
     text = _prompt(cfg, round_predecessors=["claude"])
-    assert "DEFAULT to a bare \"…\"" in text
+    # #98: the silent default upgraded from a persisted "…" row to
+    # the app-suppressed [pass] - same rule, now truly invisible
+    assert "DEFAULT to a bare [pass]" in text
     assert "not a fallback" in text
 
 
@@ -91,7 +93,9 @@ def test_scenario_second_participant_passes_after_adequate_answer(cfg):
     this round must default to passing, with no instruction nudging it
     toward restating the answer."""
     text = _prompt(cfg, round_predecessors=["claude"])
-    assert "DEFAULT to a bare \"…\"" in text
+    # #98: the silent default upgraded from a persisted "…" row to
+    # the app-suppressed [pass] - same rule, now truly invisible
+    assert "DEFAULT to a bare [pass]" in text
     assert "Never restate their content in your own words" in text
 
 

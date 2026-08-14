@@ -2,7 +2,7 @@
 // Run: node --test frontend/src/voiceView.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { orbStateFor, statusFor, showInterruptHint, displayPartial } from './voiceView.js'
+import { orbStateFor, statusFor, showInterruptHint, displayPartial, couldBePass } from './voiceView.js'
 
 test('muting stops the orb claiming it can hear you', () => {
   // The bug this pins: muted sessions kept the "listening" breathing -
@@ -43,4 +43,13 @@ test('partials show only when there is something to show', () => {
   assert.equal(displayPartial(''), null)
   assert.equal(displayPartial(null), null)
   assert.equal(displayPartial(' okay and what about '), 'okay and what about')
+})
+
+test('TTS holds while a reply could still be a bare [pass] (#98)', () => {
+  for (const t2 of ['', '[', '[pa', '[pass', '[pass]', '  [PASS]', '[pass] \n']) {
+    assert.equal(couldBePass(t2), true, JSON.stringify(t2))
+  }
+  for (const t2 of ['[pass] actually no', 'Well,', 'p', '[passive voice']) {
+    assert.equal(couldBePass(t2), false, JSON.stringify(t2))
+  }
 })
