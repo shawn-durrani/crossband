@@ -189,6 +189,16 @@ Banks already sufficient when this shipped keep working while flagged -
 pausing the installed base on upgrade would be a regression, not a
 safeguard.
 
+## The durable home (membro#33)
+
+Learned voices no longer live only in this app's data directory. When
+membro is configured (MEMORY_AUTH_TOKEN in the env), a background pass -
+at startup and after rounds, never during a turn - uploads accepted
+clips to membro's person records, pulls people this install doesn't
+hold, and obeys forget marks: forgetting a person in either app deletes
+the stored audio in both. Membro down means the pass logs once and does
+nothing; identification never waits on it.
+
 ## Scale bounds
 
 - Roster cap: 6 people at once by default (`room_roster_max`). The cap

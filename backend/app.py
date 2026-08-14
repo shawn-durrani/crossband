@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__
+from . import __version__, person_sync
 from . import auth
 from . import db
 from . import engine
@@ -230,6 +230,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     log.exception("periodic backup failed")
 
         backup_task = asyncio.create_task(backup_loop())
+        # #33 slice 2: reconcile the local voice store with membro's person
+        # records. Off the startup critical path (a worker thread); the
+        # first pass after a deploy is the backfill of the installed base,
+        # and a membro that is down makes this a logged no-op.
+        person_sync_task = asyncio.create_task(asyncio.to_thread(
+            person_sync.sync_once, settings.memory_url, True))
         # Voice latency traces are diagnostics, not records - prune the
         # table on startup so it self-limits instead of growing forever.
         try:
@@ -252,6 +258,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             backup_task.cancel()
+            person_sync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await backup_task
             app.state.reflection_sweep.cancel()
