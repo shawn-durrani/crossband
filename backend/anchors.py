@@ -412,6 +412,38 @@ class AnchorStore:
             self._save(data)
         return pid
 
+    # -- membro sync bookkeeping (#33 slice 2): which durable record each
+    # local person maps to, and how far the last pull got. Stored in the
+    # index so it rides the same atomic writes and backups as everything
+    # else here.
+
+    def membro_slugs(self) -> dict:
+        with self._lock:
+            data = self._load()
+        return {pid: p["membro_slug"] for pid, p in data["people"].items()
+                if p.get("membro_slug")}
+
+    def set_membro_slug(self, person_id: str, slug: str) -> bool:
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id)
+            if person is None:
+                return False
+            person["membro_slug"] = slug
+            self._save(data)
+        return True
+
+    def get_sync_watermark(self) -> float:
+        with self._lock:
+            data = self._load()
+        return float(data.get("persons_synced_at") or 0)
+
+    def set_sync_watermark(self, ts: float) -> None:
+        with self._lock:
+            data = self._load()
+            data["persons_synced_at"] = float(ts)
+            self._save(data)
+
     def confirm_audition(self, person_id: str) -> bool:
         """The owner listened and confirmed the bank is who it claims
         (#83). Restores the identification rights an unvouched sufficiency

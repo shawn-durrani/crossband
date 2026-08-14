@@ -4,6 +4,14 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Learned voices now have a durable home (membro#33, slice 2). A
+  background sync uploads accepted clips to membro's person records
+  (the first pass after this deploy backfills everyone), rebuilds
+  people a fresh install doesn't hold, and obeys forget marks - one
+  forget, in either app, deletes the stored audio in both. Membro
+  down or unconfigured changes nothing: identification is local and
+  never waits.
+
 - Voices is a page of its own (#91), linked from the sidebar:
   everything the app knows by voice and every control over it - listen
   to the stored clips, fix names and spellings, move a recording to

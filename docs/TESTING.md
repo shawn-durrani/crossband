@@ -392,6 +392,7 @@ week when it was maintained by hand.
 - (`test_effort.py`) Reasoning-effort gating table, with semantics ported from the predecessor
 - (`test_engine.py`) Round-loop characterization
 - (`test_eval_critic.py`) Tests for the offline critic eval harness itself (fixture loading, prompt isolation, verdict parsing, scoring math) -- no live API calls; the model call is always faked
+- (`test_person_sync.py`) The membro person sync (#33): the first pass backfills local people and clips (re-runs are no-ops by content-addressing), a person membro holds is rebuilt locally, a forgotten mark deletes the local copies, participant-named entries are never pushed, and no-token/unreachable are clean no-ops
 - (`test_pass.py`) The sanctioned pass (#98): a bare [pass] is suppressed entirely (nothing persisted, a passed event drops the bubble), the first responder on a direct question and any addressed seat get one refused-and-retried attempt, an insisting seat is suppressed without crashing the round, and the pure rules hold
 - (`test_audition_gate.py`) The owner's ear (#83): an accumulation-only bank that crosses sufficiency is paused out of the prefix and enrolment until auditioned, introduced/corrected banks never prompt, confirmation restores rights, legacy banks flag without pausing, vouching survives merges
 - (`test_discard_turn.py`) Owner-discard of a captured voice turn (#106): the row and its attachments go, the ingested watermark is reported honestly, only own user turns qualify, a running round blocks it, wrong ids 404

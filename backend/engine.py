@@ -17,7 +17,7 @@ import re
 import time
 
 from . import attachments as att_mod
-from . import chat_memory, db, guest, passes
+from . import chat_memory, db, guest, passes, person_sync
 from . import memory_client as memory_client_mod
 from . import providers
 from . import provenance as prov
@@ -892,6 +892,13 @@ async def post_round_reflect_job(chat_id, cfg):
     sweep reflection pass) would otherwise outrun its title forever.
     maybe_title_chat still no-ops on user-renamed chats (title_upto == -1) and
     still uses the cheap utility model. Best-effort."""
+    # #33 slice 2: push freshly accepted voice clips to membro (debounced
+    # inside sync_once; a worker thread; membro down = logged no-op).
+    try:
+        await asyncio.to_thread(person_sync.sync_once,
+                                cfg.get("memory_url") or "http://127.0.0.1:8901")
+    except Exception:
+        log.exception("person sync after round failed")
     try:
         # The full-transcript read - the heavy part - runs on a worker
         # thread so a voice turn arriving right after "done" doesn't compete
