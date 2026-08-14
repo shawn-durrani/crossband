@@ -455,6 +455,7 @@ week when it was maintained by hand.
 
 - (`cacheHealth.test.js`) Tests for the Spend page's cache-health block: it must surface a per-seat
 - (`captureProfile.test.js`) The mic capture-profile decision (#28 phase 4): solo constraints untouched, room mode drops the single-voice tuning, profile names match the relay's log allowlist
+- (`commitLedger.test.js`) Only one transcription wins per committed utterance (#85/#104): a salvaged commit drops its late realtime final (the doubled-turn race), a final that beats the timer stands the salvage down, exact id matching with FIFO fallback for id-less finals, continuation commits carry their buffer dispatch, the pending window is bounded, reset clears the socket's flight
 - (`eventStream.test.js`) Pure-function tests for the global live-events stream
 - (`guestJobs.test.js`) Pure-function tests for the guest job status chip
 - (`headerState.test.js`) Tests for the header title/badge: it must track the active chat_id, so the
@@ -473,7 +474,7 @@ week when it was maintained by hand.
 - (`spendView.test.js`) Tests for the Spend page: it must lead with an honest answer, not a table
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard
 - (`textQueue.test.js`) Invariant tests for per-chat text batching + pre-ingestion cancel
-- (`turnPolicy.test.js`) Bounded active-turn endpointing (#60): a normal-length turn never forces regardless of voicing, an unvoiced frame past the soft cap forces now (the continuous-noise fix), a voiced frame past the soft cap holds to avoid premature truncation, and the hard cap forces unconditionally either way
+- (`turnPolicy.test.js`) Bounded active-turn endpointing (#60): a normal-length turn never forces regardless of voicing, an unvoiced frame past the soft cap forces now (the continuous-noise fix), a voiced frame past the soft cap holds to avoid premature truncation, and the hard cap forces unconditionally either way; plus #104's additions - commit patience scales with committed audio (floor/ceiling pinned) and the total-turn bound outlasts the per-segment caps
 - (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state, and the owner's voice-confirmed marker (#28 PR-C) and the cold-start learning marker (#28) are additive-only so old payloads render unchanged - one shared rule decides the tick, the "· learning" tag and the bare "?"
 - (`voiceClips.test.js`) Clip audition rows (#68/#90): every capture path has a plain-English label, unknown sources render verbatim rather than guessed, only elimination-earned clips get the closer-listen flag (owner-reassigned ones drop it and say so), move targets are every other person by display name, row derivation keeps the file token and formats duration, and the delete explainer says what actually happens
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery

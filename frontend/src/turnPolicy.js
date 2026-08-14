@@ -29,6 +29,26 @@
 export const SOFT_MAX_TURN_MS = 12000
 export const HARD_MAX_TURN_MS = 20000
 
+// #104: the caps above bound a SEGMENT, no longer the logical turn. A capped
+// segment commits its audio and the turn continues - text buffers until a
+// real silence gap ends the turn, so a monologue stays one message. This
+// bound is the #60 guarantee's new home: even a zero-gap noise wall must
+// eventually send, so past this TOTAL duration the turn ends uncondition-
+// ally, buffered segments and all.
+export const MAX_TURN_TOTAL_MS = 60000
+
+// #104's other half: the realtime STT gets a flat 5s to finalize a commit
+// before the batch fallback takes over - but a capped segment commits the
+// largest audio the client ever produces, and healthy finalization of ~20s
+// of speech can exceed 5s. Scale the patience to the audio: floor 5s, plus
+// three-quarters of the speech length, capped at 20s (past that the batch
+// path is genuinely the better bet).
+export function sttCommitTimeoutMs(speechMs) {
+  const ms = Number(speechMs)
+  if (!Number.isFinite(ms) || ms <= 0) return 5000
+  return Math.min(20000, Math.max(5000, Math.round(ms * 0.75)))
+}
+
 // `turnMs`: elapsed ms since this turn's speech began. `voiced`: this tick's
 // frame classification. Returns true when the turn should finalize now even
 // though the ordinary silenceMs-since-lastVoice check didn't fire.

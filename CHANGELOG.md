@@ -4,6 +4,20 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A monologue stays one message, and no utterance can send twice
+  (#104, #85). The #60 noise caps were ending the whole TURN at 12/20
+  seconds, chopping genuine long speech into separate messages - and
+  those oversized commits regularly outran the flat 5s transcription
+  patience, falling to the slow batch path (the ~57s stalls) whose
+  result could then race a late realtime transcript into a doubled
+  turn. Now a cap ends only the SEGMENT: the audio commits, the text
+  buffers, and the turn stays open until a real silence gap - bounded
+  at 60 seconds total, so the zero-gap noise case #60 was built for
+  still always sends. Transcription patience scales with the audio
+  committed, and a per-commit ledger - with the server stamping each
+  transcript with the commit it answers - makes exactly one
+  transcription win per utterance, whichever path delivers it.
+
 - The lock screen tells the truth about passkeys, and passkeys get
   names (#87, #88). "Never enrolled" and "enrolled at a different
   address" both used to render as a silently missing passkey button,

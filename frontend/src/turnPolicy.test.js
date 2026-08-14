@@ -39,3 +39,24 @@ test('non-numeric or missing turnMs never forces', () => {
 test('the two tiers are ordered: soft cap strictly before hard cap', () => {
   assert.ok(SOFT_MAX_TURN_MS < HARD_MAX_TURN_MS)
 })
+
+
+test('#104: commit patience scales with the audio committed', async (t2) => {
+  const { sttCommitTimeoutMs } = await import('./turnPolicy.js')
+  assert.equal(sttCommitTimeoutMs(2000), 5000)     // floor: short remarks
+  assert.equal(sttCommitTimeoutMs(12000), 9000)    // 0.75x mid-length
+  assert.equal(sttCommitTimeoutMs(20000), 15000)   // a hard-capped segment
+  assert.equal(sttCommitTimeoutMs(60000), 20000)   // ceiling: batch wins past this
+  assert.equal(sttCommitTimeoutMs(undefined), 5000)
+  assert.equal(sttCommitTimeoutMs(-5), 5000)
+})
+
+test('#104: the total-turn bound outlasts the per-segment caps', async () => {
+  const { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, SOFT_MAX_TURN_MS } =
+    await import('./turnPolicy.js')
+  // segments cap early and often; the LOGICAL turn is bounded much later -
+  // that gap is what lets a monologue stay one message while a zero-gap
+  // noise wall still eventually sends (#60's guarantee, relocated).
+  assert.ok(MAX_TURN_TOTAL_MS >= 2 * HARD_MAX_TURN_MS)
+  assert.ok(SOFT_MAX_TURN_MS < HARD_MAX_TURN_MS)
+})
