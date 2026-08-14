@@ -79,12 +79,24 @@ def session_state(request: Request) -> dict:
     rp = passkeys.rp_for_host(request.url.hostname,
                               request.app.state.allowed_hosts)
     has_passkey = False
-    if enrolled and rp:
+    passkey_elsewhere: list = []
+    if enrolled:
         con = db.connect()
         try:
-            has_passkey = bool(passkeys.credentials_for_rp(con, rp))
+            rows = passkeys.list_credentials(con)
         finally:
             con.close()
+        if rp:
+            has_passkey = any(r.get("rp_id") == rp for r in rows)
+        if not has_passkey:
+            # #87: "never enrolled" and "enrolled somewhere you are not"
+            # both used to render as a silent absence of the passkey
+            # button. Name the addresses that DO hold one so the lock
+            # screen can say so plainly. Same disclosure class as the
+            # `passkey` bit itself: hostnames the owner configured, shown
+            # only to callers the host allowlist already admits.
+            passkey_elsewhere = sorted({r.get("rp_id") for r in rows
+                                        if r.get("rp_id")})
     # The pre-enrolment open posture is a LOOPBACK posture only. The
     # middleware already holds an anonymous trusted-host caller to the login
     # surface, so this answer must agree with it: a tailnet phone on an
@@ -96,6 +108,9 @@ def session_state(request: Request) -> dict:
         "enrolled": enrolled,
         "authenticated": open_posture or auth.request_session_ok(request),
         "passkey": has_passkey,
+        # additive (#87): [] means no passkey exists anywhere; entries name
+        # the addresses that hold one when THIS address does not.
+        "passkey_elsewhere": passkey_elsewhere,
     }
 
 
@@ -385,8 +400,25 @@ def webauthn_credentials() -> dict:
         con.close()
     return {"credentials": [
         {k: r.get(k) for k in ("id", "rp_id", "origin", "created_at",
-                               "backed_up")}
+                               "backed_up", "label", "last_used_at")}
         for r in rows]}
+
+
+@router.post("/api/webauthn/credentials/label",
+             dependencies=[Depends(require_session)])
+def webauthn_label(body: dict) -> dict:
+    """Owner-editable label (#88): mobile and desktop credentials were
+    indistinguishable twins. POST like every credential write, so the
+    cross-site middleware guard covers it."""
+    con = db.connect()
+    try:
+        ok = passkeys.set_label(con, str((body or {}).get("id", "")),
+                                str((body or {}).get("label", "")))
+    finally:
+        con.close()
+    if not ok:
+        raise HTTPException(status_code=404, detail="no passkey with that id")
+    return {"ok": True}
 
 
 @router.post("/api/webauthn/credentials/remove",

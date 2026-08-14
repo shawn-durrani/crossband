@@ -138,6 +138,17 @@ export default function LockScreen({ session, mode: initialMode, onUnlocked, onD
 
         {err && <p className="text-sm text-red-400" role="alert">{err}</p>}
 
+        {/* #87: the honest passkey state. "Never enrolled" and "enrolled at
+            a different address" both used to render as a silent absence of
+            the passkey button, which reads as broken. Say which it is. */}
+        {mode === 'login' && session?.enrolled && !session?.passkey && (
+          <p className="text-xs text-ink-faint" role="note">
+            {(session?.passkey_elsewhere || []).length > 0
+              ? `A passkey exists for ${session.passkey_elsewhere.join(' and ')} - open the app there to use it, or sign in here and enrol one for this address in Settings → Passkeys.`
+              : 'No passkey is enrolled yet. Sign in with your password, then add one in Settings → Passkeys to unlock with Touch ID or Face ID.'}
+          </p>
+        )}
+
         <div className="flex items-center justify-between">
           {mode === 'login' && (
             <button className={linkCls} onClick={() => { setMode('reset'); setErr('') }}>
