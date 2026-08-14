@@ -3,7 +3,9 @@ import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
-import { shouldForceEndpoint } from './turnPolicy.js'
+import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
+         sttCommitTimeoutMs } from './turnPolicy.js'
+import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
 import { VoiceTrace } from './voiceTrace.js'
 
 // Hands-free voice session: open mic with VAD auto-send (no push-to-talk),
@@ -193,7 +195,12 @@ export default class VoiceController {
     this.sttStreaming = false // true while inside a user utterance (sending PCM)
     this._utterFrames = 0     // PCM frames actually SENT this utterance
     this._pcmPre = []         // small pre-onset PCM ring so the start isn't clipped
-    this._dropCommit = false  // drop the next committed transcript (utterance too short)
+    // #85/#104: per-commit only-one-wins accounting (replaces a per-
+    // instance drop boolean the next turn's commit could reset mid-race),
+    // plus the buffered text of a capped-but-continuing logical turn.
+    this._ledger = newLedger()
+    this._turnBuffer = []
+    this._logicalStart = 0    // when the LOGICAL turn began (survives caps)
     this.muted = false        // hard mute: mic track disabled, nothing detected/sent
     // Hold-and-retry: utterances whose /stt POST failed on NETWORK (a dead
     // zone) wait here as audio blobs and retry until the tunnel returns -
@@ -243,9 +250,10 @@ export default class VoiceController {
         // never discarded; _finalizeUtterance still drops sub-500ms blips.)
         this.finalizeNow()
       } else {
-        // nothing captured - just clear pre-onset state so unmute starts clean
+        // nothing captured - just clear pre-onset state so unmute starts
+        // clean. (No drop flag needed: a final for a commit the ledger
+        // never saw simply does not send.)
         this.voicedHistory = []
-        this._dropCommit = true
       }
       this.onLevel?.(0)
     }
@@ -316,16 +324,14 @@ export default class VoiceController {
       } else if (msg.final !== undefined) {
         clearTimeout(this._sttCommitTimer)
         const text = (msg.final || '').trim()
-        if (!this._dropCommit && text) {
-          // Transcript is final; sendText → POST /send fires synchronously next,
-          // so this is also the dispatch instant (no separate dispatch mark -
-          // see voiceTrace.build's final_to_first_token note). The turn_id
-          // travels with the POST so the server can attribute its own
-          // context-assembly/provider-TTFT split to this SAME turn.
-          this._trace.mark('transcript_final')
-          this.sendText(text, this._trace.current()?.turnId)
+        // #85: the relay stamps each final with its commit's turn id; the
+        // ledger decides whether this final still owns its commit. A final
+        // whose commit was already salvaged - or that names no commit we
+        // know - drops here, which is exactly the doubled-turn case.
+        const win = onFinal(this._ledger, msg.turn_id)
+        if (win && text) {
+          this._deliverTranscript(text, win.turnId, win.dispatch)
         }
-        this._dropCommit = false
         if (this.active && this.state === 'transcribing') this._state('listening')
       } else if (msg.error) {
         this.onError?.(`Realtime STT: ${msg.error}`)
@@ -392,6 +398,7 @@ export default class VoiceController {
   _closeSttStream() {
     this.sttStreaming = false
     this._pcmPre = []
+    resetLedger(this._ledger)
     clearTimeout(this._sttCommitTimer)
     clearTimeout(this._sttReopenTimer)
     if (this.sttProc) { try { this.sttProc.disconnect() } catch { /* */ } this.sttProc = null }
@@ -705,6 +712,7 @@ export default class VoiceController {
         // models are talking/generating - listen only for a barge-in
         if (this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)) {
           this.speechStart = now - INTERRUPT_CONFIRM_MS
+          if (!this._turnBuffer.length) this._logicalStart = this.speechStart
           this.lastVoice = now
           this._sttStartStreaming()
           this.interrupt() // capture continues; finalize sends the interjection
@@ -719,6 +727,10 @@ export default class VoiceController {
         // clipped; auto mode waits for sustained speech to avoid false starts.
         if (this.manualMode ? voiced : this._confirmedSpeech(now, CONFIRM_MS)) {
           this.speechStart = this.manualMode ? now : now - CONFIRM_MS
+          // A fresh logical turn starts here - unless capped segments are
+          // already buffered, in which case this is the same turn resuming
+          // and the logical clock keeps its original start (#104).
+          if (!this._turnBuffer.length) this._logicalStart = this.speechStart
           this.lastVoice = now
           this._sttStartStreaming()
         } else if (now - this.recStarted > RECORDER_ROTATE_MS) {
@@ -742,23 +754,30 @@ export default class VoiceController {
         if (spec.fire) this._sttSend({ speculative: true })
         // Auto mode sends after a pause; manual mode waits for finalizeNow().
         if (!this.manualMode && now - this.lastVoice > this.silenceMs) {
-          this._finalizeUtterance()
+          this._finalizeUtterance('gap')
         } else if (!this.manualMode &&
                    shouldForceEndpoint({ turnMs: now - this.speechStart, voiced })) {
           // #60: sustained background noise (road/wind/fan) can keep frames
           // reading voiced, or keep RMS above the calibrated floor, so the
           // silence gap above never opens and the turn would listen forever.
-          // Bounded fallback: send what's captured so far instead of waiting
-          // indefinitely - see turnPolicy.js for the two-tier policy.
-          this._finalizeUtterance()
+          // Bounded fallback - but since #104 a cap ends only the SEGMENT:
+          // the audio commits, the text buffers, and the logical turn keeps
+          // going until a real gap. The total bound is the #60 guarantee's
+          // new home: past it, even a zero-gap noise wall sends.
+          const total = now - (this._logicalStart || this.speechStart)
+          this._finalizeUtterance(total >= MAX_TURN_TOTAL_MS ? 'gap' : 'cap')
         }
       }
     }
     requestAnimationFrame(tick)
   }
 
-  async _finalizeUtterance() {
+  async _finalizeUtterance(cause = 'gap') {
     const speechMs = this.lastVoice - this.speechStart
+    // #104: a cap ends the SEGMENT, not the turn - text buffers and the
+    // round waits for a real gap. 'gap' (or the total bound, mapped to gap
+    // by the caller) is the only real end.
+    const continuation = cause === 'cap'
     // The user actually stopped talking at lastVoice; in auto mode this
     // method only runs after silenceMs more of quiet (manual mode stamps
     // lastVoice at the tap, so the gap is ~0). Backdate speech_end by that
@@ -788,26 +807,37 @@ export default class VoiceController {
         await this._salvageUtterance(speechMs)
         return
       }
-      this._dropCommit = speechMs < MIN_SPEECH_MS
+      const tooShort = speechMs < MIN_SPEECH_MS
       // turn_id rides the commit frame (#28 phase 3) so the server's
       // diarization pass can label the EXACT message this utterance becomes
-      // (the /send carries the same id). Server-only correlation data - the
-      // relay never forwards it upstream. A dropped short utterance still
-      // commits with its id; since no /send follows, its labels attach
-      // nowhere instead of smearing onto a neighbouring turn.
+      // (the /send carries the same id). A dropped short utterance still
+      // commits with its id but never enters the ledger, so its final finds
+      // no commit to win and attaches nowhere - the structural version of
+      // the old drop flag.
       this._sttSend({ commit: true, turn_id: turnId })
-      if (!this._dropCommit) {
-        this._state('transcribing')
+      if (!tooShort) {
+        onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send')
+        // A continuation commit is mid-speech: capture keeps flowing, so
+        // the state stays 'listening' and the user sees nothing change.
+        if (!continuation) this._state('transcribing')
         clearTimeout(this._sttCommitTimer)
+        // #104: patience scales with the audio just committed - a capped
+        // 20s segment finalizes slower than a 2s remark, and punting a
+        // HEALTHY long finalization to the 60s batch path was half the
+        // stall. The ledger makes the race safe in both directions.
         this._sttCommitTimer = setTimeout(() => {
-          if (this.active && this.state === 'transcribing') {
-            // Realtime never answered (socket died in a dead zone). The batch
-            // recorder ran the whole time - salvage its copy of the utterance
-            // instead of silently losing what was said.
-            this._dropCommit = true // a late realtime final must not double-send
-            this._salvageUtterance(speechMs)
+          const dispatch = onSalvage(this._ledger, turnId)
+          if (dispatch && this.active) {
+            // Realtime never answered in time. The batch recorder ran the
+            // whole time - salvage its copy; the ledger has already
+            // consumed the commit, so a late realtime final drops.
+            this._salvageUtterance(speechMs, turnId, dispatch)
           }
-        }, 5000)
+        }, sttCommitTimeoutMs(speechMs))
+      } else if (cause === 'gap' && this._turnBuffer.length) {
+        // The turn ended on a too-short tail with buffered segments behind
+        // it: flush what the monologue already said.
+        this._deliverTranscript('', turnId, 'send')
       }
       return
     }
@@ -815,17 +845,40 @@ export default class VoiceController {
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
     this._startRecorder()
-    if (speechMs < MIN_SPEECH_MS) return
-    this._state('transcribing')
+    if (speechMs < MIN_SPEECH_MS) {
+      if (cause === 'gap' && this._turnBuffer.length) {
+        this._deliverTranscript('', turnId, 'send')
+      }
+      return
+    }
+    if (!continuation) this._state('transcribing')
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
-    await this._transcribeOrHold(blob, speechMs)
+    await this._transcribeOrHold(blob, speechMs,
+                                 { turnId, dispatch: continuation ? 'buffer' : 'send' })
     if (this.active && this.state === 'transcribing') this._state('listening')
+  }
+
+  // The single delivery door (#85/#104): every winning transcript - realtime
+  // final, salvage, batch, held retry - lands here with its dispatch. A
+  // 'buffer' dispatch accumulates a capped segment's text; a 'send' joins
+  // everything buffered with this text and dispatches ONE user turn.
+  _deliverTranscript(text, turnId, dispatch) {
+    if (dispatch === 'buffer') {
+      if (text) this._turnBuffer.push(text)
+      return
+    }
+    const parts = [...this._turnBuffer, text].filter(Boolean)
+    this._turnBuffer = []
+    this._logicalStart = 0
+    if (!parts.length) return
+    this._trace.mark('transcript_final')
+    this.sendText(parts.join(' '), turnId || this._trace.current()?.turnId)
   }
 
   // POST one utterance to /stt; on a NETWORK failure hold the audio and retry
   // until the tunnel returns. HTTP errors (bad audio) surface and drop -
   // retrying identical bytes can't fix those.
-  async _transcribeOrHold(blob, speechMs) {
+  async _transcribeOrHold(blob, speechMs, { turnId = null, dispatch = 'send' } = {}) {
     try {
       const fd = new FormData()
       fd.append('file', blob, 'utterance.webm')
@@ -833,9 +886,7 @@ export default class VoiceController {
       const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body: fd })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.text) {
-        // Batch STT returned; dispatch is synchronous with this (see above).
-        this._trace.mark('transcript_final')
-        this.sendText(data.text, this._trace.current()?.turnId)
+        this._deliverTranscript(data.text, turnId, dispatch)
       } else if (!res.ok) this.onError?.(`Transcription failed (${data.detail || res.status})`)
       return true
     } catch {
@@ -846,13 +897,13 @@ export default class VoiceController {
     }
   }
 
-  async _salvageUtterance(speechMs) {
+  async _salvageUtterance(speechMs, turnId = null, dispatch = 'send') {
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
     this._startRecorder()
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
-    await this._transcribeOrHold(blob, speechMs)
+    await this._transcribeOrHold(blob, speechMs, { turnId, dispatch })
     if (this.active && this.state === 'transcribing') this._state('listening')
   }
 
@@ -872,7 +923,7 @@ export default class VoiceController {
         // won't improve by resending the same bytes).
         this.heldUtterances.shift()
         this.onHeld?.(this.heldUtterances.length)
-        if (res.ok && data.text) this.sendText(data.text, this._trace.current()?.turnId)
+        if (res.ok && data.text) this._deliverTranscript(data.text, null, 'send')
         else if (!res.ok) this.onError?.(`Held message failed to transcribe (${data.detail || res.status})`)
         this._heldTimer = setTimeout(tick, this.heldUtterances.length ? 500 : 0)
       } catch {

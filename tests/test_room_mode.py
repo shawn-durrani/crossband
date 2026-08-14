@@ -47,6 +47,15 @@ from backend.config import Settings
 from backend.routers import voice as voice_router
 
 
+def _expect_final(ws, text="hello world"):
+    """The relay's final frame (#85/#104): text plus, when the commit
+    carried a turn_id, that same id stamped back so the client can enforce
+    only-one-wins. Tests that send no turn_id get an unstamped frame."""
+    got = ws.receive_json()
+    assert got.get("final") == text, got
+    return got
+
+
 @pytest.fixture
 def app(tmp_path):
     diarize._ROOM_ENABLED.clear()
@@ -273,7 +282,7 @@ def test_room_mode_off_is_byte_for_byte_identical_and_makes_no_extra_calls(
                 ws.send_json(f)
                 assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(frames[2])
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             ws.send_json({"done": True})
         msg = _insert_user_message(chat["id"])
         # give any wrongly-scheduled task every chance to run before asserting
@@ -304,7 +313,7 @@ def test_room_mode_on_leaves_upstream_frames_byte_for_byte_identical(
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"room_mode": True, "sample_rate": 16000})  # control frame
             ws.send_json(frames[1])
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             ws.send_json({"done": True})
         assert relay.sent == [_upstream(f) for f in frames]
 
@@ -368,7 +377,7 @@ def test_committed_transcript_returns_while_the_matcher_is_wedged_open(
             # The matcher is wedged open right now - and the live transcript
             # still arrives. This is the zero-added-latency pin.
             assert not matcher["gate"].is_set()
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             msg = _insert_user_message(chat["id"])
             assert _message_labels(msg["id"]) == ""  # nothing yet - it's async
             matcher["gate"].set()  # release; the label catches up out of band
@@ -394,7 +403,7 @@ def test_committed_transcript_returns_while_the_crosstalk_call_is_wedged(
             ws.send_json({"chat_id": chat["id"]})
             ws.send_json(_frame(commit=True))
             assert not gate.is_set()
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             msg = _insert_user_message(chat["id"])
             assert _message_labels(msg["id"]) == ""
             gate.set()
@@ -460,7 +469,7 @@ def test_crosstalk_split_failure_is_silent_and_the_relay_lives_on(
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             ws.send_json(_frame(commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             msg = _insert_user_message(chat["id"])
             assert _wait_for(lambda: any(
                 "diarize pass failed" in r.getMessage() for r in caplog.records))
@@ -468,7 +477,7 @@ def test_crosstalk_split_failure_is_silent_and_the_relay_lives_on(
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_frame(commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             ws.send_json({"done": True})
         time.sleep(0.2)
         assert _message_labels(msg["id"]) == ""
@@ -585,7 +594,7 @@ def test_labels_key_to_the_exact_message_by_turn_id(app, relay, batch_stt,
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             ws.send_json({**_frame(commit=True), "turn_id": "turn-exact"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             # The decoy lands FIRST - the old window matcher would take it.
             decoy = _insert_user_message(chat["id"], "a neighbouring turn")
             target = _insert_user_message(chat["id"], "the utterance's turn",
@@ -609,7 +618,7 @@ def test_dropped_interjection_never_smears_onto_a_neighbour(
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             ws.send_json({**_frame(commit=True), "turn_id": "turn-dropped"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             neighbour = _insert_user_message(chat["id"], "someone else's turn")
             # the pass runs, retries to its (shrunk) deadline, and gives up
             assert _wait_for(lambda: matcher["calls"] == 1)
@@ -630,7 +639,7 @@ def test_commit_turn_id_never_leaks_upstream(app, relay, batch_stt):
             ws.send_json(frames[0])
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({**frames[1], "turn_id": "turn-private"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             ws.send_json({"done": True})
         assert relay.sent == [_upstream(f) for f in frames]
         assert "turn-private" not in json.dumps(relay.sent)
@@ -656,7 +665,7 @@ def test_exact_turn_id_attach_never_waits_on_the_probe_cadence(
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             ws.send_json({**_frame(commit=True), "turn_id": "turn-fast"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             # let the pass reach its first lookup and MISS (the /send race)
             time.sleep(0.15)
             target = _insert_user_message(chat["id"], "the racing turn",
@@ -696,7 +705,7 @@ def test_label_write_lands_before_the_meter_write(
             target = _insert_user_message(chat["id"], "already persisted",
                                           voice_turn_id="turn-order")
             ws.send_json({**_frame(commit=True), "turn_id": "turn-order"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             assert _wait_for(lambda: _stt_usage_rows() == 1)  # pass finished
             ws.send_json({"done": True})
         assert order == ["labels", "meter"]
@@ -721,7 +730,7 @@ def test_labelling_failure_still_meters_the_spend(
             msg = _insert_user_message(chat["id"], "turn that fails",
                                        voice_turn_id="turn-boom")
             ws.send_json({**_frame(commit=True), "turn_id": "turn-boom"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             assert _wait_for(lambda: _stt_usage_rows() == 1)  # metered anyway
             ws.send_json({"done": True})
         assert _message_labels(msg["id"]) == ""  # the label write did fail

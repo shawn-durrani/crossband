@@ -320,6 +320,12 @@ async def stt_stream_relay(ws: WebSocket):
     seconds = 0.0
     up = down = None
     last_partial = ""  # freshest partial transcript - the prewarm query
+    # #85/#104: pair each commit's turn_id with the final it produces. The
+    # upstream returns finals in commit order on this one socket, so a FIFO
+    # here - the single place commit and final meet - lets every final go
+    # back down stamped with the id of the commit it belongs to, and the
+    # client can enforce only-one-wins per utterance instead of guessing.
+    commit_turn_fifo: list = []
     # Room-mode session state (utterance tee + label bookkeeping). Constructed
     # unconditionally. Phase 2 (#28): the tee itself now runs on EVERY
     # session - a bounded local buffer append per frame, still nothing on the
@@ -516,6 +522,7 @@ async def stt_stream_relay(ws: WebSocket):
                                 if room.speculative else None
                             commit_turn_id = (str(msg.get("turn_id") or "")
                                               .strip()[:64] or None)
+                            commit_turn_fifo.append(commit_turn_id)
                             if room.enabled or diarize.room_enabled(chat_id):
                                 diarize.schedule_pass(chat_id, pcm, pcm_sr,
                                                       db.now(), room, cfg,
@@ -556,7 +563,12 @@ async def stt_stream_relay(ws: WebSocket):
                             last_partial = data.get("text", "")
                             await ws.send_json({"partial": data.get("text", "")})
                         elif mt in ("committed_transcript", "committed_transcript_with_timestamps"):
-                            await ws.send_json({"final": data.get("text", "")})
+                            out = {"final": data.get("text", "")}
+                            tid = commit_turn_fifo.pop(0) if commit_turn_fifo \
+                                else None
+                            if tid:
+                                out["turn_id"] = tid
+                            await ws.send_json(out)
                         elif mt == "error" or data.get("error"):
                             await ws.send_json({"error": data.get("message") or
                                                 data.get("error") or "stt error"})

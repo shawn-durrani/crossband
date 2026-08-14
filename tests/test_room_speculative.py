@@ -40,6 +40,15 @@ from backend.config import Settings
 from backend.routers import voice as voice_router
 
 
+def _expect_final(ws, text="hello world"):
+    """The relay's final frame (#85/#104): text plus, when the commit
+    carried a turn_id, that same id stamped back so the client can enforce
+    only-one-wins. Tests that send no turn_id get an unstamped frame."""
+    got = ws.receive_json()
+    assert got.get("final") == text, got
+    return got
+
+
 @pytest.fixture
 def app(tmp_path):
     diarize._ROOM_ENABLED.clear()
@@ -213,7 +222,7 @@ def test_hint_frames_send_nothing_upstream(app, relay, no_batch, matcher):
             ws.send_json(_hint())
             ws.send_json(_hint())   # a duplicate hint is harmless too
             ws.send_json(frames[1])
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             ws.send_json({"done": True})
         assert relay.sent == [_upstream(f) for f in frames]
         assert "speculative" not in json.dumps(relay.sent)
@@ -238,7 +247,7 @@ def test_transcript_flows_while_the_speculative_check_is_wedged(
             ws.send_json({**_frame(quiet_pcm(0.5), commit=True),
                           "turn_id": "t-wedge"})
             assert not matcher["gate"].is_set()
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             msg = _insert_user_message(chat["id"], voice_turn_id="t-wedge")
             assert _message_labels(msg["id"]) == ""
             matcher["gate"].set()
@@ -270,7 +279,7 @@ def test_fresh_hint_labels_the_commit_with_one_matcher_call(
             # the silence tail keeps streaming, then the commit lands
             ws.send_json({**_frame(quiet_pcm(1.0), commit=True),
                           "turn_id": "t-fresh"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             msg = _insert_user_message(chat["id"], voice_turn_id="t-fresh")
             labels = _wait_for(lambda: _message_labels(msg["id"]))
             time.sleep(0.2)   # give a wrongful second embed time to happen
@@ -303,7 +312,7 @@ def test_resumed_speech_after_the_hint_discards_the_cached_verdict(
             # LOUD audio after the hint: the speaker kept talking
             ws.send_json({**_frame(loud_pcm(1.0), commit=True),
                           "turn_id": "t-stale"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             msg = _insert_user_message(chat["id"], voice_turn_id="t-stale")
             assert _wait_for(lambda: len(matcher["calls"]) == 2)
             time.sleep(0.3)
@@ -370,7 +379,7 @@ def test_cached_match_on_a_remembered_non_rostered_person_is_trusted(
             assert "Dave" in matcher["calls"][0][1]
             ws.send_json({**_frame(quiet_pcm(0.5), commit=True),
                           "turn_id": "t-reval"})
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             msg = _insert_user_message(chat["id"], voice_turn_id="t-reval")
             labels = _wait_for(lambda: _message_labels(msg["id"]))
             time.sleep(0.3)
@@ -403,7 +412,7 @@ def test_hint_in_a_disarmed_chat_schedules_nothing(app, relay, no_batch,
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())
             ws.send_json(_frame(loud_pcm(0.5), commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
+            _expect_final(ws)
             time.sleep(0.3)
             ws.send_json({"done": True})
     assert matcher["calls"] == []   # never consulted, hint or commit
