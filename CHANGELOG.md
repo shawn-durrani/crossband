@@ -1,6 +1,7 @@
 # Changelog
 
-House convention: user-visible change, one line each, newest first.
+House convention: one entry per user-visible change, newest first. Keep an
+entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
