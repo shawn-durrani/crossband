@@ -314,3 +314,55 @@ def test_stored_record_is_public_material_only(app):
     assert base64url_to_bytes(rec["id"]) == pk.cred_id
     priv = pk.key.private_numbers().private_value.to_bytes(32, "big")
     assert bytes_to_base64url(priv) not in json.dumps(rec)
+
+
+# ── honest passkey state and owner labels (#87/#88) ─────────────────────────
+#
+# The field failure: an empty credential store rendered exactly like a broken
+# gate - the passkey button was simply absent, and nothing said whether that
+# meant "never enrolled", "enrolled somewhere else", or "bug". And with one
+# credential per device, the two were indistinguishable twins in the list.
+
+def test_session_names_where_a_passkey_does_exist(app):
+    owner = _owner(app)
+    # nothing enrolled anywhere: elsewhere is honestly empty
+    s = _client(app, base_url="http://127.0.0.1").get("/api/auth/session").json()
+    assert s["passkey"] is False and s["passkey_elsewhere"] == []
+    # enrol at localhost; the IP-origin lock screen names it
+    _enrol_passkey(owner)
+    s = _client(app, base_url="http://127.0.0.1").get("/api/auth/session").json()
+    assert s["passkey"] is False
+    assert s["passkey_elsewhere"] == ["localhost"]
+    # at localhost itself: offered, nothing to point elsewhere
+    s = _client(app).get("/api/auth/session").json()
+    assert s["passkey"] is True and s["passkey_elsewhere"] == []
+
+
+def test_credential_labels_are_owner_editable(app):
+    owner = _owner(app)
+    _enrol_passkey(owner)
+    creds = owner.get("/api/webauthn/credentials").json()["credentials"]
+    cid = creds[0]["id"]
+    assert creds[0].get("label") in (None, "")
+    assert "last_used_at" in creds[0]
+
+    r = owner.post("/api/webauthn/credentials/label",
+                   json={"id": cid, "label": "  MacBook   Touch ID  "})
+    assert r.status_code == 200
+    creds = owner.get("/api/webauthn/credentials").json()["credentials"]
+    assert creds[0]["label"] == "MacBook Touch ID"      # whitespace collapsed
+
+    assert owner.post("/api/webauthn/credentials/label",
+                      json={"id": "nope", "label": "x"}).status_code == 404
+    # session-gated like every credential surface
+    assert _client(app).post("/api/webauthn/credentials/label",
+                             json={"id": cid, "label": "x"}).status_code == 401
+
+
+def test_successful_unlock_stamps_last_used(app):
+    owner = _owner(app)
+    pk, _ = _enrol_passkey(owner)
+    anon = _client(app)
+    assert _passkey_login(anon, pk).status_code == 200
+    creds = owner.get("/api/webauthn/credentials").json()["credentials"]
+    assert creds[0]["last_used_at"] is not None

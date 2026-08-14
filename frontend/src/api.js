@@ -38,6 +38,10 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   }).then(json),
   webauthnCredentials: () => fetch('/api/webauthn/credentials').then(json),
+  webauthnLabel: (id, label) => fetch('/api/webauthn/credentials/label', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, label }),
+  }).then(json),
   webauthnRemove: (id) => fetch('/api/webauthn/credentials/remove', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
   }).then(json),

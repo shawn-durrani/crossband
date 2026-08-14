@@ -378,7 +378,7 @@ week when it was maintained by hand.
 - (`test_app.py`) Boot smoke test
 - (`test_attribution_audit.py`) The non-blocking DIAGNOSTIC half of the source-provenance fix
 - (`test_auth_gate.py`) The browser gate: enrolment-activated sessions, recovery-gated setup/reset, websocket guard
-- (`test_passkeys.py`) Passkey unlock: per-origin enrolment, discoverable-credential ceremonies, replay/clone refusal
+- (`test_passkeys.py`) Passkey unlock: per-origin enrolment, discoverable-credential ceremonies, replay/clone refusal, and #87/#88: the session names where a passkey DOES exist when this address has none, labels are owner-editable (bounded, session-gated), and a successful unlock stamps last-used
 - (`test_boundary.py`) Localhost trust boundary
 - (`test_cache_split.py`) Claude-chat prompt-cache layout
 - (`test_chat_memory.py`) Auto-title refresh triggers, and #22: the attribution floor - a tag-free summary is refused and never replaces the turns it summarised, the truth table for the two-distinct-voices rule, and fold labels using display names

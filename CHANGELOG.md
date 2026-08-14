@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- The lock screen tells the truth about passkeys, and passkeys get
+  names (#87, #88). "Never enrolled" and "enrolled at a different
+  address" both used to render as a silently missing passkey button,
+  which reads as broken - the field case was days of "I thought I set
+  it up" over a store that was simply empty. The lock screen now says
+  which it is, naming the address that does hold one. And each passkey
+  takes an owner-editable label ("MacBook Touch ID", "iPhone") with
+  enrolled and last-used dates, so the mobile and desktop credential
+  stop being indistinguishable twins.
+
 - Learned voices are backed up (#33). voice_anchors/ was in no backup
   at all: losing the data directory forgot every learned voice while
   the chats survived. Every snapshot cycle now writes a

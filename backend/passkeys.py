@@ -109,13 +109,34 @@ def remove_credential(con, cred_id: str) -> bool:
 def update_sign_count(con, cred_id: str, sign_count: int) -> None:
     """Persist the authenticator's signature counter so a cloned credential
     (counter going backwards) is detectable next login. Apple authenticators
-    report a constant 0, which stores and verifies fine."""
+    report a constant 0, which stores and verifies fine. Also stamps
+    last_used_at (#88): a successful login is the one honest signal of which
+    device a credential lives on."""
+    import time
     rows = list_credentials(con)
     for r in rows:
         if r.get("id") == cred_id:
             r["sign_count"] = int(sign_count)
+            r["last_used_at"] = time.time()
     db.set_setting(con, CREDENTIALS_KEY, json.dumps(rows))
     con.commit()
+
+
+def set_label(con, cred_id: str, label: str) -> bool:
+    """Owner-editable credential label (#88): mobile and desktop passkeys
+    were indistinguishable twins. Bounded, plain text, empty allowed (the
+    UI falls back to address + date)."""
+    clean = " ".join((label or "").split())[:40]
+    rows = list_credentials(con)
+    hit = False
+    for r in rows:
+        if r.get("id") == cred_id:
+            r["label"] = clean
+            hit = True
+    if hit:
+        db.set_setting(con, CREDENTIALS_KEY, json.dumps(rows))
+        con.commit()
+    return hit
 
 
 def user_handle(con) -> bytes:

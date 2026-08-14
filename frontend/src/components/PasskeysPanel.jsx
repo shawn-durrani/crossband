@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Fingerprint, Loader2 } from 'lucide-react'
+import { Fingerprint, Loader2, Pencil } from 'lucide-react'
 import { api } from '../api'
 import {
   ceremonyErrorCopy, decodeCreationOptions, serialiseAttestation,
@@ -16,6 +16,28 @@ export default function PasskeysPanel() {
   const [rows, setRows] = useState(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  // #88: owner-editable labels, so the mobile and desktop credential stop
+  // being indistinguishable twins.
+  const [editing, setEditing] = useState(null)
+  const [draft, setDraft] = useState('')
+
+  async function saveLabel(id) {
+    const label = draft.trim()
+    setEditing(null); setDraft('')
+    try {
+      await api.webauthnLabel(id, label)
+      load()
+    } catch (ex) {
+      setMsg(`Couldn't rename passkey: ${ex.message}`)
+    }
+  }
+
+  // What a row calls itself: the owner's label, else address + date.
+  function displayName(c) {
+    if (c.label) return c.label
+    const when = (c.created_at || '').slice(0, 10)
+    return `${c.rp_id || c.origin}${when ? ` · ${when}` : ''}`
+  }
 
   async function load() {
     try {
@@ -83,10 +105,39 @@ export default function PasskeysPanel() {
               <li key={c.id} className="flex items-center justify-between gap-3 text-sm">
                 <span className="flex items-center gap-2 min-w-0">
                   <Fingerprint size={14} className="shrink-0 text-ink-dim" />
-                  <span className="truncate">{c.origin}</span>
+                  {editing === c.id ? (
+                    <span className="flex items-center gap-1.5">
+                      <input
+                        className="bg-transparent border border-edge rounded px-2 py-0.5 text-sm text-ink w-44"
+                        value={draft}
+                        maxLength={40}
+                        autoFocus
+                        placeholder="e.g. MacBook Touch ID, iPhone"
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveLabel(c.id) }}
+                      />
+                      <button className="text-xs text-ink-dim hover:text-ink border border-edge rounded px-2 py-0.5"
+                              onClick={() => saveLabel(c.id)}>Save</button>
+                      <button className="text-xs text-ink-dim hover:text-ink"
+                              onClick={() => { setEditing(null); setDraft('') }}>cancel</button>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="truncate">{displayName(c)}</span>
+                      <button className="text-ink-faint hover:text-ink shrink-0"
+                              title="Name this passkey (which device it lives on)"
+                              onClick={() => { setEditing(c.id); setDraft(c.label || '') }}>
+                        <Pencil size={11} />
+                      </button>
+                      <span className="text-xs text-ink-faint shrink-0">on {c.rp_id || c.origin}</span>
+                    </span>
+                  )}
                 </span>
                 <span className="flex items-center gap-3 shrink-0 text-xs text-ink-faint">
-                  {(c.created_at || '').slice(0, 10)}
+                  <span title="When this passkey was enrolled">added {(c.created_at || '').slice(0, 10) || '?'}</span>
+                  <span title="Last successful unlock with this passkey">
+                    {c.last_used_at ? `used ${new Date(c.last_used_at * 1000).toLocaleDateString()}` : 'never used'}
+                  </span>
                   <span>{c.backed_up ? 'synced (e.g. iCloud)' : 'this device only'}</span>
                   <button className="text-red-400 hover:underline underline-offset-2"
                           onClick={() => remove(c.id)}>
