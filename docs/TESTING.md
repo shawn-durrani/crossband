@@ -392,6 +392,7 @@ week when it was maintained by hand.
 - (`test_effort.py`) Reasoning-effort gating table, with semantics ported from the predecessor
 - (`test_engine.py`) Round-loop characterization
 - (`test_eval_critic.py`) Tests for the offline critic eval harness itself (fixture loading, prompt isolation, verdict parsing, scoring math) -- no live API calls; the model call is always faked
+- (`test_discard_turn.py`) Owner-discard of a captured voice turn (#106): the row and its attachments go, the ingested watermark is reported honestly, only own user turns qualify, a running round blocks it, wrong ids 404
 - (`test_events.py`) Global live-events bus
 - (`test_github_tools.py`) GitHub issue tools
 - (`test_guest.py`) summon_claude_code, in both investigate and implement modes
@@ -475,6 +476,7 @@ week when it was maintained by hand.
 - (`streamGuard.test.js`) Invariant test for the cross-chat write-guard
 - (`textQueue.test.js`) Invariant tests for per-chat text batching + pre-ingestion cancel
 - (`turnPolicy.test.js`) Bounded active-turn endpointing (#60): a normal-length turn never forces regardless of voicing, an unvoiced frame past the soft cap forces now (the continuous-noise fix), a voiced frame past the soft cap holds to avoid premature truncation, and the hard cap forces unconditionally either way; plus #104's additions - commit patience scales with committed audio (floor/ceiling pinned) and the total-turn bound outlasts the per-segment caps
+- (`voiceDiscard.test.js`) The discard affordance (#106): only the owner's settled voice turns qualify, and the confirm copy states exactly what a discard cannot undo
 - (`voiceChips.test.js`) Room-mode voice chips: user turns only, malformed label data renders nothing, ordinal assignment is first-seen and stable, named chips carry per-label uncertainty and correction state, and the owner's voice-confirmed marker (#28 PR-C) and the cold-start learning marker (#28) are additive-only so old payloads render unchanged - one shared rule decides the tick, the "· learning" tag and the bare "?"
 - (`voiceClips.test.js`) Clip audition rows (#68/#90): every capture path has a plain-English label, unknown sources render verbatim rather than guessed, only elimination-earned clips get the closer-listen flag (owner-reassigned ones drop it and say so), move targets are every other person by display name, row derivation keeps the file token and formats duration, and the delete explainer says what actually happens
 - (`voiceErrors.test.js`) Playback failure messages are user-readable and name the recovery

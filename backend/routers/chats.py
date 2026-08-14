@@ -278,6 +278,45 @@ def rearm_command_deadmen(app):
         log.info("re-armed %d slash-command dead-man timer(s)", len(rows))
 
 
+@router.post("/api/chats/{chat_id}/messages/{message_id}/discard")
+async def discard_turn(chat_id: int, message_id: int):
+    """Owner-discard of a captured voice turn (#106): live capture can
+    transcribe audio that was never meant for the chat, and the owner must
+    be able to remove it. Deletes the message row (attachments cascade), so
+    it leaves the visible chat and every FUTURE model context, and - when
+    the memory handoff has not yet passed it - it never reaches the durable
+    ledger at all.
+
+    Honesty about what already escaped rides the response: `ingested` says
+    whether the memory watermark already passed this turn (the ledger copy
+    is append-only and is NOT touched here - membro-side deletion is its
+    own owner-only surface). What models already read in past rounds
+    cannot be unsent; the UI says so before confirming.
+
+    User turns only, and never mid-round (the round is reading the
+    transcript it started with). Content-free audit line only."""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT id, speaker FROM messages WHERE id=? AND chat_id=?",
+                          (message_id, chat_id)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such message in this chat")
+        if row["speaker"] != "user":
+            raise HTTPException(400, "only your own turns can be discarded")
+        if rounds.active(chat_id) is not None:
+            raise HTTPException(409, "a round is running - stop it first")
+        chat = con.execute("SELECT ingested_upto FROM chats WHERE id=?",
+                           (chat_id,)).fetchone()
+        ingested = bool(chat and message_id <= (chat["ingested_upto"] or 0))
+        con.execute("DELETE FROM messages WHERE id=?", (message_id,))
+        con.commit()
+    finally:
+        con.close()
+    log.info("voice turn discarded by owner: chat=%s msg=%s ingested=%s",
+             chat_id, message_id, ingested)
+    return {"ok": True, "ingested": ingested}
+
+
 class NoticeIn(BaseModel):
     text: str
     # #58: the user message (a slash command) this notice consumes. Recording

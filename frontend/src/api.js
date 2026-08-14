@@ -38,6 +38,10 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   }).then(json),
   webauthnCredentials: () => fetch('/api/webauthn/credentials').then(json),
+  // #106: owner-discard of a captured voice turn.
+  discardTurn: (chatId, messageId) => fetch(
+    `/api/chats/${chatId}/messages/${messageId}/discard`, { method: 'POST' }
+  ).then(json),
   webauthnLabel: (id, label) => fetch('/api/webauthn/credentials/label', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, label }),
