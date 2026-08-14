@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Menu, Headphones, MoreHorizontal, Check, Copy, Mic, Brain, Globe,
+import { Menu, Headphones, MoreHorizontal, Check, Copy, MicOff, Brain, Globe,
   SquareTerminal, AlertTriangle, Wrench } from 'lucide-react'
 import { withAlpha } from '../speakers'
 import { chatCostFigures, chatCostNote, COST_TONE } from '../messageCost'
@@ -39,7 +39,7 @@ function Chip({ on, title, onClick, tone, children }) {
 export default function ChatHeader({
   activeChat, activeTitle, activeProject, participants, cfg, memory,
   running, chatTotal, copiedChat, voiceState,
-  onOpenDrawer, onCopyChat, onStartVoice, onToggleParticipant,
+  onOpenDrawer, onCopyChat, onStartVoice, onEndVoice, onToggleParticipant,
   onToggleVoice, onToggleWeb, onToggleMemory, onToggleCode,
 }) {
   const [overflowOpen, setOverflowOpen] = useState(false)
@@ -109,16 +109,20 @@ export default function ChatHeader({
       )
     })
 
+  // #108: this chip shapes REPLY STYLE only and must never look like a
+  // microphone control - the mic icon and the word "voice" made it read as
+  // the kill switch, and clicking it left capture running. The real end-
+  // voice control renders separately below, only while a session is live.
   const voiceModeButton = () => (
     <Chip
       on={activeChat.voice_mode}
       tone="bg-sky-950/60 border-sky-700 text-sky-300"
       title={activeChat.voice_mode
-        ? 'Voice mode ON - replies are short and spoken-style'
-        : 'Voice mode OFF - click for short, spoken-style replies'}
+        ? 'Concise replies ON - replies are short and spoken-style. This does not touch the microphone.'
+        : 'Concise replies OFF - click for short, spoken-style replies. This does not touch the microphone.'}
       onClick={onToggleVoice}
     >
-      <Mic size={13} /> voice
+      concise replies
     </Chip>
   )
 
@@ -350,6 +354,19 @@ export default function ChatHeader({
             onClick={onStartVoice}
           >
             <Headphones size={18} />
+          </button>
+        )}
+        {/* #108: while the mic is live, the kill switch is ALWAYS here -
+            never only inside the dock. Ending voice here stops capture:
+            tracks, socket, context, timers, the lot. */}
+        {voiceState !== 'off' && (
+          <button
+            title="End the voice session - stops the microphone completely"
+            aria-label="End voice session and stop the microphone"
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 h-10 border border-red-800 bg-red-950/60 text-red-300 hover:text-red-200 text-xs font-medium"
+            onClick={onEndVoice}
+          >
+            <MicOff size={14} /> End voice
           </button>
         )}
         <div className="relative shrink-0" ref={overflowRef}>

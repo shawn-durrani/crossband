@@ -4,6 +4,15 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- No control with a mic icon can leave the microphone running (#108).
+  The header chip that shapes reply style stops dressing as a voice
+  kill switch: it is now "concise replies", icon-free, and says
+  plainly that it does not touch the microphone. While a voice
+  session is live, the header always shows a red End voice control
+  that stops capture completely - tracks, socket, context, timers -
+  without opening the dock. Found live: the owner clicked the
+  mic-iconed chip, left the tab, and the browser kept recording.
+
 - A monologue stays one message, and no utterance can send twice
   (#104, #85). The #60 noise caps were ending the whole TURN at 12/20
   seconds, chopping genuine long speech into separate messages - and
