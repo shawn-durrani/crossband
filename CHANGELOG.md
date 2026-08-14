@@ -4,6 +4,14 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- Voices is a page of its own (#91), linked from the sidebar:
+  everything the app knows by voice and every control over it - listen
+  to the stored clips, fix names and spellings, move a recording to
+  the right person, confirm an auditioned bank, or forget someone -
+  with the room a full page gives it. The models menu keeps a one-line
+  pointer where the panel used to live. Voice sessions keep running
+  while the page is open (the #69 strip covers it like any page).
+
 - A model can honourably stay silent (#98). A reply of exactly [pass]
   is removed entirely - nothing shown, nothing spoken, nothing
   remembered - so "if you have nothing to add, pass" is finally a rule

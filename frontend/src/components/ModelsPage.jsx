@@ -5,7 +5,6 @@ import { PRESETS, matchPreset } from '../presets'
 import { modelReadoutLines } from '../modelReadout'
 import { lifecycleBadge, promoteState, addSeatNotice } from '../lifecycle'
 import RateCardsPanel from './RateCardsPanel'
-import RememberedVoices from './RememberedVoices'
 
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
@@ -111,7 +110,7 @@ function LifecycleBadge({ badge }) {
 // returns to ("Back to Connections" when that's where you came from): a
 // button that says "Back to chat" and means it is navigation; one that says
 // it and lies is how you lose your place.
-export default function ModelsPage({ participants, settings, voiceEnabled, onChanged, onClose, onOpenMenu, intent = null, backLabel = 'Back to chat' }) {
+export default function ModelsPage({ participants, settings, voiceEnabled, onChanged, onClose, onOpenMenu, onOpenVoices, intent = null, backLabel = 'Back to chat' }) {
   const [editing, setEditing] = useState(null) // participant object or EMPTY clone
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
@@ -334,9 +333,20 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
             the roster. */}
         {!editing && <RateCardsPanel />}
 
-        {/* Room mode's privacy surface: who the app can recognise by voice,
-            and the forget button that deletes their stored audio (#28). */}
-        {!editing && <RememberedVoices />}
+        {/* #91: voice identity has its own first-class page now - this
+            menu keeps one line so the capability stays discoverable from
+            where it used to live. */}
+        {!editing && (
+          <div className="border border-edge rounded-xl px-3 py-2.5 text-sm text-ink-mid flex items-center justify-between gap-2">
+            <span>Remembered voices - who the app recognises, their stored clips, and every control over them.</span>
+            {onOpenVoices && (
+              <button className="text-link hover:underline shrink-0"
+                      onClick={onOpenVoices}>
+                Open the Voices page
+              </button>
+            )}
+          </div>
+        )}
 
         {!editing && (
           <div className="space-y-2">

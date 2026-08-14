@@ -9,6 +9,7 @@ import ModelsPage from './components/ModelsPage'
 import ImportModal from './components/ImportModal'
 import ExportModal from './components/ExportModal'
 import SpendPage from './components/SpendPage'
+import VoicesPage from './components/VoicesPage'
 import IntegrationsConsole from './components/IntegrationsConsole'
 import SetupWizard from './components/SetupWizard'
 import MobileVoiceCall from './components/MobileVoiceCall'
@@ -65,6 +66,7 @@ export default function App() {
   const [unreadChats, setUnreadChats] = useState(() => new Set())
   const [projectModal, setProjectModal] = useState(null)
   const [showParticipants, setShowParticipants] = useState(false)
+  const [showVoices, setShowVoices] = useState(false)  // #91: the Voices page
   // Why the Models page was opened: {action:'add'} | {action:'edit',
   // slug}, plus from:'connections' when the console sent you - so the page
   // can land where the click promised and its back button can return you to
@@ -540,6 +542,7 @@ export default function App() {
     setShowIntegrations(false)
     setShowCost(false)
     setShowParticipants(false)
+    setShowVoices(false)
     setModelsIntent(null)
   }
 
@@ -766,6 +769,7 @@ export default function App() {
       onOpenImport={() => setShowImport(true)}
       onOpenExport={() => setShowExport(true)}
       onOpenCost={() => { leavePages(); setShowCost(true); if (closeAfter) setDrawerOpen(false) }}
+      onOpenVoices={() => { leavePages(); setShowVoices(true); if (closeAfter) setDrawerOpen(false) }}
       theme={theme}
       onToggleTheme={setTheme}
     />
@@ -827,11 +831,17 @@ export default function App() {
             onClose={() => setShowCost(false)}
             onOpenMenu={() => setDrawerOpen(true)}
           />
+        ) : showVoices ? (
+          <VoicesPage
+            onClose={() => setShowVoices(false)}
+            onOpenMenu={() => setDrawerOpen(true)}
+          />
         ) : showParticipants ? (
           <ModelsPage
             participants={state.participants}
             settings={state.settings}
             voiceEnabled={cfg?.voice_enabled}
+            onOpenVoices={() => { leavePages(); setShowVoices(true) }}
             onChanged={refreshState}
             intent={modelsIntent}
             backLabel={modelsIntent?.from === 'connections' ? 'Back to Connections' : 'Back to chat'}
@@ -1017,7 +1027,7 @@ export default function App() {
           voice KEEPS RUNNING and the call surfaces give way to the compact
           strip - visible at every width, because the desktop dock unmounts
           with the chat view. */}
-      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost }) === 'strip' && (
+      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost || showVoices }) === 'strip' && (
         <VoiceStrip
           voiceState={voiceState}
           muted={voiceMuted}
@@ -1028,7 +1038,7 @@ export default function App() {
       )}
       {/* Mobile-only full-screen voice "call" overlay (sm:hidden inside the
           component). Desktop keeps the in-thread .voice-dock above, untouched. */}
-      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost }) === 'call' && (
+      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost || showVoices }) === 'call' && (
         <MobileVoiceCall
           banner={banner}
           onDismissBanner={() => setBanner(null)}
