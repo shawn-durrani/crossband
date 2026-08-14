@@ -117,6 +117,14 @@ export function useRoundStream({
       setMessages((m) =>
         m.map((msg) => (msg.id === id ? { ...ev.message, attachments: [] } : msg)),
       )
+    } else if (ev.type === 'passed') {
+      // #98: the seat chose the honourable silence - the app removes the
+      // turn entirely. Nothing persisted server-side; the streamed bubble
+      // (its only content was the pass token) goes too. On a refused pass
+      // the same event precedes the retry's fresh speaker_start.
+      const id = liveIds.current[ev.speaker]
+      delete liveIds.current[ev.speaker]
+      setMessages((m) => m.filter((msg) => msg.id !== id))
     } else if (ev.type === 'tool_activity') {
       const id = liveIds.current[ev.speaker]
       setMessages((m) =>

@@ -393,6 +393,16 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         parts.append("\n## Conversation style (set by the user - follow it strictly)\n" + shared)
     # memory_summary and delegation_note used to sit HERE, and both mutate
     # mid-conversation - see _volatile_system_parts, which now carries them.
+    parts.append(
+        "\n## Passing\nIf, when your turn comes, you truly have nothing to "
+        "add beyond what has already been said, reply with exactly [pass] "
+        "and nothing else. The app removes a pass entirely - nothing is "
+        "shown, spoken, or remembered - so passing is honourable and free, "
+        "and ALWAYS better than restating another seat's point in different "
+        "words. Two exceptions, enforced by the app: never pass when you "
+        "were addressed by name, and never pass as the first responder to a "
+        "direct question - the person is owed at least one substantive "
+        "answer.")
     if participant.get("system_prompt", "").strip():
         parts.append("\n## Your persona / standing instructions\n" + participant["system_prompt"].strip())
     if project:
@@ -481,6 +491,12 @@ def _volatile_system_parts(cfg):
         # Sits with the other round state: it flips twice per summons, so it
         # can never live in the cached prefix.
         parts.append("\n## Specialist delegation - already claimed\n" + delegation)
+    refused = (cfg.get("pass_refused") or "").strip()
+    if refused:
+        # #98: the engine refused this seat's [pass] (first responder on a
+        # direct question, or addressed by name) and is re-running it once.
+        # Volatile by nature - present for exactly one retry call.
+        parts.append("\n## Pass refused - you must answer\n" + refused)
     preds = cfg.get("round_predecessors") or []
     if preds:
         parts.append(
@@ -488,8 +504,9 @@ def _volatile_system_parts(cfg):
             "message - their replies are the last things in the transcript. Read them "
             "before writing a word. If one of them already gave an adequate answer "
             "(especially a memory/recall question - you all share the same memory, so "
-            "your recall returns the SAME facts), DEFAULT to a bare \"…\" and stop there "
-            "- that is the normal, expected outcome of this check, not a fallback. Only "
+            "your recall returns the SAME facts), DEFAULT to a bare [pass] and stop "
+            "there - the app removes it entirely, nothing shown or spoken; that is the "
+            "normal, expected outcome of this check, not a fallback. Only "
             "write actual words instead if at least one of these is true right now: (a) "
             "you have something to add that they did NOT say - a new fact, a correction, "
             "or a genuine disagreement; (b) you were addressed directly, this is a "
@@ -500,7 +517,7 @@ def _volatile_system_parts(cfg):
             "never a substitute for passing when nothing above applies. Never restate "
             "their content in your own words as a way of sounding like you contributed, "
             "and never announce that you're staying brief - either earn your place or "
-            "pass with \"…\"."
+            "reply [pass]."
         )
     # The room-mode state line (#28, chat 198): seats verbally "confirmed" a
     # mode switch that never happened, and could answer "is group mode on?"

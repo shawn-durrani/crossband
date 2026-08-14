@@ -1,6 +1,7 @@
 import { captureConstraints, captureProfileName } from './captureProfile.js'
 import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
+import { couldBePass } from './voiceView.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
@@ -959,6 +960,11 @@ export default class VoiceController {
       this._trace.mark('first_token')
       this._trace.speakerMark(ev.speaker, 'first_delta', this._traceMeta(ev.speaker))
       this._feedSpeaker(ev.speaker, ev.text)
+    } else if (ev.type === 'passed') {
+      // #98: the seat passed - nothing is spoken. TTS never opened for a
+      // bare pass (couldBePass held it); just drop the pending speaker.
+      const p = this._pendingSpeaker
+      if (p && p.slug === ev.speaker) this._pendingSpeaker = null
     } else if (ev.type === 'speaker_end' || ev.type === 'error') {
       const p = this._pendingSpeaker
       if (p && p.slug === ev.speaker && !p.started) {
@@ -979,7 +985,9 @@ export default class VoiceController {
     const p = this._pendingSpeaker
     if (p && p.slug === slug && !p.started) {
       p.text += text
-      if (/[^.…\s]/.test(p.text)) { // real (non-ellipsis) content arrived - start speaking now
+      // #98: also hold while the text could still be a bare [pass] - a
+      // passed turn is never spoken, and the 'passed' event clears it.
+      if (/[^.…\s]/.test(p.text) && !couldBePass(p.text)) { // real content arrived - start speaking now
         p.started = true
         this._pendingSpeaker = null
         this._beginSpeaker(slug)

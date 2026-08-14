@@ -42,3 +42,12 @@ export function displayPartial(text) {
   const t = (text || '').trim()
   return t.length ? t : null
 }
+
+// #98: hold TTS while a streaming reply could still be a bare [pass] - a
+// pass is never spoken. The moment the text diverges from the token (or
+// carries content beyond it) the hold lifts and buffered text speaks.
+export function couldBePass(accumulated) {
+  const t = (accumulated || '').trimStart().toLowerCase()
+  if (t.length <= 6) return '[pass]'.startsWith(t)
+  return t.startsWith('[pass]') && t.slice(6).trim() === ''
+}

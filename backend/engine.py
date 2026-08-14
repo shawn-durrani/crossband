@@ -17,7 +17,7 @@ import re
 import time
 
 from . import attachments as att_mod
-from . import chat_memory, db, guest
+from . import chat_memory, db, guest, passes
 from . import memory_client as memory_client_mod
 from . import providers
 from . import provenance as prov
@@ -310,6 +310,21 @@ def pick_responders(text, chat, roster):
     return rotated, next_first
 
 
+def explicitly_addressed(text, roster):
+    """Seats the user summoned by name in `text` - the same two shapes
+    pick_responders honours (@mentions and the leading spoken vocative),
+    reused by the pass guard (#98): being summoned is the demand for an
+    answer, so an addressed seat may never pass."""
+    slugs = {p["slug"] for p in roster or []}
+    if not slugs:
+        return set()
+    pattern = "|".join(re.escape(s) for s in slugs)
+    out = {m.lower() for m in re.findall(rf"@({pattern})\b", text or "",
+                                         re.IGNORECASE)}
+    out |= {p["slug"] for p in _vocative_responders(text, roster)}
+    return out
+
+
 def _vocative_responders(text, roster):
     """Spoken addressing: when the message OPENS by naming members
     ("Claude and GPT, …", "GPT-OSS: you can sit this one out"), select those.
@@ -517,6 +532,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                       if m["id"] > chat["summary_upto"]
                       and not (m["speaker"] == "user"
                                and m["content"].lstrip().startswith("/"))]
+        # #98: what did the user just ask, and whom did they summon - the
+        # pass guard reads both. The triggering turn is the newest user
+        # message in the full (unsummarized-window) list.
+        user_text = next((m["content"] for m in reversed(messages)
+                          if m["speaker"] == "user"), "")
+        addressed = explicitly_addressed(user_text, roster)
         # This warning flips with memory-service health while `summary_upto`
         # stays put - so unlike a real summary fold it does NOT change the
         # transcript, and concatenating it into `summary` (the CACHED stable
@@ -642,71 +663,105 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             tool_memory = memory
         tool_defs = tool_defs or None
 
-        live["participant"] = participant
-        live["content"] = ""
-        live["tools"] = []
-        live["usage"] = None
-        yield sse({"type": "speaker_start", "speaker": participant["slug"]})
-        t_provider_call = time.monotonic() if t_iter_start is not None else None
-        try:
-            async for kind, payload in providers.stream_reply(
-                participant, roster, transcript, names, round_cfg, project, summary,
-                voice_mode, tools=tool_defs, memory=tool_memory,
-            ):
-                if kind == "text":
-                    if t_provider_call is not None:
-                        # First visible token - record the split once,
-                        # best-effort (a trace-write failure must never break
-                        # the actual round), then never again this participant.
-                        # On a worker thread - this write races the
-                        # first delta reaching the client otherwise.
-                        await asyncio.to_thread(
-                            _record_first_token_split,
-                            turn_id, chat_id, participant, t_iter_start,
-                            t_provider_call, memory_summary_ms, memory_recall_ms)
-                        t_provider_call = None
-                    live["content"] += payload
-                    yield sse({"type": "delta", "speaker": participant["slug"], "text": payload})
-                elif kind == "usage":
-                    live["usage"] = payload
-                elif kind == "tool":
-                    live["tools"].append(payload)
-                    yield sse({
-                        "type": "tool_activity",
-                        "speaker": participant["slug"],
-                        "tool": payload["tool"],
-                        "input_json": json.dumps(payload["input"]),
-                        "output_text": payload["output"],
-                    })
-                elif kind == "work_status":
-                    # A structured liveness event (never text) - proves the
-                    # round is alive over the SAME SSE stream the reply
-                    # rides, WITHOUT touching live["content"]. This is the
-                    # fix for the earlier persistence bug: the old
-                    # text-shaped version was folded into live["content"] and
-                    # ended up baked into the persisted assistant message.
-                    # Never buffered, never replayed, never part of any DB
-                    # row - a client that isn't connected right now simply
-                    # never sees it, which is the point.
-                    yield sse({
-                        "type": "work_status",
-                        "speaker": participant["slug"],
-                        "phase": payload["phase"],
-                        "label": payload["label"],
-                    })
-        except (GeneratorExit, asyncio.CancelledError):
-            raise  # client disconnected - run_round persists the partial reply
-        except Exception as e:
-            yield sse({"type": "error", "speaker": participant["slug"], "message": str(e)})
-            if not live["content"]:
+        # #98: one attempt normally; a REFUSED pass (first responder on a
+        # direct question, or a seat addressed by name) re-runs the seat
+        # once with the guard stated. An allowed pass - or a second pass
+        # after refusal - suppresses the turn entirely: nothing persisted,
+        # nothing spoken, the round moves on.
+        pass_note = ""
+        skip_speaker = False
+        while True:
+            round_cfg["pass_refused"] = pass_note
+            live["participant"] = participant
+            live["content"] = ""
+            live["tools"] = []
+            live["usage"] = None
+            yield sse({"type": "speaker_start", "speaker": participant["slug"]})
+            t_provider_call = time.monotonic() if t_iter_start is not None else None
+            try:
+                async for kind, payload in providers.stream_reply(
+                    participant, roster, transcript, names, round_cfg, project, summary,
+                    voice_mode, tools=tool_defs, memory=tool_memory,
+                ):
+                    if kind == "text":
+                        if t_provider_call is not None:
+                            # First visible token - record the split once,
+                            # best-effort (a trace-write failure must never break
+                            # the actual round), then never again this participant.
+                            # On a worker thread - this write races the
+                            # first delta reaching the client otherwise.
+                            await asyncio.to_thread(
+                                _record_first_token_split,
+                                turn_id, chat_id, participant, t_iter_start,
+                                t_provider_call, memory_summary_ms, memory_recall_ms)
+                            t_provider_call = None
+                        live["content"] += payload
+                        yield sse({"type": "delta", "speaker": participant["slug"], "text": payload})
+                    elif kind == "usage":
+                        live["usage"] = payload
+                    elif kind == "tool":
+                        live["tools"].append(payload)
+                        yield sse({
+                            "type": "tool_activity",
+                            "speaker": participant["slug"],
+                            "tool": payload["tool"],
+                            "input_json": json.dumps(payload["input"]),
+                            "output_text": payload["output"],
+                        })
+                    elif kind == "work_status":
+                        # A structured liveness event (never text) - proves the
+                        # round is alive over the SAME SSE stream the reply
+                        # rides, WITHOUT touching live["content"]. This is the
+                        # fix for the earlier persistence bug: the old
+                        # text-shaped version was folded into live["content"] and
+                        # ended up baked into the persisted assistant message.
+                        # Never buffered, never replayed, never part of any DB
+                        # row - a client that isn't connected right now simply
+                        # never sees it, which is the point.
+                        yield sse({
+                            "type": "work_status",
+                            "speaker": participant["slug"],
+                            "phase": payload["phase"],
+                            "label": payload["label"],
+                        })
+            except (GeneratorExit, asyncio.CancelledError):
+                raise  # client disconnected - run_round persists the partial reply
+            except Exception as e:
+                yield sse({"type": "error", "speaker": participant["slug"], "message": str(e)})
+                if not live["content"]:
+                    live["participant"] = None
+                    skip_speaker = True
+            if not skip_speaker and not live["content"] and not live["tools"]:
+                # model finished without text or tool calls (some local reasoning
+                # models occasionally emit only reasoning) - say so, never vanish
+                yield sse({"type": "error", "speaker": participant["slug"],
+                           "message": "returned an empty reply (no text, no tool calls) - try again"})
                 live["participant"] = None
+                skip_speaker = True
+            if skip_speaker:
+                break
+            if passes.is_pass(live["content"]) and not live["tools"]:
+                # #98: the seat chose the honourable silence. The client
+                # drops the streamed bubble on this event; voice held TTS
+                # while the text could still be a bare pass, so nothing was
+                # spoken either.
+                yield sse({"type": "passed", "speaker": participant["slug"]})
+                if pass_note or passes.may_pass(
+                        idx, participant["slug"] in addressed, user_text):
+                    # allowed - or the seat insisted after one refusal, and
+                    # a seat that insists has nothing: suppress the turn
+                    # entirely (nothing persisted, later seats still run).
+                    live["participant"] = None
+                    live["content"] = ""
+                    live["usage"] = None
+                    skip_speaker = True
+                    break
+                # refused: re-run this seat ONCE with the guard stated
+                pass_note = passes.GUARD_NOTE.format(user=cfg["user_name"])
                 continue
-        if not live["content"] and not live["tools"]:
-            # model finished without text or tool calls (some local reasoning
-            # models occasionally emit only reasoning) - say so, never vanish
-            yield sse({"type": "error", "speaker": participant["slug"],
-                       "message": "returned an empty reply (no text, no tool calls) - try again"})
-            live["participant"] = None
+            break
+        round_cfg["pass_refused"] = ""
+        if skip_speaker:
             continue
         # The between-speakers persist (INSERT + fsync) runs on a worker
         # thread. The abort-path persist in run_round deliberately stays

@@ -4,6 +4,16 @@ House convention: user-visible change, one line each, newest first.
 
 ## Unreleased
 
+- A model can honourably stay silent (#98). A reply of exactly [pass]
+  is removed entirely - nothing shown, nothing spoken, nothing
+  remembered - so "if you have nothing to add, pass" is finally a rule
+  the app can mean. The guard: the first responder to your direct
+  question, and any seat you addressed by name, may not pass - a pass
+  there is refused and the seat answers on a single retry (and if it
+  insists, it is suppressed and the other seats still run). Voice
+  holds text-to-speech until a reply provably is not a pass, so a pass
+  is never read aloud.
+
 - Voice survives the models menu (#69). Opening any full page (models,
   connections, spend) no longer reads as the end of the call: capture
   and playback continue, and a compact strip keeps mute, end and the
