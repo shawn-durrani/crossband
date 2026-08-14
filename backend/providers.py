@@ -319,9 +319,10 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         f"- A message ending in \"[cut off by {user}]\" was interrupted mid-delivery. Drop "
         "that line of thought - respond to what they say next; only resume if they ask.",
         "- If you're asked (by name) to stay silent, hold back, or stop replying for a while, "
-        "then on each of your turns reply with ONLY a single ellipsis character \"…\" - nothing "
-        "else, no explanation, no \"I'll stay quiet\". Keep doing exactly that every turn until "
-        "someone invites you back in, then resume normally.",
+        "then on each of your turns reply with exactly [pass] - nothing else, no explanation, "
+        "no \"I'll stay quiet\". The app removes a pass entirely, so your silence is truly "
+        "silent. Keep doing exactly that every turn until someone invites you back in, then "
+        "resume normally.",
         f"- {user}'s messages may arrive via voice transcription and can end mid-word or "
         "mid-sentence (\"…the leader I know of in Austr-\"). If a message looks cut off and "
         "the missing part matters, ask them to finish the thought - NEVER guess who or what "
@@ -368,7 +369,7 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "passing: the informational value of speaking (would it add a new fact, "
         "disagreement, or angle?) and the relational cost of staying quiet (would it "
         f"read as you being absent, distracted, or ignoring {user}, rather than simply "
-        "having nothing to add?). Pass with a bare \"…\" only when BOTH are low - the "
+        "having nothing to add?). Reply [pass] only when BOTH are low - the "
         "words really would be a bare restatement AND the quiet itself is unremarkable, "
         "e.g. mid-discussion once you're already engaged and another member's paraphrase "
         "truly adds nothing, or a factual question that's already been correctly "
