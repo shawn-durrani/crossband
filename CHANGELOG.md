@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Guest turns now tell memory who spoke, not just a name string
+  (membro#33 final slice, contract 1.2). A confidently attributed
+  guest turn carries the person record, the matcher's real score, and
+  how the identity was established (introduced, voice-matched,
+  by-elimination, or your correction) - so facts a guest states link
+  to the right person automatically when the identity is strong, and
+  never on a weak guess. The matcher's per-turn score is now stamped
+  into the label it has always written.
+
 - Your voice corrections now reach the durable home (membro#33,
   slice 3). Moving a clip to the right person, deleting one, or
   merging duplicate people is recorded and replayed against membro on

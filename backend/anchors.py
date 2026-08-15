@@ -377,6 +377,7 @@ class AnchorStore:
                 # #83: has a human ever stood behind this bank, does it
                 # need the owner's ear, and is identification paused until
                 # then (only for crossings observed post-#83).
+                "membro_slug": p.get("membro_slug"),
                 "vouched": bank_vouched(p),
                 "needs_audition": needs_audition(p),
                 "id_paused": identification_paused(p),
