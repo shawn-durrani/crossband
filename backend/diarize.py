@@ -1217,8 +1217,10 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # certain label projects as "<name> (in the room)" and chips as a matched
     # voice. 'source' is content-free metadata; every consumer ignores unknown
     # keys. No crosstalk marker - a confident single match is one voice.
+    # #33: the matcher's real score rides the label - the ingest identity
+    # field turns it into the confidence membro's binding policy reads.
     payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
-               "source": "local"}
+               "source": "local", "score": round(verdict.get("score") or 0, 3)}
     if name.casefold() == (cfg.get("user_name") or "User").casefold():
         # #28 PR-C (the owner's identity is shown, not hidden): a confident
         # OWNER match is marked so the chips can say "voice confirmed". The
@@ -1361,7 +1363,8 @@ async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
     call, no metering - a solo session stays solo, it just stops pretending
     the app does not know who is speaking."""
     payload = {"clusters": ["local"], "labels": [verdict["name"]],
-               "uncertain": [], "source": "local", "owner": True}
+               "uncertain": [], "source": "local", "owner": True,
+               "score": round(verdict.get("score") or 0, 3)}
     await _attach_until_deadline(chat_id, commit_ts, payload, session,
                                  turn_id=turn_id)
     await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"],
@@ -1387,7 +1390,7 @@ async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
              chat_id, (time.perf_counter() - t0) * 1000)
     await asyncio.to_thread(_arm_known, chat_id, {"local": name}, cfg)
     payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
-               "source": "local"}
+               "source": "local", "score": round(verdict.get("score") or 0, 3)}
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
                                              session, turn_id=turn_id)
     await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,

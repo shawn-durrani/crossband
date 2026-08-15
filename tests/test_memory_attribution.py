@@ -265,3 +265,46 @@ def test_resolved_flag_restores_confident_attribution(app):
     asyncio.run(engine.leave_chat_job(chat_id, cfg, memory))
     ingests = [body for url, body in fake.posts if url.endswith("/ingest")]
     assert ingests[0]["messages"][0]["speaker"] == "guest:Alex"
+
+
+# ---- #33 contract 1.2: the structured identity beside the wire label ----
+
+def test_speaker_identity_truth_table():
+    """Only confident guest turns carry an identity; the method maps from
+    the label's real provenance; the confidence is the stamped matcher
+    score (0 when a turn predates score stamping - which membro never
+    auto-binds on); the person is the membro slug when the store maps
+    one, else null and membro keeps the string-only behaviour."""
+    from backend.memory_client import speaker_identity
+    slugs = {"alex": "alex-9f3a2c"}
+
+    labels = {"source": "local", "score": 0.87}
+    ident = speaker_identity({"voice_labels": labels}, "guest:Alex", slugs)
+    assert ident == {"person": "alex-9f3a2c", "confidence": 0.87,
+                     "method": "voice-match"}
+
+    # provenance maps honestly; unknown sources claim only by-elimination
+    for source, method in [("cold-start", "by-elimination"),
+                           ("correction", "owner-correction"),
+                           ("introduction", "introduced"),
+                           ("something-else", "by-elimination"),
+                           (None, "by-elimination")]:
+        ident = speaker_identity(
+            {"voice_labels": {"source": source}}, "guest:Alex", slugs)
+        assert ident["method"] == method, source
+        assert ident["confidence"] == 0.0     # no stamped score = no claim
+
+    # labels arrive as the raw row string too
+    ident = speaker_identity(
+        {"voice_labels": '{"source": "local", "score": 0.9}'},
+        "guest:Alex", slugs)
+    assert ident["confidence"] == 0.9
+
+    # an unmapped name still sends the belief, person null
+    ident = speaker_identity({"voice_labels": labels}, "guest:Robin", slugs)
+    assert ident["person"] is None
+
+    # non-guest wire speakers never carry one
+    for speaker in ("user", "claude", "guest:unknown"):
+        assert speaker_identity({"voice_labels": labels}, speaker,
+                                slugs) is None

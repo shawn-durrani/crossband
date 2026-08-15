@@ -1046,6 +1046,7 @@ async def leave_chat_job(chat_id, cfg, memory):
                    if f.get("message_id")}
         c.close()
         identity = {}
+        slug_by_name = {}
         try:
             from . import anchors
             for p in anchors.store().people():
@@ -1062,6 +1063,10 @@ async def leave_chat_job(chat_id, cfg, memory):
                     identity[p["preferred_name"].casefold()] = p["name"]
                 for merged in p.get("merged_names") or []:
                     identity[merged.casefold()] = p["name"]
+                # #33 contract 1.2: the membro slug behind each name, so
+                # the wire can say WHICH person record, not just a string
+                if p.get("membro_slug"):
+                    slug_by_name[p["name"].casefold()] = p["membro_slug"]
         except Exception:
             log.warning("anchor store unreadable during handoff - guest "
                         "names ingest as spoken", exc_info=True)
@@ -1069,6 +1074,10 @@ async def leave_chat_job(chat_id, cfg, memory):
         for m in msgs:
             m["speaker"] = memory_client_mod.ingest_speaker(
                 m, flagged, owner, identity)
+            ident = memory_client_mod.speaker_identity(
+                m, m["speaker"], slug_by_name)
+            if ident:
+                m["speaker_identity"] = ident
         return msgs
 
     def _advance(last_id):

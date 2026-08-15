@@ -59,6 +59,36 @@ def _iso(ts: float) -> str:
 # as "user"; this is the corruption path being closed.
 
 GUEST_UNKNOWN = "guest:unknown"
+
+# #33, contract 1.2: how a label's provenance reads as an identity method
+# on the wire. Anything unrecognised maps to by-elimination - the weakest
+# claim, which membro's binding policy never auto-links.
+IDENTITY_METHODS = {"local": "voice-match", "cold-start": "by-elimination",
+                    "correction": "owner-correction",
+                    "introduction": "introduced"}
+
+
+def speaker_identity(msg, wire_speaker, slug_by_name):
+    """The structured belief beside a guest wire label (#33, contract 1.2):
+    which membro person record spoke, how confident, and how we know.
+    Only the turns ingest_speaker names confidently (`guest:<name>`) carry
+    one - everything weaker already ingests as guest:unknown and stays
+    string-only. The confidence is the matcher's REAL per-turn score,
+    stamped into the label at attach time; a turn labelled before scores
+    were stamped sends 0, which membro never auto-binds on."""
+    if not wire_speaker.startswith("guest:") or wire_speaker == GUEST_UNKNOWN:
+        return None
+    labels = msg.get("voice_labels") or {}
+    if isinstance(labels, str):
+        try:
+            labels = json.loads(labels or "{}")
+        except ValueError:
+            labels = {}
+    name = wire_speaker[len("guest:"):]
+    return {"person": slug_by_name.get(name.casefold()),
+            "confidence": float(labels.get("score") or 0.0),
+            "method": IDENTITY_METHODS.get(labels.get("source") or "",
+                                           "by-elimination")}
 _VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
 
 
@@ -324,6 +354,9 @@ class MemoryClient:
                 "content": m["content"] or "(sent attached file(s))",
                 "created_at": _iso(m["created_at"]),
             }
+            if m.get("speaker_identity"):
+                # #33 contract 1.2: the structured belief beside the label
+                entry["speaker_identity"] = m["speaker_identity"]
             if atts:
                 entry["attachments"] = atts
             out.append(entry)
