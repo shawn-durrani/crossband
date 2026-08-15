@@ -26,9 +26,12 @@ itself states the relationship being tested.
 
 | Kind | General examples | Eval corpora (`eval_critic/`, `eval_silence/`) |
 | --- | --- | --- |
-| People | Alex, Sam | User, contact R, contact P |
-| Organisations | AcmeCo | AcmeCo, BetaWorks |
+| People | Alex, Sam, Dave, Mateo | User, contact R, contact P |
+| Organisations | AcmeCo, Initech, Globex | AcmeCo, BetaWorks |
 | Places | Fairhaven | Meridian Falls, Cedar Hollow |
+
+This is the fleet roster: membro and spendglass use the same cast, so a
+reviewer moving between repos can tell invented data from real at a glance.
 
 Infrastructure placeholders are fixed rather than free choice, because
 `scripts/secret-scan.sh` allowlists exactly these and rejects anything else
