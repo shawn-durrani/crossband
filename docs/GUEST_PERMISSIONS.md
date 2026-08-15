@@ -9,20 +9,38 @@ your checkout either: each visit runs in its own throwaway **git worktree**
 visit. This page explains that in plain English. Read it before changing
 `backend/guest.py`'s allow/deny lists.
 
+## What each mode actually stops
+
+The asymmetry that catches people out is credential files. The `Read` deny
+rules exist in implement mode and nowhere else.
+
+| | investigate (default) | implement (`code_allow_writes`) |
+|---|---|---|
+| Change your repo | no `Write`, `Edit` or `Bash` at all | yes, on a branch; never merges, never pushes `main` |
+| `Read` of `.env`, `config.local.json`, `*.pem`, `id_rsa*` | **not blocked**; nothing in the loadout restricts `Read` by path | denied by rule, on the CLI's deny-over-allow precedence |
+| `Grep` / `Glob` over those files | **not blocked** | **not blocked**; the rules name `Read` only |
+| `env` / `printenv` / `curl` / `wget` | blocked, there is no `Bash` | blocked by name |
+| MCP servers in `code_mcp` | mounted whole, write tools included | mounted whole, write tools included |
+
+So a read-only guest is read-only about **your repo**, not about **your
+secrets**. What limits the damage in practice is reach rather than rules: each
+visit runs in a throwaway worktree at a fresh checkout, and gitignored files
+such as `.env` are not in a fresh checkout. That is a property of where the
+guest is standing, not a permission.
+
+"Credential files" below has the detail and what to change if you want the
+rules in both modes.
+
 ## The two modes
 
 - **Investigate (default, read-only).** *Built-in* tools are limited to
-  `Read`, `Grep`, `Glob`. No shell, no file writes: it looks and reasons; it
-  changes nothing **in the repo**. Read-only bounds what it can change, not
-  what it can open: the credential-file deny rules apply to implement mode
-  only, and this mode has no path restriction on `Read`. See "Credential
-  files", below, before you rely on the opposite. Note: MCP servers listed
-  in `code_mcp` are mounted in **both** modes, and each is allowed whole (`mcp__<name>`), so
-  read-only bounds what the guest can do to your code, not what your MCP
-  servers expose. That includes write-side tools. Membro's `membro` recall
-  server offers `save_memory` (a fact proposal held for your review), and,
-  if you wire it up, the authenticated `membro-admin` exact-fact reader. See
-  "Giving a guest scoped read access to memory", below.
+  `Read`, `Grep`, `Glob`. No shell, no file writes: it looks and reasons, and
+  changes nothing in the repo. It can still open any file it can name, as the
+  table above shows. MCP servers listed in `code_mcp` are mounted in **both**
+  modes and each is allowed whole (`mcp__<name>`), write-side tools included.
+  Membro's `membro` recall server offers `save_memory`, a fact proposal held
+  for your review, and the authenticated `membro-admin` exact-fact reader if
+  you wire it up.
 - **`get_diagnostic` (always mounted, both modes, not a `code_mcp` entry).**
   Every guest visit, with no config needed, also gets one in-process MCP tool,
   `get_diagnostic(name)`, where `name` is a closed enum (`health`, `models`,
@@ -135,36 +153,23 @@ are there, since these settings commonly exempt the repository owner while
 still applying to anyone pushing as a collaborator, which is the account a
 guest pushes under.
 
-## Credential files: the file rules are implement mode only
+## Credential files: where the rules actually live
 
-This is the asymmetry most likely to catch you out, so it gets its own
-section rather than a footnote.
+The table at the top of this page states the asymmetry. This is where it
+comes from in the code.
 
-The `Read(.env)`, `Read(**/.env)`, `Read(**/.env.*)`,
-`Read(**/config.local.json)`, `Read(**/*.pem)` and `Read(**/id_rsa*)` rules
-live in **`IMPLEMENT_DENIED` and nowhere else**. Investigate mode's deny list
-is `DENIED_TOOLS`, which names whole tools (`Bash`, `Write`, `Edit`,
+`Read(.env)`, `Read(**/.env)`, `Read(**/.env.*)`,
+`Read(**/config.local.json)`, `Read(**/*.pem)` and `Read(**/id_rsa*)` live in
+**`IMPLEMENT_DENIED` and nowhere else**. Investigate mode's deny list is
+`DENIED_TOOLS`, which names whole tools (`Bash`, `Write`, `Edit`,
 `NotebookEdit`, `WebFetch`, `WebSearch`, `Task`, `TodoWrite`, `KillShell`)
 and contains **no `Read` rule of any kind**. Its allow list is the bare
 `Read`, `Grep`, `Glob`.
 
-So, plainly:
-
-| | investigate (default) | implement (`code_allow_writes`) |
-|---|---|---|
-| `Read` of `.env` / `.env.*` / `config.local.json` / `*.pem` / `id_rsa*` | **not blocked**, nothing in the loadout restricts `Read` by path | denied by rule, on the CLI's documented precedence of deny over allow; no test here watches a read being refused |
-| `Grep` / `Glob` over those same files | **not blocked** | **not blocked**, the rules name `Read`, not the search tools |
-| `env` / `printenv` / `curl` / `wget` | blocked (no `Bash` at all) | blocked by name |
-
-Two things follow. First, a read-only guest is read-only about **your repo**,
-not about **your secrets**: the mode stops it changing things, and stops it
-running a shell, but it does not stop it opening a file. Second, even in
-implement mode the file rules bound `Read` alone, so a `Grep` over a
-credential file is not covered. What limits the damage in practice is reach
-rather than rules: each visit runs in a throwaway git worktree at a fresh
-checkout, and gitignored files such as `.env` are not in a fresh checkout.
-That is a property of where the guest is standing, not a permission, and it
-is not a substitute for one.
+Two limits on what those rules buy, even in implement mode. They bind `Read`
+alone, so a `Grep` over a credential file is not covered. And no test here
+watches a read being refused: the suite pins which rules are handed to Claude
+Code, and relies on the CLI's documented deny-over-allow precedence.
 
 If you need the file rules in both modes, add them to `DENIED_TOOLS` as well
 as `IMPLEMENT_DENIED`, and update this page and `SECURITY.md` in the same

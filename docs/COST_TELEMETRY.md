@@ -60,27 +60,18 @@ Field reference:
   block (`providers._stable_system_parts`): identical across calls for a
   given participant/project/round, and the block that actually carries the
   `cache_control` breakpoint (the whole point of the split).
-- **`volatile_hash` / `volatile_chars`**: the memory-summary + memory-ambient
-  + delegation-note + round-predecessors block
-  (`providers._volatile_system_parts`): expected to change on nearly every
-  call by design. Once the split was finished it stopped being system content
-  at all: it rides at the very END of the message list (inside the final user
-  turn, after the transcript breakpoint; `developer` input item on the OpenAI
-  side), because ANY changing byte upstream of the transcript breakpoint
-  invalidated the whole conversation cache on every call. `memory_summary` and
-  `delegation_note` joined it later. The first split classified them as stable,
-  but the summary is re-fetched every round (and rebuilt by `save_memory`) and
-  the delegation note flips twice per Claude Code summons, so on a day with
-  many summonses the pair of them churn the cached prefix relentlessly and
-  cache re-writes can come to dominate the Claude chat bill.
-  `memory_write_warning` joined them after that: it flips with memory-service
-  health while `summary_upto` never moves, so unlike a real summary fold it
-  changes the cached block without changing the transcript, and a memory outage
-  used to double as a prompt-cache outage. `chat_summary` is deliberately NOT
-  here: its changes are coupled to the transcript (one writer advances
-  `summary_upto` in the same statement), so a rebuild already re-writes the
-  transcript and moving the summary would cost uncached tokens every turn to
-  prevent a bust it isn't causing.
+- **`volatile_hash` / `volatile_chars`**: the memory summary, ambient memory,
+  delegation note, memory-write warning and round-predecessors block
+  (`providers._volatile_system_parts`). Expected to change on nearly every
+  call. It rides at the very END of the message list, inside the final user
+  turn after the transcript breakpoint (a `developer` input item on the OpenAI
+  side), because any changing byte upstream of that breakpoint invalidates the
+  whole conversation cache.
+
+  `chat_summary` is deliberately NOT here. Its changes are coupled to the
+  transcript, since one writer advances `summary_upto` in the same statement,
+  so a rebuild already re-writes the transcript. Moving the summary would cost
+  uncached tokens every turn to prevent a bust it is not causing.
 - **`chat_id` / `tools_hash` / `tools_n` / `changed`**: the fields that
   let a miss name its own cause. `tools_hash` covers the tool definitions, which
   lead Anthropic's cache prefix AHEAD of system and messages: change them and
@@ -91,11 +82,7 @@ Field reference:
   a real break look the same. `changed` lists which components differ from this
   seat's previous call IN THIS CHAT: `none` on a hit, `first-call` after a
   restart. All four also ride `usage_json.cache_prefix`, so this is SQL-queryable
-  rather than log-only. Both gaps together are why the memory-summary and
-  delegation-note problem described above was first diagnosed from the
-  furthest-upstream component anyone could see rather than the responsible one,
-  and why the fix later looked ineffective when it had in fact cut the
-  real-defect miss rate substantially.
+  rather than log-only.
 - **`transcript_hash`**: a fingerprint of the CACHEABLE conversation
   prefix: the outgoing message list *before* the volatile tail joins it
   (hashing the tail in would show churn by construction). Same value on
