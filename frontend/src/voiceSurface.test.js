@@ -1,3 +1,6 @@
+// Voice survives page switches (#69). A live session swaps its call surface
+// for the compact strip while a full page is open, and never ends because a
+// panel opened.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
