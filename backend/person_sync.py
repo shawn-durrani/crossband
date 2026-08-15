@@ -14,11 +14,17 @@ path (startup, and after rounds - never during a turn):
    there (slug = the local person id, already unique and stable).
    Participant-boundary entries are never pushed - they are guard
    artefacts, not people (#65/#77).
-3. PUSH clips: per mapped person, membro's stored sha256 list is
+3. REPLAY corrections (slice 3): every local move, delete and merge
+   the owner made is a judgement the durable home must reflect, or the
+   correction resurrects through a rebuild. The store's correction
+   ledger is replayed against membro's move/delete/merge routes; what
+   lands (or has already converged) is removed, what cannot land yet
+   stays for the next pass.
+4. PUSH clips: per mapped person, membro's stored sha256 list is
    diffed against the local clip files and missing ones are uploaded.
    Content-addressing makes re-runs no-ops, so the first pass after
    deploy IS the backfill of the installed base.
-4. The pass records the newest change stamp it saw, so the next pull
+5. The pass records the newest change stamp it saw, so the next pull
    is a delta.
 
 Membro down, or no MEMORY_AUTH_TOKEN, means the pass logs once and does
@@ -80,6 +86,83 @@ def sync_once(memory_url: str, force: bool = False) -> dict:
             return {"skipped": f"unreachable: {e}"}
 
 
+def _find_anchor(client, base, slug, sha):
+    """Membro's anchor id for these bytes under this person, or None."""
+    lst = client.get(f"{base}/v1/persons/{slug}/anchors")
+    if lst.status_code != 200:
+        return None
+    for a in lst.json()["anchors"]:
+        if a["sha256"] == sha:
+            return a["id"]
+    return None
+
+
+def _replay_corrections(client, base, store) -> int:
+    """Replay the owner's moves, deletes and merges against membro (#33
+    slice 3). Consumed when they land OR have already converged (the clip
+    or person is not there to correct); kept pending when the target does
+    not exist yet or membro cannot be reached - the next pass retries.
+    Every branch is deliberate: dropping a correction silently is how a
+    fixed mis-attribution resurrects through a rebuild."""
+    done = []
+    slugs = store.membro_slugs()
+    for corr in store.pending_corrections():
+        kind = corr.get("kind")
+        try:
+            if kind == "move":
+                from_slug = slugs.get(corr["from"])
+                to_slug = slugs.get(corr["to"])
+                if from_slug is None:
+                    done.append(corr["cid"])      # nothing durable to fix
+                    continue
+                if to_slug is None:
+                    continue                       # target not pushed yet
+                aid = _find_anchor(client, base, from_slug, corr["sha"])
+                if aid is None:
+                    done.append(corr["cid"])      # already converged
+                    continue
+                r = client.post(
+                    f"{base}/v1/persons/{from_slug}/anchors/{aid}/move",
+                    json={"to": to_slug})
+                if r.status_code in (200, 404, 410):
+                    done.append(corr["cid"])
+                elif r.status_code == 409:
+                    log.warning("clip move refused by membro: %s",
+                                r.text[:200])
+                    done.append(corr["cid"])
+            elif kind == "delete":
+                from_slug = slugs.get(corr["from"])
+                if from_slug is None:
+                    done.append(corr["cid"])
+                    continue
+                aid = _find_anchor(client, base, from_slug, corr["sha"])
+                if aid is None:
+                    done.append(corr["cid"])
+                    continue
+                r = client.delete(
+                    f"{base}/v1/persons/{from_slug}/anchors/{aid}")
+                if r.status_code in (200, 404, 410):
+                    done.append(corr["cid"])
+            elif kind == "merge":
+                winner_slug = slugs.get(corr["winner"])
+                if winner_slug is None:
+                    continue                       # winner not pushed yet
+                r = client.post(
+                    f"{base}/v1/persons/{corr['loser_slug']}/merge",
+                    json={"into": winner_slug})
+                if r.status_code in (200, 404, 410):
+                    done.append(corr["cid"])
+                elif r.status_code == 409:
+                    log.warning("merge refused by membro: %s", r.text[:200])
+                    done.append(corr["cid"])
+            else:
+                done.append(corr.get("cid"))       # unknown kind: drop
+        except httpx.HTTPError:
+            break                                  # membro went away mid-pass
+    store.remove_corrections([c for c in done if c])
+    return len(done)
+
+
 def _run(base: str, token: str) -> dict:
     store = anchors.store()
     client = httpx.Client(timeout=20,
@@ -108,6 +191,13 @@ def _run(base: str, token: str) -> dict:
                 continue
             # a living person we don't hold: rebuild them locally
             pid = store.ensure_person(person["display_name"])
+            if store.membro_slugs().get(pid):
+                # the name resolves to a person we already hold under a
+                # DIFFERENT slug - a duplicate membro record (typically
+                # the not-yet-merged loser of a local merge). Never
+                # clobber the survivor's mapping: the correction replay
+                # owns reconciling duplicates.
+                continue
             if person.get("name_owner_set"):
                 store.set_preferred_name(pid, person["display_name"],
                                          owner_set=True)
@@ -130,21 +220,22 @@ def _run(base: str, token: str) -> dict:
                                   source=a.get("source") or "accumulated"):
                     out["pulled_clips"] += 1
 
-        # PUSH: people first, then the clip diff per mapped person
+        # PUSH people first (so replay targets exist), then REPLAY the
+        # owner's corrections, then the clip diff per mapped person
         con = db.connect()
         try:
             pnames = _participant_names(con)
         finally:
             con.close()
-        for p in store.people():
+        syncable = [p for p in store.people()
+                    if not (participant_alias(p["preferred_name"]
+                                              or p["name"], pnames)
+                            or participant_alias(p["name"], pnames))]
+        for p in syncable:
             pid = p["person_id"]
-            if participant_alias(p["preferred_name"] or p["name"], pnames) \
-                    or participant_alias(p["name"], pnames):
-                continue                          # #65: never a person
-            slug = store.membro_slugs().get(pid) or pid
             if store.membro_slugs().get(pid) is None:
                 cr = client.post(f"{base}/v1/persons", json={
-                    "slug": slug,
+                    "slug": pid,
                     "display_name": p["preferred_name"] or p["name"],
                     "aliases": [p["name"]] + list(p["merged_names"] or []),
                     "origin_client": "multi-model-chat"})
@@ -154,9 +245,16 @@ def _run(base: str, token: str) -> dict:
                     log.warning("person push refused for %s: %s",
                                 pid, cr.text[:200])
                     continue
-                store.set_membro_slug(pid, slug)
+                store.set_membro_slug(pid, pid)
                 out["pushed_people"] += 1
 
+        out["replayed"] = _replay_corrections(client, base, store)
+
+        for p in syncable:
+            pid = p["person_id"]
+            slug = store.membro_slugs().get(pid)
+            if slug is None:
+                continue
             lst = client.get(f"{base}/v1/persons/{slug}/anchors")
             if lst.status_code != 200:
                 continue

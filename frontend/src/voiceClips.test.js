@@ -1,9 +1,3 @@
-// Clip audition rows (#68/#90). Every capture path has a plain-English label,
-// and unknown sources render verbatim rather than guessed. Only elimination-
-// earned clips get the closer-listen flag; owner-reassigned ones drop it and
-// say so. Move targets are every other person by display name. Row derivation
-// keeps the file token and formats duration, and the delete explainer says
-// what it actually does.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
