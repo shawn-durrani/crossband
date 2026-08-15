@@ -47,6 +47,30 @@ git config core.hooksPath .githooks
   synthetic by construction.
 - Scope boundaries in [ARCHITECTURE.md](ARCHITECTURE.md) are deliberate.
 
+## Writing documentation
+
+Budgets, not taste. `tests/test_doc_style.py` enforces the hard limits;
+the rest is review. The house reference is this repo's README: a
+15.5-word average sentence with 4% of sentences over 35 words.
+
+- One claim per sentence. Average under 18 words, and keep sentences
+  over 35 words under 10% of a document.
+- No em-dashes. Australian English. Plain English over jargon.
+- Caveats earn their own sentence. Appending a limitation to every claim
+  is how the important ones stop reading as important.
+- Antithesis ("X, not Y", "rather than", "instead of") is a tool, not a
+  cadence. If deleting the "not Y" half loses no information, delete it.
+- Never announce your own honesty. "Stated plainly", "the honest reason":
+  delete the phrase, keep the fact.
+- Issue numbers and bug history go in the CHANGELOG and the issue.
+  Reference prose says what is true now. A test file is the exception:
+  recording which bug a case guards is exactly what it is for.
+- Do not narrate a document's own structure or edit history. Nobody read
+  the previous version.
+- A table cell holds a value and a sentence, not a section.
+- Headings every 30 to 50 lines of prose, so a section can be navigated.
+- Say a thing once. Two copies of a rule is one copy that will go stale.
+
 ## Releasing
 
 Ordinary semantic versions in the 0.x range: no stability promise yet.

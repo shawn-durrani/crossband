@@ -46,7 +46,9 @@ claude_chat_cache speaker=<slug> model=<model-id> tool_round=<int>
   output_tok=<int>
 ```
 
-**Every field is content-free.** `*_hash` values are a truncated SHA-256
+### Every field is content-free
+
+`*_hash` values are a truncated SHA-256
 fingerprint (`backend/providers.py:_content_hash` / `_messages_hash`) of a
 prompt block: proof that a block changed or didn't, never a way to recover
 what it said. `*_chars` are byte counts, not text. The token and cache-write
@@ -54,7 +56,7 @@ counts come straight from Anthropic's own `usage` / `cache_creation` response
 fields. **Prompt and transcript text are never logged, by construction.**
 There is no code path in this feature that writes chat content to the log.
 
-Field reference:
+### Field reference
 
 - **`stable_hash` / `stable_chars`**: the persona/project/shared-instructions
   block (`providers._stable_system_parts`): identical across calls for a
@@ -106,7 +108,9 @@ Field reference:
   per reply, so a tool-heavy exchange produces several lines for one visible
   message.
 
-**Where it goes.** These are ordinary Python `logging` calls under the `crossband`
+### Where it goes
+
+These are ordinary Python `logging` calls under the `crossband`
 logger hierarchy, which lands in `data/service.log` under the launchd
 supervisor (or your terminal under `./start.sh`); see
 [docs/OPERATIONS.md](OPERATIONS.md). By default the app only surfaces
@@ -117,7 +121,9 @@ It only changes what's written to the log, never what gets cached, priced,
 or billed, and it affects nothing else (uvicorn's own request/access logging
 is configured independently and is unaffected either way).
 
-**No log? The database has the same story.** Per-message cache
+### No log? The database has the same story
+
+Per-message cache
 counters are always persisted in `messages.usage_json` (`input`,
 `cache_read`, `cache_creation`, `output`, summed across a reply's tool
 rounds), so cache behaviour can be checked after the fact even when the
@@ -204,7 +210,9 @@ credential content. Every field involved is already content-free by
 construction (§2), so nothing here needs manual redaction beyond not renaming
 your own chat/participant slugs to something identifying.
 
-**Before you start:** decide what you're comparing (e.g. "this build" vs. "a
+### Before you start
+
+Decide what you're comparing (e.g. "this build" vs. "a
 future change"), and use a comparable conversation for both samples: the same
 rough length and cadence, ideally the same scripted set of messages replayed
 into a scratch chat. Comparing a two-message chat to a fifty-message chat

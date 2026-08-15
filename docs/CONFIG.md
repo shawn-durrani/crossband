@@ -97,7 +97,7 @@ lengths and offsets, never the conversation text.
 | `voice_id_enabled` | `true` | Room mode's offline local speaker matcher, and the only identity path. Off, or with `sherpa-onnx` or the model file absent, turns are not named and the room never arms automatically. See below. [VOICE_ID.md](VOICE_ID.md). |
 | `voice_id_threshold` | `0.5` | Cosine similarity a voice must reach to be named. Calibrated for the bundled model (same-speaker ≈0.63–0.73 vs a stranger ≈0.12–0.31, so 0.5 sits in the gap). Raise it to name fewer, more certain matches; lower it to name more, less certainly. |
 | `voice_id_margin` | `0.12` | How clearly the best match must beat the runner-up before it is claimed. The similar-voice-household knob: the hygiene guard also widens it automatically for any two stored voices it finds sitting close together. |
-| `voice_id_pending_extra` | `0.08` | #81: while anyone on the roster is still unlearnt, the naming bar rises by this much - the likeliest speaker has no stored voice to score against, so borderline matches to remembered people defer instead of stealing the unlearnt person's turns. `0` = off. Details in [VOICE_ID.md](VOICE_ID.md). |
+| `voice_id_pending_extra` | `0.08` | How much the naming bar rises while anyone on the roster is unlearnt. Protects a new guest from having their turns claimed by a similar-sounding regular. `0` = off. [VOICE_ID.md](VOICE_ID.md). |
 | `voice_id_sufficient_seconds` | `6.0` | Accepted seconds of clear speech a person's stored voice needs before identification trusts it. Below the bar their turns stay uncertain. |
 | `voice_id_min_short_clips` | `2` | The second half of the sufficiency bar (#28 PR-B): how many short (~1–2s) clips the stored voice must include, so quick interjections can be recognised, not just full sentences. |
 | `voice_id_model_url` | `""` | Override the local speaker model's download URL. Empty uses the built-in pinned URL. Pin the **hash too**: a URL override checked against the default hash just fails verification and the matcher stays unavailable. |
@@ -118,7 +118,16 @@ spoken commands and the switch in the voice settings still arm it by hand.
 | key | default | what it does |
 |---|---|---|
 | `memory_url` | `http://127.0.0.1:8901` | Where to probe for [Membro](https://github.com/shawn-durrani/membro). Present → memory features light up; absent → fully functional memoryless. Re-probed every 30s, so start order doesn't matter. |
-| `MEMORY_AUTH_TOKEN` (env, not a config key) | unset | Membro's owner token. `/recall` and `/summary` stay open, but Membro's `/search` (verbatim transcript search, the `search_history` tool) is owner-gated even on loopback, so the client sends it as `Authorization: Bearer <token>` when set. Same variable `code_mcp`'s `membro-admin` entry resolves via `${MEMORY_AUTH_TOKEN}` (see [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md)) - one token, put once in Crossband's `.env`. Without it, `search_history` reports a failure rather than silently reading as "no history". |
+| `MEMORY_AUTH_TOKEN` (env, not a config key) | unset | Membro's owner token, sent as a bearer on its `/search`. One token, put once in Crossband's `.env`. Without it `search_history` reports a failure rather than reading as "no history". See below. |
+
+### The memory token
+
+Membro's `/recall` and `/summary` answer an unauthenticated loopback caller.
+Its `/search`, the verbatim transcript search behind the `search_history`
+tool, is owner-gated even on loopback. `code_mcp`'s `membro-admin` entry
+resolves the same variable via `${MEMORY_AUTH_TOKEN}`, so one token in
+Crossband's `.env` serves both. See
+[GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md).
 
 ## Coding guest + GitHub (the `code` toggle)
 
@@ -130,7 +139,7 @@ allow/deny lists only together with that document.
 | key | default | what it does |
 |---|---|---|
 | `code_repos` | `{}` | Short name → local path a guest may open. **Empty = the whole feature is dark.** |
-| `code_mcp` | `{}` | MCP servers mounted into the guest (e.g. Membro for recall): name → `{command, args, env}`. For Membro, `env` must carry `{"PYTHONPATH": "<membro checkout>"}` because it runs from its checkout and is never pip-installed; without it the server dies at spawn and the guest arrives with the tool missing. `${VAR}` tokens in `env` values resolve from Crossband's own environment at guest launch. Mounted in BOTH modes, allowed whole (every tool the server exposes). Full worked example: [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md). |
+| `code_mcp` | `{}` | MCP servers mounted into the guest: name → `{command, args, env}`. Mounted in BOTH modes and allowed whole, every tool the server exposes. Worked example, including the required `PYTHONPATH` for Membro: [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md). |
 | `github_repos` | `{}` | Name → `owner/repo` the AIs may read and file issues against. Auth: `GITHUB_TOKEN` env, else the machine's logged-in `gh` CLI. |
 | `code_use_api_key` | `false` | `false` = guest turns ride the machine's Claude Code login (subscription). `true` = bill `ANTHROPIC_API_KEY` per token. Either way the turn records which one actually paid. |
 | `code_model` | `default` | Guest model tier: `default`/`opus`/`sonnet`/`haiku`. Per-summon override allowed. Changes the rate, not the account that pays. |
@@ -146,10 +155,10 @@ allow/deny lists only together with that document.
 
 | key | default | what it does |
 |---|---|---|
-| `mcp_servers` | `{}` | MCP servers the resident MODELS may call: name → `{command, args, label?}` (stdio). Private by placement, so configure it in `config.local.json`. Optional `label` is a trusted, operator-written display string shown in the work-status chip while that server is in flight, e.g. `"Checking job listings"`; omitted servers get a generic "Working on it" fallback, never a guess. |
-| `ingest_token` | `""` | Bearer token for the machine side-channel: `POST /api/ingest` AND `POST /api/chats/{id}/notice`, one credential for both (`Authorization: Bearer <token>`, env: `CROSSBAND_INGEST_TOKEN`). Once the owner password is enrolled this is the ONLY way local producers (deploy watcher, schedulers) reach either route - everything else needs a browser session, and tooling has no cookie jar. Empty = the historical posture: loopback trust before enrolment, nothing after. |
+| `mcp_servers` | `{}` | MCP servers the resident MODELS may call: name → `{command, args, label?}` (stdio). Configure it in `config.local.json`. Optional `label` shows in the work-status chip while that server is in flight; omitted servers get a generic "Working on it". |
+| `ingest_token` | `""` | Bearer for the machine side-channel, `POST /api/ingest` and `POST /api/chats/{id}/notice` (env: `CROSSBAND_INGEST_TOKEN`). Once a password is enrolled it is the only way a producer reaches either route. Empty keeps the historical posture. [PRODUCERS.md](PRODUCERS.md). |
 | `slash_commands` | `[]` | Composer suggestion chips for `/` messages: `{insert, label, hint}`. Crossband assigns no meaning to any command: `/` messages go to your tooling, and no model replies. The full producer contract is [PRODUCERS.md](PRODUCERS.md). |
-| `slash_ack_timeout_s` | `120` | Dead-man for `/` messages (#58): a producer that consumes a command acks it by sending the message id as `ack_command_id` on `POST /api/chats/{id}/notice`; if nothing acks within this window, ONE system line says nothing picked it up - so a stopped watcher stops looking identical to a queued deploy. `0` = off. |
+| `slash_ack_timeout_s` | `120` | Dead-man for `/` messages. If nothing acks a slash command within this window, one system line says nothing picked it up, so a stopped watcher stops looking like a queued deploy. `0` = off. [PRODUCERS.md](PRODUCERS.md). |
 
 ## Research tool caps
 

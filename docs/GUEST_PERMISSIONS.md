@@ -67,11 +67,11 @@ tier (`default`/`opus`/`sonnet`/`haiku`) and an **effort** level
 (`default`/`think`/`think-hard`/`ultrathink`). Both are fixed alias sets
 checked at the tool boundary, so nothing free-form ever reaches the SDK, and
 each layers per-summon choice over the `code_model`/`code_effort` config
-default over Claude Code's own default. A guest reply ends with a readout of
-both, labelled by how well each is known: the **model** is read back from
-Claude Code's own session, so it names what actually ran rather than the tier
-that was asked for; the **effort** is only what was requested and applied (as
-a thinking budget), because the SDK never reports thinking tokens back, so nothing
+default over Claude Code's own default. A guest reply ends with a readout of both,
+labelled by how well each is known. The **model** is read back from Claude
+Code's own session, so it names what actually ran rather than the tier that
+was asked for. The **effort** is only what was requested and applied, as a
+thinking budget: the SDK never reports thinking tokens back, so nothing
 confirms it. See `README.md` for how to ask for them.
 
 ## How permission works (headless = deny-by-default)
@@ -244,7 +244,9 @@ HTTP-based, so it sidesteps the stdio DB-open fragility):
 }
 ```
 
-**Why `PYTHONPATH` is not optional here.** Membro is run from its checkout and
+### Why `PYTHONPATH` is not optional here
+
+Membro is run from its checkout and
 is never pip-installed, so `memory_service` is not on the interpreter's path
 just because you named that interpreter. Without it the server exits with
 `ModuleNotFoundError: No module named 'memory_service'` at spawn, and the guest
@@ -262,7 +264,9 @@ resolve. Put the real value in Crossband's `.env` (`MEMORY_AUTH_TOKEN=…`). A
 missing variable resolves to `""`, so the tool gets no credential rather than a
 bogus one, so a typo fails closed instead of leaking the literal `${VAR}`.
 
-**Security tradeoff, a conscious choice rather than a default.** Wiring an
+### The security tradeoff
+
+A conscious choice rather than a default. Wiring an
 authenticated read server means every summoned guest carries that token and can
 read exact rows, including personal facts, which then appear in the guest's
 transcript. If that guest later opens a PR, those facts can ride along, the
