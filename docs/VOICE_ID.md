@@ -199,6 +199,12 @@ hold, and obeys forget marks: forgetting a person in either app deletes
 the stored audio in both. Membro down means the pass logs once and does
 nothing; identification never waits on it.
 
+Corrections travel too: moving a clip to the right person, deleting one,
+or merging duplicate people here is recorded and replayed against membro
+on the next pass - so the durable record always reflects your judgement,
+and a rebuild can never resurrect a recording you corrected away. A
+correction made while membro is down simply waits for the next pass.
+
 ## Scale bounds
 
 - Roster cap: 6 people at once by default (`room_roster_max`). The cap

@@ -31,6 +31,7 @@ pass, the introduction scan) - nothing here is awaited by any live path.
 """
 
 import array
+import hashlib
 import json
 import logging
 import os
@@ -412,6 +413,39 @@ class AnchorStore:
             self._save(data)
         return pid
 
+    # -- the correction ledger (#33 slice 3): a move, delete or merge is
+    # the owner's judgement, and it must reach the durable home too - or
+    # the correction resurrects through a rebuild. Each mutator records
+    # its decision here; person_sync replays them against membro and
+    # removes what landed. Records carry ids and hashes only, never audio.
+
+    def _record_correction(self, data: dict, entry: dict):
+        entry["cid"] = uuid.uuid4().hex[:12]
+        entry["at"] = time.time()
+        data.setdefault("pending_corrections", []).append(entry)
+
+    def _clip_sha(self, fname: str):
+        try:
+            return hashlib.sha256((self.root / fname).read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def pending_corrections(self) -> list:
+        with self._lock:
+            data = self._load()
+        return list(data.get("pending_corrections") or [])
+
+    def remove_corrections(self, cids) -> None:
+        cids = set(cids)
+        if not cids:
+            return
+        with self._lock:
+            data = self._load()
+            data["pending_corrections"] = [
+                c for c in (data.get("pending_corrections") or [])
+                if c.get("cid") not in cids]
+            self._save(data)
+
     # -- membro sync bookkeeping (#33 slice 2): which durable record each
     # local person maps to, and how far the last pull got. Stored in the
     # index so it rides the same atomic writes and backups as everything
@@ -553,6 +587,12 @@ class AnchorStore:
                            if c.get("quarantined")][:QUARANTINE_MAX]
             kept = select_keep(active_clips(merged)) + quarantined
             survivor["clips"] = kept
+            # #33 slice 3: a merged-away person with a durable record must
+            # merge there too, or its stale clips rebuild one day
+            if gone.get("membro_slug"):
+                self._record_correction(data, {
+                    "kind": "merge", "loser_slug": gone["membro_slug"],
+                    "winner": survivor_id})
             # #83: vouching survives a merge - either side's human stamp
             # carries, and the earliest of each stamp stands.
             for key in ("vouched_at", "audition_confirmed_at",
@@ -701,6 +741,12 @@ class AnchorStore:
             clip["moved_from"] = person_id
             clip["moved_at"] = time.time()
             dst.setdefault("clips", []).append(clip)
+            # #33 slice 3: the correction must reach the durable home too
+            sha = self._clip_sha(fname)
+            if sha:
+                self._record_correction(data, {
+                    "kind": "move", "from": person_id,
+                    "to": to_person_id, "sha": sha})
             self._save(data)
         return True
 
@@ -721,6 +767,12 @@ class AnchorStore:
             if len(keep) == len(clips):
                 return False
             person["clips"] = keep
+            # #33 slice 3: record before the bytes go, so the durable
+            # home's copy is deleted too instead of resurrecting later
+            sha = self._clip_sha(fname)
+            if sha:
+                self._record_correction(data, {
+                    "kind": "delete", "from": person_id, "sha": sha})
             self._save(data)
             self._delete_file(fname)
         return True

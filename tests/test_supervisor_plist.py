@@ -78,50 +78,33 @@ def test_installer_takes_over_cleanly_and_validates():
     assert "plutil -lint" in src, "must validate the generated plist"
 
 
-def test_every_test_suite_documents_itself():
-    """Every suite must say what it covers, in the file itself.
-
-    This used to be a per-file index in docs/TESTING.md, and that index drifted
+def test_every_test_suite_has_a_doc_entry():
+    """docs/TESTING.md promises an entry per suite, and that promise drifted
     three times in one week - each time a PR added a file and the doc wasn't
-    touched. The guard stopped the drift and left a worse problem: 340 lines of
-    the doc restated descriptions the test files already carried, so the same
-    fact lived in two places and the doc that was meant to say what the suites
-    GUARANTEE had become a file listing.
+    touched. Enforce the correspondence in both directions instead of trusting
+    anyone to remember. (Exact test COUNTS are deliberately absent from the doc
+    for the same reason: a hand-maintained number is a number that goes stale.)
 
-    So the requirement moved to where a developer reading the code already
-    looks. Same promise, no second copy: nothing is undocumented, and the doc
-    is free to talk about guarantees.
-
-    Covers BOTH suites. The index checked only Python at first, and the
-    unwatched half drifted exactly as predicted: 13 of 16 frontend suites had
-    no entry, including load-bearing invariants (the cross-chat write-guard,
-    the atomic-flip race, the barge-in leak). A guard that covers one half of
-    the thing it guards teaches you to trust the other half for no reason."""
-    import ast
+    Covers BOTH suites. This checked only Python at first, and the unwatched
+    half drifted exactly as predicted: 13 of 16 frontend suites had no entry,
+    including load-bearing invariants (the cross-chat write-guard, the
+    atomic-flip race, the barge-in leak). A guard that covers one half of the
+    thing it guards teaches you to trust the other half for no reason."""
     import glob
     import re as _re
-
-    bare = []
-    for f in sorted(glob.glob(str(REPO / "tests" / "test_*.py"))):
-        doc = ast.get_docstring(ast.parse(Path(f).read_text()))
-        if not doc or not doc.strip():
-            bare.append(Path(f).name)
-    assert not bare, (
-        "these suites have no module docstring saying what they cover: "
-        f"{bare}")
-
-    # The frontend suites are plain JS, so the convention is a comment block
-    # at the top rather than a docstring. Same requirement, different syntax.
-    bare_js = []
-    for f in sorted(glob.glob(str(REPO / "frontend" / "src" / "*.test.js"))):
-        head = "\n".join(Path(f).read_text().splitlines()[:3])
-        if not _re.search(r"^\s*(//|/\*)", head, _re.M):
-            bare_js.append(Path(f).name)
-    assert not bare_js, (
-        "these frontend suites have no header comment saying what they cover: "
-        f"{bare_js}")
-
     doc = (REPO / "docs" / "TESTING.md").read_text()
+
+    py = {Path(f).name for f in glob.glob(str(REPO / "tests" / "test_*.py"))}
+    py_doc = set(_re.findall(r"`(test_[a-z_0-9]+\.py)`", doc))
+    assert not py - py_doc, f"undocumented suites: {sorted(py - py_doc)}"
+    assert not py_doc - py, f"documented but missing: {sorted(py_doc - py)}"
+
+    js = {Path(f).name
+          for f in glob.glob(str(REPO / "frontend" / "src" / "*.test.js"))}
+    js_doc = set(_re.findall(r"`([A-Za-z0-9_]+\.test\.js)`", doc))
+    assert not js - js_doc, f"undocumented frontend suites: {sorted(js - js_doc)}"
+    assert not js_doc - js, f"documented but missing: {sorted(js_doc - js)}"
+
     assert not _re.search(r"\d+ tests across \d+ files", doc), (
         "docs/TESTING.md should not hardcode a test count - it goes stale")
 

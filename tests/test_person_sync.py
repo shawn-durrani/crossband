@@ -55,6 +55,21 @@ class FakeMembro:
             def log_message(self, *a):
                 pass
 
+            def do_DELETE(self):
+                fake.requests.append(("DELETE", self.path))
+                parts = self.path.strip("/").split("/")
+                if len(parts) == 5 and parts[3] == "anchors":
+                    rows = fake.anchors.get(parts[2], [])
+                    row = next((a for a in rows if a["id"] == int(parts[4])),
+                               None)
+                    if not row:
+                        self._json({"error": "no clip"}, 404)
+                        return
+                    rows.remove(row)
+                    self._json({"deleted": True, "file_removed": True})
+                else:
+                    self._json({"error": "nope"}, 404)
+
             def _json(self, obj, code=200):
                 body = json.dumps(obj).encode()
                 self.send_response(code)
@@ -106,6 +121,22 @@ class FakeMembro:
                                  "source": body.get("source", ""),
                                  "data": data})
                     self._json({"deduped": False, "anchor_id": len(rows)})
+                elif len(parts) == 6 and parts[5] == "move":
+                    rows = fake.anchors.get(parts[2], [])
+                    row = next((a for a in rows if a["id"] == int(parts[4])),
+                               None)
+                    if not row:
+                        self._json({"error": "no clip"}, 404)
+                        return
+                    rows.remove(row)
+                    fake.anchors.setdefault(body["to"], []).append(row)
+                    self._json({"moved": True, "to": body["to"]})
+                elif len(parts) == 4 and parts[3] == "merge":
+                    fake.persons[parts[2]]["merged_into"] = body["into"]
+                    fake.persons[parts[2]]["updated_at"] = 300.0
+                    fake.anchors.setdefault(body["into"], []).extend(
+                        fake.anchors.pop(parts[2], []))
+                    self._json({"merged": parts[2], "into": body["into"]})
                 else:
                     self._json({"error": "nope"}, 404)
 
@@ -194,3 +225,70 @@ def test_no_token_or_dead_membro_is_a_clean_noop(app, membro, monkeypatch):
     monkeypatch.setenv("MEMORY_AUTH_TOKEN", "test-token")
     out = person_sync.sync_once("http://127.0.0.1:1", force=True)
     assert out["skipped"].startswith("unreachable")
+
+
+def test_a_local_move_is_replayed_and_cannot_resurrect(app, membro):
+    store = anchors.store()
+    a = store.ensure_person("Blair")
+    b = store.ensure_person("Casey")
+    # two DIFFERENT clips (identical bytes would content-address to one)
+    assert store.add_clip(a, _pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(a, _pcm(2.5), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+    assert len(membro.anchors[a]) == 2
+
+    moved = store.clips_of(a)[0]["file"]
+    moved_sha = hashlib.sha256(
+        (store.root / moved).read_bytes()).hexdigest()
+    assert store.move_clip(a, moved, b)
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1
+    assert store.pending_corrections() == []
+    # membro reflects the correction: the clip now lives under Casey
+    assert moved_sha not in {x["sha256"] for x in membro.anchors[a]}
+    assert moved_sha in {x["sha256"] for x in membro.anchors.get(b, [])}
+
+
+def test_a_local_delete_is_replayed(app, membro):
+    store = anchors.store()
+    a = store.ensure_person("Blair")
+    assert store.add_clip(a, _pcm(), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    gone = store.clips_of(a)[0]["file"]
+    gone_sha = hashlib.sha256((store.root / gone).read_bytes()).hexdigest()
+    assert store.delete_clip(a, gone)
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert gone_sha not in {x["sha256"] for x in membro.anchors[a]}
+    # and the push step does NOT re-upload what the owner deleted
+    assert membro.anchors[a] == []
+
+
+def test_a_local_merge_is_replayed(app, membro):
+    store = anchors.store()
+    a = store.ensure_person("Sam")
+    store.add_clip(a, _pcm(), 16000, source="introduction")
+    b = store.ensure_person("Sammy")
+    store.add_clip(b, _pcm(1.5), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+
+    survivor = store.merge_people(a, b)
+    gone_slug = b if survivor == a else a
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert membro.persons[gone_slug]["merged_into"] == survivor
+
+
+def test_corrections_survive_membro_being_down(app, membro):
+    store = anchors.store()
+    a = store.ensure_person("Blair")
+    b = store.ensure_person("Casey")
+    assert store.add_clip(a, _pcm(), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    assert store.move_clip(a, store.clips_of(a)[0]["file"], b)
+    # membro unreachable: the correction stays pending
+    person_sync.sync_once("http://127.0.0.1:1", force=True)
+    assert len(store.pending_corrections()) == 1
+    # membro back: it lands and clears
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []

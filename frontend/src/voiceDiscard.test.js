@@ -1,7 +1,3 @@
-// The discard affordance (#106/#111). Only the owner's settled voice turns
-// qualify. The confirm copy states exactly what a discard cannot undo, and the
-// erase link names membro on the same host with an encoded ref, or honestly
-// nothing on an older server.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 

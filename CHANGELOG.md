@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Your voice corrections now reach the durable home (membro#33,
+  slice 3). Moving a clip to the right person, deleting one, or
+  merging duplicate people is recorded and replayed against membro on
+  the next sync - so a fixed mis-attribution can never come back from
+  backup, and a correction made while membro is down just waits for
+  the next pass.
+
 - The message list now has a render test (follow-through on today's
   blank-chat fix): the real chat view renders against realistic
   fixture messages in the test suite and CI, so a crash-on-render can

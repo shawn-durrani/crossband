@@ -1,4 +1,3 @@
-// The gate's view rule: which lock-screen face shows for which session state.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { gateView, setupProblem } from './lockState.js'
