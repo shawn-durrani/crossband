@@ -1,3 +1,4 @@
+// Playback failure messages are user-readable and name the recovery.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { playbackFailureMessage } from './voiceErrors.js'
