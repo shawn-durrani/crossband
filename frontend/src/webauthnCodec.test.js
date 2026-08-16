@@ -1,3 +1,5 @@
+// WebAuthn wire plumbing: base64url round-trips, option decoding, credential
+// serialisation, cancellation copy.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {

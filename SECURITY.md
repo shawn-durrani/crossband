@@ -10,12 +10,13 @@ within a few days.
 ## The trust boundary
 
 Who can reach the port is the outer boundary; a browser gate stands
-inside it. The everyday unlock is a passkey (WebAuthn platform
-authenticator; only the credential's public key is stored, per origin)
-once one is enrolled, with a durable owner password (scrypt verifier in
-the local store) as the fallback, and an out-of-band recovery secret
-(`CROSSBAND_RECOVERY_SECRET`, or a per-start random value shown only
-before enrolment) gating enrolment and reset. Sessions are opaque,
+inside it. Three credentials, with distinct jobs. The
+everyday unlock is a passkey once one is enrolled: a WebAuthn platform
+authenticator, with only the credential's public key stored, per origin.
+A durable owner password is the fallback, held as a scrypt verifier in
+the local store. An out-of-band recovery secret gates enrolment and
+reset, either `CROSSBAND_RECOVERY_SECRET` or a per-start random value
+shown only before enrolment. Sessions are opaque,
 expiring, server-revocable ids in httpOnly SameSite=Strict cookies.
 Passkey enrolment requires an already-unlocked session, never the lock
 screen.

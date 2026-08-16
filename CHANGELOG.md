@@ -41,11 +41,11 @@ entry to a short paragraph; the issue holds the detail.
   down or unconfigured changes nothing: identification is local and
   never waits.
 
-- Voices is a page of its own (#91), linked from the sidebar:
-  everything the app knows by voice and every control over it - listen
-  to the stored clips, fix names and spellings, move a recording to
-  the right person, confirm an auditioned bank, or forget someone -
-  with the room a full page gives it. The models menu keeps a one-line
+- Voices is a page of its own (#91), linked from the sidebar. It holds
+  everything the app knows by voice and every control over it, with the
+  room a full page gives it: listen to the stored clips, fix names and
+  spellings, move a recording to the right person, confirm an auditioned
+  bank, or forget someone. The models menu keeps a one-line
   pointer where the panel used to live. Voice sessions keep running
   while the page is open (the #69 strip covers it like any page).
 
@@ -96,10 +96,10 @@ entry to a short paragraph; the issue holds the detail.
 - A captured voice turn can be discarded by its owner (#106). Live
   capture can transcribe audio never meant for the chat; hovering your
   own voice turn now offers a discard that removes it from the chat
-  and from everything the models see from then on, with honest confirm
-  copy about what cannot be undone - replies that already exist stay,
-  and a copy that already reached memory stays there (the ledger is
-  append-only; membro-side deletion is its own owner surface). The
+  and from everything the models see from then on. The confirm copy
+  states what cannot be undone: replies that already exist stay, and a
+  copy that already reached memory stays there, since the ledger is
+  append-only and membro-side deletion is its own owner surface. The
   audit line is content-free.
 
 - No control with a mic icon can leave the microphone running (#108).
@@ -151,15 +151,14 @@ entry to a short paragraph; the issue holds the detail.
   fold was the one door provenance could quietly die through.
 
 - An explicit introduction outranks an implicit voice match (#81). Two
-  changes from the first real contamination: a confident voice match may
+  changes from the first real contamination. A confident voice match may
   re-identify an introduction silently only when the introduced name is
-  a plausible spelling of the matched person's (otherwise the new person
+  a plausible spelling of the matched person's; otherwise the new person
   is seated under their own name and the resemblance becomes a merge
-  question); and while anyone in the room is still unlearnt, the naming
-  bar rises (`voice_id_pending_extra`) so a borderline resemblance to a
-  remembered person defers honestly instead of stealing the unlearnt
-  person's turns - which is what lets their own voice bank its first
-  clip. This deliberately reverses the fourteenth field test's silent
+  question. And while anyone in the room is still unlearnt, the naming
+  bar rises (`voice_id_pending_extra`), so a borderline resemblance to a
+  remembered person defers instead of stealing the unlearnt person's
+  turns. That is what lets their own voice bank its first clip. This deliberately reverses the fourteenth field test's silent
   collapse for dissimilar names; variant spellings keep collapsing
   silently.
 
@@ -181,13 +180,13 @@ entry to a short paragraph; the issue holds the detail.
   events can never resurrect an old round out loud.
 
 - Fix a contaminated voice without deleting anything (#90). The first
-  real audition found recordings of one person filed under another; the
-  panel can now create a person by name (no voice needed - they start
-  unlearnt), move a recording to the person it actually belongs to
-  (audio untouched, a stale set-aside cleared, both voices re-learn
-  from what they hold), and record another spelling of a name - a
-  misspelling worth keeping or the phonetic form - beside the display
-  name. Owner-reassigned recordings say "reassigned by you" in the
+  real audition found recordings of one person filed under another. The
+  panel can now create a person by name, who starts unlearnt with no
+  voice needed. It can move a recording to the person it actually
+  belongs to, leaving the audio untouched, clearing a stale set-aside,
+  and re-learning both voices from what they hold. And it can record
+  another spelling of a name beside the display name, whether a
+  misspelling worth keeping or the phonetic form. Owner-reassigned recordings say "reassigned by you" in the
   list. The AI-participant boundary (#77) holds at every new door.
 
 - Hear what a remembered voice was built from (#68). Each person in the
@@ -231,13 +230,13 @@ entry to a short paragraph; the issue holds the detail.
 
 - Stable guest names on the memory wire, and the owner's name harder to
   mishear into a guest (#56). Two fixes from the first real multi-human
-  sessions: a guest's name now crosses to the memory service as the one
-  stable identity name (never the cosmetic preferred spelling, which
-  stays a display concern), so renaming how a name is shown can no
-  longer split one person's history into two guests in the ledger; and
-  a transcription of the owner's own name up to two letters off (the
-  "Sean" for "Shawn" case) is now recognised as the owner everywhere a
-  name could join the roster, instead of minting a phantom guest.
+  sessions. A guest's name now crosses to the memory service as the one
+  stable identity name, never the cosmetic preferred spelling, which
+  stays a display concern. So renaming how a name is shown can no longer
+  split one person's history into two guests in the ledger. And a
+  transcription of the owner's own name up to two letters off is now
+  recognised as the owner everywhere a name could join the roster,
+  instead of minting a phantom guest.
 
 - Auto (hands-free) voice turns no longer wait forever for silence that
   never comes (#60). Sustained background noise - road noise, wind, a
@@ -283,10 +282,10 @@ entry to a short paragraph; the issue holds the detail.
   person (#28). If someone the app remembers is introduced under a
   spelling too different for any spelling rule ("Samantha" for a
   remembered "Sam" is fine; a wholly different rendering was not), the
-  app now checks the introduction's own voice - including when room
+  app now checks the introduction's own voice. That includes when room
   mode is already on, where it previously judged leftover audio from
-  before the room opened (and could even bank a guest's words as the
-  owner's voice; that door is closed). The new spelling is kept on the
+  before the room opened, and could even bank a guest's words as the
+  owner's voice. That door is closed. The new spelling is kept on the
   person's record, so it is transcribed and resolved correctly from
   then on. And saying "Matteo is the spelling but it's pronounced
   Mateo" now records both forms on one person without overriding any
@@ -329,11 +328,10 @@ entry to a short paragraph; the issue holds the detail.
 - The voice dock is one panel with two rows, not four floating layers
   (#28). The status line used to be an ever-growing run of text that
   spilled out of its tray as soon as a second voice existed. It is now
-  one chip per person - a green tick beside the name once their voice is
-  remembered, "learning 4s" while it is still being learnt, plain while
-  nothing has been heard - and the chips wrap, collapsing into a "+2"
-  when there are more than four, with the live speed reading kept small
-  on the right. The controls you touch per turn (microphone mode, the
+  one chip per person: a green tick beside the name once their voice is
+  remembered, "learning 4s" while it is still being learnt, and plain
+  while nothing has been heard. The chips wrap, collapsing into a "+2"
+  past four, with the live speed reading kept small on the right. The controls you touch per turn (microphone mode, the
   room toggle, send, stop, end) stay on one row; the pause and speed
   sliders, which you set once, move behind a settings button along with
   the matcher and mode readouts. Nothing was removed. On a phone the
@@ -388,13 +386,13 @@ entry to a short paragraph; the issue holds the detail.
   accepts shorter utterances than before, where the audio is clearly
   voiced.
 - Stored voices now audit themselves (#28). Whenever a voice bank
-  changes, every clip is checked against every person: a clip that
-  sounds more like someone else is set aside (kept on disk, shown as
-  "clips set aside", excluded from matching), and two people whose
-  stored voices sit close together are flagged in the voice health
-  strip ("Alex and Sam sound close - matching is stricter") with the
-  matcher automatically demanding a wider winning margin between
-  exactly those two. This is the guard against the field-tested
+  changes, every clip is checked against every person. A clip that
+  sounds more like someone else is set aside: kept on disk, shown as
+  "clips set aside", and excluded from matching. Two people whose stored
+  voices sit close together are flagged in the voice health strip
+  ("Alex and Sam sound close - matching is stricter"), and the matcher
+  automatically demands a wider winning margin between exactly those
+  two. This is the guard against the field-tested
   cross-contamination that once let one person's turns be confidently
   labelled as another.
 - Names now arrive with the words, not after them (#28). The app
@@ -424,11 +422,11 @@ entry to a short paragraph; the issue holds the detail.
   sticks: the same name heard later starts fresh.
 - The voice health strip (#28). The voice dock and the mobile call
   screen now show a compact readout of what voice identification is
-  doing: whether the on-device matcher is ready (or fetching its model,
-  or falling back to the cloud), whether the room is on, solo, or
-  ambient-listening, each remembered voice's learning progress, and how
-  the last spoken turn was identified ("local · 227ms", "cloud ·
-  1.9s"). The readout is fed by a new content-free endpoint - states,
+  doing. Four things: whether the on-device matcher is ready, fetching
+  its model, or falling back to the cloud; whether the room is on, solo,
+  or ambient-listening; each remembered voice's learning progress; and
+  how the last spoken turn was identified ("local · 227ms",
+  "cloud · 1.9s"). The readout is fed by a new content-free endpoint - states,
   counts and milliseconds only, never names or words - and costs the
   live voice path nothing.
 - The room-mode toggle is now durable and honest (#28). Switching it on
@@ -486,28 +484,28 @@ entry to a short paragraph; the issue holds the detail.
   cached instead of re-read from disk on every spoken turn. Live voice
   latency is untouched - everything here happens on the background pass.
 - Room mode arming fixes from the third field test (#28). Two spoken
-  triggers that silently did nothing now work: a handover with no name
+  triggers that silently did nothing now work. A handover with no name
   ("I'm going to hand over to a guest") switches room mode on and asks
-  who the guest is - never inventing a name - and a guest introducing
+  who the guest is, never inventing a name. A guest introducing
   themselves ("I'm Samantha, Alex's wife, also known as Sam") switches
   it on and adds them under their proper name, keeping the short form
   ("also known as", "call me") as their preferred display name. Every
   introduction check now leaves one plain log line saying what it
   decided, so a silent failure can no longer be mistaken for the check
   not running. And remembered voices can now switch room mode on by
-  themselves: when a session starts with room mode off in a household
+  themselves. When a session starts with room mode off in a household
   with remembered voices, the first couple of spoken turns are also
   transcribed a second time, listening for a known voice or a second
-  speaker - stated plainly, those sessions transcribe their first
-  couple of utterances twice - and a recognised voice switches room
-  mode on and joins the roster with no introduction needed.
+  speaker. Those sessions therefore transcribe their first couple of
+  utterances twice. A recognised voice switches room mode on and joins
+  the roster with no introduction needed.
 - Room mode, phase 4 (#28): honesty about people talking over each
   other, and three fixes from the second field test. When two voices
-  land in one spoken turn, the turn now says so - "Two voices at once -
-  some words may be missing" - because on a single microphone the
-  quieter person's overlapped words are often simply gone; the models
-  see the same note so they can ask the quieter person to repeat, and
-  such turns are never saved to memory as any one person's words. When
+  land in one spoken turn, the turn now says so: "Two voices at once -
+  some words may be missing". On a single microphone the quieter
+  person's overlapped words are often simply gone. The models see the
+  same note, so they can ask the quieter person to repeat, and such
+  turns are never saved to memory as any one person's words. When
   the two voices took turns cleanly rather than overlapping, a
   best-effort split shows who said which words (shown only when the
   second listen agrees with the live transcript; your message text is
@@ -528,10 +526,10 @@ entry to a short paragraph; the issue holds the detail.
 - Room mode, phase 3 (#28): attribution lands everywhere it matters.
   Voice labels now attach to exactly the turn that was spoken (a quick
   interjection can no longer be labelled onto a neighbouring turn), and
-  the models finally SEE the labels: a turn confidently matched to a
+  the models finally SEE the labels. A turn confidently matched to a
   named person reads as that person "(in the room)" in every model's
-  view of the chat, while an uncertain turn reads as an unidentified
-  speaker - never guessed, never silently credited to you. Names stop
+  view of the chat. An uncertain turn reads as an unidentified speaker:
+  never guessed, never silently credited to you. Names stop
   drifting: your own name always comes from the `user_name` setting
   (never from what the transcriber heard), each remembered voice gets
   an editable preferred spelling (Models -> Remembered voices, pencil
@@ -548,12 +546,12 @@ entry to a short paragraph; the issue holds the detail.
   this computer (owner-only files, deletable from Models -> Remembered
   voices with a Forget button that deletes the audio), so a known
   person is recognised in later sessions with no introduction. Turns
-  are labelled with names; below the learning bar a label stays marked
-  uncertain, an unrecognised voice raises a "someone new is speaking -
-  who?" prompt you answer by just saying the name, and a background
-  cross-check can flag a turn whose content reads like someone else -
-  it never changes the label; tap the name on a turn to correct it
-  (which also teaches the right voice). An "In the room" chip shows who
+  are labelled with names, and below the learning bar a label stays
+  marked uncertain. An unrecognised voice raises a "someone new is
+  speaking - who?" prompt you answer by just saying the name. A
+  background cross-check can flag a turn whose content reads like
+  someone else, but it never changes the label. Tap the name on a turn
+  to correct it, which also teaches the right voice. An "In the room" chip shows who
   the app is telling apart, which is also the cue that multi-voice
   processing (double transcription spend) is on. The live conversation
   still waits on none of this. Roster size is capped (default 6,

@@ -122,7 +122,8 @@ one it stays visible but disabled and tells you why, and the API refuses the
 same way, with `409 … no cost-provenance record … until then this model stays
 a manual trial`.
 
-**Anything you run locally can be promoted, with no setup at all.** A model
+### Anything local can be promoted, with no setup
+ A model
 served from your own machine with no API key (the Ollama and LM Studio
 presets, or any `http://localhost…` / `http://127.0.0.1…` base URL you type)
 gets its cost record automatically: **self-hosted, $0 marginal**. Nothing is
@@ -138,13 +139,15 @@ This is deliberately narrow, because a wrong $0 is worse than an honest
 network, or anything behind a key, is something you might be paying for, so it
 keeps needing a real price (below).
 
-**Hosted models you add yourself stay on Trial until you price them.** The
+### Hosted models stay on Trial until you price them
+ The
 Groq / Together / OpenRouter / Fireworks ids listed above aren't in the
 built-in price table, so as shipped they can't be promoted. Nothing is
 broken: @mention the seat whenever you want to hear from it. Evaluating a
 model that way is exactly what trial is for.
 
-**To promote any other model, price it in the app.** The **Model prices**
+### Pricing a model in the app
+ The **Model prices**
 section on the **Models** page is the intended route. Pick "A published list
 price", enter the provider's per-1M input and output rates, the http(s) link
 you read them from, and the date they were published or checked, then **Save
@@ -193,7 +196,9 @@ A local model is declared with a zero marginal cost:
 For a hosted model, use the provider's published per-1M input and output rates
 with `"provenance": "rate_card_estimate"` and a real `source` URL.
 
-**How an id gets matched.** Exact match first: the **Model / version** string
+### How an id gets matched
+
+Exact match first: the **Model / version** string
 on the seat has to equal the key. Failing that, an entry that names your id in
 its `aliases` list wins, which is how one card covers a second id you are
 attesting is priced identically. Failing that, a date-stamped or build-stamped

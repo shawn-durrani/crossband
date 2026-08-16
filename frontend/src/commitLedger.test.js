@@ -1,3 +1,9 @@
+// Only one transcription wins per committed utterance (#85/#104). A salvaged
+// commit drops its late realtime final, which was the doubled-turn race. A
+// final that beats the timer stands the salvage down. Ids match exactly, with
+// FIFO fallback for id-less finals. Continuation commits carry their buffer
+// dispatch, the pending window is bounded, and reset clears the socket's
+// flight.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
