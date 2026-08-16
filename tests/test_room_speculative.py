@@ -221,6 +221,7 @@ def test_hint_frames_send_nothing_upstream(app, relay, no_batch, matcher):
         chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(frames[0])
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())
@@ -245,6 +246,7 @@ def test_transcript_flows_while_the_speculative_check_is_wedged(
         matcher["verdicts"] = [_match("Sam", pid)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5)))
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())   # fires the wedged check - and returns
@@ -274,6 +276,7 @@ def test_fresh_hint_labels_the_commit_with_one_matcher_call(
         speech = loud_pcm(1.5)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(speech))
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())
@@ -309,6 +312,7 @@ def test_resumed_speech_after_the_hint_discards_the_cached_verdict(
         ]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5)))
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())
@@ -375,6 +379,7 @@ def test_cached_match_on_a_remembered_non_rostered_person_is_trusted(
         ]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5)))
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())
@@ -412,6 +417,7 @@ def test_hint_in_a_disarmed_chat_schedules_nothing(app, relay, no_batch,
                                     app.state.settings.as_cfg())
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5)))
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())

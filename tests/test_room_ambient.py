@@ -261,6 +261,7 @@ def test_committed_transcript_arrives_while_ambient_is_wedged(
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             # the live path completes while the ambient check is blocked
             assert ws.receive_json() == {"final": "hello world"}
@@ -288,6 +289,7 @@ def test_owner_voice_labels_but_never_arms(app, relay, batch_calls, matcher):
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
@@ -311,6 +313,7 @@ def test_remembered_voice_arms_names_and_rosters(app, relay, batch_calls,
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
@@ -332,6 +335,7 @@ def test_clear_stranger_arms_and_asks(app, relay, batch_calls, matcher):
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
@@ -359,6 +363,7 @@ def test_stranger_without_owner_enrolment_defers(app, relay, batch_calls,
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             assert _wait_for(lambda: matcher["calls"] >= 1)
@@ -395,6 +400,7 @@ def test_disarmed_chat_never_schedules_ambient(app, relay, batch_calls,
                                     cfg)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
@@ -417,6 +423,7 @@ def test_mid_session_disarm_is_honoured_at_the_next_commit(
         cfg = app.state.settings.as_cfg()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             assert _wait_for(lambda: matcher["calls"] == 1)   # ran, deferred

@@ -237,6 +237,7 @@ def test_matched_cluster_gets_the_persons_name(app, relay, batch_stt, multi_matc
         utter = loud_pcm(1.5)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})  # NO client toggle - server flag
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(utter, commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
@@ -266,6 +267,7 @@ def test_remembered_voice_reidentifies_in_a_fresh_session(app, relay, batch_stt,
         for expect_rows in (1, 2):
             with c.websocket_connect("/api/voice/stt-stream") as ws:
                 ws.send_json({"chat_id": chat["id"]})
+                assert ws.receive_json()["session"]  # #134 handshake
                 ws.send_json(_frame(loud_pcm(1.5), commit=True))
                 assert ws.receive_json() == {"final": "hello world"}
                 msg = _insert_user_message(chat["id"])
@@ -292,6 +294,7 @@ def test_elimination_names_the_single_pending_person_and_builds_their_anchor(
         chat = _setup_room(c, sufficient=["Shawn"], pending=["Alex"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             first_labels = None
             for n, secs in enumerate((2.5, 2.5, 1.5, 1.5), start=1):
                 ws.send_json(_frame(loud_pcm(secs), commit=True))
@@ -323,6 +326,7 @@ def test_num_speakers_tracks_roster_size(app, relay, batch_stt, multi_matcher):
         chat = _setup_room(c, sufficient=["Shawn"], pending=["Ana", "Ben"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.0), commit=True))
             ws.receive_json()
             assert _wait_for(lambda: batch_stt["calls"])
@@ -345,6 +349,7 @@ def test_ambiguous_unknown_cluster_stays_uncertain_and_asks_once(
         chat = _setup_room(c, sufficient=["Shawn"], pending=["Ana", "Ben"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             for n in (1, 2):
                 ws.send_json(_frame(loud_pcm(1.5), commit=True))
                 assert ws.receive_json() == {"final": "hello world"}
@@ -388,6 +393,7 @@ def test_mismatch_flags_but_never_mutates_the_label(app, relay, batch_stt, multi
         chat = _setup_room(c, sufficient=["Shawn", "Alex"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"], "my husband thinks so too")
@@ -427,6 +433,7 @@ def test_mismatch_keyless_is_a_quiet_no_op(app, relay, batch_stt, multi_matcher)
         chat = _setup_room(c, sufficient=["Shawn"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             ws.receive_json()
             msg = _insert_user_message(chat["id"])
@@ -595,6 +602,7 @@ def test_off_session_stashes_the_utterance_for_the_owner_anchor(
         utter = loud_pcm(1.0)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(utter, commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             ws.send_json({"done": True})

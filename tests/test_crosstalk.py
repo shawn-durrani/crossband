@@ -288,6 +288,7 @@ def test_room_crosstalk_turn_is_marked_and_split_when_aligned(
         chat = _setup_room(c, sufficient=["Shawn"], pending=["Alex"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"], "hello world")
@@ -312,6 +313,7 @@ def test_misaligned_split_falls_back_to_the_marker_alone(app, relay, batch_stt, 
         chat = _setup_room(c, sufficient=["Shawn"], pending=["Alex"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"], "hello world")
@@ -331,6 +333,7 @@ def test_simultaneous_speech_is_marked_but_never_split(app, relay, batch_stt, mu
         chat = _setup_room(c, sufficient=["Shawn"], pending=["Alex"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"], "hello world")
@@ -353,6 +356,7 @@ def test_single_voice_turn_carries_no_crosstalk_keys(app, relay, batch_stt, mult
         chat = _setup_room(c, sufficient=["Shawn"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
@@ -379,6 +383,7 @@ def test_unmatched_clusters_split_as_uncertain_ordinals(
         chat = _setup_room(c, sufficient=["Shawn"])
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"], "hello world")
@@ -439,6 +444,7 @@ def test_capture_profile_is_logged_and_never_reaches_upstream(
             with c.websocket_connect("/api/voice/stt-stream") as ws:
                 ws.send_json({"chat_id": chat["id"],
                               "capture_profile": "room-open"})
+                assert ws.receive_json()["session"]  # #134 handshake
                 ws.send_json(frame)
                 assert ws.receive_json() == {"final": "hello world"}
                 ws.send_json({"done": True})
@@ -459,6 +465,7 @@ def test_capture_profile_control_frame_logs_and_sends_nothing_upstream(
             with c.websocket_connect("/api/voice/stt-stream") as ws:
                 ws.send_json({"chat_id": chat["id"],
                               "capture_profile": "solo-tuned"})
+                assert ws.receive_json()["session"]  # #134 handshake
                 ws.send_json({"room_mode": True,
                               "capture_profile": "room-open"})
                 frame = _frame(loud_pcm(0.5), commit=True)
@@ -482,6 +489,7 @@ def test_unrecognised_capture_profile_is_never_logged(app, relay, caplog):
             with c.websocket_connect("/api/voice/stt-stream") as ws:
                 ws.send_json({"chat_id": chat["id"],
                               "capture_profile": "secret words here"})
+                assert ws.receive_json()["session"]  # #134 handshake
                 ws.send_json({"done": True})
     assert not [r for r in caplog.records
                 if "capture profile" in r.getMessage()]

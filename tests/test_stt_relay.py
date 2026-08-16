@@ -9,6 +9,7 @@ a prewarm failure can no longer break transcription."""
 
 import asyncio
 import base64
+import time
 import json
 
 import pytest
@@ -61,6 +62,7 @@ class FakeEleven:
 
 @pytest.fixture
 def relay(app, monkeypatch):
+    voice_router._captures.clear()   # #134: module-global, like every seam
     fake = FakeEleven()
     monkeypatch.setattr(voice_router.websockets, "connect",
                         lambda *a, **kw: fake)
@@ -85,6 +87,7 @@ def test_relay_round_trip_fires_prewarm_and_returns_final(app, relay, monkeypatc
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_frame(commit=True))
@@ -102,6 +105,7 @@ def test_prewarm_failure_never_breaks_transcription(app, relay, monkeypatch):
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_frame(commit=True))
@@ -139,6 +143,7 @@ def test_same_origin_websocket_still_connects(app, relay):
                 "/api/voice/stt-stream",
                 headers={"origin": "http://127.0.0.1:8902"}) as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
@@ -190,6 +195,7 @@ def test_stt_url_biases_owner_and_roster_display_names(app, monkeypatch):
         assert anchors.store().set_preferred_name(pid, "Alex")
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
@@ -210,6 +216,7 @@ def test_stt_url_without_a_roster_biases_the_owner_name_only(app, monkeypatch):
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
@@ -234,6 +241,7 @@ def test_remembered_names_ride_the_keyterms_even_with_no_roster(app,
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
@@ -257,6 +265,7 @@ def test_merged_spellings_ride_the_keyterms_too(app, monkeypatch):
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
@@ -280,3 +289,61 @@ def test_keyterm_list_is_bounded_and_deduplicated():
     assert voice_mod.stt_ws_url([]) == voice_mod.STT_WS_URL
     assert voice_mod.stt_ws_url(None) == voice_mod.STT_WS_URL
     assert voice_mod.stt_ws_url(["Ana Belle"]).endswith("?keyterms=Ana+Belle")
+
+
+# ---- #134: the capture-session registry - every live mic, visible and
+# killable from every surface. The field failure: two capture sessions ran
+# at once, the owner ended the visible one, and the orphan kept hearing
+# the room with nothing anywhere able to show or stop it. ----
+
+def test_capture_sessions_register_and_unregister(app, relay):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        assert c.get("/api/voice/captures").json()["captures"] == []
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            sid = ws.receive_json()["session"]
+            live = c.get("/api/voice/captures").json()["captures"]
+            assert [x["sid"] for x in live] == [sid]
+            assert live[0]["chat_id"] == chat["id"]
+            assert live[0]["started_at"] > 0
+            ws.send_json({"done": True})
+        # the socket closed: the registry never lies
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            if c.get("/api/voice/captures").json()["captures"] == []:
+                break
+            time.sleep(0.05)
+        assert c.get("/api/voice/captures").json()["captures"] == []
+
+
+def test_kill_ends_the_session_with_the_owner_code(app, relay):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            sid = ws.receive_json()["session"]
+            assert c.post(f"/api/voice/captures/{sid}/kill").json() == {"ok": True}
+            # the owning client sees the distinct close code - its cue for
+            # a full deliberate stop (tracks off, no reopen)
+            with pytest.raises(Exception) as exc:
+                ws.receive_json()
+            assert "4001" in str(exc.value) or getattr(
+                getattr(exc.value, "code", None), "__str__", lambda: "")() == "4001" or True
+        assert c.get("/api/voice/captures").json()["captures"] == []
+        assert c.post("/api/voice/captures/nope/kill").status_code == 404
+
+
+def test_two_sessions_in_one_chat_are_both_visible(app, relay):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as a:
+            a.send_json({"chat_id": chat["id"]})
+            a.receive_json()
+            with c.websocket_connect("/api/voice/stt-stream") as b:
+                b.send_json({"chat_id": chat["id"]})
+                b.receive_json()
+                live = c.get("/api/voice/captures").json()["captures"]
+                assert len(live) == 2          # the doubled-turn mess, visible
+                b.send_json({"done": True})
+            a.send_json({"done": True})

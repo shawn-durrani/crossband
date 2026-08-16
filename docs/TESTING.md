@@ -50,6 +50,14 @@ prefix, and roster names are pinned out of the transcript turns.
 
 ## Voice and room mode
 
+**Every live microphone is visible everywhere.** The relay registers
+each capture session. It unregisters the moment capture ends, at the
+clean done as well as abrupt closes, so the registry can never claim a
+dead mic or hide a live one. A kill from any surface closes that
+session's socket with a distinct code. The owning client treats the code
+as a deliberate full stop. Two sessions in one chat are both shown - the
+doubled-turn case. The banner rules are pure and node-tested.
+
 **Identity work never starves a reply.** Everything the identity pass
 runs on threads - clip banking, the hygiene audit, the crosstalk call -
 uses its own bounded executor, never the default pool the request path

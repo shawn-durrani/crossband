@@ -320,6 +320,12 @@ export default class VoiceController {
     }
     ws.onmessage = (e) => {
       let msg; try { msg = JSON.parse(e.data) } catch { return }
+      if (msg.session) {
+        // #134: our capture-session id, so the every-surface mic banner
+        // can tell this session apart from an orphan's.
+        this.captureSid = msg.session
+        return
+      }
       if (msg.partial !== undefined) {
         this.onPartial?.(msg.partial)
       } else if (msg.final !== undefined) {
@@ -340,8 +346,16 @@ export default class VoiceController {
       }
     }
     ws.onerror = () => this._fallbackToBatch('websocket error')
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       this.sttWs = null
+      if (e && e.code === 4001) {
+        // #134: the owner ended this capture from another surface. This
+        // is a DELIBERATE stop, not a drop: full teardown - microphone
+        // tracks stopped - and never a reopen.
+        this.stop()
+        this.onError?.('Voice was ended from another window.')
+        return
+      }
       // A socket we did NOT close is a dropped connection - a backgrounded tab
       // is the common cause. Left alone, the ScriptProcessor keeps running and
       // feeding a socket that no longer exists: the mic works, the context
