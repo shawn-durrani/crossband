@@ -15,6 +15,9 @@ db.py           - SQLite (WAL); one insert path; the notify bell
 engine.py       - a round: who speaks, in what order, with what context
 providers.py    - per-vendor projection, streaming, prompt-cache layout
 tools.py        - shared tools every seat can call
+egress.py       - the vetting proxy every model-influenced URL exits by
+url_ledger.py   - fetchable means already seen from a non-model source
+browse.py       - rendered viewing; browse_worker.py is the keyless child
 guest.py        - Claude Code as a summonable participant
 accounting.py   - cost with provenance; provenance.py defines the axes
 frontend/       - React UI; pure .js modules hold the rules and are tested

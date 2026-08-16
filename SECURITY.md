@@ -79,6 +79,18 @@ path-restricts `Grep` or `Glob` either. Treat the file rules as a
 guardrail in one mode, not a guarantee in either. See
 [docs/GUEST_PERMISSIONS.md](docs/GUEST_PERMISSIONS.md).
 
+## Outbound: the web the models reach
+
+Models can search, fetch and render public web pages. Every URL a model
+can influence leaves through a local vetting proxy that connects only
+to public internet addresses, so a page cannot reach this machine, the
+sibling services, or the local network. A model can only fetch a URL
+that already appeared in the chat from a non-model source, which closes
+the channel where injected text asks it to smuggle data out inside a
+URL it composes. The rendering browser runs in a separate process that
+holds no secrets. [docs/WEB_RESEARCH.md](docs/WEB_RESEARCH.md) has the
+full model and its limits.
+
 ## What these controls do not do
 
 - No rate limiting: a caller that reaches the port can hammer it.
@@ -87,9 +99,9 @@ guardrail in one mode, not a guarantee in either. See
 - The guest tool allowlist bounds built-in tools only. Any MCP server
   you mount for a guest is available to it in full, in both modes. If
   one of those servers can write, so can the guest.
-- Fetched pages are guarded against SSRF with per-redirect revalidation,
-  but a page you ask a model to read is still untrusted text that a
-  model will act on.
+- A fetched page arrives labelled untrusted, but the label informs the
+  models rather than binding them. Page text is still input a model may
+  act on.
 
 ## Operational notes
 

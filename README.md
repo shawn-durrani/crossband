@@ -4,8 +4,9 @@ Crossband is a group chat with several AI models at once. Claude and GPT
 sit in one shared transcript, see each other's messages, and can agree or
 disagree. Everything runs on your machine: a FastAPI backend, a SQLite
 file, and a web UI on loopback. Models reach shared tools (web search,
-page and Reddit fetch, GitHub issues, memory) and every result is
-persisted where every participant can see it.
+page fetch, rendered page viewing, Reddit and YouTube, GitHub issues,
+memory) and every result is persisted where every participant can see
+it.
 
 The name is a radio term. A crossband repeater receives on one band and
 retransmits on another, which is roughly what the app does across model
