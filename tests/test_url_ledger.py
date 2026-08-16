@@ -33,7 +33,7 @@ def test_canonical_preserves_the_channels_that_matter():
 def test_canonical_rejects_junk():
     c = url_ledger.canonical
     assert c("ftp://x.com/a") is None
-    assert c("https://user:pw@x.com/") is None
+    assert c("https://user:pw@example.com/") is None
     assert c("not a url") is None
     assert c("") is None
 
