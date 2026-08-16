@@ -460,156 +460,157 @@ async def stt_stream_relay(ws: WebSocket):
         ) as eleven:
 
             async def pump_up():
-                nonlocal seconds
-                first = True
-                while True:
-                    msg = await ws.receive_json()
-                    if msg.get("done"):
-                        # #134: capture is OVER at done, whatever the
-                        # upstream teardown still has in flight - the
-                        # registry must say so now, not when the handler
-                        # finishes draining. The finally's pop covers
-                        # abrupt ends; this covers the clean one.
-                        _captures.pop(sid, None)
-                        return
-                    if "room_mode" in msg and "audio" not in msg:
-                        # Control frame, ours alone: toggle the tee and send
-                        # NOTHING upstream - the ElevenLabs byte stream stays
-                        # identical to a session that never toggled. A
-                        # mid-session capture-profile change (#28 phase 4)
-                        # rides the same frame and is logged the same
-                        # content-free way as the init's.
-                        room.set_enabled(msg.get("room_mode"))
-                        p = capture_profile(msg)
-                        if p:
-                            log.info("stt capture profile: chat=%s profile=%s",
-                                     chat_id, p)
-                        continue
-                    if msg.get("speculative") and "audio" not in msg:
-                        # Silence-start hint (#28 PR-B), ours alone - NOTHING
-                        # goes upstream for it, pinned like the room_mode
-                        # control frame. Fire the LOCAL-ONLY identity check
-                        # on the buffered utterance now, so the verdict is
-                        # cached before the commit frame arrives. create_task
-                        # inside, never awaited; a failure to schedule must
-                        # not break live transcription.
-                        try:
-                            if chat_id and not diarize.ambient_off(chat_id) \
-                                    and (room.enabled
-                                         or diarize.room_enabled(chat_id)
-                                         or room.ambient_on):
-                                diarize.schedule_speculative(chat_id, room,
-                                                             cfg)
-                        except Exception:
-                            log.warning("speculative scheduling failed; live "
-                                        "transcription continues",
-                                        exc_info=True)
-                        continue
-                    audio = msg.get("audio") or ""
-                    sr = int(msg.get("sample_rate", 16000))
-                    if audio:
-                        try:
-                            raw = base64.b64decode(audio)
-                            seconds += len(raw) / 2 / sr
-                            # The tee: a local buffer append of bytes the
-                            # metering above already decoded. Nothing here
-                            # touches the upstream payload below. Always on
-                            # (phase 2) so the introduction utterance itself
-                            # can seed the owner's anchor - see the RoomSession
-                            # comment above for why that is safe.
-                            room.add_audio(raw, sr)
-                        except Exception:
-                            pass
-                    payload = {
-                        "message_type": "input_audio_chunk",
-                        "audio_base_64": audio,
-                        "commit": bool(msg.get("commit")),
-                        "sample_rate": sr,
-                    }
-                    if first and msg.get("previous_text"):
-                        payload["previous_text"] = msg["previous_text"]
-                    first = False
-                    if payload["commit"] and chat_id:
-                        # Speech just ended - start the ambient recall
-                        # NOW, overlapped with ElevenLabs finalizing the
-                        # transcript, keyed on the freshest partial. The round
-                        # only adopts it if it matches the final text.
-                        # Best-effort BY CONSTRUCTION: a prewarm is an
-                        # optimization, and no failure in it may ever break
-                        # live transcription (it did once - a missing import
-                        # killed the relay on the first commit frame).
-                        # Content-free INFO line: proves the hook fired and
-                        # whether there was any partial text to prewarm from.
-                        log.info("stt commit: chat=%s partial_chars=%d",
-                                 chat_id, len(last_partial))
-                        try:
-                            engine.prewarm_recall(chat_id, last_partial,
-                                                  ws.app.state.memory)
-                        except Exception:
-                            log.warning("recall prewarm failed; transcription "
-                                        "continues without it", exc_info=True)
-                    if payload["commit"]:
-                        # Commit boundary = utterance boundary: slice the teed
-                        # audio. With room mode effective (the client's toggle
-                        # OR the server-side flag an introduction flipped -
-                        # diarize.room_enabled is a dict lookup, no I/O), fire
-                        # the parallel diarization pass; otherwise stash the
-                        # utterance locally so a confirmed introduction can
-                        # claim it as the owner's anchor. create_task only -
-                        # NEVER awaited here; the commit frame below goes
-                        # upstream exactly as it always has, and a failure to
-                        # even schedule must not break live transcription
-                        # (same posture as the prewarm hook).
-                        #
-                        # The commit frame's `turn_id` (#28 phase 3) is the
-                        # client's voice-trace correlation id - the SAME id
-                        # its /send will persist on the user message, which
-                        # is what lets the pass label the exact turn. Ours
-                        # alone: it is not part of the upstream payload
-                        # built above, so the ElevenLabs byte stream stays
-                        # identical whether or not it is sent.
-                        try:
-                            pcm, pcm_sr = room.take_utterance()
-                            # Claim the speculative silence-start entry (#28
-                            # PR-B) synchronously, so it can never leak onto
-                            # the next utterance. A dict pop - no I/O; the
-                            # staleness judgment happens inside the pass, on
-                            # a worker thread.
-                            spec = room.take_speculative(len(pcm)) \
-                                if room.speculative else None
-                            commit_turn_id = (str(msg.get("turn_id") or "")
-                                              .strip()[:64] or None)
-                            commit_turn_fifo.append(commit_turn_id)
-                            if room.enabled or diarize.room_enabled(chat_id):
-                                diarize.schedule_pass(chat_id, pcm, pcm_sr,
-                                                      db.now(), room, cfg,
-                                                      turn_id=commit_turn_id,
-                                                      speculative=spec)
-                            else:
-                                diarize.stash_utterance(chat_id, pcm, pcm_sr)
-                                # Automatic arming while room mode is off
-                                # (#28), unless the owner has said "solo
-                                # mode" (the sacred disarm, honoured cheaply
-                                # via the live mirror here and re-checked
-                                # inside each pass). ONE door since PR-B:
-                                # the ambient local check - the on-device
-                                # matcher, which NEVER calls ElevenLabs (the
-                                # bounded EL session-start sniff retired
-                                # with the cloud identity path). create_task
-                                # only, NEVER awaited; the upstream byte
-                                # stream is untouched either way.
-                                if diarize.ambient_off(chat_id):
-                                    pass
-                                elif room.ambient_on:
-                                    diarize.schedule_ambient(
-                                        chat_id, pcm, pcm_sr, db.now(),
-                                        room, cfg, turn_id=commit_turn_id,
-                                        speculative=spec)
-                        except Exception:
-                            log.warning("diarize scheduling failed; live "
-                                        "transcription continues", exc_info=True)
-                    await eleven.send(json.dumps(payload))
+                try:
+                    nonlocal seconds
+                    first = True
+                    while True:
+                        msg = await ws.receive_json()
+                        if msg.get("done"):
+                            return
+                        if "room_mode" in msg and "audio" not in msg:
+                            # Control frame, ours alone: toggle the tee and send
+                            # NOTHING upstream - the ElevenLabs byte stream stays
+                            # identical to a session that never toggled. A
+                            # mid-session capture-profile change (#28 phase 4)
+                            # rides the same frame and is logged the same
+                            # content-free way as the init's.
+                            room.set_enabled(msg.get("room_mode"))
+                            p = capture_profile(msg)
+                            if p:
+                                log.info("stt capture profile: chat=%s profile=%s",
+                                         chat_id, p)
+                            continue
+                        if msg.get("speculative") and "audio" not in msg:
+                            # Silence-start hint (#28 PR-B), ours alone - NOTHING
+                            # goes upstream for it, pinned like the room_mode
+                            # control frame. Fire the LOCAL-ONLY identity check
+                            # on the buffered utterance now, so the verdict is
+                            # cached before the commit frame arrives. create_task
+                            # inside, never awaited; a failure to schedule must
+                            # not break live transcription.
+                            try:
+                                if chat_id and not diarize.ambient_off(chat_id) \
+                                        and (room.enabled
+                                             or diarize.room_enabled(chat_id)
+                                             or room.ambient_on):
+                                    diarize.schedule_speculative(chat_id, room,
+                                                                 cfg)
+                            except Exception:
+                                log.warning("speculative scheduling failed; live "
+                                            "transcription continues",
+                                            exc_info=True)
+                            continue
+                        audio = msg.get("audio") or ""
+                        sr = int(msg.get("sample_rate", 16000))
+                        if audio:
+                            try:
+                                raw = base64.b64decode(audio)
+                                seconds += len(raw) / 2 / sr
+                                # The tee: a local buffer append of bytes the
+                                # metering above already decoded. Nothing here
+                                # touches the upstream payload below. Always on
+                                # (phase 2) so the introduction utterance itself
+                                # can seed the owner's anchor - see the RoomSession
+                                # comment above for why that is safe.
+                                room.add_audio(raw, sr)
+                            except Exception:
+                                pass
+                        payload = {
+                            "message_type": "input_audio_chunk",
+                            "audio_base_64": audio,
+                            "commit": bool(msg.get("commit")),
+                            "sample_rate": sr,
+                        }
+                        if first and msg.get("previous_text"):
+                            payload["previous_text"] = msg["previous_text"]
+                        first = False
+                        if payload["commit"] and chat_id:
+                            # Speech just ended - start the ambient recall
+                            # NOW, overlapped with ElevenLabs finalizing the
+                            # transcript, keyed on the freshest partial. The round
+                            # only adopts it if it matches the final text.
+                            # Best-effort BY CONSTRUCTION: a prewarm is an
+                            # optimization, and no failure in it may ever break
+                            # live transcription (it did once - a missing import
+                            # killed the relay on the first commit frame).
+                            # Content-free INFO line: proves the hook fired and
+                            # whether there was any partial text to prewarm from.
+                            log.info("stt commit: chat=%s partial_chars=%d",
+                                     chat_id, len(last_partial))
+                            try:
+                                engine.prewarm_recall(chat_id, last_partial,
+                                                      ws.app.state.memory)
+                            except Exception:
+                                log.warning("recall prewarm failed; transcription "
+                                            "continues without it", exc_info=True)
+                        if payload["commit"]:
+                            # Commit boundary = utterance boundary: slice the teed
+                            # audio. With room mode effective (the client's toggle
+                            # OR the server-side flag an introduction flipped -
+                            # diarize.room_enabled is a dict lookup, no I/O), fire
+                            # the parallel diarization pass; otherwise stash the
+                            # utterance locally so a confirmed introduction can
+                            # claim it as the owner's anchor. create_task only -
+                            # NEVER awaited here; the commit frame below goes
+                            # upstream exactly as it always has, and a failure to
+                            # even schedule must not break live transcription
+                            # (same posture as the prewarm hook).
+                            #
+                            # The commit frame's `turn_id` (#28 phase 3) is the
+                            # client's voice-trace correlation id - the SAME id
+                            # its /send will persist on the user message, which
+                            # is what lets the pass label the exact turn. Ours
+                            # alone: it is not part of the upstream payload
+                            # built above, so the ElevenLabs byte stream stays
+                            # identical whether or not it is sent.
+                            try:
+                                pcm, pcm_sr = room.take_utterance()
+                                # Claim the speculative silence-start entry (#28
+                                # PR-B) synchronously, so it can never leak onto
+                                # the next utterance. A dict pop - no I/O; the
+                                # staleness judgment happens inside the pass, on
+                                # a worker thread.
+                                spec = room.take_speculative(len(pcm)) \
+                                    if room.speculative else None
+                                commit_turn_id = (str(msg.get("turn_id") or "")
+                                                  .strip()[:64] or None)
+                                commit_turn_fifo.append(commit_turn_id)
+                                if room.enabled or diarize.room_enabled(chat_id):
+                                    diarize.schedule_pass(chat_id, pcm, pcm_sr,
+                                                          db.now(), room, cfg,
+                                                          turn_id=commit_turn_id,
+                                                          speculative=spec)
+                                else:
+                                    diarize.stash_utterance(chat_id, pcm, pcm_sr)
+                                    # Automatic arming while room mode is off
+                                    # (#28), unless the owner has said "solo
+                                    # mode" (the sacred disarm, honoured cheaply
+                                    # via the live mirror here and re-checked
+                                    # inside each pass). ONE door since PR-B:
+                                    # the ambient local check - the on-device
+                                    # matcher, which NEVER calls ElevenLabs (the
+                                    # bounded EL session-start sniff retired
+                                    # with the cloud identity path). create_task
+                                    # only, NEVER awaited; the upstream byte
+                                    # stream is untouched either way.
+                                    if diarize.ambient_off(chat_id):
+                                        pass
+                                    elif room.ambient_on:
+                                        diarize.schedule_ambient(
+                                            chat_id, pcm, pcm_sr, db.now(),
+                                            room, cfg, turn_id=commit_turn_id,
+                                            speculative=spec)
+                            except Exception:
+                                log.warning("diarize scheduling failed; live "
+                                            "transcription continues", exc_info=True)
+                        await eleven.send(json.dumps(payload))
 
+                finally:
+                    # #134: capture is over when the client's frames stop -
+                    # done, disconnect, or error alike. The handler may keep
+                    # draining upstream after this; the registry must not
+                    # wait for it (the outer finally stays as the backstop).
+                    _captures.pop(sid, None)
             async def pump_down():
                 nonlocal last_partial
                 try:
