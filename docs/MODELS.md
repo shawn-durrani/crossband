@@ -61,6 +61,11 @@ you. Both stay editable, and **Custom** lets you fill everything by hand.
 port `1234`), pick the *LM Studio (local)* preset, and set the model id to a
 loaded model. No key.
 
+Servers that only implement classic chat completions (mlx_lm.server, LM
+Studio, vLLM, llama.cpp) work too. The app notices a missing Responses API
+on the first reply and speaks chat completions to that endpoint from then
+on. Nothing to configure.
+
 > Local servers need no authentication, but the OpenAI SDK insists on a
 > non-empty key. For **chat replies** the app passes a harmless placeholder to
 > keyless local endpoints, so a blank key field just works. (The default OpenAI
