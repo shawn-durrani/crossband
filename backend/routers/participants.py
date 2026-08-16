@@ -22,6 +22,15 @@ def _reasoning_error(provider):
            f"for provider '{provider}'")
 
 
+def _thinking_error(provider):
+    """The 400 for an unsupported thinking_control. Anthropic seats get
+    Default only, so the message names that rather than listing mechanisms
+    that would never fire for them."""
+    choices = [c or "Default" for c in providers.thinking_control_choices(provider)]
+    return (f"thinking_control must be one of: {', '.join(choices)} "
+            f"for provider '{provider}'")
+
+
 class ParticipantIn(BaseModel):
     name: str | None = None
     provider: str | None = None
@@ -34,6 +43,7 @@ class ParticipantIn(BaseModel):
     voice_id: str | None = None
     voice_gain: float | None = None  # playback volume, clamped 0.2–1.0
     reasoning_effort: str | None = None
+    thinking_control: str | None = None  # local-endpoint thinking opt-out (#159)
     lifecycle: str | None = None  # 'trial' | 'onboarded'
 
     @field_validator("voice_gain")
@@ -67,6 +77,8 @@ def create_participant(body: ParticipantIn):
     # here used to mean the saved policy quietly never reached the provider call.
     if not providers.valid_reasoning_effort(body.provider, body.reasoning_effort):
         raise HTTPException(400, _reasoning_error(body.provider))
+    if not providers.valid_thinking_control(body.provider, body.thinking_control):
+        raise HTTPException(400, _thinking_error(body.provider))
     con = db.connect()
     slug = base_slug = slugify(body.name)
     n = 2
@@ -76,10 +88,11 @@ def create_participant(body: ParticipantIn):
     pos = con.execute("SELECT COALESCE(MAX(position),0)+1 FROM participants").fetchone()[0]
     cur = con.execute(
         "INSERT INTO participants(slug, name, provider, model, base_url, api_key_env, "
-        "system_prompt, color, reasoning_effort, position, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        "system_prompt, color, reasoning_effort, thinking_control, position, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (slug, body.name, body.provider, body.model, body.base_url or None,
          body.api_key_env or None, body.system_prompt or "", body.color or "#a78bfa",
-         body.reasoning_effort or "", pos, db.now()),
+         body.reasoning_effort or "", body.thinking_control or "", pos, db.now()),
     )
     # newcomers only join NEW chats by default; existing rosters are untouched
     con.commit()
@@ -108,6 +121,15 @@ def update_participant(pid: int, body: ParticipantIn):
         if not providers.valid_reasoning_effort(effective_provider, updates["reasoning_effort"]):
             con.close()
             raise HTTPException(400, _reasoning_error(effective_provider))
+    if "thinking_control" in updates:
+        # Same effective-provider rule as reasoning_effort above: a PATCH may
+        # move the seat to Anthropic and set a control in one body, and the
+        # control must validate against where the seat ends up.
+        effective_provider = updates.get("provider", row["provider"])
+        if not providers.valid_thinking_control(effective_provider,
+                                                updates["thinking_control"]):
+            con.close()
+            raise HTTPException(400, _thinking_error(effective_provider))
     if "enabled" in updates:
         updates["enabled"] = int(updates["enabled"])
     # Onboarding gate: a seat may become 'onboarded' only once an

@@ -5,6 +5,17 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Local thinking models can be told to skip the reasoning trace (#159).
+  A Qwen3-family seat on an OpenAI-compatible server emitted a hidden
+  reasoning block before its first visible token, and no setting reached
+  it: reasoning effort only speaks Anthropic's and OpenAI's own dialects.
+  Seats with their own base URL now carry a Thinking control on the
+  Models page. It names the mechanism the server documents, so nothing
+  is guessed from a model id, and the `/no_think` prompt hack is offered
+  as an explicit last resort rather than injected. Default stays empty
+  and sends no new field. An endpoint that rejects the choice fails the
+  turn by name instead of silently ignoring it.
+
 - The speaker model is named and its swap path documented (#154).
   VOICE_ID.md now says what the matcher runs (NVIDIA's TitaNet-Small
   via sherpa-onnx), that the thresholds are calibrated to it, and that
