@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { eraseLink } from './voiceDiscard.js'
 import { voiceSurface } from './voiceSurface.js'
+import { captureBanner } from './micRegistry.js'
 import Sidebar from './components/Sidebar'
 import Composer from './components/Composer'
 import ProjectModal from './components/ProjectModal'
@@ -102,6 +103,10 @@ export default function App() {
   // call screen and the page strip must all show the same truth about
   // whether the mic is live.
   const [voiceMuted, setVoiceMuted] = useState(false)
+  // #134: every live capture session the relay knows about - polled so a
+  // microphone left running in ANOTHER window is visible (and killable)
+  // from this one.
+  const [captures, setCaptures] = useState([])
   useEffect(() => { localStorage.setItem('voice_dock_open', voiceDockOpen ? '1' : '0') }, [voiceDockOpen])
   // Room mode (#28 phase 1): per-SESSION, deliberately NOT persisted - it
   // roughly doubles voice spend while on, so every session starts off and the
@@ -491,6 +496,21 @@ export default function App() {
   useEffect(() => {
     if (voiceState !== 'off') refreshVoiceHealth(activeChatIdRef.current)
   }, [messages, voiceState])
+
+  // #134: poll the capture registry while the page is visible, and
+  // immediately when this tab's own voice state changes - the banner must
+  // reflect an End within a beat, not a poll cycle.
+  useEffect(() => {
+    let live = true
+    const load = () => api.listCaptures()
+      .then((d) => { if (live) setCaptures(d.captures || []) })
+      .catch(() => {})
+    load()
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') load()
+    }, 20000)
+    return () => { live = false; clearInterval(t) }
+  }, [voiceState])
 
   // Pin-to-bottom only while the user is at the bottom; the moment they scroll
   // up during streaming, stop following and count new arrivals for the pill.
@@ -1023,6 +1043,32 @@ export default function App() {
           </div>
         )}
       </main>
+      {/* #134: a microphone live in ANOTHER window is shown here - on every
+          surface - with the kill that #108 could only offer in-tab. */}
+      {(() => {
+        const mic = captureBanner(captures, voiceRef.current?.captureSid,
+                                  activeChatId)
+        if (!mic) return null
+        return (
+          <div className={`fixed top-3 right-3 z-50 flex items-center gap-2 rounded-lg border px-3 py-2 shadow-lg text-xs ${
+            mic.level === 'double' ? 'border-red-500/60 bg-red-950/90 text-red-200'
+                                   : 'border-amber-400/60 bg-panel text-amber-300'
+          }`} role="alert">
+            <span>{mic.text}</span>
+            {mic.sessions.map((s) => (
+              <button key={s.sid}
+                className="border border-current rounded px-1.5 py-0.5 hover:opacity-80"
+                onClick={() => api.killCapture(s.sid)
+                  .then(() => api.listCaptures())
+                  .then((d) => setCaptures(d.captures || []))
+                  .catch(() => {})}
+              >
+                End it
+              </button>
+            ))}
+          </div>
+        )
+      })()}
       {/* #69: while a full page (models menu, connections, spend) is open,
           voice KEEPS RUNNING and the call surfaces give way to the compact
           strip - visible at every width, because the desktop dock unmounts

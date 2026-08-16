@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A live microphone anywhere is now visible everywhere (#134). If a
+  capture session is running in another window or device, every
+  surface shows a banner naming it - louder when it is a second mic in
+  the same chat, which doubles every utterance - with an End button
+  that stops it remotely: tracks off, no reconnect, ever. This closes
+  the field case where voice was turned off in one window while an
+  orphaned session elsewhere kept hearing the room.
+
 - Replies no longer stall after a still-learning guest speaks (#133).
   The voice-identity background work (clip banking and the bank-hygiene
   audit) ran on the same thread pool that dispatches your messages, so

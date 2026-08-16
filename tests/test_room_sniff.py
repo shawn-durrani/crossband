@@ -196,6 +196,7 @@ def test_undecidable_first_utterances_fire_no_el_call_and_arm_nothing(
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             for _ in range(3):
                 ws.send_json(_frame(loud_pcm(1.5), commit=True))
                 assert ws.receive_json() == {"final": "hello world"}
@@ -225,6 +226,7 @@ def test_matcher_unavailable_means_no_automatic_arming_and_no_el(
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             time.sleep(0.3)
@@ -269,6 +271,7 @@ def test_matcher_disabled_by_flag_schedules_nothing(tmp_path, monkeypatch):
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             time.sleep(0.3)
@@ -293,6 +296,7 @@ def test_remembered_voice_still_arms_a_fresh_chat_locally(
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             assert _wait_for(lambda: _chat_room_mode(chat["id"]))

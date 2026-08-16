@@ -9,6 +9,8 @@
 import asyncio
 import base64
 import json
+import time
+import uuid
 from urllib.parse import urlparse
 
 import websockets
@@ -278,6 +280,45 @@ async def tts_relay(ws: WebSocket):
             pass
 
 
+# #134: the capture-session registry - every live microphone, visible from
+# every surface. The field failure: two capture sessions ran at once (a
+# second tab or device left in voice), the owner ended the visible one,
+# and the orphan kept hearing the room; nothing anywhere could show or
+# stop it. Content-free entries: ids, chat, timing, a client hint - never
+# audio. Mutated only on the event loop, so no lock.
+_captures: dict = {}
+CAPTURE_KILLED_CODE = 4001
+
+
+def capture_sessions() -> list:
+    return [{k: v[k] for k in ("sid", "chat_id", "started_at", "client")}
+            for v in _captures.values()]
+
+
+@router.get("/api/voice/captures")
+def list_captures():
+    """#134: the truth the every-surface mic banner reads."""
+    return {"captures": capture_sessions()}
+
+
+@router.post("/api/voice/captures/{sid}/kill")
+async def kill_capture(sid: str):
+    """#134: end a capture session from ANY surface. The relay socket
+    closes with CAPTURE_KILLED_CODE; the owning client treats that code
+    as a deliberate stop - full teardown, microphone tracks stopped, no
+    auto-reopen ever."""
+    entry = _captures.get(sid)
+    if not entry:
+        raise HTTPException(404, "no such capture session")
+    try:
+        await entry["ws"].close(code=CAPTURE_KILLED_CODE,
+                                reason="ended by the owner")
+    except Exception:
+        pass
+    _captures.pop(sid, None)
+    return {"ok": True}
+
+
 @router.websocket("/api/voice/stt-stream")
 async def stt_stream_relay(ws: WebSocket):
     """Browser <-> backend <-> ElevenLabs Scribe v2 Realtime STT relay. The client
@@ -309,6 +350,16 @@ async def stt_stream_relay(ws: WebSocket):
     except WebSocketDisconnect:
         return
     chat_id = init.get("chat_id")
+    # #134: register this CAPTURE session and tell the client its id, so
+    # every surface can list live microphones and the client can tell its
+    # own session apart from an orphan's. Capture only - the TTS relay is
+    # playback and never registers.
+    sid = uuid.uuid4().hex[:12]
+    _captures[sid] = {"sid": sid, "chat_id": chat_id,
+                      "started_at": time.time(),
+                      "client": (ws.headers.get("user-agent") or "")[:80],
+                      "ws": ws}
+    await ws.send_json({"session": sid})
     # Capture experiment (#28 phase 4): record which mic profile this session
     # captured with, so field tests can compare crosstalk label rates between
     # suppression-on and suppression-off capture. INFO and content-free
@@ -414,6 +465,12 @@ async def stt_stream_relay(ws: WebSocket):
                 while True:
                     msg = await ws.receive_json()
                     if msg.get("done"):
+                        # #134: capture is OVER at done, whatever the
+                        # upstream teardown still has in flight - the
+                        # registry must say so now, not when the handler
+                        # finishes draining. The finally's pop covers
+                        # abrupt ends; this covers the clean one.
+                        _captures.pop(sid, None)
                         return
                     if "room_mode" in msg and "audio" not in msg:
                         # Control frame, ours alone: toggle the tee and send
@@ -600,6 +657,7 @@ async def stt_stream_relay(ws: WebSocket):
         for task in (up, down):
             if task and not task.done():
                 task.cancel()
+        _captures.pop(sid, None)          # #134: the registry never lies
         if seconds:
             con = db.connect()
             db.log_voice_usage(con, chat_id, "stt", seconds, voice.voice_cost("stt", seconds, cfg))

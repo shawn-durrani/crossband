@@ -278,6 +278,7 @@ def test_room_mode_off_is_byte_for_byte_identical_and_makes_no_extra_calls(
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             for f in frames[:2]:
                 ws.send_json(f)
                 assert ws.receive_json() == {"partial": "hello"}
@@ -309,6 +310,7 @@ def test_room_mode_on_leaves_upstream_frames_byte_for_byte_identical(
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(frames[0])
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"room_mode": True, "sample_rate": 16000})  # control frame
@@ -338,6 +340,7 @@ def test_tee_slices_utterances_on_the_same_commit_boundaries(
         chat, pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             for f in u1 + u2:
                 ws.send_json(f)
                 ws.receive_json()
@@ -371,6 +374,7 @@ def test_committed_transcript_returns_while_the_matcher_is_wedged_open(
         matcher["verdicts"] = [_verdict_match("Shawn", pid)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame())
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_frame(commit=True))
@@ -401,6 +405,7 @@ def test_committed_transcript_returns_while_the_crosstalk_call_is_wedged(
         chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(commit=True))
             assert not gate.is_set()
             _expect_final(ws)
@@ -435,6 +440,7 @@ def test_solo_utterances_never_trigger_an_el_call(app, relay, batch_stt,
                                _verdict_defer("below_threshold")]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json({**_frame(commit=True), "turn_id": "t-1"})
             ws.receive_json()
             m1 = _insert_user_message(chat["id"], "first turn",
@@ -468,6 +474,7 @@ def test_crosstalk_split_failure_is_silent_and_the_relay_lives_on(
         chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(commit=True))
             _expect_final(ws)
             msg = _insert_user_message(chat["id"])
@@ -495,6 +502,7 @@ def test_crosstalk_split_is_metered_as_stt_spend(app, relay, batch_stt,
         prefix_pcm, _ = anchors.store().build_prefix([pid], 16000)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             # the target row exists up front so the attach resolves at once
             # and the meter (which books AFTER the labels) runs promptly
             _insert_user_message(chat["id"], "the turn",
@@ -593,6 +601,7 @@ def test_labels_key_to_the_exact_message_by_turn_id(app, relay, batch_stt,
         matcher["verdicts"] = [_verdict_match("Shawn", pid)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json({**_frame(commit=True), "turn_id": "turn-exact"})
             _expect_final(ws)
             # The decoy lands FIRST - the old window matcher would take it.
@@ -617,6 +626,7 @@ def test_dropped_interjection_never_smears_onto_a_neighbour(
         matcher["verdicts"] = [_verdict_match("Shawn", pid)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json({**_frame(commit=True), "turn_id": "turn-dropped"})
             _expect_final(ws)
             neighbour = _insert_user_message(chat["id"], "someone else's turn")
@@ -636,6 +646,7 @@ def test_commit_turn_id_never_leaks_upstream(app, relay, batch_stt):
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"], "room_mode": True})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(frames[0])
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({**frames[1], "turn_id": "turn-private"})
@@ -664,6 +675,7 @@ def test_exact_turn_id_attach_never_waits_on_the_probe_cadence(
         chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json({**_frame(commit=True), "turn_id": "turn-fast"})
             _expect_final(ws)
             # let the pass reach its first lookup and MISS (the /send race)
@@ -702,6 +714,7 @@ def test_label_write_lands_before_the_meter_write(
         chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             target = _insert_user_message(chat["id"], "already persisted",
                                           voice_turn_id="turn-order")
             ws.send_json({**_frame(commit=True), "turn_id": "turn-order"})
@@ -727,6 +740,7 @@ def test_labelling_failure_still_meters_the_spend(
         chat, _pid = _room_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
             msg = _insert_user_message(chat["id"], "turn that fails",
                                        voice_turn_id="turn-boom")
             ws.send_json({**_frame(commit=True), "turn_id": "turn-boom"})
