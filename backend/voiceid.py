@@ -395,6 +395,19 @@ def _model_sha(cfg) -> str:
     return ((cfg or {}).get("voice_id_model_sha256") or MODEL_SHA256).strip().lower()
 
 
+def model_identity(cfg) -> dict:
+    """Which speaker model this install runs (#154), content-free: the
+    pinned file name, a hash prefix, and whether the built-in pin was
+    overridden. Makes "which model is live" answerable from the app
+    instead of the filesystem. Never touches the state machine."""
+    url = _model_url(cfg)
+    return {
+        "file": url.rsplit("/", 1)[-1],
+        "sha256_prefix": _model_sha(cfg)[:12],
+        "pinned_default": url == MODEL_URL and _model_sha(cfg) == MODEL_SHA256,
+    }
+
+
 # ================= the model file (fetch + verify) ========================
 
 def _models_dir() -> Path:

@@ -121,6 +121,32 @@ Functional, not magical. (Older builds fell back to a cloud pass with
 "Voice 1"-style labels; that path produced a confidently wrong name in
 field testing and was removed on purpose.)
 
+## The model itself
+
+The matcher runs `nemo_en_titanet_small`: NVIDIA's NeMo TitaNet-Small
+speaker model (CC-BY-4.0), about 38MB, run locally through sherpa-onnx.
+It is fetched once from the sherpa-onnx releases into
+`<data_dir>/voice_models/` and SHA-256 verified before first use.
+`GET /api/voice/health` reports the live model's file name, hash prefix,
+and whether the built-in pin was overridden.
+
+The pin can be swapped. `voice_id_model_url` and
+`voice_id_model_sha256` (see [CONFIG.md](CONFIG.md)) override it
+together: both or neither. A new URL checked against the old hash fails
+verification, and the matcher stays unavailable rather than running an
+unverified file.
+
+Two things to know before swapping:
+
+- Every threshold in this document was calibrated for TitaNet-Small's
+  score distribution. A different model needs its own calibration, with
+  the knobs below.
+- Stored voices survive a swap on their own. The app keeps the anchor
+  clips, never model output; voice fingerprints live only in memory and
+  are rebuilt from the clips by whichever model is loaded. After a swap
+  and a restart there is nothing to migrate and no mixed comparisons -
+  matching simply warms up again from the same clips.
+
 ## The tuning knobs
 
 All of these live in [CONFIG.md](CONFIG.md) and can be set in

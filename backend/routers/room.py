@@ -105,6 +105,9 @@ def voice_health(request: Request, chat_id: int | None = None):
 
     out = {
         "matcher": voiceid.matcher_status(cfg),
+        # #154: which speaker model is live (file, hash prefix, pin state) -
+        # content-free, and answerable without a shell on the box.
+        "model": voiceid.model_identity(cfg),
         "people_total": len(people),
         "people_sufficient": sum(1 for p in people if p["sufficient"]),
         "learning": {p["person_id"]: _learning(p) for p in people},
