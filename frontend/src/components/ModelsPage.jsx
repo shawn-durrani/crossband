@@ -4,11 +4,13 @@ import { api } from '../api'
 import { PRESETS, matchPreset } from '../presets'
 import { modelReadoutLines } from '../modelReadout'
 import { lifecycleBadge, promoteState, addSeatNotice } from '../lifecycle'
+import { thinkingOptions, thinkingSupport, normalizeThinkingControl } from '../thinkingControl'
 import RateCardsPanel from './RateCardsPanel'
 
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
   system_prompt: '', color: '#a78bfa', enabled: true, reasoning_effort: '',
+  thinking_control: '',
 }
 
 // Does this model support a reasoning-effort setting? Mirrors the per-provider
@@ -226,6 +228,10 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
         voice_id: editing.voice_id ?? null,
         voice_gain: editing.voice_gain ?? 1,
         reasoning_effort: editing.reasoning_effort ?? '',
+        // Cleared when it no longer applies (see normalizeThinkingControl), so
+        // the saved row can never claim a control the request never sends.
+        thinking_control: normalizeThinkingControl(
+          editing.provider, editing.base_url, editing.thinking_control),
       }
       if (editing.id) await api.updateParticipant(editing.id, body)
       else await api.createParticipant(body)
@@ -268,6 +274,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
 
   const field = 'mt-1 w-full bg-app border border-edge2 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-edge3'
   const eff = editing ? effortSupport(editing.provider, editing.model) : null
+  const think = editing ? thinkingSupport(editing.provider, editing.base_url) : null
   // Which preset the current base_url/api_key_env corresponds to (openai style only).
   const presetId = editing && editing.provider === 'openai' ? matchPreset(editing) : null
   const preset = presetId ? PRESETS.find((p) => p.id === presetId) : null
@@ -557,6 +564,30 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
               <span className={`mt-1 block text-xs ${eff?.ok ? 'text-ink-faint' : 'text-amber-500'}`}>
                 {eff?.note}
               </span>
+            </label>
+            <label className="block">
+              <span className="text-sm text-ink-mid">
+                Thinking on a local endpoint{' '}
+                <span className="text-ink-faint">(turn off a local model's hidden reasoning trace - it delays the first word)</span>
+              </span>
+              <select
+                className={`${field} disabled:opacity-50 disabled:cursor-not-allowed`}
+                disabled={!think?.ok}
+                value={normalizeThinkingControl(editing.provider, editing.base_url, editing.thinking_control)}
+                onChange={(e) => setEditing({ ...editing, thinking_control: e.target.value })}>
+                {thinkingOptions(editing.provider).map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <span className={`mt-1 block text-xs ${think?.ok ? 'text-ink-faint' : 'text-amber-500'}`}>
+                {think?.note}
+              </span>
+              {think?.ok && editing.thinking_control ? (
+                <span className="mt-1 block text-xs text-ink-faint">
+                  {thinkingOptions(editing.provider)
+                    .find((o) => o.value === editing.thinking_control)?.hint}
+                </span>
+              ) : null}
             </label>
             {voiceEnabled && (
               <label className="block">

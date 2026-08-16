@@ -99,6 +99,29 @@ That's it for *connecting* the model: it's on your roster, and it sees the
 whole shared transcript whenever it speaks. One thing still decides **when**
 it speaks.
 
+## Thinking models: turn the reasoning trace off
+
+Qwen3 and models like it write a hidden reasoning block before the visible
+answer. You wait through all of it for the first word, which is worst in
+voice. The **Thinking on a local endpoint** setting on the seat turns it off.
+
+There is no single field for this across servers, so pick the one your server
+documents:
+
+| choice | what it sends | who wants it |
+|---|---|---|
+| Default | nothing | anything already fast, or any hosted model |
+| `chat_template_kwargs` | `chat_template_kwargs.enable_thinking = false` | vLLM, SGLang, mlx_lm |
+| `enable_thinking` | top-level `enable_thinking = false` | Qwen-style API servers |
+| `think` | `think = false` | Ollama |
+| `/no_think` hint | appends `/no_think` to the system prompt | builds that honour no real switch |
+
+The last one is a prompt hack rather than a request field, so it is never
+applied unless you choose it. The setting appears only on a seat with its own
+base URL, because OpenAI's own endpoint has no such field. If your server
+rejects the choice, the turn fails and names it, rather than leaving you to
+wonder whether it applied.
+
 ## Trial seats: why your new model stays quiet
 
 Every model you add yourself starts as a **Trial** seat. That's a real

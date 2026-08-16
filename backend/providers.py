@@ -201,6 +201,86 @@ def _openai_effort(participant):
     return level
 
 
+# ---------- thinking control on OpenAI-compatible endpoints (#159) ----------
+#
+# `reasoning_effort` above speaks two vendor dialects only: Anthropic's
+# output_config.effort and OpenAI's reasoning.effort. A Qwen3-family seat
+# served by mlx_lm.server, vLLM or Ollama matches neither, so it had no way to
+# say "answer, don't deliberate". Those models emit a hidden reasoning trace
+# before the first visible token by default, which a voice turn pays for in
+# silence.
+#
+# There is no single agreed field for this, so the seat NAMES the mechanism
+# its server documents instead of us sniffing the model id and guessing:
+#
+#   ""                     Default. Send nothing. Exactly today's behaviour.
+#   "chat_template_kwargs" {"chat_template_kwargs": {"enable_thinking": false}}
+#                          - vLLM, SGLang, mlx_lm and other template-driven
+#                            servers.
+#   "enable_thinking"      top-level {"enable_thinking": false} - Qwen's own
+#                          API-compatible servers.
+#   "ollama_think"         {"think": false} - Ollama's OpenAI-compatible route.
+#   "no_think_hint"        appends the "/no_think" token to the system prompt.
+#                          A prompt hack, so it is opt-in and named as one,
+#                          never injected because a model id looked Qwen-ish.
+#
+# Scope is deliberate: this applies ONLY on the classic chat-completions leg
+# of a seat that has its own base_url. OpenAI-hosted seats and the Responses
+# leg are untouched, and a server that rejects the field fails loudly rather
+# than quietly ignoring the setting (see _stream_openai_chat).
+THINKING_CONTROL_CHOICES = ("", "chat_template_kwargs", "enable_thinking",
+                            "ollama_think", "no_think_hint")
+
+_THINKING_EXTRA_BODY = {
+    "chat_template_kwargs": {"chat_template_kwargs": {"enable_thinking": False}},
+    "enable_thinking": {"enable_thinking": False},
+    "ollama_think": {"think": False},
+}
+
+NO_THINK_HINT = "/no_think"
+
+
+def thinking_control_choices(provider):
+    """Valid `thinking_control` values for this provider id. Anthropic seats
+    get Default only: `reasoning_effort` already covers Claude's thinking, and
+    a second knob for the same thing is how two settings start disagreeing."""
+    return THINKING_CONTROL_CHOICES if provider == "openai" else ("",)
+
+
+def valid_thinking_control(provider, value):
+    """Is `value` ('' counts as Default) a recognized thinking-control choice
+    for this provider? routers/participants.py rejects anything else with a
+    400 rather than storing a setting that would silently never apply."""
+    return (value or "") in thinking_control_choices(provider)
+
+
+def _thinking_control(participant):
+    """The control this seat actually gets to use, or "" for none. A seat with
+    no base_url is OpenAI proper, where none of these fields exist, so the
+    setting stays inert there instead of turning every turn into a 400."""
+    value = (participant.get("thinking_control") or "").strip()
+    if value not in THINKING_CONTROL_CHOICES or value == "":
+        return ""
+    if participant.get("provider") != "openai":
+        return ""
+    if not (participant.get("base_url") or "").strip():
+        return ""
+    return value
+
+
+def thinking_extra_body(participant):
+    """The extra request body to merge into a chat-completions call for this
+    seat, or None. Returns None for the prompt-hint mechanism, which carries
+    no request field at all."""
+    body = _THINKING_EXTRA_BODY.get(_thinking_control(participant))
+    return dict(body) if body else None
+
+
+def thinking_prompt_hint(participant):
+    """The system-prompt token this seat asked for, or "" for none."""
+    return NO_THINK_HINT if _thinking_control(participant) == "no_think_hint" else ""
+
+
 def _key_for(participant, allow_missing=False):
     default_env = "ANTHROPIC_API_KEY" if participant["provider"] == "anthropic" else "OPENAI_API_KEY"
     env_name = participant.get("api_key_env") or default_env
@@ -1641,13 +1721,20 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
     reasoning/effort (the servers this path exists for predate it, and an
     unknown parameter is a 400 on several), no store flag, usage taken from
     the final chunk when the server sends one and left at zero when it
-    doesn't (these seats price as self-hosted $0 anyway; see config)."""
+    doesn't (these seats price as self-hosted $0 anyway; see config).
+
+    The one request field this leg DOES add is the seat's own thinking control
+    (#159), and only when the seat names the mechanism its server documents."""
     cc_tools = [
         {"type": "function", "function": {
             "name": t["name"], "description": t["description"],
             "parameters": t["input_schema"]}}
         for t in (tools or [])
     ]
+    extra_body = thinking_extra_body(p)
+    hint = thinking_prompt_hint(p)
+    if hint:
+        stable = f"{stable}\n\n{hint}" if stable else hint
     usage = {"input": 0, "cache_read": 0, "cache_creation": 0, "output": 0}
     reply_text_parts = []
     for _ in range(cfg["max_tool_rounds"]):
@@ -1659,7 +1746,23 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
         )
         if cc_tools:
             kwargs["tools"] = cc_tools
-        stream = await client.chat.completions.create(**kwargs)
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        try:
+            stream = await client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            # A 400 while we are sending a thinking control is the endpoint
+            # saying it does not know that field. Say so by name instead of
+            # letting a bare "unrecognized parameter" reach the chat, and
+            # never retry without it: silently dropping the setting is how a
+            # seat ends up thinking for seven seconds with the toggle off.
+            if extra_body and getattr(exc, "status_code", None) == 400:
+                raise RuntimeError(
+                    f"{p.get('name') or p.get('slug')}: this endpoint rejected "
+                    f"the thinking control '{_thinking_control(p)}'. Set that "
+                    f"seat back to Default, or pick the mechanism this server "
+                    f"documents. The server said: {exc}") from exc
+            raise
         finish = None
         calls = {}  # stream index -> accumulating {"id","name","arguments"}
         async for chunk in stream:

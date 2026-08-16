@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 18  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138)
+SCHEMA_VERSION = 19  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -140,6 +140,11 @@ CREATE TABLE IF NOT EXISTS participants(
   voice_id TEXT NOT NULL DEFAULT '',
   voice_gain REAL NOT NULL DEFAULT 1.0,  -- playback volume 0.2–1.0 (normalize loud voices)
   reasoning_effort TEXT NOT NULL DEFAULT '',
+  -- How this seat asks an OpenAI-compatible server to skip its hidden
+  -- reasoning trace. '' = send nothing (every hosted seat). The other values
+  -- name the mechanism the server documents; see providers.
+  -- THINKING_CONTROL_CHOICES.
+  thinking_control TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
   -- Onboarding lifecycle: 'trial' = added for manual evaluation
   -- only, never selectable-by-default or auto-selectable; 'onboarded' = has an
@@ -540,6 +545,15 @@ def init(settings=None):
                        "AND name='chats'").fetchone():
             con.execute("ALTER TABLE chats ADD COLUMN ambient_off "
                         "INTEGER NOT NULL DEFAULT 0")
+    if 1 <= version <= 18:  # v19: participants.thinking_control (#159).
+        # Defaults empty, which sends no extra request field at all, so every
+        # existing seat keeps exactly the request shape it had. Only a seat
+        # the owner explicitly points at a local endpoint and switches ever
+        # sends one.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='participants'").fetchone():
+            con.execute("ALTER TABLE participants ADD COLUMN thinking_control "
+                        "TEXT NOT NULL DEFAULT ''")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
