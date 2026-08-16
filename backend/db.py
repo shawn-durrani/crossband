@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 17  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58)
+SCHEMA_VERSION = 18  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -108,7 +108,11 @@ CREATE TABLE IF NOT EXISTS messages(
   -- diarization pass can key its label write to the EXACT message the
   -- utterance produced instead of guessing by time window. Empty for typed
   -- messages and for voice clients that predate the field.
-  voice_turn_id TEXT NOT NULL DEFAULT ''
+  voice_turn_id TEXT NOT NULL DEFAULT '',
+  -- #138 slice 4: json list of web sources (domains, or "web-search") the
+  -- round that produced this assistant message read, or ''. Rides /ingest so
+  -- the memory service can hold web-derived facts for review.
+  web_sources TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_messages_voice_turn
   ON messages(voice_turn_id) WHERE voice_turn_id != '';
@@ -438,6 +442,14 @@ def init(settings=None):
         con.execute("ALTER TABLE messages ADD COLUMN import_uuid TEXT")
     if 1 <= version <= 4:  # v5: per-chat Claude Code guest toggle (off by default)
         con.execute("ALTER TABLE chats ADD COLUMN code_enabled INTEGER NOT NULL DEFAULT 0")
+    if 1 <= version <= 17:  # v18: web_sources stamp on messages (#138 slice 4)
+        # Guard on the live table: a stamped-but-minimal db (migration
+        # fixtures) has no messages table yet - the executescript below
+        # creates it with the column already in place.
+        mcols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
+        if mcols and "web_sources" not in mcols:
+            con.execute("ALTER TABLE messages ADD COLUMN web_sources "
+                        "TEXT NOT NULL DEFAULT ''")
     # v6: inbound_events - new table, created by the executescript below
     if 1 <= version <= 6:  # v7: per-seat onboarding lifecycle. The
         # column DEFAULTS to 'trial' (conservative), so the ALTER lands every
@@ -742,7 +754,8 @@ def get_messages_after(con, since, chat_id=None):
 
 def insert_message(con, chat_id, speaker, content, *, usage_json=None,
                     import_uuid=None, tool_events=None, attachment_ids=None,
-                    notify=True, voice_turn_id="", voice_labels=None):
+                    notify=True, voice_turn_id="", voice_labels=None,
+                    web_sources=None):
     """THE single write path for a LIVE message - every insert
     that should be pushed to a connected client goes through here, not a raw
     `INSERT INTO messages`. Centralizing this is what makes the live-events
@@ -766,10 +779,11 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
     labels_json = _json_dumps(voice_labels) if voice_labels else ""
     cur = con.execute(
         "INSERT INTO messages(chat_id, speaker, content, usage_json, created_at, "
-        "import_uuid, voice_turn_id, voice_labels, labels_updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
+        "import_uuid, voice_turn_id, voice_labels, labels_updated_at, web_sources) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
         (chat_id, speaker, content, usage_json, now(), import_uuid,
-         voice_turn_id or "", labels_json, now() if labels_json else 0),
+         voice_turn_id or "", labels_json, now() if labels_json else 0,
+         _json_dumps(sorted(web_sources)) if web_sources else ""),
     )
     msg_id = cur.lastrowid
     for att_id in (attachment_ids or []):

@@ -194,6 +194,7 @@ class MemoryClient:
         self._probe_ts = 0.0
         self._available = False
         self._contract_version: str | None = None
+        self._stamp_warned = False  # one line, once, when the service predates 1.3
         self._warned_mismatch = False
         # Leave-hook write jobs: chat_id -> {"state": running|ok|failed, "error", "ts"}
         # Surfaced in /api/state; a failure also warns the models next round.
@@ -314,10 +315,15 @@ class MemoryClient:
 
     async def save_fact(self, content: str, origin_agent: str,
                         event_date: str | None = None,
-                        confidence: str = "medium") -> dict | None:
+                        confidence: str = "medium",
+                        web_sources: list[str] | None = None) -> dict | None:
         """POST /facts. Returns the response dict, or None when the service is
         down / the write failed. Model-authored facts land quarantined when the
-        service's trust gate says so - that's the service's call, not ours."""
+        service's trust gate says so - that's the service's call, not ours.
+
+        web_sources (#138 slice 4, contract 1.3): the round's web stamp, so a
+        save that happened after reading a page is held for review. Additive;
+        a pre-1.3 service ignores it, which is the pre-#138 baseline."""
         if not await self.probe():
             return None
         body = {
@@ -327,6 +333,9 @@ class MemoryClient:
             "origin_agent": origin_agent,
             "source_app": SOURCE_APP,
         }
+        if web_sources:
+            body["web_sources"] = list(web_sources)[:20]
+            self._warn_if_stamp_unsupported()
         try:
             r = await self._client.post(self.api + "/facts", json=body)
             r.raise_for_status()
@@ -357,6 +366,18 @@ class MemoryClient:
             if m.get("speaker_identity"):
                 # #33 contract 1.2: the structured belief beside the label
                 entry["speaker_identity"] = m["speaker_identity"]
+            ws = m.get("web_sources")
+            if ws:
+                # #138 slice 4, contract 1.3: the db row stores json text;
+                # a malformed value drops the stamp, never the message.
+                if isinstance(ws, str):
+                    try:
+                        ws = json.loads(ws)
+                    except ValueError:
+                        ws = []
+                if ws:
+                    entry["web_sources"] = list(ws)[:20]
+                    self._warn_if_stamp_unsupported()
             if atts:
                 entry["attachments"] = atts
             out.append(entry)
@@ -365,6 +386,24 @@ class MemoryClient:
         r = await self._client.post(self.api + "/ingest", json=payload)
         r.raise_for_status()
         return r.json()
+
+    def _warn_if_stamp_unsupported(self):
+        """One line, once per process: a web_sources stamp sent to a pre-1.3
+        service is ignored there. That is the pre-#138 baseline, so ingest
+        continues either way - but silently losing a hold is worth a line."""
+        if self._stamp_warned or not self._contract_version:
+            return
+        try:
+            major, minor = (int(x) for x in
+                            self._contract_version.split(".")[:2])
+        except ValueError:
+            return
+        if (major, minor) < (1, 3):
+            self._stamp_warned = True
+            log.warning(
+                "memory service contract %s predates web_sources - "
+                "web-derived facts will not be held for review",
+                self._contract_version)
 
     async def distill(self, conversation_id: str) -> None:
         """POST /distill - async on the service side (202 + job)."""
