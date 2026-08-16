@@ -172,6 +172,11 @@ allow/deny lists only together with that document.
 | `max_transcript_chars` | `100000` | YouTube transcript in-chat cap. |
 | `max_audio_mb` | `60` | `transcribe_audio_url` download cap. |
 | `max_search_results` | `5` | Results per search. |
+| `egress_max_transfer_mb` | `64` | Per-connection byte backstop at the egress proxy. Keep it at or above `max_audio_mb`; podcast audio rides the same path. |
+| `egress_politeness_s` | `2` | Minimum spacing between connects to the same host. |
+| `egress_idle_timeout_s` | `60` | An egress connection with no bytes moving for this long is closed. |
+| `egress_tunnel_lifetime_s` | `300` | Hard wall clock on one egress connection. |
+| `fetch_max_page_mb` | `10` | `fetch_page` decoded-body cap; a bigger page errors instead of ballooning in RAM. |
 
 ## Backups
 
