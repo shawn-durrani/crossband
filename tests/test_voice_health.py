@@ -204,6 +204,9 @@ def test_health_endpoint_shape_and_counts(app):
         assert h["people_sufficient"] == 1
         assert h["chat"] is None
         assert h["last_decision"] is None
+        # #154: the live model is named - file, hash prefix, pin state
+        assert h["model"]["file"] == voiceid.MODEL_FILENAME
+        assert h["model"]["pinned_default"] is True
 
 
 def test_health_endpoint_is_content_free(app):
@@ -246,3 +249,29 @@ def test_health_endpoint_chat_block_and_decision(app):
         assert h["chat"]["ambient_off"] is True
         # unknown chat 404s
         assert c.get("/api/voice/health?chat_id=99999").status_code == 404
+
+
+# ── the model identity readout (#154) ───────────────────────────────────────
+
+def test_model_identity_names_the_default_pin():
+    ident = voiceid.model_identity({})
+    assert ident["file"] == voiceid.MODEL_FILENAME
+    assert len(ident["sha256_prefix"]) == 12
+    assert ident["pinned_default"] is True
+
+
+def test_model_identity_marks_an_overridden_pin():
+    cfg = {"voice_id_model_url": "https://example.test/other-model.onnx",
+           "voice_id_model_sha256": "AB" * 32}
+    ident = voiceid.model_identity(cfg)
+    assert ident["file"] == "other-model.onnx"
+    assert ident["sha256_prefix"] == "ab" * 6
+    assert ident["pinned_default"] is False
+
+
+def test_model_identity_is_content_free_and_passive(monkeypatch):
+    # reading it never touches the state machine (same law as matcher_status)
+    monkeypatch.setattr(voiceid, "sherpa_onnx", object())
+    voiceid._set_state("cold")
+    voiceid.model_identity({})
+    assert voiceid._state == "cold"

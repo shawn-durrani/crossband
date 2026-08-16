@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The speaker model is named and its swap path documented (#154).
+  VOICE_ID.md now says what the matcher runs (NVIDIA's TitaNet-Small
+  via sherpa-onnx), that the thresholds are calibrated to it, and that
+  stored voices survive a model swap because fingerprints are rebuilt
+  from the kept clips. `GET /api/voice/health` reports the live model's
+  file, hash prefix, and whether the built-in pin was overridden.
+
 - Responses-route discovery survives the 404 arriving as a connection
   reset (#151). Servers that close without draining the request body
   reset transcript-sized requests every time, so the #144 fallback never
