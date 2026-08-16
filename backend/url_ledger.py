@@ -32,8 +32,9 @@ from . import db
 
 # Research tools whose SUCCESS output is source-authored content. Only these
 # rows of tool_events feed the ledger (see module docstring for why).
-SOURCE_TOOLS = ("web_search", "fetch_page", "fetch_youtube_transcript",
-                "transcribe_audio_url", "fetch_reddit_thread")
+SOURCE_TOOLS = ("web_search", "fetch_page", "view_page",
+                "fetch_youtube_transcript", "transcribe_audio_url",
+                "fetch_reddit_thread")
 
 _ATTACH_TEXT_CAP = 2 * 1024 * 1024  # bytes read per text attachment
 
