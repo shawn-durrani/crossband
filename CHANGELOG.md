@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Replies no longer stall after a still-learning guest speaks (#133).
+  The voice-identity background work (clip banking and the bank-hygiene
+  audit) ran on the same thread pool that dispatches your messages, so
+  a guest whose voice was still being learnt could starve the round and
+  leave the room stuck "listening". That work now runs on its own
+  bounded pool, and the audit runs at most once per 20-second window -
+  deferred, never dropped.
+
 - Guest turns now tell memory who spoke, not just a name string
   (membro#33 final slice, contract 1.2). A confidently attributed
   guest turn carries the person record, the matcher's real score, and

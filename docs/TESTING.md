@@ -50,6 +50,13 @@ prefix, and roster names are pinned out of the transcript turns.
 
 ## Voice and room mode
 
+**Identity work never starves a reply.** Everything the identity pass
+runs on threads - clip banking, the hygiene audit, the crosstalk call -
+uses its own bounded executor, never the default pool the request path
+shares, and the audit runs at most once per cool-down window without ever
+dropping a changed bank. A source-level guard keeps asyncio.to_thread out
+of the module for good.
+
 **Identity is local or honestly uncertain.** The on-device matcher names a
 turn or the turn stays unresolved. No ElevenLabs call ever fires because the
 matcher deferred: a solo utterance can never trigger one, every defer reason

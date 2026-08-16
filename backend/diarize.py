@@ -38,6 +38,8 @@ everything else untouched. No retry ever feeds back into the live path.
 """
 
 import asyncio
+import concurrent.futures
+import functools
 import logging
 import re
 import struct
@@ -46,6 +48,26 @@ import time
 from . import db, voice, voiceid
 
 log = logging.getLogger("crossband.diarize")
+
+# #133: ALL of this module's thread work runs on its own bounded executor,
+# never the default asyncio.to_thread pool. The identity pass is
+# fire-and-forget by design, but its heavy steps (clip banking, the
+# pairwise hygiene audit, crosstalk's synchronous cloud call) were queueing
+# on the SAME default executor /send needs to persist the user's message -
+# so a still-learning guest's every utterance starved round dispatch and
+# the room sat in "listening". Two workers: identity work is sequential
+# per-utterance anyway, and a bounded queue here can never crowd out a
+# request thread again.
+_VOICE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="voiceid")
+
+
+def _in_voice_thread(fn, /, *args, **kwargs):
+    """Awaitable run of `fn` on the DEDICATED voice executor - the drop-in
+    replacement for asyncio.to_thread everywhere in this module."""
+    loop = asyncio.get_running_loop()
+    return loop.run_in_executor(_VOICE_EXECUTOR,
+                                functools.partial(fn, *args, **kwargs))
 
 # Utterance buffer cap: ~2 minutes of PCM-16 mono. Past it we keep the TAIL
 # (the newest audio) - an utterance that long has long since ceased to be one
@@ -800,7 +822,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     t0 = time.perf_counter()
     plan = None
     try:
-        plan = await asyncio.to_thread(_room_plan, chat_id, sample_rate)
+        plan = await _in_voice_thread(_room_plan, chat_id, sample_rate)
     except Exception:
         log.debug("room plan failed; utterance stays unresolved",
                   exc_info=True)
@@ -886,7 +908,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
              chat_id, verdict.get("score", 0.0))
     request_pcm = prefix_pcm + pcm
     try:
-        result = await asyncio.to_thread(
+        result = await _in_voice_thread(
             voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),
             "audio/wav", cfg, num_speakers=num_speakers)
     except Exception:
@@ -918,7 +940,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             # The crosstalk split is real, metered spend - room mode's only
             # remaining cloud voice cost (#28 PR-B). The anchor prefix is
             # transcribed audio too, so it is metered with it.
-            await asyncio.to_thread(_meter, chat_id, request_pcm, sample_rate,
+            await _in_voice_thread(_meter, chat_id, request_pcm, sample_rate,
                                     cfg)
         except Exception:
             log.info("diarize metering failed: chat=%s", chat_id)
@@ -944,7 +966,7 @@ async def _utterance_verdict(chat_id, pcm, sample_rate, candidates, cfg,
             verdict = await speculative["task"]
         except Exception:
             verdict = None
-        if verdict is not None and await asyncio.to_thread(
+        if verdict is not None and await _in_voice_thread(
                 _speculative_fresh, speculative, pcm):
             if not voiceid.matched(verdict):
                 return verdict
@@ -957,7 +979,7 @@ async def _utterance_verdict(chat_id, pcm, sample_rate, candidates, cfg,
                     c["person_id"] for c in candidates}:
                 return verdict
     try:
-        return await asyncio.to_thread(
+        return await _in_voice_thread(
             voiceid.identify_utterance, pcm, sample_rate, candidates, cfg,
             pending_present)
     except Exception:
@@ -1012,7 +1034,7 @@ async def _attach_until_deadline(chat_id, commit_ts, payload, session,
         deadline = time.monotonic() + min(ID_ATTACH_WINDOW_SECS,
                                           MATCH_WINDOW_SECS)
         while True:
-            outcome = await asyncio.to_thread(
+            outcome = await _in_voice_thread(
                 _attach_labels, chat_id, commit_ts, payload, session, turn_id)
             if outcome is not _NO_ROW_YET:
                 return outcome
@@ -1021,7 +1043,7 @@ async def _attach_until_deadline(chat_id, commit_ts, payload, session,
             await asyncio.sleep(ID_ATTACH_RETRY_SECS)
     deadline = time.monotonic() + MATCH_WINDOW_SECS
     while True:
-        target_id = await asyncio.to_thread(
+        target_id = await _in_voice_thread(
             _attach_labels, chat_id, commit_ts, payload, session, turn_id)
         if target_id or time.monotonic() >= deadline:
             return target_id
@@ -1125,14 +1147,14 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # pending (just-introduced) person's anchors at all. A crosstalk
         # utterance never lands here - two voices are ground truth for
         # neither.
-        await asyncio.to_thread(_accumulate_anchor, chat_id, pcm, sample_rate,
+        await _in_voice_thread(_accumulate_anchor, chat_id, pcm, sample_rate,
                                 clusters[0], resolved, cfg)
     if not resolved["labels"]:
         return
     if resolved["ask"]:
         # Someone the anchors don't know and elimination can't name: surface
         # the ask-fallback. The turn keeps its uncertain ordinal meanwhile.
-        await asyncio.to_thread(_raise_unknown_voice, chat_id, target_id)
+        await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
     if target_id:
         from . import anchors
         # Tap-to-correct's audio source: remembered in memory, bounded.
@@ -1206,7 +1228,7 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     name = verdict["name"]
     if roster_join:
         try:
-            await asyncio.to_thread(_roster_remembered, chat_id, name,
+            await _in_voice_thread(_roster_remembered, chat_id, name,
                                     verdict.get("person_id"), cfg)
         except Exception:
             # The label must still attach: a failed roster write may not
@@ -1233,7 +1255,7 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # person's clips. The batch room path does the same for a matched single
     # cluster; on the fast path this is the ONLY thing that keeps the person's
     # anchors fresh, since the batch pass no longer runs for them.
-    await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
+    await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
                             sample_rate, cfg)
     if not target_id:
         return
@@ -1325,7 +1347,7 @@ async def _cold_start_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                "learning": True, "source": COLD_START_SOURCE}
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
                                              session, turn_id=turn_id)
-    await asyncio.to_thread(_bank_cold_start, chat_id, name, pcm, sample_rate,
+    await _in_voice_thread(_bank_cold_start, chat_id, name, pcm, sample_rate,
                             cfg)
     if target_id:
         from . import anchors
@@ -1367,7 +1389,7 @@ async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
                "score": round(verdict.get("score") or 0, 3)}
     await _attach_until_deadline(chat_id, commit_ts, payload, session,
                                  turn_id=turn_id)
-    await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"],
+    await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"],
                             pcm, sample_rate, cfg)
 
 
@@ -1388,12 +1410,12 @@ async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         return
     log.info("diarize pass (ambient voiceid): chat=%s ms=%.0f armed=1",
              chat_id, (time.perf_counter() - t0) * 1000)
-    await asyncio.to_thread(_arm_known, chat_id, {"local": name}, cfg)
+    await _in_voice_thread(_arm_known, chat_id, {"local": name}, cfg)
     payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
                "source": "local", "score": round(verdict.get("score") or 0, 3)}
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
                                              session, turn_id=turn_id)
-    await asyncio.to_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
+    await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
                             sample_rate, cfg)
     if target_id:
         from . import anchors
@@ -1434,7 +1456,7 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     silence-start verdict when fresh. Every failure ends here."""
     t0 = time.perf_counter()
     try:
-        plan = await asyncio.to_thread(_ambient_plan, chat_id, sample_rate, cfg)
+        plan = await _in_voice_thread(_ambient_plan, chat_id, sample_rate, cfg)
         if plan is None:
             return
         candidates, owner_ok = plan
@@ -1469,7 +1491,7 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                   session, cfg, verdict, t0, turn_id=turn_id)
             return
         if decision == "arm_unknown":
-            await asyncio.to_thread(_arm_ambient_unknown, chat_id, cfg)
+            await _in_voice_thread(_arm_ambient_unknown, chat_id, cfg)
             ordinal = session.assign(["ambient_unknown"])
             payload = {"clusters": ["ambient_unknown"], "labels": ordinal,
                        "uncertain": list(ordinal)}
@@ -1477,7 +1499,7 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                                      payload, session,
                                                      turn_id=turn_id)
             if target_id:
-                await asyncio.to_thread(_raise_unknown_voice, chat_id, target_id)
+                await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
         # decision == "defer": nothing here; the introduction/command/toggle
         # doors still cover what the matcher could not (#28 PR-B).
     except Exception:
@@ -1563,10 +1585,10 @@ async def run_speculative(chat_id, pcm, sample_rate, cfg):
     match against its own candidate set, so a broader speculative candidate
     pool can never name someone the consuming pass would not."""
     try:
-        candidates = await asyncio.to_thread(remembered_candidates)
+        candidates = await _in_voice_thread(remembered_candidates)
         if not candidates:
             return None
-        verdict = await asyncio.to_thread(
+        verdict = await _in_voice_thread(
             voiceid.identify_utterance, pcm, sample_rate, candidates, cfg)
         log.info("speculative check: chat=%s status=%s", chat_id,
                  (verdict or {}).get("status"))

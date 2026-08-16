@@ -45,6 +45,7 @@ import logging
 import math
 import os
 import threading
+import time
 from pathlib import Path
 
 from . import anchors, db
@@ -714,6 +715,14 @@ def identify_utterance(pcm, sample_rate, candidates, cfg,
 
 _audit_lock = threading.Lock()
 _audit_fingerprint = None
+# #133: a still-learning bank changes on nearly every utterance, and the
+# audit re-embeds and recomputes pairwise closeness across every stored
+# person each time - back-to-back utterances queued behind it and starved
+# the request path. The audit now runs at most once per window; a change
+# arriving inside the window is not lost (the fingerprint still differs on
+# the next call after the window, so the audit runs then).
+AUDIT_MIN_INTERVAL_S = 20.0
+_audit_last_ran = 0.0
 _clip_emb_cache: dict = {}  # clip filename -> embedding (files are immutable)
 
 
@@ -767,7 +776,7 @@ def audit_banks_if_changed(cfg):
     last one - the 'on every anchor-bank change' trigger, made idempotent so
     every add_clip call site can call it unconditionally. Serialised: two
     passes finishing together audit once."""
-    global _audit_fingerprint
+    global _audit_fingerprint, _audit_last_ran
     try:
         fp = anchors.store().clip_fingerprint()
     except Exception:
@@ -775,6 +784,10 @@ def audit_banks_if_changed(cfg):
         return False
     with _audit_lock:
         if fp == _audit_fingerprint:
+            return False
+        # #133: inside the cool-down window, defer - the changed
+        # fingerprint keeps the debt on the books for the next call.
+        if time.monotonic() - _audit_last_ran < AUDIT_MIN_INTERVAL_S:
             return False
         # Do NOT spend the attempt while the matcher is cold (#28, tenth
         # field test): the first anchor change of a process almost always
@@ -792,6 +805,7 @@ def audit_banks_if_changed(cfg):
         # Remember the shape only when an audit ACTUALLY ran.
         if ran:
             _audit_fingerprint = fp
+            _audit_last_ran = time.monotonic()
         return ran
 
 
@@ -800,10 +814,11 @@ def audit_banks_if_changed(cfg):
 def _reset_for_tests():
     """Return the module to cold and clear caches. Used by the test harness so
     the process-global matcher never leaks a ready extractor between tests."""
-    global _extractor, _state, _audit_fingerprint
+    global _extractor, _state, _audit_fingerprint, _audit_last_ran
     with _lock:
         _extractor = None
         _state = "cold"
     _enroll_cache.clear()
     _clip_emb_cache.clear()
     _audit_fingerprint = None
+    _audit_last_ran = 0.0
