@@ -332,6 +332,18 @@ class Settings(BaseModel):
     max_audio_mb: int = 60  # transcribe_audio_url download cap
     max_search_results: int = 5
 
+    # egress vetting proxy (#138, first slice): every model-influenced URL
+    # leaves through one loopback proxy that resolves a host once and connects
+    # to the address it vetted, so DNS rebinding gains nothing. The transfer
+    # cap is a per-connection machine backstop and must stay >= max_audio_mb
+    # (podcast audio rides the same path); fetch_max_page_mb is the tighter
+    # decoded-bytes cap fetch_page enforces itself.
+    egress_max_transfer_mb: int = 64
+    egress_politeness_s: float = 2.0  # per-host spacing between connects
+    egress_idle_timeout_s: float = 60.0
+    egress_tunnel_lifetime_s: float = 300.0
+    fetch_max_page_mb: int = 10
+
     # backups
     backup_keep: int = 14
     backup_interval_hours: float = 6.0

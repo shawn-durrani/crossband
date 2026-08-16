@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, person_sync
 from . import auth
 from . import db
+from . import egress
 from . import engine
 from . import events
 from . import guest
@@ -214,6 +215,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # anything can insert a message - a notify() before bind_loop() would
         # otherwise silently no-op.
         events.bind_loop(asyncio.get_running_loop())
+        # #138 slice 1: one vetted egress path for every model-influenced
+        # URL. Tools discover the proxy via egress.proxy_url() - a module
+        # global bound to this process, exactly like the events bus above.
+        app.state.egress = egress.EgressProxy(
+            max_transfer_bytes=settings.egress_max_transfer_mb * 1024 * 1024,
+            politeness_s=settings.egress_politeness_s,
+            idle_timeout_s=settings.egress_idle_timeout_s,
+            lifetime_s=settings.egress_tunnel_lifetime_s)
+        await app.state.egress.start()
+        egress.set_proxy_url(app.state.egress.url)
+        log.info("egress proxy on %s", app.state.egress.url)
         await memory.probe(force=True)
         st = memory.status()
         if st["available"]:
@@ -266,6 +278,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await app.state.reflection_sweep
             await app.state.mcp.stop()
             await memory.aclose()
+            egress.set_proxy_url(None)
+            await app.state.egress.stop()
             events.unbind_loop()
             try:
                 app.state.lock.close()
