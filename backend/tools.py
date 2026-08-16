@@ -90,7 +90,11 @@ def tool_definitions(cfg):
         "description": (
             "Fetch a public web page and return its readable text. Use after web_search "
             "when a result looks promising and you need more than the snippet - salary "
-            "pages, articles, documentation. Public http(s) URLs only."
+            "pages, articles, documentation. Public http(s) URLs only. Only a URL that "
+            "has already appeared in this chat from a non-model source can be fetched: "
+            "a search result, the user's own message, or a link inside an "
+            "already-fetched page. For any other URL, web_search first, then fetch "
+            "exactly the URL a result names."
         ),
         "input_schema": {
             "type": "object",
@@ -121,9 +125,10 @@ def tool_definitions(cfg):
                 "URL from its RSS feed) and transcribe it with speech-to-text. Use "
                 "for podcasts without published transcripts - find the episode's "
                 "enclosure/audio URL first (web_search or fetch_page on the RSS "
-                "feed). Costs real money per audio hour, so confirm it's the right "
-                f"episode before calling. {cfg.get('max_audio_mb', 60)}MB cap "
-                "(~1 hour of MP3)."
+                "feed; like fetch_page, the URL must already appear in this chat "
+                "from a non-model source). Costs real money per audio hour, so "
+                f"confirm it's the right episode before calling. "
+                f"{cfg.get('max_audio_mb', 60)}MB cap (~1 hour of MP3)."
             ),
             "input_schema": {
                 "type": "object",
@@ -1273,6 +1278,12 @@ _RESEARCH_TOOLS = {
     "fetch_reddit_thread": fetch_reddit_thread,
 }
 
+# Tools whose url argument may reach an arbitrary host, gated by the seen-URL
+# ledger (#138 slice 2). The YouTube and Reddit fetchers stay ungated: each
+# extracts an id/path and talks only to its own fixed service, so a composed
+# URL cannot carry data to an attacker's server through them.
+_URL_LEDGER_GATED = {"fetch_page", "transcribe_audio_url"}
+
 _MEMORY_TOOLS = {
     "recall_memory": recall_memory,
     "search_history": search_history,
@@ -1321,6 +1332,24 @@ async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
         fn = _RESEARCH_TOOLS.get(name)
         if not fn:
             return f"Error: unknown tool {name}"
-        return await asyncio.to_thread(fn, args, cfg)
+        if name in _URL_LEDGER_GATED and cfg.get("chat_id"):
+            # #138 slice 2: model text never mints a fetchable URL - the
+            # target must already exist in this chat from a non-model
+            # source. The gate lives in dispatch so no provider adapter can
+            # reach the tool around it.
+            from . import url_ledger
+            verdict = await asyncio.to_thread(
+                url_ledger.check, cfg["chat_id"], str(args.get("url") or ""),
+                tuple(cfg.get("_round_tool_texts") or ()))
+            if verdict:
+                return verdict
+        out = await asyncio.to_thread(fn, args, cfg)
+        # Successful research output joins this round's in-flight ledger
+        # sources, so a URL surfaced by a search seconds ago is fetchable
+        # before anything persists. Errors echo model input - never added.
+        texts = cfg.get("_round_tool_texts")
+        if texts is not None and not str(out).startswith("Error"):
+            texts.append(str(out))
+        return out
     except Exception as e:
         return f"Error running {name}: {e}"

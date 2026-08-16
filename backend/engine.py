@@ -558,6 +558,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         round_cfg["shared_instructions"] = state["shared_instructions"]
         round_cfg["round_predecessors"] = list(spoken)  # dynamic, this round only
         round_cfg["chat_id"] = chat_id  # summon_claude_code queues per chat
+        # #138 slice 2: this round's research-tool outputs, shared by every
+        # participant, so a URL a search surfaced moments ago is fetchable
+        # before anything persists (tool events only insert with the reply).
+        round_cfg["_round_tool_texts"] = []
         # Room mode gates the pending-identity head (#28, night test 4): only
         # a room-mode chat has a diarization pass racing the round, so only
         # there may an unlabelled young turn honestly claim "name still
