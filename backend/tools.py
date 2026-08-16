@@ -16,18 +16,16 @@ import asyncio
 import base64
 import datetime
 import html
-import ipaddress
 import json
 import os
 import re
-import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 import httpx
 
-from . import diagnostics
+from . import diagnostics, egress
 from .memory_client import MemorySearchError
 
 USER_AGENT = "crossband/1.0 (local research assistant)"
@@ -935,27 +933,20 @@ def web_search(args, cfg):
 # ---------- fetch_page (with SSRF guard) ----------
 
 def _assert_public_url(url):
-    """SSRF guard: http(s) on standard ports, host must not resolve to any
-    private/loopback/link-local/reserved address."""
-    u = urlparse(url)
-    if u.scheme not in ("http", "https"):
-        raise ValueError("Only http(s) URLs are allowed")
-    if not u.hostname:
-        raise ValueError("URL has no host")
-    if u.port not in (None, 80, 443):
-        raise ValueError("Only standard ports (80/443) are allowed")
-    try:
-        infos = socket.getaddrinfo(u.hostname, None)
-    except OSError as e:
-        raise ValueError(f"Could not resolve host: {e}")
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.version == 6 and ip.ipv4_mapped:
-            ip = ip.ipv4_mapped  # ::ffff:127.0.0.1 must fail as 127.0.0.1
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
-                or ip.is_multicast or ip.is_unspecified):
-            raise ValueError("URL resolves to a non-public address")
-    return url
+    """SSRF pre-flight, sharing one policy with the egress proxy
+    (egress.vet_url): http(s) on standard ports, no URL credentials, only
+    publicly routable answers. The proxy re-enforces the policy at connect
+    time (#138); this call is the baseline that also covers direct
+    (proxyless) runs."""
+    return egress.vet_url(url)
+
+
+def _proxy_kw():
+    """Route model-influenced fetches through the egress proxy when this
+    process runs one (#138). Without a proxy (keyless tests, raw create_app)
+    fetches go direct and keep the pre-flight guard only."""
+    url = egress.proxy_url()
+    return {"proxy": url} if url else {}
 
 
 def _html_to_text(markup):
@@ -967,28 +958,45 @@ def _html_to_text(markup):
     return re.sub(r"\n\s*\n+", "\n\n", text).strip()
 
 
-def _get_following_redirects(url, headers, cfg):
-    """Manual redirect following so every hop is re-validated against the SSRF guard."""
+def _stream_following_redirects(url, headers, cfg, max_bytes):
+    """Manual redirect following so every hop is re-validated against the
+    SSRF guard, then a streamed read against a decoded-bytes cap: a page can
+    neither land somewhere private nor balloon in RAM (the old reader
+    buffered whatever arrived). Returns (final_url, content_type, body)."""
     for _ in range(4):
-        r = httpx.get(url, timeout=cfg["fetch_timeout"], follow_redirects=False,
-                      headers=headers)
-        if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
-            url = _assert_public_url(str(httpx.URL(url).join(r.headers["location"])))
-            continue
-        return r
+        with httpx.stream("GET", url, timeout=cfg["fetch_timeout"],
+                          follow_redirects=False, headers=headers,
+                          **_proxy_kw()) as r:
+            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+                url = _assert_public_url(str(httpx.URL(url).join(r.headers["location"])))
+                continue
+            r.raise_for_status()
+            buf = b""
+            for chunk in r.iter_bytes():
+                buf += chunk
+                if len(buf) > max_bytes:
+                    raise ValueError(
+                        f"page exceeds the {max_bytes // (1024 * 1024)}MB cap")
+            return url, r.headers.get("content-type", ""), buf
     raise ValueError("Too many redirects")
 
 
 def fetch_page(args, cfg):
     url = _assert_public_url((args.get("url") or "").strip())
-    r = _get_following_redirects(url, {"User-Agent": USER_AGENT}, cfg)
-    r.raise_for_status()
-    ctype = r.headers.get("content-type", "")
+    url, ctype, body = _stream_following_redirects(
+        url, {"User-Agent": USER_AGENT}, cfg,
+        cfg["fetch_max_page_mb"] * 1024 * 1024)
     if not any(t in ctype for t in ("html", "text", "json", "xml")):
         return f"Error: unsupported content type {ctype} - fetch_page reads text/HTML pages only"
-    text = r.text
+    m = re.search(r"charset=([\w-]+)", ctype)
+    try:
+        text = body.decode(m.group(1) if m else "utf-8", "replace")
+    except LookupError:
+        text = body.decode("utf-8", "replace")
     if "html" in ctype:
         text = _html_to_text(text)
+    # The reported URL is the FINAL hop, so a redirect cannot masquerade as
+    # its starting point.
     return f"Fetched: {url}\n\n{text}"[:cfg["max_tool_output"]]
 
 
@@ -1051,7 +1059,8 @@ def transcribe_audio_url(args, cfg):
     ctype = ""
     for _ in range(4):  # manual redirects so every hop is SSRF-validated
         with httpx.stream("GET", url, timeout=180, follow_redirects=False,
-                          headers={"User-Agent": USER_AGENT}) as resp:
+                          headers={"User-Agent": USER_AGENT},
+                          **_proxy_kw()) as resp:
             if resp.status_code in (301, 302, 303, 307, 308) and resp.headers.get("location"):
                 url = _assert_public_url(str(httpx.URL(url).join(resp.headers["location"])))
                 continue
@@ -1106,10 +1115,23 @@ def _reddit_get(path, cfg):
         base = "https://oauth.reddit.com"
     else:
         base = "https://www.reddit.com"
-    r = httpx.get(base + path, headers=headers, timeout=cfg["fetch_timeout"],
-                  follow_redirects=True)
-    r.raise_for_status()
-    return r.json()
+    url = base + path
+    for _ in range(4):
+        r = httpx.get(url, headers=headers, timeout=cfg["fetch_timeout"],
+                      follow_redirects=False, **_proxy_kw())
+        if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+            url = str(httpx.URL(url).join(r.headers["location"]))
+            host = urlparse(url).hostname or ""
+            # The Authorization header rides every hop, so hops may never
+            # leave Reddit; the guard also re-vets the address per hop.
+            if not (host == "reddit.com" or host.endswith(".reddit.com")
+                    or host == "redd.it"):
+                raise ValueError("Reddit redirected off reddit.com - not following")
+            _assert_public_url(url)
+            continue
+        r.raise_for_status()
+        return r.json()
+    raise ValueError("Too many redirects")
 
 
 def fetch_reddit_thread(args, cfg):

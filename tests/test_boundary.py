@@ -16,8 +16,8 @@ def test_loopback_hosts_allowed(client_factory):
 
 
 def test_ssrf_rejects_ipv4_mapped_ipv6(monkeypatch):
-    from backend import tools
-    monkeypatch.setattr(tools.socket, "getaddrinfo",
+    from backend import egress, tools
+    monkeypatch.setattr(egress.socket, "getaddrinfo",
                         lambda *a, **k: [(None, None, None, None, ("::ffff:127.0.0.1", 0))])
     with pytest.raises(ValueError, match="non-public"):
         tools._assert_public_url("http://mapped.example.com/")

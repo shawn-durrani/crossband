@@ -14,6 +14,14 @@ entry to a short paragraph; the issue holds the detail.
   composes: models choose among URLs that exist, they never author one.
   A blocked fetch says so plainly and points at web_search.
 
+- Every URL a model chooses to fetch now leaves the machine through a
+  local vetting egress proxy (#138, first slice). The proxy resolves a
+  host once, connects only to publicly routable addresses, and caps
+  transfer size, so DNS rebinding between check and fetch reaches
+  nothing local. `fetch_page` gains a decoded-size cap and reports the
+  final URL after redirects; Reddit fetches refuse redirects that
+  leave reddit.com.
+
 - A live microphone anywhere is now visible everywhere (#134). If a
   capture session is running in another window or device, every
   surface shows a banner naming it - louder when it is a second mic in
