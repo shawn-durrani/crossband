@@ -27,3 +27,8 @@ webauthn>=2.2,<3
 sherpa-onnx>=1.13,<2
 numpy
 pytest
+# Rendered page viewing (view_page, #138): the pip package is small; the
+# Chromium build it drives is an operator step (`.venv/bin/playwright
+# install chromium`, ~160MB). backend/browse.py gates the tool on both, so
+# absence just means models keep fetch_page.
+playwright>=1.45

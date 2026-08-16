@@ -343,6 +343,10 @@ class Settings(BaseModel):
     egress_idle_timeout_s: float = 60.0
     egress_tunnel_lifetime_s: float = 300.0
     fetch_max_page_mb: int = 10
+    # view_page (#138 slice 3): wall clock for one rendered view, worker
+    # process included. The render itself runs in a contained subprocess
+    # behind the egress proxy (backend/browse.py).
+    browse_timeout_s: float = 20.0
 
     # backups
     backup_keep: int = 14

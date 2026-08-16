@@ -102,6 +102,26 @@ def tool_definitions(cfg):
             "required": ["url"],
         },
     })
+    from . import browse as _browse
+    if _browse.offered():
+        defs.append({
+            "name": "view_page",
+            "description": (
+                "View a public web page as a browser renders it (JavaScript "
+                "executed) and return the visible text plus its links, "
+                "numbered. Use when fetch_page comes back thin or empty - "
+                "app-style sites, dashboards, pages built by scripts. Slower "
+                "and heavier than fetch_page, so try fetch_page first. Same "
+                "URL rule as fetch_page: only a URL that has already appeared "
+                "in this chat from a non-model source."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"url": {"type": "string",
+                                       "description": "Absolute http(s) URL"}},
+                "required": ["url"],
+            },
+        })
     defs.append({
         "name": "fetch_youtube_transcript",
         "description": (
@@ -1000,6 +1020,31 @@ def fetch_page(args, cfg):
     return f"Fetched: {url}\n\n{text}"[:cfg["max_tool_output"]]
 
 
+def view_page(args, cfg):
+    """Rendered viewing (#138 slice 3): the actual render runs in the
+    contained worker (backend/browse.py owns the isolation story). Links are
+    budgeted BEFORE the page text so navigation never falls off the end of
+    the output cap - they are what the seen-URL ledger admits next."""
+    from . import browse
+    url = _assert_public_url((args.get("url") or "").strip())
+    out = browse.render(url, cfg)
+    head = [f"Viewed: {out.get('final_url') or url}"]
+    if out.get("title"):
+        head.append(f"Title: {out['title']}")
+    link_lines = []
+    for i, l in enumerate(out.get("links") or [], 1):
+        label = (l.get("t") or "").strip()
+        link_lines.append(f"{i}. {label + ' - ' if label else ''}{l.get('h')}")
+    links_block = ("\n\nLinks on this page:\n" + "\n".join(link_lines)) if link_lines else ""
+    marker = "\n…[truncated]"
+    budget = (cfg["max_tool_output"] - len("\n".join(head)) - len(links_block)
+              - len(marker) - 2)
+    text = (out.get("text") or "").strip() or "(the rendered page has no visible text)"
+    if budget > 200 and len(text) > budget:
+        text = text[:budget] + marker
+    return ("\n".join(head) + "\n\n" + text + links_block)[:cfg["max_tool_output"]]
+
+
 # ---------- fetch_youtube_transcript ----------
 
 def youtube_transcript_text(url):
@@ -1273,6 +1318,7 @@ async def save_memory(args, cfg, memory, origin_agent=None):
 _RESEARCH_TOOLS = {
     "web_search": web_search,
     "fetch_page": fetch_page,
+    "view_page": view_page,
     "fetch_youtube_transcript": fetch_youtube_transcript,
     "transcribe_audio_url": transcribe_audio_url,
     "fetch_reddit_thread": fetch_reddit_thread,
@@ -1282,7 +1328,7 @@ _RESEARCH_TOOLS = {
 # ledger (#138 slice 2). The YouTube and Reddit fetchers stay ungated: each
 # extracts an id/path and talks only to its own fixed service, so a composed
 # URL cannot carry data to an attacker's server through them.
-_URL_LEDGER_GATED = {"fetch_page", "transcribe_audio_url"}
+_URL_LEDGER_GATED = {"fetch_page", "view_page", "transcribe_audio_url"}
 
 _MEMORY_TOOLS = {
     "recall_memory": recall_memory,

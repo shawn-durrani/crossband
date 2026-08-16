@@ -5,6 +5,17 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Models can view rendered pages (#138, third slice): a new `view_page`
+  tool runs the page in a real browser and returns the visible text and
+  its links, numbered - for app-style sites `fetch_page` reads as thin
+  or empty. The render is contained: a separate worker process holding
+  no keys or tokens, every request (subresources included) forced
+  through the vetting egress proxy, WebRTC's proxy-bypass disabled,
+  downloads refused, a fresh throwaway profile per view, and a hard
+  deadline that kills the worker. Requires Playwright plus a one-time
+  `playwright install chromium`; without them the tool is not offered
+  and nothing else changes.
+
 - A model can no longer invent the URL it fetches (#138, second slice).
   `fetch_page` and `transcribe_audio_url` now accept only URLs that
   already appeared in this chat from a non-model source: your messages,
