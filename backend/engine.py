@@ -428,7 +428,11 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     context-assembly/provider-TTFT stage split."""
     cfg = settings.as_cfg()
     handback = make_handback(settings, memory, mcp)
-    live = {"participant": None, "content": "", "tools": [], "usage": None}
+    # web_domains lives for the WHOLE round (never reset per participant):
+    # once the round has read the web, every later assistant message in it
+    # carries the stamp (#138 slice 4).
+    live = {"participant": None, "content": "", "tools": [], "usage": None,
+            "web_domains": set()}
 
     def persist_live(interrupted=False):
         p = live["participant"]
@@ -461,7 +465,8 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         # connected client via the global events bus, same as an out-of-band
         # deploy notice does.
         msg = db.insert_message(con, chat_id, p["slug"], content,
-                                usage_json=usage_json, tool_events=live["tools"])
+                                usage_json=usage_json, tool_events=live["tools"],
+                                web_sources=live.get("web_domains"))
         con.close()
         live["participant"] = None
         live["content"] = ""
@@ -562,6 +567,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # participant, so a URL a search surfaced moments ago is fetchable
         # before anything persists (tool events only insert with the reply).
         round_cfg["_round_tool_texts"] = []
+        # #138 slice 4: the SAME set object persist_live stamps onto each
+        # assistant insert - run_tool adds the domains web tools touch.
+        round_cfg["_round_web_domains"] = live["web_domains"]
         # Room mode gates the pending-identity head (#28, night test 4): only
         # a room-mode chat has a diarization pass racing the round, so only
         # there may an unlabelled young turn honestly claim "name still

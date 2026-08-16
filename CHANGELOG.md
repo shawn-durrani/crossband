@@ -5,6 +5,17 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Web content now carries its provenance everywhere it goes (#138,
+  fourth slice). Fetched and rendered pages arrive marked as untrusted
+  quoted data naming their domain, so every model in the room can see
+  what it is reading. A round that read the web stamps its replies with
+  the source domains; the stamp rides into the memory service (contract
+  1.3), which holds facts born from those turns for your review - a
+  public page cannot write memory by phrasing a sentence well, and an
+  explicit save cannot slip past the same hold. On an older memory
+  service the stamp is ignored (the previous baseline) and one log line
+  says so.
+
 - Models can view rendered pages (#138, third slice): a new `view_page`
   tool runs the page in a real browser and returns the visible text and
   its links, numbered - for app-style sites `fetch_page` reads as thin

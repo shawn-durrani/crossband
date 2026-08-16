@@ -20,11 +20,13 @@ class FakeMemory:
         self.recalled = []
         self.searched = []
 
-    async def save_fact(self, content, origin_agent, event_date=None, confidence="medium"):
+    async def save_fact(self, content, origin_agent, event_date=None,
+                        confidence="medium", web_sources=None):
         if self.fail:
             return None
         self.saved.append({"content": content, "origin_agent": origin_agent,
-                           "event_date": event_date, "confidence": confidence})
+                           "event_date": event_date, "confidence": confidence,
+                           "web_sources": web_sources})
         return {"id": 1, "quarantined": self.quarantined}
 
     async def recall(self, query, limit=10, include_superseded=False):
