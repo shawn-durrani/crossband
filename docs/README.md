@@ -22,11 +22,14 @@ covers.
    and tuning, written for households that are not the one it was calibrated
    in. Where the trigger phrases came from, the English bias, every tuning
    knob, similar-sounding voices, and the scale bounds.
-5. [docs/REMOTE_ACCESS.md](REMOTE_ACCESS.md): the whole app, voice included,
+5. [docs/WEB_RESEARCH.md](WEB_RESEARCH.md): the web tools and what
+   contains them. What a hostile page cannot do, the one-line Chromium
+   install that turns on rendered viewing, and the limits.
+6. [docs/REMOTE_ACCESS.md](REMOTE_ACCESS.md): the whole app, voice included,
    from your phone over Tailscale. Nothing exposed to the internet.
-6. [docs/OPERATIONS.md](OPERATIONS.md): keeping a live instance up. The
+7. [docs/OPERATIONS.md](OPERATIONS.md): keeping a live instance up. The
    launchd supervisor, logs, restart-on-crash, reboot survival, backups.
-7. [docs/PRODUCERS.md](PRODUCERS.md): the machine-tooling side-channel, if
+8. [docs/PRODUCERS.md](PRODUCERS.md): the machine-tooling side-channel, if
    you want your own deploy watcher or scheduler talking to chats. Slash
    commands out, notices and events in, the acknowledgement contract, the
    bearer credential, and what a producer must never do.

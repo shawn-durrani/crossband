@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The web research surface is documented (#145): docs/WEB_RESEARCH.md
+  covers the tools, the containment model, the one-line install for
+  rendered viewing, and the limits - including that human-verification
+  challenges stay closed and pasting is the path for gated sources.
+  SECURITY.md gains the outbound story, ARCHITECTURE.md maps the new
+  modules, and the docs index and README feature line catch up.
+
 - OpenAI-compatible servers without the Responses API now work (#144).
   The first reply on such a seat discovers the missing route and replays
   through classic chat completions in the same turn; later replies skip
