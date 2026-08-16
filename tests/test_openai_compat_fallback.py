@@ -231,7 +231,23 @@ def test_projection_roles_text_and_attachment_marker():
     assert "look at this" in msgs[1]["content"]
     assert "[attachment omitted" in msgs[1]["content"]
     assert msgs[2] == {"role": "assistant", "content": "plain string reply"}
-    assert msgs[3] == {"role": "system", "content": "per-turn note"}
+    assert msgs[3] == {"role": "user", "content": "per-turn note"}
+
+
+def test_projection_never_places_system_after_index_zero():
+    """#157: the trailing volatile block rides as a developer item, and
+    mlx_lm refuses any system message that is not the first. The framed
+    block was designed to ride in a user turn (the Anthropic adapter has
+    always delivered it that way), so the projection must too."""
+    msgs = providers.build_chat_completion_messages("SYS", [
+        {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        {"role": "assistant", "content": "reply"},
+        {"role": "developer", "content": [
+            {"type": "input_text", "text": "[Context refresh] note"}]},
+    ])
+    assert [m["role"] for m in msgs].index("system") == 0
+    assert all(m["role"] != "system" for m in msgs[1:])
+    assert msgs[-1] == {"role": "user", "content": "[Context refresh] note"}
 
 
 def test_projection_tool_items_become_tool_call_pairs():

@@ -918,12 +918,17 @@ def build_openai_input(self_slug, transcript, names, cfg):
 def build_chat_completion_messages(stable, input_items):
     """Project a Responses-API request onto classic chat completions, for
     servers that never implemented /v1/responses (#144). `instructions`
-    becomes the system message; input items keep their roles (`developer`
-    maps to `system`, keeping its instruction rank); function_call /
-    function_call_output items become assistant tool_calls and role:"tool"
-    results. Attachment parts beyond text are replaced by an explicit
-    omission marker: these endpoints are text-first, and a marker the model
-    can see beats an image encoding the server may silently mangle."""
+    becomes the system message; input items keep their roles, except that
+    `developer` maps to `user` (#157): the only developer item this app
+    sends is the trailing volatile block, strict servers (mlx_lm) accept a
+    system message at position 0 only, and the block's context-refresh
+    frame exists precisely so it can ride in a user turn - the Anthropic
+    adapter has always delivered it that way. The invariant: no system
+    message after index 0, ever. function_call / function_call_output
+    items become assistant tool_calls and role:"tool" results. Attachment
+    parts beyond text are replaced by an explicit omission marker: these
+    endpoints are text-first, and a marker the model can see beats an
+    image encoding the server may silently mangle."""
     msgs = [{"role": "system", "content": stable}]
     for item in input_items:
         itype = item.get("type")
@@ -939,7 +944,7 @@ def build_chat_completion_messages(stable, input_items):
             continue
         role = item.get("role") or "user"
         if role == "developer":
-            role = "system"
+            role = "user"
         content = item.get("content")
         if isinstance(content, str):
             text = content
