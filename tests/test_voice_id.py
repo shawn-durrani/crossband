@@ -28,6 +28,7 @@ model and WITHOUT sherpa-onnx present:
    present and SKIPS cleanly when it is not (the CI case).
 """
 
+import time
 import asyncio
 import hashlib
 import os
@@ -250,9 +251,16 @@ def test_audit_banks_if_changed_runs_once_per_bank_shape(store, monkeypatch):
     assert voiceid.audit_banks_if_changed(_cfg()) is True
     assert voiceid.audit_banks_if_changed(_cfg()) is False  # unchanged bank
     assert calls["n"] == 1
-    # a new clip changes the fingerprint: the next call audits again
+    # a new clip changes the fingerprint - but inside the #133 cool-down
+    # window the audit DEFERS (a still-learning bank changes on nearly
+    # every utterance, and re-auditing each one starved the request path)
     store["store"].add_clip(store["alex"], _tone(_ALEX_VAL, 2), 16000,
                             "accumulated")
+    assert voiceid.audit_banks_if_changed(_cfg()) is False
+    assert calls["n"] == 1
+    # once the window passes, the deferred change runs - never dropped
+    monkeypatch.setattr(voiceid, "_audit_last_ran",
+                        time.monotonic() - voiceid.AUDIT_MIN_INTERVAL_S - 1)
     assert voiceid.audit_banks_if_changed(_cfg()) is True
     assert calls["n"] == 2
 
