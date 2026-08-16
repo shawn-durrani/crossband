@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A model can no longer invent the URL it fetches (#138, second slice).
+  `fetch_page` and `transcribe_audio_url` now accept only URLs that
+  already appeared in this chat from a non-model source: your messages,
+  search results, links inside already-fetched pages, transcripts, text
+  attachments, machine notices. This closes the channel where a hostile
+  page instructs a model to smuggle private context out inside a URL it
+  composes: models choose among URLs that exist, they never author one.
+  A blocked fetch says so plainly and points at web_search.
+
 - A live microphone anywhere is now visible everywhere (#134). If a
   capture session is running in another window or device, every
   surface shows a banner naming it - louder when it is a second mic in
