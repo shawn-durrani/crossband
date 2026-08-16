@@ -80,11 +80,14 @@ def _tool_call_chunk(index, call_id, name, arguments):
 
 class FakeClient:
     """responses.create fails as configured; chat.completions.create pops
-    one prepared stream per round and records its kwargs."""
+    one prepared stream per round and records its kwargs. A stream=False
+    call is the #151 liveness ping, counted separately and answered (or
+    refused) without consuming a prepared round."""
 
-    def __init__(self, chat_rounds, responses_exc=None):
+    def __init__(self, chat_rounds, responses_exc=None, ping_ok=True):
         self.responses_calls = 0
         self.chat_calls = []
+        self.ping_calls = 0
         rounds = [list(r) for r in chat_rounds]
         outer = self
 
@@ -93,6 +96,12 @@ class FakeClient:
             raise responses_exc if responses_exc else _not_found()
 
         async def _chat_create(**kwargs):
+            if kwargs.get("stream") is False:
+                outer.ping_calls += 1
+                if not ping_ok:
+                    raise httpx.ReadError("Connection reset by peer")
+                return SimpleNamespace(choices=[SimpleNamespace(
+                    message=SimpleNamespace(content="ok"))])
             outer.chat_calls.append(kwargs)
             return _ChatStream(rounds.pop(0))
 
@@ -166,6 +175,44 @@ def test_non_404_errors_are_not_treated_as_missing_route(monkeypatch):
     with pytest.raises(RuntimeError, match="connection reset"):
         _run(dict(P), client, monkeypatch)
     assert providers._chat_completions_only == set()
+
+
+def test_reset_while_reading_the_404_still_falls_back(monkeypatch):
+    """#151: mlx closes the Responses 404 without draining the request
+    body, so a transcript-sized request sees a raw ReadError instead of
+    NotFoundError - every time. A live one-token chat ping disambiguates
+    a missing route from a dead server and classifies the endpoint."""
+    client = FakeClient([[_text_chunk("hi"), _finish_chunk()]],
+                        responses_exc=httpx.ReadError("reset by peer"))
+    events = _run(dict(P), client, monkeypatch)
+    assert client.ping_calls == 1
+    assert "".join(v for k, v in events if k == "text") == "hi"
+    assert BASE_URL in providers._chat_completions_only
+
+
+def test_apiconnectionerror_variant_also_falls_back(monkeypatch):
+    """The same race surfaces as the SDK's own wrapper when it dies inside
+    the request send rather than the error-body read."""
+    client = FakeClient(
+        [[_text_chunk("hi"), _finish_chunk()]],
+        responses_exc=openai.APIConnectionError(
+            request=httpx.Request("POST", BASE_URL + "/responses")))
+    events = _run(dict(P), client, monkeypatch)
+    assert "".join(v for k, v in events if k == "text") == "hi"
+    assert BASE_URL in providers._chat_completions_only
+
+
+def test_dead_server_is_never_classified(monkeypatch):
+    """Ping fails too: the server is down, not routeless. The original
+    error propagates and nothing is remembered, so recovery is retried
+    fresh next turn."""
+    client = FakeClient([], responses_exc=httpx.ReadError("reset"),
+                        ping_ok=False)
+    with pytest.raises(httpx.ReadError):
+        _run(dict(P), client, monkeypatch)
+    assert client.ping_calls == 1
+    assert providers._chat_completions_only == set()
+    assert client.chat_calls == []
 
 
 # ── the projection ──────────────────────────────────────────────────────────

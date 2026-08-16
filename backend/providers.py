@@ -1499,19 +1499,37 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
         try:
             stream = await client.responses.create(**kwargs)
         except Exception as exc:
+            import httpx
             import openai
             # A 404 for the ROUTE on a custom endpoint means "no Responses
             # API here" (#144): remember that and replay this turn as chat
             # completions. Guarded to the first round (nothing streamed yet,
             # so the replay cannot duplicate text) and to seats WITH a
             # base_url - on OpenAI proper a 404 is a real error, kept loud.
-            if (base_url and not reply_text_parts
-                    and isinstance(exc, openai.NotFoundError)):
+            #
+            # The 404 does not always arrive intact (#151): a server that
+            # closes without draining the request body (mlx_lm's HTTP/1.0
+            # handler) can reset the connection mid-read, and a real chat
+            # turn's transcript-sized body loses that race every time. A
+            # connection-level death here is ambiguous - missing route or
+            # dead server - so it earns a one-token chat ping: alive means
+            # classify and fall back, dead means the original error stays.
+            fell = None
+            if base_url and not reply_text_parts:
+                if isinstance(exc, openai.NotFoundError):
+                    fell = "404"
+                elif isinstance(exc, (openai.APIConnectionError,
+                                      httpx.ReadError,
+                                      httpx.RemoteProtocolError)):
+                    if await _chat_ping(client, p["model"]):
+                        fell = ("connection reset on the Responses route, "
+                                "but a chat-completions ping answered")
+            if fell:
                 _chat_completions_only.add(base_url)
                 log.warning(
-                    "%s has no Responses API (404) - falling back to chat "
-                    "completions for this endpoint from now on (#144)",
-                    base_url)
+                    "%s has no Responses API (%s) - falling back to chat "
+                    "completions for this endpoint from now on (#144/#151)",
+                    base_url, fell)
                 async for ev in _stream_openai_chat(p, client, stable,
                                                     input_items, transcript,
                                                     names, cfg, tools, memory):
@@ -1590,6 +1608,24 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
             raise
     yield ("text", "\n\n*(research budget for this reply reached - answering with what I have)*")
     yield ("usage", usage)
+
+
+async def _chat_ping(client, model):
+    """Is this endpoint alive and speaking chat completions? One token,
+    non-streaming, body a few bytes - small enough to win the reset race a
+    transcript-sized request loses (#151). True only on a genuine
+    completion; any error means "do not classify, let the original raise"."""
+    try:
+        await client.chat.completions.create(
+            model=model, max_tokens=1, stream=False,
+            messages=[{"role": "user", "content": "ping"}],
+            # Bounded: a cold local model can take a couple of minutes to
+            # page in (fine), but a wedged server must fail the turn in
+            # bounded time, not hold it for the SDK's ten-minute default.
+            timeout=180.0)
+        return True
+    except Exception:
+        return False
 
 
 async def _stream_openai_chat(p, client, stable, input_items, transcript,
