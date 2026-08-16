@@ -8,7 +8,10 @@ API key (keys themselves never touch the database).
 
 The OpenAI adapter uses the Responses API (client.responses.create with
 stream=True), which supports reasoning_effort together with function tools -
-removing the predecessor's chat.completions drop-and-retry hack.
+removing the predecessor's chat.completions drop-and-retry hack. Custom
+endpoints that 404 the Responses ROUTE itself (mlx_lm.server, LM Studio,
+vLLM, llama.cpp) fall back per-endpoint to classic chat completions (#144);
+that is discovery of a missing route, never silent parameter dropping.
 """
 
 import asyncio
@@ -29,6 +32,13 @@ log = logging.getLogger("crossband.providers")
 
 _anthropic_clients = {}
 _openai_clients = {}
+
+# base_urls discovered to lack the Responses API: the server 404'd the route
+# itself, so this endpoint speaks classic chat completions instead (#144).
+# In-process on purpose - a restart re-discovers with one cheap 404. Only
+# seats WITH a base_url ever land here; the default OpenAI endpoint always
+# has /v1/responses, so a 404 there stays a loud error.
+_chat_completions_only: set = set()
 
 # Last cache-prefix component hashes per (chat_id, seat slug). Lets each call
 # name WHICH component changed since that seat's previous call in that chat, so
@@ -905,6 +915,46 @@ def build_openai_input(self_slug, transcript, names, cfg):
     return items
 
 
+def build_chat_completion_messages(stable, input_items):
+    """Project a Responses-API request onto classic chat completions, for
+    servers that never implemented /v1/responses (#144). `instructions`
+    becomes the system message; input items keep their roles (`developer`
+    maps to `system`, keeping its instruction rank); function_call /
+    function_call_output items become assistant tool_calls and role:"tool"
+    results. Attachment parts beyond text are replaced by an explicit
+    omission marker: these endpoints are text-first, and a marker the model
+    can see beats an image encoding the server may silently mangle."""
+    msgs = [{"role": "system", "content": stable}]
+    for item in input_items:
+        itype = item.get("type")
+        if itype == "function_call":
+            msgs.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": item["call_id"], "type": "function",
+                 "function": {"name": item["name"],
+                              "arguments": item.get("arguments") or "{}"}}]})
+            continue
+        if itype == "function_call_output":
+            msgs.append({"role": "tool", "tool_call_id": item["call_id"],
+                         "content": item.get("output") or ""})
+            continue
+        role = item.get("role") or "user"
+        if role == "developer":
+            role = "system"
+        content = item.get("content")
+        if isinstance(content, str):
+            text = content
+        else:
+            parts = []
+            for part in (content or []):
+                if part.get("type") == "input_text":
+                    parts.append(part.get("text") or "")
+                else:
+                    parts.append("[attachment omitted: this endpoint receives text only]")
+            text = "\n".join(x for x in parts if x)
+        msgs.append({"role": role, "content": text})
+    return msgs
+
+
 # ---------- streaming ----------
 
 TOOLS_SYSTEM_NOTE = (
@@ -1421,6 +1471,14 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
          "parameters": t["input_schema"]}
         for t in (tools or [])
     ]
+    base_url = p.get("base_url") or ""
+    if base_url in _chat_completions_only:
+        # This endpoint already told us it has no Responses API (#144).
+        async for ev in _stream_openai_chat(p, client, stable, input_items,
+                                            transcript, names, cfg, tools,
+                                            memory):
+            yield ev
+        return
     usage = {"input": 0, "cache_read": 0, "cache_creation": 0, "output": 0}
     reply_text_parts = []  # accumulated across the whole turn (all tool rounds)
     # for the attribution audit at natural completion - see _check_attribution.
@@ -1438,7 +1496,28 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
             kwargs["reasoning"] = {"effort": effort}
         if oa_tools:
             kwargs["tools"] = oa_tools
-        stream = await client.responses.create(**kwargs)
+        try:
+            stream = await client.responses.create(**kwargs)
+        except Exception as exc:
+            import openai
+            # A 404 for the ROUTE on a custom endpoint means "no Responses
+            # API here" (#144): remember that and replay this turn as chat
+            # completions. Guarded to the first round (nothing streamed yet,
+            # so the replay cannot duplicate text) and to seats WITH a
+            # base_url - on OpenAI proper a 404 is a real error, kept loud.
+            if (base_url and not reply_text_parts
+                    and isinstance(exc, openai.NotFoundError)):
+                _chat_completions_only.add(base_url)
+                log.warning(
+                    "%s has no Responses API (404) - falling back to chat "
+                    "completions for this endpoint from now on (#144)",
+                    base_url)
+                async for ev in _stream_openai_chat(p, client, stable,
+                                                    input_items, transcript,
+                                                    names, cfg, tools, memory):
+                    yield ev
+                return
+            raise
         final = None
         async for event in stream:
             etype = getattr(event, "type", "")
@@ -1503,6 +1582,118 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
                 input_items.append({
                     "type": "function_call_output",
                     "call_id": c.call_id,
+                    "output": output,
+                })
+        except BaseException:
+            for t in tasks:
+                t.cancel()
+            raise
+    yield ("text", "\n\n*(research budget for this reply reached - answering with what I have)*")
+    yield ("usage", usage)
+
+
+async def _stream_openai_chat(p, client, stable, input_items, transcript,
+                              names, cfg, tools, memory):
+    """Classic chat-completions leg of the OpenAI adapter (#144): same tool
+    rounds, same concurrency, same events - used only for endpoints that 404
+    the Responses route. Differences are deliberate, not drift: no
+    reasoning/effort (the servers this path exists for predate it, and an
+    unknown parameter is a 400 on several), no store flag, usage taken from
+    the final chunk when the server sends one and left at zero when it
+    doesn't (these seats price as self-hosted $0 anyway; see config)."""
+    cc_tools = [
+        {"type": "function", "function": {
+            "name": t["name"], "description": t["description"],
+            "parameters": t["input_schema"]}}
+        for t in (tools or [])
+    ]
+    usage = {"input": 0, "cache_read": 0, "cache_creation": 0, "output": 0}
+    reply_text_parts = []
+    for _ in range(cfg["max_tool_rounds"]):
+        kwargs = dict(
+            model=p["model"],
+            messages=build_chat_completion_messages(stable, input_items),
+            max_tokens=cfg["max_response_tokens"],
+            stream=True,
+        )
+        if cc_tools:
+            kwargs["tools"] = cc_tools
+        stream = await client.chat.completions.create(**kwargs)
+        finish = None
+        calls = {}  # stream index -> accumulating {"id","name","arguments"}
+        async for chunk in stream:
+            u = getattr(chunk, "usage", None)
+            if u is not None:
+                cached = 0
+                details = getattr(u, "prompt_tokens_details", None)
+                if details is not None:
+                    cached = getattr(details, "cached_tokens", 0) or 0
+                usage["input"] += (getattr(u, "prompt_tokens", 0) or 0) - cached
+                usage["cache_read"] += cached
+                usage["output"] += getattr(u, "completion_tokens", 0) or 0
+            if not getattr(chunk, "choices", None):
+                continue  # usage-only final chunk
+            choice = chunk.choices[0]
+            finish = getattr(choice, "finish_reason", None) or finish
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+            if getattr(delta, "content", None):
+                reply_text_parts.append(delta.content)
+                yield ("text", delta.content)
+            for tc in (getattr(delta, "tool_calls", None) or []):
+                slot = calls.setdefault(
+                    tc.index, {"id": "", "name": "", "arguments": ""})
+                if getattr(tc, "id", None):
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        slot["name"] = fn.name
+                    if getattr(fn, "arguments", None):
+                        slot["arguments"] += fn.arguments
+        if finish != "tool_calls" or not calls:
+            _check_attribution("".join(reply_text_parts), transcript, p, cfg)
+            yield ("usage", usage)
+            return
+        ordered = [calls[i] for i in sorted(calls)]
+        for i, c in enumerate(ordered):
+            if not c["id"]:  # some servers omit ids; outputs must still pair
+                c["id"] = f"call_{i}"
+        def _tool_input(c):
+            try:
+                return json.loads(c["arguments"] or "{}")
+            except json.JSONDecodeError:
+                return {}
+        inputs = [_tool_input(c) for c in ordered]
+        # Same concurrency and event order as the Responses loop above.
+        tasks = [asyncio.create_task(
+                     run_tool(c["name"], tool_input, cfg,
+                              origin_agent=(p.get("slug") or p.get("name")),
+                              memory=memory))
+                 for c, tool_input in zip(ordered, inputs)]
+        call_names = [c["name"] for c in ordered]
+        label = (work_status.batch_activity(call_names, mcp=cfg.get("_mcp"))
+                 if work_status.is_announceable(call_names) else None)
+        try:
+            async for kind, val in _tool_batch_events(tasks, label):
+                if kind == "work_status":
+                    yield ("work_status", val)
+                    continue
+                idx = val
+                c, tool_input, task = ordered[idx], inputs[idx], tasks[idx]
+                output = await task
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": c["id"],
+                    "name": c["name"],
+                    "arguments": c["arguments"] or "{}",
+                })
+                yield ("tool", {"tool": c["name"], "input": tool_input,
+                                "output": output})
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": c["id"],
                     "output": output,
                 })
         except BaseException:

@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- OpenAI-compatible servers without the Responses API now work (#144).
+  The first reply on such a seat discovers the missing route and replays
+  through classic chat completions in the same turn; later replies skip
+  straight there. This covers mlx_lm.server, LM Studio, vLLM and
+  llama.cpp, whose baseline is chat completions. The default OpenAI
+  endpoint never falls back, so a real 404 there stays loud.
+
 - Web content now carries its provenance everywhere it goes (#138,
   fourth slice). Fetched and rendered pages arrive marked as untrusted
   quoted data naming their domain, so every model in the room can see
