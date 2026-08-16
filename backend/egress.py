@@ -143,6 +143,7 @@ class EgressProxy:
         self._server = None
         self._pace_lock = asyncio.Lock()
         self._next_by_host = {}
+        self._conns = set()  # live handler tasks, cancelled on stop()
         self.port = None
         self.url = None
 
@@ -154,10 +155,17 @@ class EgressProxy:
         return self
 
     async def stop(self):
+        """Stop listening and cancel live connections. Cancelling our own
+        handler-task registry (rather than Server.close_clients) keeps this
+        off 3.13-only API and off wait_closed's wait-for-handlers behaviour,
+        which would otherwise let one long tunnel stall shutdown."""
         if self._server is None:
             return
         self._server.close()
-        self._server.close_clients()
+        for task in list(self._conns):
+            task.cancel()
+        if self._conns:
+            await asyncio.gather(*self._conns, return_exceptions=True)
         with contextlib.suppress(Exception):
             await self._server.wait_closed()
         self._server = None
@@ -165,6 +173,7 @@ class EgressProxy:
     # -- per-connection plumbing --
 
     async def _handle(self, reader, writer):
+        self._conns.add(asyncio.current_task())
         upstream_writer = None
         try:
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"),
@@ -191,6 +200,7 @@ class EgressProxy:
         except Exception:
             log.exception("egress handler failed")
         finally:
+            self._conns.discard(asyncio.current_task())
             for w in (writer, upstream_writer):
                 if w is not None:
                     with contextlib.suppress(Exception):
