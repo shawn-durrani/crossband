@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Responses-route discovery survives the 404 arriving as a connection
+  reset (#151). Servers that close without draining the request body
+  reset transcript-sized requests every time, so the #144 fallback never
+  engaged in real chats. A connection-level failure on an unclassified
+  custom endpoint now earns a one-token chat ping: alive means classify
+  and fall back, dead means the original error stays loud.
+
 - The web research surface is documented (#145): docs/WEB_RESEARCH.md
   covers the tools, the containment model, the one-line install for
   rendered viewing, and the limits - including that human-verification
