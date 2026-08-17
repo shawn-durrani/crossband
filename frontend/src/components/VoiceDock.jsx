@@ -330,10 +330,12 @@ export default function VoiceDock({
       {/* The anchor. role="status" so a screen reader hears the state change
           that the orb conveys visually. */}
       <div className="voice-orb-row" role="status">
-        <div className={`voice-orb ${voiceState}`} aria-hidden="true" />
+        {/* 'working' (round generating, nothing audible yet) shares the
+            transcribing visual - both are "busy on your turn". */}
+        <div className={`voice-orb ${voiceState === 'working' ? 'transcribing' : voiceState}`} aria-hidden="true" />
         <span className="voice-status">
           {voiceState === 'listening' && (pttMode ? 'Your turn - press Send' : 'Listening')}
-          {voiceState === 'transcribing' && 'Thinking…'}
+          {(voiceState === 'transcribing' || voiceState === 'working') && 'Thinking…'}
           {voiceState === 'speaking' && 'Speaking - talk to interrupt'}
         </span>
       </div>

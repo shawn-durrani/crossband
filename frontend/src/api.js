@@ -224,7 +224,9 @@ export async function streamSSE(url, body, onEvent, signal, method = 'POST') {
   if (!res.ok || !res.body) {
     let detail = res.statusText
     try { detail = (await res.json()).detail || detail } catch { /* ignore */ }
-    throw new Error(detail)
+    const err = new Error(detail)
+    err.status = res.status // callers route e.g. a 409 round-conflict to a hold
+    throw err
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
