@@ -220,6 +220,18 @@ export default class VoiceController {
     })
   }
 
+  // Diagnostics-only, content-free: timestamped console logging for the
+  // turn-handoff investigation (issue: voice turn-handoff stuck in
+  // listening / false "2 microphones live"). Never disturbs capture,
+  // barge-in, or playback - console.debug only, no network, no state
+  // read-back. Safe to leave on by default; the payload is small and
+  // never includes transcript text.
+  _vlog(tag, data) {
+    const t = (typeof performance !== 'undefined' && performance.now
+      ? performance.now() : Date.now()).toFixed(1)
+    console.debug(`[voice] ${t}ms ${tag}`, data || '')
+  }
+
   // Provider/model/voice labels for a speaker, for per-model trace segmentation.
   _traceMeta(slug) {
     const p = this.getParticipants?.().find((x) => x.slug === slug)
@@ -322,7 +334,11 @@ export default class VoiceController {
       let msg; try { msg = JSON.parse(e.data) } catch { return }
       if (msg.session) {
         // #134: our capture-session id, so the every-surface mic banner
-        // can tell this session apart from an orphan's.
+        // can tell this session apart from an orphan's. Log the sid
+        // hand-off so a reconnect that leaves the OLD sid registered
+        // server-side (Bug B: false "2 microphones live") can be
+        // correlated against backend/routers/voice.py's sid lifetime log.
+        this._vlog('stt:sid', { previousSid: this.captureSid || null, sid: msg.session })
         this.captureSid = msg.session
         return
       }
@@ -347,6 +363,8 @@ export default class VoiceController {
     }
     ws.onerror = () => this._fallbackToBatch('websocket error')
     ws.onclose = (e) => {
+      this._vlog('stt:close', { sid: this.captureSid || null, code: e?.code, reason: e?.reason,
+                                ourClose: !!this._sttClosing })
       this.sttWs = null
       if (e && e.code === 4001) {
         // #134: the owner ended this capture from another surface. This
@@ -489,11 +507,13 @@ export default class VoiceController {
   }
 
   _state(s) {
+    if (s !== this.state) this._vlog('state', { from: this.state, to: s })
     this.state = s
     this.onState?.(s)
   }
 
   async start() {
+    this._vlog('session:start', { roomMode: this.roomMode })
     // Unlock audio while we still hold the start-button gesture, and on any
     // later click - so a session that auto-resumes on reload (no gesture) isn't
     // left permanently muted with no way to recover. Makes the "click anywhere"
@@ -580,6 +600,7 @@ export default class VoiceController {
   }
 
   stop() {
+    this._vlog('session:stop', { state: this.state, roundActive: this.roundActive, captureSid: this.captureSid })
     this.active = false
     if (this._unlockHandler) {
       window.removeEventListener('pointerdown', this._unlockHandler)
@@ -727,13 +748,25 @@ export default class VoiceController {
         this.voicedHistory.shift()
       }
 
-      if (this.playing > 0 || this.roundActive) {
+      // Diagnostics-only: which side of this gate the loop is on, logged only
+      // on the edge (not every tick, or this would spam at ~60Hz). This is
+      // the exact fork the turn-handoff investigation is watching - a
+      // `roundActive` that never flips back to false pins the loop on the
+      // 'gated' (barge-in-only) side forever, which is Bug A's mechanism.
+      const gated = this.playing > 0 || this.roundActive
+      if (gated !== this._lastVadGated) {
+        this._lastVadGated = gated
+        this._vlog('vad:branch', { gated, playing: this.playing, roundActive: this.roundActive })
+      }
+
+      if (gated) {
         // models are talking/generating - listen only for a barge-in
         if (this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)) {
           this.speechStart = now - INTERRUPT_CONFIRM_MS
           if (!this._turnBuffer.length) this._logicalStart = this.speechStart
           this.lastVoice = now
           this._sttStartStreaming()
+          this._vlog('vad:bargeIn', { playing: this.playing, roundActive: this.roundActive })
           this.interrupt() // capture continues; finalize sends the interjection
         } else if (!this.speechStart && now - this.recStarted > RECORDER_ROTATE_MS) {
           this._startRecorder() // bound stale audio while they monologue
@@ -773,6 +806,7 @@ export default class VoiceController {
         if (spec.fire) this._sttSend({ speculative: true })
         // Auto mode sends after a pause; manual mode waits for finalizeNow().
         if (!this.manualMode && now - this.lastVoice > this.silenceMs) {
+          this._vlog('vad:finalize', { cause: 'gap', silenceMs: now - this.lastVoice })
           this._finalizeUtterance('gap')
         } else if (!this.manualMode &&
                    shouldForceEndpoint({ turnMs: now - this.speechStart, voiced })) {
@@ -784,7 +818,9 @@ export default class VoiceController {
           // going until a real gap. The total bound is the #60 guarantee's
           // new home: past it, even a zero-gap noise wall sends.
           const total = now - (this._logicalStart || this.speechStart)
-          this._finalizeUtterance(total >= MAX_TURN_TOTAL_MS ? 'gap' : 'cap')
+          const cause = total >= MAX_TURN_TOTAL_MS ? 'gap' : 'cap'
+          this._vlog('vad:finalize', { cause, forced: true, turnMs: now - this.speechStart, total })
+          this._finalizeUtterance(cause)
         }
       }
     }
@@ -793,6 +829,7 @@ export default class VoiceController {
 
   async _finalizeUtterance(cause = 'gap') {
     const speechMs = this.lastVoice - this.speechStart
+    this._vlog('finalizeUtterance', { cause, speechMs, roundActive: this.roundActive, playing: this.playing })
     // #104: a cap ends the SEGMENT, not the turn - text buffers and the
     // round waits for a real gap. 'gap' (or the total bound, mapped to gap
     // by the caller) is the only real end.
@@ -960,10 +997,13 @@ export default class VoiceController {
     // rules, including "a barge-in must never leak past its own round", are
     // unit-tested. Every event advances it; only the ones below also have a
     // playback side effect.
-    const gate = gateEvent(
-      { roundActive: this.roundActive, dropQueue: this.dropQueue }, ev.type)
+    const before = { roundActive: this.roundActive, dropQueue: this.dropQueue }
+    const gate = gateEvent(before, ev.type)
     this.roundActive = gate.roundActive
     this.dropQueue = gate.dropQueue
+    if (gate.roundActive !== before.roundActive || gate.dropQueue !== before.dropQueue) {
+      this._vlog('gate:onEvent', { evType: ev.type, before, after: gate })
+    }
     if (ev.type === 'speaker_start') {
       // Defer opening TTS until the reply has real content, so a benched model's
       // ellipsis-only "…" reply is never voiced (ElevenLabs otherwise breathes it).
@@ -1013,9 +1053,11 @@ export default class VoiceController {
   }
 
   onRoundDone() {
+    const before = { roundActive: this.roundActive, dropQueue: this.dropQueue }
     const gate = gateRoundDone()
     this.roundActive = gate.roundActive
     this.dropQueue = gate.dropQueue
+    this._vlog('gate:onRoundDone', { before, after: gate })
     // The TEXT/round stream has ended - but TTS and the sequential per-speaker
     // playChain keep running AFTER this, so the later speakers' play_invoked/
     // playback/queue-wait marks haven't happened yet. Flushing here
