@@ -5,6 +5,12 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A summoned Claude Code visit that cannot start now says so in the
+  chat (#170). If Claude Code was switched off after the summons, or
+  another visit was still running, the summons was dropped in silence
+  while a seat had already promised the guest was coming. The drop now
+  lands as a system notice, so nobody keeps waiting for it.
+
 - The "two microphones live" banner stops accusing your own reconnect
   (#167). A phone reconnect registers a fresh capture session while the
   dead one lingers server-side for up to 40 seconds, so the banner

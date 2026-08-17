@@ -813,11 +813,35 @@ GUEST_CONTEXT_MESSAGES = 10   # recent-transcript tail shown to the guest
 GUEST_CONTEXT_CHARS = 4000
 
 
+def _summons_dropped_notice(chat_id, reason):
+    """A consumed summons that cannot start must say so IN the chat (#170).
+    The summoning seat has already told the user the guest will join (the
+    tool result guest.request returned), so silence here turns that honest
+    report false after the fact: the user waits for a visit that never
+    arrives, and the next round's seats still believe one is coming.
+    speaker='system' is ground truth for both. Called from the round
+    generator, so it runs on the event loop and insert_message's bus
+    notify is safe - the same rule as routers/chats.py post_notice."""
+    try:
+        con = db.connect()
+        try:
+            db.insert_message(con, chat_id, "system",
+                              f"Claude Code did not join: {reason}. The "
+                              "summons was dropped - ask again if it's "
+                              "still wanted.")
+        finally:
+            con.close()
+    except Exception:
+        log.warning("summons-drop notice failed for chat %s", chat_id,
+                    exc_info=True)
+
+
 def _launch_guest_job(chat_id, summons, cfg, handback, narrate=True):
     """Prepare a summoned guest's context + resume handle and start it as a
     DETACHED job. Returns the `guest_job` SSE dict to push to the round's
     attached client (so its status chip appears immediately), or None when the
-    guest can't run (code disabled after summons, or a job already in flight).
+    guest can't run (code disabled after summons, or a job already in flight) -
+    in which case the chat is told, since the summons is already consumed.
     The job itself runs independently of this round - see guestjobs.start."""
     from . import guestjobs
     con = db.connect()
@@ -825,10 +849,17 @@ def _launch_guest_job(chat_id, summons, cfg, handback, narrate=True):
     names = db.participant_names(con)
     messages = db.get_chat_messages(con, chat_id)
     con.close()
-    if not chat or not chat["code_enabled"]:
+    if not chat:
+        return None
+    if not chat["code_enabled"]:
+        _summons_dropped_notice(chat_id, "Claude Code is switched off for "
+                                         "this chat")
         return None
     if guestjobs.active_for_chat(chat_id):
-        return None  # one guest job per chat - block, don't queue
+        # one guest job per chat - block, don't queue
+        _summons_dropped_notice(chat_id, "another Claude Code visit is still "
+                                         "running in this chat")
+        return None
 
     lines = []
     for m in messages[-GUEST_CONTEXT_MESSAGES:]:

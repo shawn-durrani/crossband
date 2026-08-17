@@ -134,6 +134,34 @@ def test_claimed_reports_a_running_background_job(tmp_path, monkeypatch):
     asyncio.run(go())
 
 
+def test_dropped_summons_says_so_in_the_chat(tmp_path):
+    """#170: a summons consumed after code_enabled flipped off (or while
+    another visit was running) used to vanish silently - the summoning seat
+    had already told the user the guest would join, and nothing corrected
+    it. The drop now lands as a system notice in the chat."""
+    db.configure(tmp_path / "data")
+    db.init()
+    con = db.connect()
+    cid = con.execute(
+        "INSERT INTO chats(created_at, updated_at, code_enabled) VALUES(?,?,0)",
+        (db.now(), db.now())).lastrowid
+    con.commit()
+    con.close()
+
+    async def go():
+        # On the event loop, exactly as the round generator calls it.
+        return engine._launch_guest_job(cid, {"task": "t", "repo": "demo"},
+                                        {}, None)
+    assert asyncio.run(go()) is None
+
+    con = db.connect()
+    msgs = db.get_chat_messages(con, cid)
+    con.close()
+    assert msgs and msgs[-1]["speaker"] == "system"
+    assert "did not join" in msgs[-1]["content"]
+    assert "switched off" in msgs[-1]["content"]
+
+
 # ---------- exactly-once: not even offered once claimed ----------
 
 def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(app, monkeypatch):
