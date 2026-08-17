@@ -295,6 +295,24 @@ def capture_sessions() -> list:
             for v in _captures.values()]
 
 
+def _pop_capture(sid: str, reason: str) -> None:
+    """Diagnostics-only wrapper around `_captures.pop`: logs sid, reason
+    (client_done/disconnect/killed_remotely/exception/relay_exit) and the
+    session's lifetime in seconds. Idempotent like the raw pop it replaces -
+    every call site races the others (pump_up's own finally vs. the outer
+    one), so a second pop for the same sid is expected and logs nothing.
+    Part of the turn-handoff investigation's Bug B instrumentation: a
+    lifetime that keeps running past the client's own reconnect (see
+    frontend/src/voice.js's `stt:sid`/`stt:close` logs) is the signature of
+    the orphaned-session false "2 microphones live" banner."""
+    entry = _captures.pop(sid, None)
+    if entry is None:
+        return
+    lifetime_s = time.time() - entry["started_at"]
+    log.info("stt capture close: sid=%s chat=%s reason=%s lifetime_s=%.1f live_now=%d",
+             sid, entry["chat_id"], reason, lifetime_s, len(_captures))
+
+
 @router.get("/api/voice/captures")
 def list_captures():
     """#134: the truth the every-surface mic banner reads."""
@@ -315,7 +333,7 @@ async def kill_capture(sid: str):
                                 reason="ended by the owner")
     except Exception:
         pass
-    _captures.pop(sid, None)
+    _pop_capture(sid, "killed_remotely")
     return {"ok": True}
 
 
@@ -359,6 +377,16 @@ async def stt_stream_relay(ws: WebSocket):
                       "started_at": time.time(),
                       "client": (ws.headers.get("user-agent") or "")[:80],
                       "ws": ws}
+    # Diagnostics-only, content-free: sid open/close-with-reason and session
+    # lifetime, for the turn-handoff investigation (issue: voice turn-handoff
+    # stuck in listening / false "2 microphones live"). Bug B's leading
+    # hypothesis is a client reconnect registering a NEW sid here before the
+    # OLD one is provably dead - this pairs with the client-side
+    # `[voice] ... stt:sid` / `stt:close` logs in frontend/src/voice.js so a
+    # field capture can show a stale sid's lifetime overlapping a fresh one
+    # for the same chat_id.
+    log.info("stt capture open: sid=%s chat=%s live_now=%d",
+             sid, chat_id, len(_captures))
     await ws.send_json({"session": sid})
     # Capture experiment (#28 phase 4): record which mic profile this session
     # captured with, so field tests can compare crosstalk label rates between
@@ -460,12 +488,20 @@ async def stt_stream_relay(ws: WebSocket):
         ) as eleven:
 
             async def pump_up():
+                # Diagnostics-only: which of the three ways this loop ends -
+                # the client sending {"done": true}, the socket actually
+                # disconnecting, or some other exception - so the sid close
+                # log below (Bug B instrumentation) can distinguish a clean
+                # handoff from the "client moved on, server hasn't noticed
+                # yet" case the false "2 microphones live" banner needs.
+                _close_reason = "disconnect"
                 try:
                     nonlocal seconds
                     first = True
                     while True:
                         msg = await ws.receive_json()
                         if msg.get("done"):
+                            _close_reason = "client_done"
                             return
                         if "room_mode" in msg and "audio" not in msg:
                             # Control frame, ours alone: toggle the tee and send
@@ -605,12 +641,15 @@ async def stt_stream_relay(ws: WebSocket):
                                             "transcription continues", exc_info=True)
                         await eleven.send(json.dumps(payload))
 
+                except Exception as exc:
+                    _close_reason = f"exception:{type(exc).__name__}"
+                    raise
                 finally:
                     # #134: capture is over when the client's frames stop -
                     # done, disconnect, or error alike. The handler may keep
                     # draining upstream after this; the registry must not
                     # wait for it (the outer finally stays as the backstop).
-                    _captures.pop(sid, None)
+                    _pop_capture(sid, _close_reason)
             async def pump_down():
                 nonlocal last_partial
                 try:
@@ -658,7 +697,7 @@ async def stt_stream_relay(ws: WebSocket):
         for task in (up, down):
             if task and not task.done():
                 task.cancel()
-        _captures.pop(sid, None)          # #134: the registry never lies
+        _pop_capture(sid, "relay_exit")   # #134: the registry never lies - backstop, usually a no-op second pop
         if seconds:
             con = db.connect()
             db.log_voice_usage(con, chat_id, "stt", seconds, voice.voice_cost("stt", seconds, cfg))

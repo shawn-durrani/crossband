@@ -6,6 +6,19 @@ import { eventBelongsToActiveChat } from '../streamGuard'
 import { voiceReplaySpeakerEligible } from '../eventStream'
 import { createBatch, addFragment, cancelBatch, flipBatch, combineFragments } from '../textQueue'
 
+// Diagnostics-only, content-free: timestamped console logging for the
+// turn-handoff investigation (issue: voice turn-handoff stuck in listening
+// / false "2 microphones live"). Tracks entry/exit of the two functions
+// that call VoiceController.onRoundDone() - runStream and voiceAttachRound -
+// since Bug A's leading hypothesis is a path through one of these that
+// leaves `roundActive` set without a matching onRoundDone() call. Never
+// logs message/transcript content, only ids and control flow.
+function rlog(tag, data) {
+  const t = (typeof performance !== 'undefined' && performance.now
+    ? performance.now() : Date.now()).toFixed(1)
+  console.debug(`[round] ${t}ms ${tag}`, data || '')
+}
+
 // The round loop's client side: everything between "the user hit Send" and
 // "the round is over" and, deliberately, the STATE that produces, not just
 // the behaviour. The transcript, the streaming flag, round progress,
@@ -157,11 +170,12 @@ export function useRoundStream({
   }
 
   async function runStream(url, body, { queueable = false } = {}) {
+    const chatId = activeChatIdRef.current
+    rlog('runStream:enter', { chatId, url, queueable })
     streamingRef.current = true
     setStreaming(true)
     roundCtrl.current = new AbortController()
     const signal = roundCtrl.current.signal
-    const chatId = activeChatIdRef.current
     // Light the running indicator for this chat immediately; the server's
     // running_chat_ids reconciles it (and keeps it lit if the round detaches).
     cb.current.onRunningMark(chatId)
@@ -210,6 +224,7 @@ export function useRoundStream({
         cb.current.onBanner(e.message)
       }
     } finally {
+      rlog('runStream:exit', { chatId, aborted, roundId: track.roundId, eventCount: track.count })
       roundCtrl.current = null
       streamingRef.current = false
       setStreaming(false)
@@ -231,6 +246,7 @@ export function useRoundStream({
       // NB: don't clear speakingSlug here - the text round is done but the TTS
       // audio is still playing. voice.js onSpeaker(null) clears it when the last
       // reply finishes speaking, so the orb stays coloured for the whole reply.
+      rlog('runStream:onRoundDone', { chatId, roundId: track.roundId })
       voiceRef.current?.onRoundDone()
       cb.current.refreshState()
       // Refresh the round chat's voice/context totals - guarded to the LIVE
@@ -257,7 +273,13 @@ export function useRoundStream({
   // tailing from the buffer start (after=0) voices the whole narration exactly
   // once - nothing was spoken yet.
   async function voiceAttachRound(chatId, speaker) {
-    if (voiceAttachInFlight.current || streamingRef.current) return
+    rlog('voiceAttachRound:enter', { chatId, speaker,
+                                     inFlight: voiceAttachInFlight.current,
+                                     streaming: streamingRef.current })
+    if (voiceAttachInFlight.current || streamingRef.current) {
+      rlog('voiceAttachRound:skip', { reason: 'inFlightOrStreaming' })
+      return
+    }
     voiceAttachInFlight.current = true
     try {
       const { round_id, last_round_id } =
@@ -275,19 +297,41 @@ export function useRoundStream({
         || (voiceReplaySpeakerEligible(speaker) ? last_round_id : null)
       // Re-check the world after the await: still this chat, still in voice, not
       // a round we already fed, and not one we started/aborted out of.
-      if (chatId !== activeChatIdRef.current || !voiceActiveRef.current) return
-      if (streamingRef.current || !target || tailedRounds.current.has(target)) return
+      // NOTE (diagnostics): every branch below that returns WITHOUT reaching
+      // the streamSSE call also never calls onRoundDone() - by construction
+      // that's fine here, since none of them can have set roundActive=true
+      // (onEvent is only ever invoked from inside the streamSSE call below).
+      // Logged anyway so a real-world capture can confirm that invariant
+      // actually holds, per the turn-handoff investigation's Bug A.
+      if (chatId !== activeChatIdRef.current || !voiceActiveRef.current) {
+        rlog('voiceAttachRound:skip', { reason: 'chatOrVoiceChanged', chatId,
+                                        activeChatId: activeChatIdRef.current,
+                                        voiceActive: voiceActiveRef.current })
+        return
+      }
+      if (streamingRef.current || !target || tailedRounds.current.has(target)) {
+        rlog('voiceAttachRound:skip', { reason: 'streamingOrNoTarget', target,
+                                        streaming: streamingRef.current,
+                                        alreadyTailed: target ? tailedRounds.current.has(target) : null })
+        return
+      }
       tailedRounds.current.add(target)
       const ctrl = new AbortController()
+      rlog('voiceAttachRound:streamStart', { chatId, target })
       try {
         await streamSSE(
           `/api/chats/${chatId}/round/stream?round_id=${target}&after=0`,
           null,
           (ev) => { if (chatId === activeChatIdRef.current) voiceRef.current?.onEvent(ev) },
           ctrl.signal, 'GET')
-      } catch { /* dropped/aborted - messages persisted regardless */ }
+      } catch (e) {
+        // dropped/aborted - messages persisted regardless
+        rlog('voiceAttachRound:streamError', { chatId, target, message: e?.message })
+      }
+      rlog('voiceAttachRound:onRoundDone', { chatId, target })
       voiceRef.current?.onRoundDone() // clears roundActive/dropQueue for the next turn
     } finally {
+      rlog('voiceAttachRound:exit', { chatId })
       voiceAttachInFlight.current = false
     }
   }
