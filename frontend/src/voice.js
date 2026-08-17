@@ -1,4 +1,5 @@
 import { captureConstraints, captureProfileName } from './captureProfile.js'
+import { sidToKill } from './micRegistry.js'
 import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { couldBePass } from './voiceView.js'
@@ -343,6 +344,16 @@ export default class VoiceController {
         // server-side (Bug B: false "2 microphones live") can be
         // correlated against backend/routers/voice.py's sid lifetime log.
         this._vlog('stt:sid', { previousSid: this.captureSid || null, sid: msg.session })
+        const stale = sidToKill(this.captureSid, msg.session)
+        if (stale) {
+          // Our own previous capture session. After a reconnect the server
+          // can hold that half-open socket registered for tens of seconds,
+          // and until it dies every surface calls our own reconnect a second
+          // live microphone. Kill it by sid: targeted, a no-op when the
+          // server already reaped it, and it can never touch a REAL second
+          // device's session (only the id this client was handed earlier).
+          fetch(`/api/voice/captures/${stale}/kill`, { method: 'POST' }).catch(() => {})
+        }
         this.captureSid = msg.session
         return
       }
@@ -440,6 +451,11 @@ export default class VoiceController {
   _closeSttStream() {
     this.sttStreaming = false
     this._pcmPre = []
+    // A deliberate close ends the session server-side ({done:true} below), so
+    // the sid is finished business: keep it and the NEXT session's first sid
+    // would try to kill a long-gone session. Only the unexpected-close path
+    // (reconnect) keeps captureSid, which is exactly when the kill is wanted.
+    this.captureSid = null
     resetLedger(this._ledger)
     clearTimeout(this._sttCommitTimer)
     clearTimeout(this._sttReopenTimer)
