@@ -46,7 +46,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import diag_mcp, provenance
+from . import diag_mcp, passes, provenance
 
 log = logging.getLogger("crossband.guest")
 
@@ -472,8 +472,12 @@ def delegation_note(claim: dict | None) -> str:
             f"(repo: {claim['repo']}). It is not offered to you as a tool this "
             "turn - don't ask for it again, and don't spend your reply "
             "narrating that it was summoned; the user already sees that. "
-            "Answer anything else normally, or pass with a bare \"…\" if "
-            "that was all you had to add."
+            # The token names the ONLY string passes.is_pass recognises. The
+            # note used to say a bare "…", which no code recognises: obedient
+            # seats' ellipsis replies persisted as real messages and voice
+            # (which never speaks ellipsis-only replies) rendered dead air.
+            f"Answer anything else normally, or reply with a bare "
+            f"{passes.PASS_TOKEN} if that was all you had to add."
         )
     return (
         f"Claude Code is ALREADY working in the background on: {claim['task']} "
@@ -481,8 +485,8 @@ def delegation_note(claim: dict | None) -> str:
         "running. It is not offered to you as a tool this turn. Don't summon "
         "it again, and don't spend your reply discussing whether to or "
         "announcing that it's working - the user already sees its status. "
-        "Answer anything else normally, or pass with a bare \"…\" if there's "
-        "nothing new to add."
+        f"Answer anything else normally, or reply with a bare "
+        f"{passes.PASS_TOKEN} if there's nothing new to add."
     )
 
 
