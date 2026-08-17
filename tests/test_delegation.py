@@ -29,7 +29,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import db, engine, guest, guestjobs
+from backend import db, engine, guest, guestjobs, passes
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import group_chat_system
@@ -79,6 +79,22 @@ def test_claimed_reports_a_summons_queued_this_round():
     assert "ALREADY been summoned this round" in note
     assert "claude" in note and "look at the round loop" in note
     assert "not offered to you as a tool" in note
+
+
+def test_delegation_note_names_the_recognised_pass_token():
+    # The note used to say a bare "…", which passes.is_pass does not
+    # recognise: obedient seats' ellipsis replies persisted as real
+    # messages, and voice (which never speaks ellipsis-only replies)
+    # rendered them as dead air (#169). The note must name the ONE token
+    # the engine actually treats as a pass.
+    queued = guest.delegation_note({"state": "queued", "task": "t", "repo": "r",
+                                    "mode": "investigate", "requested_by": "gpt"})
+    running = guest.delegation_note({"state": "running", "task": "t", "repo": "r",
+                                     "mode": "investigate"})
+    for note in (queued, running):
+        assert passes.PASS_TOKEN in note
+        assert "…" not in note
+    assert passes.is_pass(passes.PASS_TOKEN)
 
 
 def test_claimed_reports_a_running_background_job(tmp_path, monkeypatch):

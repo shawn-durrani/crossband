@@ -5,6 +5,12 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Seats told to stand back while Claude Code works now pass properly
+  (#169). The delegation note said to pass with a bare "…", a token
+  nothing recognises, so obedient seats' ellipsis replies landed as
+  real messages and voice rendered them as dead air. The note now
+  names the real [pass] token, pinned to the engine's own constant.
+
 - Voice says "Thinking…" while the models work, and a dead round can no
   longer trap the microphone (#165). The generation wait used to render
   as "Listening…", which invited speech the gated mic then discarded or
