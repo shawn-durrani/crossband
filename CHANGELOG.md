@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A wedged seat can no longer hold a round hostage (#168). A seat that
+  produces no stream event at all for three minutes - no text, no tool
+  event, no liveness check-in - is errored and the round moves on, with
+  any partial reply kept. Provider SDK defaults allowed about ten
+  silent minutes, during which /send returned 409 and the voice gate
+  stayed armed. Every stream event resets the bound, so slow healthy
+  replies and long tool runs are never cut.
+
 - Voice stalls now leave server-side evidence (#171). The client posts
   a content-free beacon when the round guard force-clears a dead round,
   or when speech strands for ten seconds behind a gated microphone. The

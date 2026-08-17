@@ -27,6 +27,16 @@ from .config import compute_cost, provenance_for
 
 log = logging.getLogger("crossband.engine")
 
+# A seat that produces no stream event at all - no text delta, no tool
+# event, no usage, no work_status check-in - for this long is treated as
+# wedged: it is errored and the round moves on (#168). Progress-idle, not
+# wall clock: every event resets the bound, so a long healthy reply or a
+# slow tool run is never cut. Without this, the provider SDKs' own
+# defaults allow ~ten silent minutes (a wedged local server does exactly
+# that), and the whole app waits on the round for all of it - /send
+# returns 409 and a voice client's turn gate stays armed.
+SEAT_STALL_TIMEOUT_S = 180.0
+
 
 def sse(payload):
     return f"data: {json.dumps(payload)}\n\n"
@@ -690,11 +700,26 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             live["usage"] = None
             yield sse({"type": "speaker_start", "speaker": participant["slug"]})
             t_provider_call = time.monotonic() if t_iter_start is not None else None
+            stream = providers.stream_reply(
+                participant, roster, transcript, names, round_cfg, project, summary,
+                voice_mode, tools=tool_defs, memory=tool_memory,
+            )
             try:
-                async for kind, payload in providers.stream_reply(
-                    participant, roster, transcript, names, round_cfg, project, summary,
-                    voice_mode, tools=tool_defs, memory=tool_memory,
-                ):
+                stream_it = stream.__aiter__()
+                while True:
+                    try:
+                        kind, payload = await asyncio.wait_for(
+                            stream_it.__anext__(), timeout=SEAT_STALL_TIMEOUT_S)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        # Surfaces through the ordinary per-seat error path
+                        # below: an error event, any partial content persists,
+                        # the round moves on. wait_for has already cancelled
+                        # the pending provider step.
+                        raise RuntimeError(
+                            f"produced nothing for {int(SEAT_STALL_TIMEOUT_S)}s "
+                            "- treating the seat as stalled and moving on")
                     if kind == "text":
                         if t_provider_call is not None:
                             # First visible token - record the split once,
@@ -739,6 +764,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             except (GeneratorExit, asyncio.CancelledError):
                 raise  # client disconnected - run_round persists the partial reply
             except Exception as e:
+                # Close the provider generator before reporting. On the stall
+                # path wait_for already cancelled the pending step; this is
+                # the bounded finaliser, so a wedged SDK teardown can never
+                # re-wedge the round it just stalled.
+                try:
+                    await asyncio.wait_for(stream.aclose(), timeout=5.0)
+                except Exception:
+                    pass
                 yield sse({"type": "error", "speaker": participant["slug"], "message": str(e)})
                 if not live["content"]:
                     live["participant"] = None
