@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { captureBanner, foreignCaptures } from './micRegistry.js'
+import { captureBanner, foreignCaptures, sidToKill } from './micRegistry.js'
 
 const A = { sid: 'aaa', chat_id: 1, started_at: 1755300000 }
 const B = { sid: 'bbb', chat_id: 2, started_at: 1755300000 }
@@ -30,4 +30,15 @@ test('a second mic in THIS chat is the loud case (#134 doubled turns)', () => {
   // without a session of our own, another window is just 'elsewhere' -
   // nothing is doubled if only one mic is live
   assert.equal(captureBanner([A], null, 1).level, 'elsewhere')
+})
+
+test('a reconnect kills exactly its own previous session (#167)', () => {
+  // The false "two microphones" case: the same client reconnects, the old
+  // sid lingers server-side, and the banner counts one mic twice.
+  assert.equal(sidToKill('aaa', 'bbb'), 'aaa')
+  // A first session has nothing to kill; a re-sent identical sid neither.
+  assert.equal(sidToKill(null, 'bbb'), null)
+  assert.equal(sidToKill(undefined, 'bbb'), null)
+  assert.equal(sidToKill('aaa', 'aaa'), null)
+  assert.equal(sidToKill('aaa', null), null)
 })

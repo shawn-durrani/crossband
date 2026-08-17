@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The "two microphones live" banner stops accusing your own reconnect
+  (#167). A phone reconnect registers a fresh capture session while the
+  dead one lingers server-side for up to 40 seconds, so the banner
+  counted the same microphone twice. The client now ends its own
+  previous session the moment it is handed a new id, and dead sockets
+  are reaped within about 20 seconds. A real second device still shows
+  the banner exactly as before.
+
 - Seats told to stand back while Claude Code works now pass properly
   (#169). The delegation note said to pass with a bare "…", a token
   nothing recognises, so obedient seats' ellipsis replies landed as

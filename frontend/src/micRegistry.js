@@ -7,6 +7,17 @@ export function foreignCaptures(captures, ownSid) {
   return (captures || []).filter((c) => c.sid !== ownSid)
 }
 
+// The reconnect self-heal: when the relay hands this client a NEW sid while
+// it still remembers its previous one, that previous session is OURS and
+// already dead on this side - but the server can hold its half-open socket
+// registered for tens of seconds, and until it dies every surface counts it
+// as a second live microphone. The caller kills exactly the returned sid.
+// Never fires for a first session, and can never name another device's
+// session: only the id this same client was handed earlier.
+export function sidToKill(prevSid, newSid) {
+  return prevSid && newSid && prevSid !== newSid ? prevSid : null
+}
+
 // The banner's verdict: null (nothing to say), or {level, text}.
 // 'double' outranks 'elsewhere': a second mic in THIS chat means every
 // utterance is heard twice - that is both a privacy problem and the

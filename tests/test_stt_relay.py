@@ -28,6 +28,18 @@ def app(tmp_path):
     return create_app(settings)
 
 
+def test_uvicorn_config_reaps_dead_websockets_in_bounded_time(tmp_path):
+    """#167: uvicorn's 20 s/20 s ping defaults left a dead capture socket
+    (phone reconnect, half-open TCP) registered for up to ~40 s, which the
+    every-surface mic banner reported as a second live microphone. The
+    served config pins tighter pings so an orphan dies within ~20 s."""
+    from backend.__main__ import uvicorn_config
+    cfg = uvicorn_config(object(), Settings(data_dir=str(tmp_path / "data")))
+    assert cfg.ws_ping_interval == 10.0
+    assert cfg.ws_ping_timeout == 10.0
+    assert cfg.timeout_graceful_shutdown is not None
+
+
 class FakeEleven:
     """Async CM + async iterator standing in for the ElevenLabs socket:
     echoes a partial for every audio frame, a committed transcript for the
