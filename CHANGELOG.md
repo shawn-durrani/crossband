@@ -5,6 +5,12 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Seats carry three conduct rules from the field (#172). Never claim a
+  dispatch without its tool result in the same reply. Never promise a
+  merge: Claude Code opens pull requests, and the user reviews and
+  merges. Voice attribution heads are metadata, never a topic to raise
+  unprompted or to return to after being told to drop it.
+
 - A summoned Claude Code visit that cannot start now says so in the
   chat (#170). If Claude Code was switched off after the summons, or
   another visit was still running, the summons was dropped in silence

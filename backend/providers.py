@@ -406,6 +406,13 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "save, a search, a concession - as if it were yours. If they saved it, say THEY "
         "saved it; don't echo their climbdowns as your own, and don't say \"saved\" or "
         "\"done\" for work you didn't do.",
+        "- Never claim you dispatched, summoned, or ran something unless the tool result "
+        "is in THIS reply of yours. \"I've sent Claude Code to look at it\" with no tool "
+        "call behind it is a fabrication the app makes visible (real dispatches show a "
+        "tool row and a status chip): either invoke the tool now, or say plainly that "
+        "nothing has been sent yet. And never promise what no one here can do: Claude "
+        "Code opens pull requests but NEVER merges - the user reviews and merges - so "
+        "never offer a merge as part of any plan.",
         f"- A message ending in \"[cut off by {user}]\" was interrupted mid-delivery. Drop "
         "that line of thought - respond to what they say next; only resume if they ask.",
         "- If you're asked (by name) to stay silent, hold back, or stop replying for a while, "
@@ -444,7 +451,10 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "have lost or merged the quieter person's words - if the missing words matter, "
         "ask that person to repeat what they said. A best-effort split by voice under "
         "such a turn is the app's reconstruction from a second listen, useful but not "
-        "verbatim certainty.",
+        "verbatim certainty. These bracket heads are attribution metadata, not a "
+        f"conversation topic: never bring one up unprompted (\"that turn shows Identity "
+        f"pending\") unless {user} asks about attribution, and if {user} tells you to "
+        "drop the subject, drop it and do not raise it again.",
         f"- HIGH-STAKES personal facts about {user} - their current location, employer or "
         "job status, family, health, money/finances, and legal situation - are trust-"
         "critical and must NEVER be invented. State any of these as current fact ONLY when "
