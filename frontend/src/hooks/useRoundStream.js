@@ -62,6 +62,11 @@ export function useRoundStream({
   // Streaming-message ids per speaker, for delta/end/tool events to target.
   const liveIds = useRef({})
   const roundCtrl = useRef(null)
+  // The detached-round replay's controller (voiceAttachRound). Stored so
+  // Stop and teardown can abort it - a local-only controller left that
+  // stream unkillable, and a half-open hang there wedged the voice gate
+  // until page reload.
+  const attachCtrl = useRef(null)
   // Round ids we've already fed to voice - the one we started (round_start),
   // and any detached round we attached to. Stops a voice-mode re-attach from
   // double-voicing a round, and from re-attaching one the user barged out of.
@@ -211,6 +216,16 @@ export function useRoundStream({
           cb.current.onBanner('No connection - holding your message; it sends when the tunnel returns.')
           ensureSendRetry()
           return
+        } else if (queueable && e.status === 409) {
+          // A round is still running server-side. The round guard un-gates
+          // the mic before a wedged round's REAL end, so a voice turn can
+          // land mid-round; dropping it would lose words already spoken.
+          // Hold it with the offline queue and retry when the round ends.
+          pendingSends.current.push({ url, body })
+          setHeldSends(pendingSends.current.length)
+          cb.current.onBanner('A round is still finishing - holding your message; it sends when the round ends.')
+          ensureSendRetry()
+          return
         } else {
           throw e
         }
@@ -317,6 +332,7 @@ export function useRoundStream({
       }
       tailedRounds.current.add(target)
       const ctrl = new AbortController()
+      attachCtrl.current = ctrl
       rlog('voiceAttachRound:streamStart', { chatId, target })
       try {
         await streamSSE(
@@ -332,6 +348,7 @@ export function useRoundStream({
       voiceRef.current?.onRoundDone() // clears roundActive/dropQueue for the next turn
     } finally {
       rlog('voiceAttachRound:exit', { chatId })
+      attachCtrl.current = null
       voiceAttachInFlight.current = false
     }
   }
@@ -463,6 +480,7 @@ export function useRoundStream({
     const chatId = activeChatIdRef.current
     if (chatId) api.abortRound(chatId).catch(() => {})
     roundCtrl.current?.abort()
+    attachCtrl.current?.abort()
   }
 
   // Tear down the LIVE CLIENT-SIDE view of the current chat before navigating
@@ -476,6 +494,7 @@ export function useRoundStream({
   // barge-in only) or detached rounds break.
   function teardownLiveView() {
     roundCtrl.current?.abort()
+    attachCtrl.current?.abort()
     voiceRef.current?.stop() // voice is single-active-room; kill chat A's TTS
     liveIds.current = {}
     setStreaming(false)

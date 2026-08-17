@@ -6,6 +6,7 @@ import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs } from './turnPolicy.js'
+import { shouldForceRoundDone } from './roundGuard.js'
 import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
 import { VoiceTrace } from './voiceTrace.js'
 
@@ -173,6 +174,9 @@ export default class VoiceController {
     this.playing = 0
     this.roundActive = false
     this.dropQueue = false
+    // Round liveness clock for the wedged-gate escape hatch (roundGuard.js):
+    // stamped on EVERY incoming round event, read by the VAD's gated branch.
+    this._lastRoundEventAt = 0
     this.manualMode = false // push-to-talk: pauses don't send; user ends the turn
     this.silenceMs = DEFAULT_SILENCE_MS // auto mode: how long a pause before the turn ends
     this.voicedHistory = [] // {t, voiced}
@@ -355,7 +359,12 @@ export default class VoiceController {
         if (win && text) {
           this._deliverTranscript(text, win.turnId, win.dispatch)
         }
-        if (this.active && this.state === 'transcribing') this._state('listening')
+        // The turn is transcribed; if its round is already generating, say
+        // so. 'listening' here rendered the whole generation wait as
+        // "Listening…", inviting speech the gated mic then discarded.
+        if (this.active && this.state === 'transcribing') {
+          this._state(this.roundActive ? 'working' : 'listening')
+        }
       } else if (msg.error) {
         this.onError?.(`Realtime STT: ${msg.error}`)
         this._fallbackToBatch(`relay error: ${msg.error}`)
@@ -455,7 +464,9 @@ export default class VoiceController {
     this.sttFallbackCause = cause
     console.warn('[voice] realtime STT fell back to batch:', cause)
     this._closeSttStream()
-    if (this.active && this.state === 'transcribing') this._state('listening')
+    if (this.active && this.state === 'transcribing') {
+      this._state(this.roundActive ? 'working' : 'listening')
+    }
     this.onSttFallback?.(cause)
   }
 
@@ -513,7 +524,15 @@ export default class VoiceController {
   }
 
   async start() {
-    this._vlog('session:start', { roomMode: this.roomMode })
+    this._vlog('session:start', { roomMode: this.roomMode, staleRoundActive: this.roundActive })
+    // A fresh session starts with a clean gate. The controller outlives
+    // stop()/start() (App builds it once), so a gate wedged true by a dead
+    // round in the PREVIOUS session would pin this one to barge-in-only
+    // from its first tick - End voice + start again used to inherit the
+    // wedge, and only a page reload cleared it.
+    this.roundActive = false
+    this.dropQueue = false
+    this._lastRoundEventAt = 0
     // Unlock audio while we still hold the start-button gesture, and on any
     // later click - so a session that auto-resumes on reload (no gesture) isn't
     // left permanently muted with no way to recover. Makes the "click anywhere"
@@ -760,6 +779,21 @@ export default class VoiceController {
       }
 
       if (gated) {
+        // Wedged-gate escape hatch: a round silent for the roundGuard bound,
+        // with nothing playing, is treated as gone. A half-open stream never
+        // errors, so its onRoundDone() never runs and nothing else can clear
+        // the gate - the session stays pinned to barge-in-only forever.
+        // Force the round-done path (gate cleared, trace flushed, state
+        // honest) and let normal listening resume next tick.
+        if (shouldForceRoundDone({ roundActive: this.roundActive, playing: this.playing,
+                                   idleMs: now - (this._lastRoundEventAt || now) })) {
+          const idleMs = Math.round(now - this._lastRoundEventAt)
+          console.warn(`[voice] round guard: no round events for ${idleMs}ms `
+            + 'with nothing playing - forcing round-done')
+          this._vlog('gate:forceRoundDone', { idleMs })
+          this.onRoundDone()
+          return
+        }
         // models are talking/generating - listen only for a barge-in
         if (this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)) {
           this.speechStart = now - INTERRUPT_CONFIRM_MS
@@ -911,7 +945,9 @@ export default class VoiceController {
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
     await this._transcribeOrHold(blob, speechMs,
                                  { turnId, dispatch: continuation ? 'buffer' : 'send' })
-    if (this.active && this.state === 'transcribing') this._state('listening')
+    if (this.active && this.state === 'transcribing') {
+      this._state(this.roundActive ? 'working' : 'listening')
+    }
   }
 
   // The single delivery door (#85/#104): every winning transcript - realtime
@@ -960,7 +996,9 @@ export default class VoiceController {
     this._startRecorder()
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
     await this._transcribeOrHold(blob, speechMs, { turnId, dispatch })
-    if (this.active && this.state === 'transcribing') this._state('listening')
+    if (this.active && this.state === 'transcribing') {
+      this._state(this.roundActive ? 'working' : 'listening')
+    }
   }
 
   _startHeldRetry() {
@@ -1003,6 +1041,14 @@ export default class VoiceController {
     this.dropQueue = gate.dropQueue
     if (gate.roundActive !== before.roundActive || gate.dropQueue !== before.dropQueue) {
       this._vlog('gate:onEvent', { evType: ev.type, before, after: gate })
+    }
+    // Round liveness: EVERY event feeds the wedge guard's idle clock -
+    // work_status/tool_activity included, so a live tool round never trips it.
+    this._lastRoundEventAt = Date.now()
+    // A round generating with nothing audible is 'working', not 'listening':
+    // the screen must not invite speech the gated mic would then discard.
+    if (this.roundActive && this.playing === 0 && this.state === 'listening') {
+      this._state('working')
     }
     if (ev.type === 'speaker_start') {
       // Defer opening TTS until the reply has real content, so a benched model's
@@ -1173,6 +1219,9 @@ export default class VoiceController {
     if (!this.active) return
     if (this.playing === 0 && !this.roundActive) {
       if (this.state !== 'transcribing') this._state('listening')
+    } else if (this.playing === 0 && this.roundActive && this.state === 'speaking') {
+      // Between speakers: the round is still generating, nothing is audible.
+      this._state('working')
     }
   }
 }

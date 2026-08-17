@@ -29,6 +29,18 @@ test('status priority: held > muted > speaking > thinking > listening', () => {
   assert.equal(statusFor({ voiceState: 'listening' }), 'Listening…')
 })
 
+test('a generating round reads as Thinking, never Listening', () => {
+  // The bug this pins: the whole model-generation window rendered as
+  // "Listening…", inviting speech the gated mic then discarded or turned
+  // into an accidental round-kill. 'working' is that window's honest name.
+  assert.equal(statusFor({ voiceState: 'working' }), 'Thinking…')
+  assert.equal(orbStateFor('working', false), 'transcribing')
+  assert.equal(orbStateFor('working', true), 'idle') // muted still wins
+  assert.match(statusFor({ muted: true, voiceState: 'working' }), /Muted - models keep talking/)
+  assert.match(statusFor({ held: 1, voiceState: 'working' }), /Holding 1 message/)
+  assert.equal(showInterruptHint('working', false), false) // hint stays speaking-only
+})
+
 test('the interrupt hint never lies', () => {
   // Only while a model speaks AND a voice barge-in could actually work.
   assert.equal(showInterruptHint('speaking', false), true)

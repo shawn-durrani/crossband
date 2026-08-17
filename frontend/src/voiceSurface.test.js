@@ -13,7 +13,7 @@ test('no session, no surface - whatever page is open', () => {
 })
 
 test('a live session keeps its call surface until a page opens (#69)', () => {
-  for (const s of ['listening', 'transcribing', 'speaking']) {
+  for (const s of ['listening', 'transcribing', 'working', 'speaking']) {
     assert.equal(voiceSurface({ voiceState: s, pageOpen: false }), 'call')
     // the page does not end voice - it swaps the surface for the strip
     assert.equal(voiceSurface({ voiceState: s, pageOpen: true }), 'strip')

@@ -5,6 +5,16 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Voice says "Thinking…" while the models work, and a dead round can no
+  longer trap the microphone (#165). The generation wait used to render
+  as "Listening…", which invited speech the gated mic then discarded or
+  turned into an accidental round-kill; a new working state names that
+  wait honestly on every surface. A round silent for 60 seconds with
+  nothing playing now force-clears the turn gate, ending voice and
+  starting again begins from a clean gate, and Stop can abort the
+  detached-round replay. A send refused because a round is still
+  running is held and retried instead of dropped.
+
 - Local thinking models can be told to skip the reasoning trace (#159).
   A Qwen3-family seat on an OpenAI-compatible server emitted a hidden
   reasoning block before its first visible token, and no setting reached

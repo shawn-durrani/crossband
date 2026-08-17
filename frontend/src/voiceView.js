@@ -10,10 +10,12 @@
 // What the orb should look like. `muted` wins over listening - a dimmed idle
 // orb is the truth when the mic track is emitting silence - but a SPEAKING
 // model keeps the speaking visual: who's talking still matters while muted.
+// 'working' (a round is generating, nothing audible yet) shares the
+// transcribing visual: both are "the app is busy on your turn".
 export function orbStateFor(voiceState, muted) {
   if (voiceState === 'speaking') return 'speaking'
   if (muted) return 'idle'
-  if (voiceState === 'transcribing') return 'transcribing'
+  if (voiceState === 'transcribing' || voiceState === 'working') return 'transcribing'
   return 'listening'
 }
 
@@ -24,7 +26,7 @@ export function statusFor({ held = 0, muted = false, voiceState, speakerName = n
   if (held > 0) return `Holding ${held} message${held > 1 ? 's' : ''} - reconnecting…`
   if (muted && voiceState !== 'speaking') return 'Muted - models keep talking, you aren’t heard'
   if (voiceState === 'speaking') return `${speakerName || 'Speaking'}…`
-  if (voiceState === 'transcribing') return 'Thinking…'
+  if (voiceState === 'transcribing' || voiceState === 'working') return 'Thinking…'
   return 'Listening…'
 }
 
