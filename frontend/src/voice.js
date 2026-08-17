@@ -7,7 +7,7 @@ import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs } from './turnPolicy.js'
-import { shouldForceRoundDone } from './roundGuard.js'
+import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
 import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
 import { VoiceTrace } from './voiceTrace.js'
 
@@ -249,6 +249,25 @@ export default class VoiceController {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {})
+    } catch { /* diagnostics are never load-bearing */ }
+  }
+
+  // Stall beacon (#171): the one voice signal that reaches the SERVER log.
+  // The latency trace begins at finalize, so a turn that never finalizes
+  // leaves no row anywhere, and the console logs never leave the phone -
+  // this beacon is how a stall becomes diagnosable from data/service.log
+  // alone. Content-free by construction: a kind, ids and millisecond
+  // numbers, never transcript text. Best-effort, never load-bearing.
+  _postStall(kind, data) {
+    try {
+      fetch('/api/voice/stall', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, chat_id: this.getChatId(),
+                               round_active: this.roundActive,
+                               playing: this.playing, ...data }),
         keepalive: true,
       }).catch(() => {})
     } catch { /* diagnostics are never load-bearing */ }
@@ -502,6 +521,7 @@ export default class VoiceController {
     // counted.
     this._utterFrames = 0
     this._specFired = false  // a fresh utterance re-arms the silence hint
+    this._strandedSent = false  // a fresh utterance re-arms the stall beacon
     if (!this.sttRealtime || !this.sttWs || this.sttStreaming) return
     this.sttStreaming = true
     for (const c of this._pcmPre) this._sttSend({ audio: c })
@@ -807,8 +827,24 @@ export default class VoiceController {
           console.warn(`[voice] round guard: no round events for ${idleMs}ms `
             + 'with nothing playing - forcing round-done')
           this._vlog('gate:forceRoundDone', { idleMs })
+          this._postStall('round_guard_forced', { idle_ms: idleMs })
           this.onRoundDone()
           return
+        }
+        // Stall beacon (#171): the user spoke into the gated window (a
+        // barge-in opened capture) and their words have been stranded for
+        // 10 s - the exact "talking into a stuck app" moment. Once per
+        // utterance; _sttStartStreaming re-arms it.
+        if (!this._strandedSent && speechStranded({
+          roundActive: this.roundActive, playing: this.playing,
+          speechStart: this.speechStart, lastVoice: this.lastVoice, now,
+        })) {
+          this._strandedSent = true
+          this._vlog('stall:gatedSpeechStranded', { sinceVoiceMs: now - this.lastVoice })
+          this._postStall('gated_speech_stranded', {
+            speech_ms: this.lastVoice - this.speechStart,
+            idle_ms: now - (this._lastRoundEventAt || now),
+          })
         }
         // models are talking/generating - listen only for a barge-in
         if (this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)) {

@@ -170,6 +170,40 @@ def voice_trace_ingest(payload: dict = Body(...)):
     return {"stored": len(stages)}
 
 
+# The stall beacon's vocabulary (#171). Allowlisted so the WARNING line is
+# content-free by construction, exactly like the trace's stage allowlist:
+# an unknown kind is dropped, never logged.
+STALL_KINDS = {"round_guard_forced", "gated_speech_stranded"}
+
+
+@router.post("/api/voice/stall")
+def voice_stall(payload: dict = Body(...)):
+    """Content-free stall beacon from the voice client (#171).
+
+    The latency trace begins at finalize, so a turn that never finalizes
+    leaves no row, and the client's console diagnostics never leave the
+    phone. This is the one signal a stuck voice session sends the server:
+    a kind from the allowlist plus numeric context, logged at WARNING so
+    it reaches data/service.log at the DEFAULT log level - no
+    CROSSBAND_LOG_LEVEL change, no tethered browser console, phone-only
+    diagnosable. Nothing is persisted; the log line is the product."""
+    kind = payload.get("kind")
+    if kind not in STALL_KINDS:
+        return {"ok": False}
+
+    def _num(key):
+        v = payload.get(key)
+        return round(float(v), 1) if isinstance(v, (int, float)) else None
+
+    chat_id = payload.get("chat_id")
+    log.warning("voice stall: kind=%s chat=%s idle_ms=%s speech_ms=%s "
+                "round_active=%s playing=%s",
+                kind, chat_id if isinstance(chat_id, int) else None,
+                _num("idle_ms"), _num("speech_ms"),
+                bool(payload.get("round_active")), _num("playing"))
+    return {"ok": True}
+
+
 @router.get("/api/voice/trace/summary")
 def voice_trace_summary(window_hours: float = 24.0):
     """Development diagnostics: stage-level p50/p95 latency over the last

@@ -28,3 +28,19 @@ export function shouldForceRoundDone({ roundActive, playing, idleMs }) {
   if (!Number.isFinite(ms)) return false
   return ms > ROUND_EVENT_IDLE_MS
 }
+
+// The stall beacon's second trigger (#171): the user has spoken - a
+// barge-in opened capture - but the gate is still up this long after
+// their voice stopped, so nothing can finalize or send. This is the
+// "talking into a stuck app" moment the telemetry was blind to: the
+// latency trace only begins at finalize, so a stranded turn used to
+// leave no row anywhere.
+export const STRANDED_SPEECH_MS = 10000
+
+export function speechStranded({ roundActive, playing, speechStart, lastVoice, now }) {
+  if (!roundActive && (playing || 0) === 0) return false
+  if (!speechStart || !lastVoice) return false
+  const quiet = Number(now) - Number(lastVoice)
+  if (!Number.isFinite(quiet)) return false
+  return quiet > STRANDED_SPEECH_MS
+}

@@ -209,10 +209,22 @@ export const api = {
   }).then(json),
 }
 
+// Round streams can legitimately go quiet while a seat thinks, but a
+// half-open mobile connection goes quiet FOREVER, with no error and no
+// close - the read below just pends, and everything downstream of the
+// stream (the voice turn gate included) waits with it. 90 s sits well
+// above the longest observed healthy silence and behind the voice round
+// guard's 60 s bound; on expiry the stream errors into its caller's
+// normal recovery (reattach for rounds, round-done for replays).
+export const SSE_IDLE_TIMEOUT_MS = 90000
+
 // Read a Server-Sent-Events stream and invoke onEvent per event.
 // Accepts a JSON-able body or FormData (for uploads); method 'GET' for
-// re-attaching to a detached round (no body).
-export async function streamSSE(url, body, onEvent, signal, method = 'POST') {
+// re-attaching to a detached round (no body). `idleMs` > 0 bounds the
+// wait for EACH read; opt-in, because the global events stream is
+// legitimately quiet for hours and must never time out.
+export async function streamSSE(url, body, onEvent, signal, method = 'POST',
+                                { idleMs = 0 } = {}) {
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const res = await fetch(url, {
     method,
@@ -232,7 +244,27 @@ export async function streamSSE(url, body, onEvent, signal, method = 'POST') {
   const decoder = new TextDecoder()
   let buf = ''
   for (;;) {
-    const { done, value } = await reader.read()
+    let done, value
+    if (idleMs > 0) {
+      let timer
+      try {
+        ({ done, value } = await Promise.race([
+          reader.read(),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(
+              `stream idle - no bytes for ${Math.round(idleMs / 1000)}s`)), idleMs)
+          }),
+        ]))
+      } catch (e) {
+        // On idle timeout the pending read must not linger on a dead body.
+        try { reader.cancel() } catch { /* already dead */ }
+        throw e
+      } finally {
+        clearTimeout(timer)
+      }
+    } else {
+      ({ done, value } = await reader.read())
+    }
     if (done) break
     buf += decoder.decode(value, { stream: true })
     let idx
