@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { api, streamSSE } from '../api'
+import { api, streamSSE, SSE_IDLE_TIMEOUT_MS } from '../api'
 import { participantInfo } from '../speakers'
 import { mergeGuestJob } from '../guestJobs'
 import { eventBelongsToActiveChat } from '../streamGuard'
@@ -203,7 +203,8 @@ export function useRoundStream({
     }
     try {
       try {
-        await streamSSE(url, body, onEvent, signal)
+        await streamSSE(url, body, onEvent, signal, 'POST',
+                        { idleMs: SSE_IDLE_TIMEOUT_MS })
       } catch (e) {
         if (e.name === 'AbortError') throw e
         if (track.roundId) {
@@ -339,7 +340,7 @@ export function useRoundStream({
           `/api/chats/${chatId}/round/stream?round_id=${target}&after=0`,
           null,
           (ev) => { if (chatId === activeChatIdRef.current) voiceRef.current?.onEvent(ev) },
-          ctrl.signal, 'GET')
+          ctrl.signal, 'GET', { idleMs: SSE_IDLE_TIMEOUT_MS })
       } catch (e) {
         // dropped/aborted - messages persisted regardless
         rlog('voiceAttachRound:streamError', { chatId, target, message: e?.message })
@@ -364,7 +365,7 @@ export function useRoundStream({
       try {
         await streamSSE(
           `/api/chats/${chatId}/round/stream?round_id=${track.roundId}&after=${track.count}`,
-          null, onEvent, signal, 'GET')
+          null, onEvent, signal, 'GET', { idleMs: SSE_IDLE_TIMEOUT_MS })
         cb.current.onBanner('')
         return
       } catch (e) {

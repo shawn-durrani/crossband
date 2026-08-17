@@ -2,7 +2,8 @@
 // Run: node --test frontend/src/roundGuard.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ROUND_EVENT_IDLE_MS, shouldForceRoundDone } from './roundGuard.js'
+import { ROUND_EVENT_IDLE_MS, STRANDED_SPEECH_MS,
+         shouldForceRoundDone, speechStranded } from './roundGuard.js'
 
 test('no round, no force - whatever the idle time says', () => {
   assert.equal(shouldForceRoundDone({ roundActive: false, playing: 0, idleMs: 1e9 }), false)
@@ -35,4 +36,19 @@ test('the bound clears long tool-using gaps only if they go silent', () => {
   // keeping the clock fresh on EVERY event type is the caller's job.
   assert.equal(shouldForceRoundDone({ roundActive: true, playing: 0,
                                       idleMs: ROUND_EVENT_IDLE_MS * 10 }), true)
+})
+
+test('stranded speech is flagged only in a gated window, after real quiet (#171)', () => {
+  const now = 100000
+  const spoke = { speechStart: now - 15000, lastVoice: now - STRANDED_SPEECH_MS - 1 }
+  // The reportable moment: the user spoke into a gated window and their
+  // words have sat stranded past the bound.
+  assert.equal(speechStranded({ roundActive: true, playing: 0, ...spoke, now }), true)
+  assert.equal(speechStranded({ roundActive: false, playing: 1, ...spoke, now }), true)
+  // Ungated, or no utterance, or still talking: nothing to report.
+  assert.equal(speechStranded({ roundActive: false, playing: 0, ...spoke, now }), false)
+  assert.equal(speechStranded({ roundActive: true, playing: 0, speechStart: 0,
+                                lastVoice: 0, now }), false)
+  assert.equal(speechStranded({ roundActive: true, playing: 0,
+                                speechStart: now - 5000, lastVoice: now - 200, now }), false)
 })

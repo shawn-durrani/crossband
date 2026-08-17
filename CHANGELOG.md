@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Voice stalls now leave server-side evidence (#171). The client posts
+  a content-free beacon when the round guard force-clears a dead round,
+  or when speech strands for ten seconds behind a gated microphone. The
+  server logs it at WARNING, so data/service.log shows the stall at the
+  default log level, diagnosable from a phone. Round streams also time
+  out after 90 seconds without bytes and recover through the normal
+  reattach path, instead of pending forever on a half-open connection.
+
 - Seats carry three conduct rules from the field (#172). Never claim a
   dispatch without its tool result in the same reply. Never promise a
   merge: Claude Code opens pull requests, and the user reviews and
