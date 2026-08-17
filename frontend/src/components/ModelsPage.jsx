@@ -5,6 +5,7 @@ import { PRESETS, matchPreset } from '../presets'
 import { modelReadoutLines } from '../modelReadout'
 import { lifecycleBadge, promoteState, addSeatNotice } from '../lifecycle'
 import { thinkingOptions, thinkingSupport, normalizeThinkingControl } from '../thinkingControl'
+import { voiceIdPatch } from '../seatSave'
 import RateCardsPanel from './RateCardsPanel'
 
 const EMPTY = {
@@ -134,7 +135,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
     if (intent.action === 'add') { setModels(null); setEditing({ ...EMPTY }) }
     else if (intent.action === 'edit' && intent.slug) {
       const seat = participants.find((x) => x.slug === intent.slug)
-      if (seat) { setModels(null); setEditing({ ...seat }) }
+      if (seat) { setModels(null); setEditing({ ...seat, _seedVoiceId: seat.voice_id || '' }) }
     }
   }, [intent, participants])
 
@@ -225,7 +226,12 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
         system_prompt: editing.system_prompt ?? '',
         color: editing.color,
         enabled: editing.enabled,
-        voice_id: editing.voice_id ?? null,
+        // #161: voice_id rides the save ONLY when the user changed the
+        // selector (seatSave.js) - the editor's copy is stale the moment a
+        // voice start auto-assigns after the roster fetch, and re-sending
+        // the stale blank cleared the assignment on every unrelated save.
+        ...voiceIdPatch({ isNew: !editing.id, voiceId: editing.voice_id,
+                          seedVoiceId: editing._seedVoiceId }),
         voice_gain: editing.voice_gain ?? 1,
         reasoning_effort: editing.reasoning_effort ?? '',
         // Cleared when it no longer applies (see normalizeThinkingControl), so
@@ -403,7 +409,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                     </div>
                   )}
                 </div>
-                <button className="text-xs text-ink-mid hover:text-ink" onClick={() => { setModels(null); setEditing({ ...p, enabled: !!p.enabled }) }}>
+                <button className="text-xs text-ink-mid hover:text-ink" onClick={() => { setModels(null); setEditing({ ...p, enabled: !!p.enabled, _seedVoiceId: p.voice_id || '' }) }}>
                   Edit
                 </button>
                 <button className="text-xs text-ink-faint hover:text-red-400" onClick={() => remove(p)}>
