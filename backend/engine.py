@@ -451,7 +451,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     # once the round has read the web, every later assistant message in it
     # carries the stamp (#138 slice 4).
     live = {"participant": None, "content": "", "tools": [], "usage": None,
-            "web_domains": set()}
+            "web_domains": set(), "attachments": []}
 
     def persist_live(interrupted=False):
         p = live["participant"]
@@ -485,12 +485,14 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         # deploy notice does.
         msg = db.insert_message(con, chat_id, p["slug"], content,
                                 usage_json=usage_json, tool_events=live["tools"],
+                                attachment_ids=live.get("attachments"),
                                 web_sources=live.get("web_domains"))
         con.close()
         live["participant"] = None
         live["content"] = ""
         live["tools"] = []
         live["usage"] = None
+        live["attachments"] = []
         return msg
 
     try:
@@ -716,6 +718,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             live["content"] = ""
             live["tools"] = []
             live["usage"] = None
+            live["attachments"] = []
             yield sse({"type": "speaker_start", "speaker": participant["slug"]})
             t_provider_call = time.monotonic() if t_iter_start is not None else None
             stream = providers.stream_reply(
@@ -755,6 +758,19 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                     elif kind == "usage":
                         live["usage"] = payload
                     elif kind == "tool":
+                        # #149: a tool that produced a file (view_page's
+                        # screenshot) parked it on round_cfg keyed by tool +
+                        # URL; claim it onto this event and queue the
+                        # attachment for the assistant message's insert.
+                        pending = round_cfg.get("_tool_attachments") or []
+                        for i, entry in enumerate(pending):
+                            if (entry["tool"] == payload["tool"]
+                                    and entry["url"] ==
+                                    (payload["input"] or {}).get("url")):
+                                payload["attachment_id"] = entry["attachment_id"]
+                                live["attachments"].append(entry["attachment_id"])
+                                del pending[i]
+                                break
                         live["tools"].append(payload)
                         yield sse({
                             "type": "tool_activity",
@@ -762,6 +778,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                             "tool": payload["tool"],
                             "input_json": json.dumps(payload["input"]),
                             "output_text": payload["output"],
+                            "attachment_id": payload.get("attachment_id"),
                         })
                     elif kind == "work_status":
                         # A structured liveness event (never text) - proves the

@@ -14,6 +14,7 @@ All size/time caps come from config: no magic numbers here.
 
 import asyncio
 import base64
+import logging
 import datetime
 import html
 import json
@@ -28,6 +29,8 @@ import httpx
 from . import diagnostics, egress
 from .config import load_settings
 from .memory_client import MemorySearchError
+
+log = logging.getLogger("crossband.tools")
 
 USER_AGENT = "crossband/1.0 (local research assistant)"
 
@@ -1053,6 +1056,41 @@ def fetch_page(args, cfg):
             )[:cfg["max_tool_output"]]
 
 
+def _store_view_screenshot(out, cfg) -> int | None:
+    """Persist the worker's viewport PNG (#149) into the ordinary attachment
+    store, message_id NULL until the assistant message exists (the same
+    late-link path user uploads use). Returns the attachment id, or None -
+    a failed store never costs the view its text. The id rides back to the
+    engine on the per-round cfg (`_tool_attachments`), which is also how
+    concurrent tool calls stay matched: each entry names its URL."""
+    shot = out.get("shot_b64")
+    if not shot:
+        return None
+    import uuid
+    from . import db
+    try:
+        data = base64.b64decode(shot)
+        host = (urlparse(out.get("final_url") or "").hostname or "page")
+        filename = f"view-{host}-{int(time.time())}.png"
+        stored = f"{uuid.uuid4().hex}_{filename}"
+        os.makedirs(db.ATTACH_DIR, exist_ok=True)
+        with open(os.path.join(db.ATTACH_DIR, stored), "wb") as f:
+            f.write(data)
+        con = db.connect()
+        try:
+            cur = con.execute(
+                "INSERT INTO attachments(message_id, filename, stored_name, "
+                "mime, size, created_at) VALUES(NULL,?,?,?,?,?)",
+                (filename, stored, "image/png", len(data), db.now()))
+            con.commit()
+            return cur.lastrowid
+        finally:
+            con.close()
+    except Exception:
+        log.debug("view_page screenshot store failed", exc_info=True)
+        return None
+
+
 def view_page(args, cfg):
     """Rendered viewing (#138 slice 3): the actual render runs in the
     contained worker (backend/browse.py owns the isolation story). Links are
@@ -1065,12 +1103,18 @@ def view_page(args, cfg):
         # #150: the interstitial's text is junk and its links would launder
         # challenge URLs into the seen-URL ledger. Raised as the tool error
         # so the ledger's Error% filter keeps every URL in this reply out;
-        # the wording points at the one path that works.
+        # the wording points at the one path that works. Checked before the
+        # screenshot store on purpose: a challenge page's shot is junk too.
         raise ValueError(
             "this site gates automated readers behind a human-verification "
             "challenge, which stays closed by design - ask "
             f"{cfg.get('user_name', 'the user')} to paste the content into "
             "the chat instead")
+    shot_id = _store_view_screenshot(out, cfg)
+    if shot_id:
+        cfg.setdefault("_tool_attachments", []).append(
+            {"tool": "view_page", "url": (args.get("url") or "").strip(),
+             "attachment_id": shot_id})
     final = out.get("final_url") or url
     head = [f"Viewed: {final}"]
     if out.get("title"):

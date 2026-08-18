@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 21  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105)
+SCHEMA_VERSION = 22  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -169,6 +169,10 @@ CREATE TABLE IF NOT EXISTS tool_events(
   tool TEXT NOT NULL,
   input_json TEXT NOT NULL DEFAULT '{}',
   output_text TEXT NOT NULL DEFAULT '',
+  -- #149: a file the tool itself produced (view_page's screenshot of what
+  -- was viewed), stored in the ordinary attachment store and linked to the
+  -- same assistant message. NULL for every tool that makes no file.
+  attachment_id INTEGER REFERENCES attachments(id) ON DELETE SET NULL,
   created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS voice_usage(
@@ -587,6 +591,13 @@ def init(settings=None):
                         "REFERENCES messages(id) ON DELETE SET NULL")
             con.execute("ALTER TABLE room_roster ADD COLUMN seated_via "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 21:  # v22: tool_events.attachment_id (#149).
+        # Nullable, so every existing tool row simply has no produced file -
+        # exactly what was true before the column existed.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='tool_events'").fetchone():
+            con.execute("ALTER TABLE tool_events ADD COLUMN attachment_id "
+                        "INTEGER REFERENCES attachments(id) ON DELETE SET NULL")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -839,9 +850,10 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
             (msg_id, att_id))
     for rec in (tool_events or []):
         con.execute(
-            "INSERT INTO tool_events(message_id, tool, input_json, output_text, created_at) "
-            "VALUES(?,?,?,?,?)",
-            (msg_id, rec["tool"], _json_dumps(rec["input"]), rec["output"], now()),
+            "INSERT INTO tool_events(message_id, tool, input_json, output_text, "
+            "attachment_id, created_at) VALUES(?,?,?,?,?,?)",
+            (msg_id, rec["tool"], _json_dumps(rec["input"]), rec["output"],
+             rec.get("attachment_id"), now()),
         )
     con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), chat_id))
     con.commit()  # durable BEFORE anyone is told about it - see docstring
