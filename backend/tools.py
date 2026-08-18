@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import httpx
 
 from . import diagnostics, egress
+from .config import load_settings
 from .memory_client import MemorySearchError
 
 USER_AGENT = "crossband/1.0 (local research assistant)"
@@ -336,6 +337,24 @@ def code_tool_definitions(cfg):
 # authenticated gh CLI (`gh auth token`) - the common local case needs zero
 # new keys. Cached for the process lifetime.
 _gh_token_cache = {"value": None, "checked": False}
+
+
+def refresh_github_repos(cfg):
+    """Overlay the live `github_repos` map onto cfg, in place (#24).
+
+    The map is hand-maintained in config.local.json and was read once at
+    boot, so after a repo rename both the tools' allowed-repo list and the
+    integrations tile stayed stale until a restart. Mirrors
+    routers/pricing.py: a fresh load_settings() per use. An unreadable
+    config keeps the copy already in cfg rather than dropping the tools
+    mid-session. Callers pass a per-request/per-round dict, never a shared
+    one.
+    """
+    try:
+        cfg["github_repos"] = load_settings().github_repos or {}
+    except Exception:
+        pass
+    return cfg
 
 
 def github_token():

@@ -5,6 +5,12 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- GitHub repo config edits apply without a restart (#24). The
+  `github_repos` map was read once at boot, so after a repo rename the
+  models' allowed-repo list and the integrations tile stayed stale
+  until the server restarted. The map is now re-read from disk at each
+  round start and status read, the same way pricing already reloads.
+
 - The voice tick stops posing as a live verdict (#139). A green tick
   beside a person means their profile holds enough approved audio to
   recognise them; it said turns "are named automatically", which read

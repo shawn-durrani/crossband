@@ -22,6 +22,34 @@ def fresh_token_cache(monkeypatch):
                         {"value": None, "checked": False})
 
 
+# ---------- the live repo map (#24) ----------
+
+def test_refresh_reads_the_live_map_not_the_boot_copy(monkeypatch, tmp_path):
+    """An edit to config.local.json applies on the next call - no restart."""
+    from backend import config
+    (tmp_path / "config.local.json").write_text(
+        json.dumps({"github_repos": {"app": "alex/app"}}))
+    real = config.load_settings
+    monkeypatch.setattr(tools_mod, "load_settings",
+                        lambda: real(root=tmp_path, environ={}))
+    cfg = {"github_repos": {"app": "alex/old-name"}}  # the boot-time copy
+    assert tools_mod.refresh_github_repos(cfg)["github_repos"] == {
+        "app": "alex/app"}
+    # the rename case that filed #24: the file changes, the next call sees it
+    (tmp_path / "config.local.json").write_text(
+        json.dumps({"github_repos": {"app": "alex/renamed"}}))
+    assert tools_mod.refresh_github_repos(cfg)["github_repos"] == {
+        "app": "alex/renamed"}
+
+
+def test_refresh_keeps_the_copy_when_config_is_unreadable():
+    # conftest's autouse guard makes load_settings raise, which doubles as the
+    # unreadable-config case: the cfg already in hand survives untouched.
+    cfg = {"github_repos": {"app": "alex/app"}}
+    assert tools_mod.refresh_github_repos(cfg)["github_repos"] == {
+        "app": "alex/app"}
+
+
 # ---------- availability + gating ----------
 
 def test_available_needs_repos_and_token(monkeypatch):

@@ -27,6 +27,21 @@ def _voiceid_offline(monkeypatch):
     voiceid._reset_for_tests()
 
 
+@pytest.fixture(autouse=True)
+def _no_disk_config_in_tools(monkeypatch):
+    """#24 re-reads github_repos from disk per round/request. In tests the cfg
+    a test builds is the whole truth - never the developer's own
+    config.local.json. The raise lands in refresh_github_repos' fallback, which
+    keeps the passed copy. Tests of the live re-read override this with a
+    tmp-root loader."""
+    from backend import tools as tools_mod
+
+    def _no_disk(*a, **k):
+        raise RuntimeError("tests build cfg explicitly; no disk config")
+
+    monkeypatch.setattr(tools_mod, "load_settings", _no_disk)
+
+
 @pytest.fixture
 def client_factory(tmp_path):
     """Build a TestClient against a fresh data dir, with a chosen base_url so
