@@ -4,6 +4,7 @@ import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { couldBePass } from './voiceView.js'
 import { WrittenFilter } from './writtenChannel.js'
+import { effectiveVolume } from './voiceGain.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
@@ -1262,10 +1263,14 @@ export default class VoiceController {
         // This participant's audio is now the one actually playing - tint the orb
         // to them for the FULL duration of their speech (not just their text).
         this.onSpeaker?.(slug)
-        // Per-agent volume (voice_gain 0.2–1.0 normalizes loud voices) and the
-        // session playback rate, applied as this speaker claims the sink.
+        // Per-agent volume, RELATIVE (#163): gains are weights, so a boosted
+        // quiet voice plays at full volume while the others duck
+        // proportionally - the element itself can never exceed 1.0. Applied
+        // with the session playback rate as this speaker claims the sink.
         // defaultPlaybackRate too: loading a new src resets playbackRate to it.
-        this.sink.volume = Math.min(1, Math.max(0.2, participant?.voice_gain ?? 1))
+        this.sink.volume = effectiveVolume(
+          participant?.voice_gain,
+          (this.getParticipants?.() || []).map((p) => p?.voice_gain))
         this.sink.defaultPlaybackRate = this.playbackRate || 1
         this.sink.playbackRate = this.playbackRate || 1
         return player.play(

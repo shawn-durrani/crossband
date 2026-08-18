@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A quiet voice can be turned UP (#163). Voice volume is now a relative
+  weight (up to 300%): boosting one voice plays it at full volume and
+  quietens the others proportionally, since a browser cannot push audio
+  past full. With every seat at or below 100% nothing changes - the old
+  turn-a-loud-voice-down behaviour is untouched. Set it once per voice
+  on the Models page; the device volume sets the overall level.
+
 - Rendered pages stop paying politeness per subresource, and a stuck
   render can no longer leak browsers (#153). The egress proxy paces
   connection BURSTS, not connections: a page's dozen same-host
