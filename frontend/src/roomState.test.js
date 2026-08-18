@@ -348,6 +348,17 @@ test('a remembered voice is a confirmed chip - a tick beside the name', () => {
   assert.match(chip.title, /remembered/)
 })
 
+test('the tick never claims the live turn (#139)', () => {
+  // The field failure: a green profile tick beside a guest while their
+  // live turns still read "Identity pending" - the tick looked like a
+  // live recognition verdict. The copy must scope it to the profile and
+  // point at the turn's own label for the live answer.
+  const chip = voicePersonChip(chipPerson('Alex', { sufficient: true, seconds: 9 }), 6, 3)
+  assert.match(chip.title, /not the turn being spoken/)
+  assert.match(chip.title, /own label/)
+  assert.doesNotMatch(chip.title, /named automatically/)
+})
+
 test('a part-learned voice shows progress in seconds', () => {
   const chip = voicePersonChip(
     chipPerson('Sam', { sufficient: false, seconds: 4.4, short_clips: 0 }), 6, 3)

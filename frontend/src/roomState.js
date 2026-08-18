@@ -111,9 +111,10 @@ export function sufficiencyProgress(person, sufficientSeconds, minShortClips) {
 //
 // The three states are the three honest things the app can know about a
 // person's voice:
-// - confirmed: their bank clears the bar, so a turn of theirs is named on
-//   its own evidence. Shown as a tick beside the name (the owner asked for
-//   a tick beside the name rather than swapped label text).
+// - confirmed: their bank clears the bar, so a turn of theirs CAN be named
+//   on its own evidence - the per-turn label stays the live truth (#139).
+//   Shown as a tick beside the name (the owner asked for a tick beside the
+//   name rather than swapped label text).
 // - learning:  some of their voice is banked but not enough yet, so their
 //   turns lean on elimination and stay uncertain. Shows the progress.
 // - pending:   nothing of their voice is banked at all.
@@ -146,8 +147,14 @@ export function voicePersonChip(person, sufficientSeconds, minShortClips) {
   if (person.sufficient) {
     return {
       key, name, state: CHIP_CONFIRMED, label: name, short: `${name} ✓`,
-      title: `${name}'s voice is remembered - turns they speak are named `
-        + 'automatically.',
+      // #139: this tick is about the PROFILE, and must never read as a
+      // verdict on the turn being spoken. The field failure: a guest's
+      // tick sat green while their live turns showed "Identity pending",
+      // and the tick read as "recognised right now".
+      title: `${name}'s voice is remembered: there is enough approved audio `
+        + 'to recognise them. The tick describes their profile, not the '
+        + 'turn being spoken - each turn’s own label shows who the app '
+        + 'actually heard, and a hard turn can still come through uncertain.',
     }
   }
   const prog = sufficiencyProgress(person, sufficientSeconds, minShortClips)
