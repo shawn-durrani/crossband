@@ -437,9 +437,10 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     so the round's first responder can record the server-side
     context-assembly/provider-TTFT stage split."""
     cfg = settings.as_cfg()
-    # github_repos is hand-edited config: re-read it as the round starts so a
-    # rename in config.local.json applies without a restart (#24).
-    tools_mod.refresh_github_repos(cfg)
+    # The repo maps are hand-edited config: re-read them as the round starts
+    # so a rename or added checkout in config.local.json applies without a
+    # restart (#24, #86).
+    tools_mod.refresh_repo_maps(cfg)
     handback = make_handback(settings, memory, mcp)
     # web_domains lives for the WHOLE round (never reset per participant):
     # once the round has read the web, every later assistant message in it

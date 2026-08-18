@@ -437,12 +437,13 @@ def _room_and_ability_entries(cfg, environ):
     entries.append(entry)
 
     # ── GitHub tools ────────────────────────────────────────────────────────
-    gh_repos = sorted((cfg.get("github_repos") or {}))
+    gh_map = dict(cfg.get("github_repos") or {})
+    gh_repos = sorted(gh_map)
     try:
         gh_ok = bool(tools_mod.github_available(cfg))
     except Exception:
         gh_ok = False
-    entries.append(_entry(
+    entry = _entry(
         id="toolset:github", display_name="GitHub tools", kind="toolset",
         description=("Lets the models read your issues and pull requests, and file, "
                      "comment on and edit them - every write signed with which AI did it."),
@@ -458,7 +459,12 @@ def _room_and_ability_entries(cfg, environ):
         requires=[_requirement(
             env=["GH_TOKEN", "GITHUB_TOKEN"], label="A GitHub token (or a logged-in `gh` CLI)",
             satisfied=gh_ok, optional=False, setup_service=None)],
-    ))
+    )
+    # nickname -> owner/repo, typed for the repo-access panel (#86) - which
+    # GitHub repository each short name actually reaches, so a rename is
+    # visible instead of asserted from memory. Config facts, no secrets.
+    entry["repos"] = gh_map
+    entries.append(entry)
 
     # ── event ingestion ─────────────────────────────────────────────────────
     # Always available: the endpoint is part of the app. The token is optional
