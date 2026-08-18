@@ -19,13 +19,18 @@ Containment, per the issue:
 
 Protocol: one JSON object on stdin ->  one JSON object on stdout.
 In:  {url, proxy, user_agent, nav_timeout_ms, settle_timeout_ms,
-      max_text, max_links, max_shot_bytes?}
+      max_text, max_links, max_shot_bytes?, proxy_user?, proxy_pass?}
 Out: {final_url, title, text, links: [{t, h}, ...], shot_b64?}  or  {error}
 
 shot_b64 (#149): a viewport PNG of what was rendered, base64, so the user
 can SEE exactly what was viewed. Best-effort and bounded by
 max_shot_bytes - a failed or oversized capture drops the field, never the
 render.
+
+proxy_user/proxy_pass (#148): the per-view key for the proxy's budgeted
+view listener, so every connection this page load opens shares one
+transfer budget. Chromium answers the listener's 407 challenge with them;
+the header is hop-by-hop, so the site never sees it.
 """
 
 import base64
@@ -36,10 +41,14 @@ import sys
 def render(req: dict) -> dict:
     from playwright.sync_api import sync_playwright
 
+    proxy = {"server": req["proxy"]}
+    if req.get("proxy_user"):
+        proxy["username"] = req["proxy_user"]
+        proxy["password"] = req.get("proxy_pass", "")
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            proxy={"server": req["proxy"]},
+            proxy=proxy,
             args=[
                 "--webrtc-ip-handling-policy=disable_non_proxied_udp",
                 "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",

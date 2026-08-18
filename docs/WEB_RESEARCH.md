@@ -90,7 +90,9 @@ path for gated sources.
 - Logged-in browsing does not exist. No cookies or credentials are ever
   sent, and no page can ask for them.
 - The rendering worker is a separate process, not an OS-level sandbox.
-- The proxy caps each connection, not the whole page load.
+- A rendered page load also carries a whole-page transfer budget
+  (`browse_page_budget_mb`, 30MB); plain fetches keep per-connection
+  caps only.
 - The transcript shows rendered text, not a screenshot.
 - The provenance label informs the models; it cannot force them. A
   page's text is still input a model may act on.

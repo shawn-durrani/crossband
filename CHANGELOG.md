@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A rendered page load now has a whole-page transfer budget (#148,
+  second half). The egress proxy grew a budgeted view listener: every
+  connection a `view_page` render opens carries a per-view key, and all
+  of them share one 30MB budget (`browse_page_budget_mb`), so a page
+  cannot pull without bound through many small connections. Per-
+  connection caps and the worker deadline stay as they were; plain
+  fetches are untouched. The macOS worker sandbox half of #148 stays
+  open - it needs the target machine.
+
 - The view_page tool row carries a screenshot of what was viewed (#149).
   The rendered-viewing worker captures a viewport PNG; it lands in the
   ordinary attachment store keyed to the assistant message, and the tool

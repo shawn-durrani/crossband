@@ -20,6 +20,7 @@ def _reset(monkeypatch):
     monkeypatch.setattr(browse, "_available", None)
     yield
     egress.set_proxy_url(None)
+    egress.set_view_proxy_url(None)
 
 
 def _cfg(**over):
@@ -94,6 +95,38 @@ def test_worker_env_is_built_by_inclusion(tmp_path, monkeypatch):
     assert {"PATH", "HOME", "TMPDIR"} <= seen
 
 
+def test_render_routes_through_the_view_listener_with_a_fresh_key(
+        tmp_path, monkeypatch):
+    """#148: with the budgeted view listener published, the render goes to
+    IT with a per-view key - and two renders never share a key, so their
+    budgets never pool."""
+    _fake_worker(tmp_path, monkeypatch, (
+        "import json, sys\n"
+        "req = json.loads(sys.stdin.read())\n"
+        "print(json.dumps({'final_url': 'x', 'title': '', "
+        "'text': json.dumps([req['proxy'], req.get('proxy_user'), "
+        "req.get('proxy_pass')]), 'links': []}))\n"))
+    egress.set_view_proxy_url("http://127.0.0.1:2")
+    one = json.loads(browse.render("https://example.com/", _cfg())["text"])
+    two = json.loads(browse.render("https://example.com/", _cfg())["text"])
+    assert one[0] == "http://127.0.0.1:2" and one[1] == "view"
+    assert len(one[2]) >= 32 and one[2] != two[2]  # a fresh secret per view
+
+
+def test_render_keeps_the_plain_proxy_without_a_view_listener(
+        tmp_path, monkeypatch):
+    # budget off (or an older proxy): exactly the pre-#148 request shape
+    _fake_worker(tmp_path, monkeypatch, (
+        "import json, sys\n"
+        "req = json.loads(sys.stdin.read())\n"
+        "print(json.dumps({'final_url': 'x', 'title': '', "
+        "'text': json.dumps([req['proxy'], req.get('proxy_user')]), "
+        "'links': []}))\n"))
+    assert egress.view_proxy_url() is None
+    out = json.loads(browse.render("https://example.com/", _cfg())["text"])
+    assert out == ["http://127.0.0.1:1", None]
+
+
 def test_deadline_kills_a_hung_worker(tmp_path, monkeypatch):
     _fake_worker(tmp_path, monkeypatch,
                  "import time\ntime.sleep(120)\n")
@@ -146,7 +179,10 @@ def _pw():
 def test_real_render_through_a_live_proxy():
     """End to end: a JS-built page renders through the egress proxy. The
     hostname resolves only through the proxy's injected resolver, so a
-    successful render proves the browser's traffic went through it."""
+    successful render proves the browser's traffic went through it. The
+    proxy carries a page budget, so the render goes through the BUDGETED
+    view listener - real Chromium answering the 407 challenge with the
+    per-view key (#148), not just the fakes above."""
     async def main():
         async def handler(reader, writer):
             await reader.readuntil(b"\r\n\r\n")
@@ -165,17 +201,19 @@ def test_real_render_through_a_live_proxy():
         sport = server.sockets[0].getsockname()[1]
         proxy = egress.EgressProxy(
             max_transfer_bytes=1 << 20, politeness_s=0.0, idle_timeout_s=10,
-            lifetime_s=30,
+            lifetime_s=30, page_budget_bytes=1 << 20,
             resolver=lambda h, p: [(2, 1, 6, "", ("127.0.0.1", 0))],
             address_policy=lambda ip: True, http_ports={sport})
         await proxy.start()
         egress.set_proxy_url(proxy.url)
+        egress.set_view_proxy_url(proxy.view_url)
         try:
             out = await asyncio.to_thread(
                 browse.render, f"http://viewtest.invalid:{sport}/page",
                 _cfg(browse_timeout_s=30.0))
         finally:
             egress.set_proxy_url(None)
+            egress.set_view_proxy_url(None)
             await proxy.stop()
             server.close()
         assert out["title"] == "JS Page"

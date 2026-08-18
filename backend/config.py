@@ -347,6 +347,11 @@ class Settings(BaseModel):
     # process included. The render itself runs in a contained subprocess
     # behind the egress proxy (backend/browse.py).
     browse_timeout_s: float = 20.0
+    # #148: total bytes ONE page load may pull across all its connections
+    # (subresources included), enforced at the proxy's view listener. 0
+    # disables the listener and a render falls back to the per-connection
+    # caps alone.
+    browse_page_budget_mb: float = 30.0
 
     # backups
     backup_keep: int = 14
