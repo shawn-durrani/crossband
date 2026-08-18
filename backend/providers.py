@@ -571,6 +571,11 @@ def _volatile_system_parts(cfg):
     transcript changed."""
     parts = []
     user = cfg["user_name"]
+    note = (cfg.get("depth_note") or "").strip()
+    if note:
+        # #105: the seat's own spoken depth, per seat per round - volatile
+        # by nature (it flips on a spoken command), so it lives here.
+        parts.append("\n" + note)
     mem = (cfg.get("memory_summary") or "").strip()
     if mem:
         parts.append(

@@ -5,6 +5,17 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Reasoning depth answers to your voice, per seat, per chat (#105 slice
+  1). "Slow down and think harder", "take your time Claude", "quick
+  answers from now on", "back to normal": a cheap prefilter plus the
+  same utility-model confirmation room commands use turns natural
+  phrasing into a persistent per-seat depth for that chat - no memorised
+  incantation, no automatic de-escalation. A named seat moves alone; no
+  name moves every seat. Each change lands a system notice stating the
+  trade ("replies here will take longer"), and the seat itself is told
+  its current depth so it answers honestly when asked. Model tier is
+  deliberately not spoken-controllable yet.
+
 - Promised deliverables arrive in the same reply, voice included (#80).
   A participant gets exactly one message per round, so "I'll put the
   full list in my next message" was a promise the app made impossible
