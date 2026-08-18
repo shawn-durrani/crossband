@@ -20,6 +20,7 @@ either, the tool is not offered and models keep fetch_page.
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -143,6 +144,15 @@ def render(url: str, cfg) -> dict:
         # dropped by the worker; the render itself is never affected.
         "max_shot_bytes": _MAX_SHOT_BYTES,
     }
+    # #148: when the proxy's budgeted view listener is up, the render goes
+    # through IT with a fresh per-view key, so this page load's many
+    # connections share one transfer budget. No listener (budget off, or an
+    # older proxy) keeps the plain per-connection path.
+    view_proxy = egress.view_proxy_url()
+    if view_proxy:
+        req["proxy"] = view_proxy
+        req["proxy_user"] = "view"
+        req["proxy_pass"] = secrets.token_hex(16)
     profile_dir = tempfile.mkdtemp(prefix="crossband-browse-")
     try:
         proc = subprocess.run(

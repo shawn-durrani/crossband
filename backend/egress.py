@@ -20,6 +20,7 @@ through here: their destinations are fixed by code, not chosen by a model.
 """
 
 import asyncio
+import base64
 import contextlib
 import ipaddress
 import logging
@@ -36,6 +37,7 @@ _HEAD_LIMIT = 32 * 1024
 _MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
 _proxy_url: str | None = None
+_view_proxy_url: str | None = None
 
 
 def set_proxy_url(url: str | None) -> None:
@@ -46,6 +48,18 @@ def set_proxy_url(url: str | None) -> None:
 
 def proxy_url() -> str | None:
     return _proxy_url
+
+
+def set_view_proxy_url(url: str | None) -> None:
+    """Publish (or clear) the budgeted view listener (#148): the port a
+    rendered page load must use, so its many connections share one per-page
+    transfer budget."""
+    global _view_proxy_url
+    _view_proxy_url = url
+
+
+def view_proxy_url() -> str | None:
+    return _view_proxy_url
 
 
 # ---------- policy: one definition of "public" ----------
@@ -131,27 +145,43 @@ class EgressProxy:
 
     def __init__(self, *, max_transfer_bytes, politeness_s, idle_timeout_s,
                  lifetime_s, resolver=None, address_policy=None,
-                 http_ports=(80,), connect_ports=(443,)):
+                 http_ports=(80,), connect_ports=(443,),
+                 page_budget_bytes=0):
         self.max_transfer_bytes = int(max_transfer_bytes)
         self.politeness_s = float(politeness_s)
         self.idle_timeout_s = float(idle_timeout_s)
         self.lifetime_s = float(lifetime_s)
+        # #148: per-PAGE transfer budget, enforced on the separate view
+        # listener where every connection carries a per-view key. 0 = the
+        # view listener does not open at all.
+        self.page_budget_bytes = int(page_budget_bytes)
         self._resolver = resolver
         self._policy = address_policy
         self.http_ports = set(http_ports)
         self.connect_ports = set(connect_ports)
         self._server = None
+        self._view_server = None
         self._pace_lock = asyncio.Lock()
         self._next_by_host = {}
+        self._budgets = {}  # view key -> response bytes moved so far (#148)
         self._conns = set()  # live handler tasks, cancelled on stop()
         self.port = None
         self.url = None
+        self.view_url = None
 
     async def start(self, host="127.0.0.1"):
         self._server = await asyncio.start_server(
             self._handle, host, 0, limit=_HEAD_LIMIT)
         self.port = self._server.sockets[0].getsockname()[1]
         self.url = f"http://{host}:{self.port}"
+        if self.page_budget_bytes > 0:
+            # The budgeted door (#148): same policy, same vetting, plus a
+            # required per-view key so one page load's MANY connections
+            # (subresources, iframes, redirects) share one transfer budget.
+            self._view_server = await asyncio.start_server(
+                self._handle_view, host, 0, limit=_HEAD_LIMIT)
+            vport = self._view_server.sockets[0].getsockname()[1]
+            self.view_url = f"http://{host}:{vport}"
         return self
 
     async def stop(self):
@@ -162,17 +192,48 @@ class EgressProxy:
         if self._server is None:
             return
         self._server.close()
+        if self._view_server is not None:
+            self._view_server.close()
         for task in list(self._conns):
             task.cancel()
         if self._conns:
             await asyncio.gather(*self._conns, return_exceptions=True)
         with contextlib.suppress(Exception):
             await self._server.wait_closed()
+        if self._view_server is not None:
+            with contextlib.suppress(Exception):
+                await self._view_server.wait_closed()
+            self._view_server = None
         self._server = None
 
     # -- per-connection plumbing --
 
     async def _handle(self, reader, writer):
+        await self._serve_one(reader, writer, budgeted=False)
+
+    async def _handle_view(self, reader, writer):
+        await self._serve_one(reader, writer, budgeted=True)
+
+    @staticmethod
+    def _view_key(headers) -> str:
+        """The per-view key from Proxy-Authorization: Basic view:<key>.
+        '' when absent or malformed. The header is hop-by-hop, so the site
+        never sees it."""
+        for name, value in headers:
+            if name.lower() != "proxy-authorization":
+                continue
+            scheme, _, blob = value.partition(" ")
+            if scheme.lower() != "basic":
+                return ""
+            try:
+                user, _, key = base64.b64decode(
+                    blob.strip()).decode("latin-1").partition(":")
+            except (ValueError, UnicodeDecodeError):
+                return ""
+            return key if user == "view" and key else ""
+        return ""
+
+    async def _serve_one(self, reader, writer, budgeted):
         self._conns.add(asyncio.current_task())
         upstream_writer = None
         try:
@@ -184,11 +245,24 @@ class EgressProxy:
                 return await self._refuse(writer, 400, "malformed request line")
             method, target, _version = parts
             headers = self._parse_headers(raw_headers)
+            account = None
+            if budgeted:
+                key = self._view_key(headers)
+                if not key:
+                    # Chromium sends credentials only after a challenge:
+                    # answer 407 and let it retry with the per-view key.
+                    return await self._refuse(writer, 407,
+                                              "view key required")
+                account = self._accountant(key)
+                if account(0):
+                    return await self._refuse(
+                        writer, 403, "page transfer budget exhausted")
             if method.upper() == "CONNECT":
-                upstream_writer = await self._tunnel(reader, writer, target)
+                upstream_writer = await self._tunnel(reader, writer, target,
+                                                     account)
             elif "://" in target:
                 upstream_writer = await self._forward(
-                    reader, writer, method, target, headers)
+                    reader, writer, method, target, headers, account)
             else:
                 return await self._refuse(
                     writer, 400, "origin-form requests are not proxied")
@@ -215,14 +289,36 @@ class EgressProxy:
                 out.append((name.strip(), value.strip()))
         return out
 
+    def _accountant(self, key):
+        """One page's shared budget meter (#148): a closure every relay on
+        this view's connections books bytes through. Returns True the moment
+        the page's TOTAL crosses the budget. Ledger bounded like the pacing
+        map - a forgotten key costs one stale int, never growth."""
+        if len(self._budgets) > 1024 and key not in self._budgets:
+            for k in list(self._budgets)[:512]:
+                del self._budgets[k]
+
+        def account(n: int) -> bool:
+            used = self._budgets.get(key, 0) + n
+            self._budgets[key] = used
+            return used > self.page_budget_bytes
+
+        return account
+
     async def _refuse(self, writer, code, reason):
         """Answer an unproxied request and stop handling this connection.
-        403 carries the vet failure so the tool's error is honest."""
+        403 carries the vet failure so the tool's error is honest. 407
+        carries the Basic challenge the view listener needs - Chromium sends
+        proxy credentials only after being asked."""
         phrase = {400: "Bad Request", 403: "Forbidden",
+                  407: "Proxy Authentication Required",
                   413: "Content Too Large"}.get(code, "Error")
+        challenge = ("Proxy-Authenticate: Basic realm=\"crossband-view\"\r\n"
+                     if code == 407 else "")
         body = f"egress proxy: {reason}\n".encode()
         writer.write(
             f"HTTP/1.1 {code} {phrase}\r\nContent-Type: text/plain\r\n"
+            f"{challenge}"
             f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
             + body)
         with contextlib.suppress(Exception):
@@ -262,12 +358,15 @@ class EgressProxy:
         if wait:
             await asyncio.sleep(wait)
 
-    async def _relay(self, src, dst, cap, last=None):
+    async def _relay(self, src, dst, cap, last=None, account=None):
         """Move bytes src -> dst until EOF, idle timeout, or the cap. `last`
         is a shared one-item list of the tunnel's last-activity time: a
         direction with nothing to say stays open while the OTHER direction is
         still moving (a long quiet download must not be killed by the silent
-        request side)."""
+        request side). `account` (#148) books this direction's bytes into a
+        page's shared budget and answers True when the PAGE total is spent -
+        the per-connection cap bounds one connection, the accountant bounds
+        the whole view."""
         moved = 0
         while True:
             try:
@@ -285,12 +384,16 @@ class EgressProxy:
             moved += len(chunk)
             if moved > cap:
                 raise _CapExceeded(f"transfer exceeded {cap} bytes")
+            if account is not None and account(len(chunk)):
+                raise _CapExceeded(
+                    f"page transfer budget exceeded "
+                    f"({self.page_budget_bytes} bytes)")
             dst.write(chunk)
             await dst.drain()
 
     # -- CONNECT (https) --
 
-    async def _tunnel(self, reader, writer, target):
+    async def _tunnel(self, reader, writer, target, account=None):
         host, _, port_s = target.rpartition(":")
         host = host.strip("[]")
         try:
@@ -308,12 +411,12 @@ class EgressProxy:
 
             last = [time.monotonic()]
 
-            async def relay_then_close(src, dst, cap):
+            async def relay_then_close(src, dst, cap, book=None):
                 # A cap breach or error tears down BOTH ends at once: the
                 # tools must see a broken transfer, never a silently
                 # truncated body that still parses.
                 try:
-                    await self._relay(src, dst, cap, last)
+                    await self._relay(src, dst, cap, last, account=book)
                 finally:
                     for w in (writer, up_writer):
                         with contextlib.suppress(Exception):
@@ -322,7 +425,10 @@ class EgressProxy:
             await asyncio.wait_for(
                 asyncio.gather(
                     relay_then_close(reader, up_writer, _MAX_REQUEST_BYTES),
-                    relay_then_close(up_reader, writer, self.max_transfer_bytes),
+                    # only the pull direction spends the page budget: the
+                    # request side is already bounded per connection
+                    relay_then_close(up_reader, writer,
+                                     self.max_transfer_bytes, account),
                     return_exceptions=True),
                 timeout=self.lifetime_s)
         except BaseException:
@@ -333,7 +439,8 @@ class EgressProxy:
 
     # -- absolute-form (plain http) --
 
-    async def _forward(self, reader, writer, method, target, headers):
+    async def _forward(self, reader, writer, method, target, headers,
+                       account=None):
         u = urlparse(target)
         if u.scheme != "http":
             await self._refuse(writer, 400,
@@ -382,7 +489,8 @@ class EgressProxy:
             # for Connection: close, so EOF is the terminator and the client
             # socket closes with it (the finally in _handle).
             await asyncio.wait_for(
-                self._relay(up_reader, writer, self.max_transfer_bytes),
+                self._relay(up_reader, writer, self.max_transfer_bytes,
+                            account=account),
                 timeout=self.lifetime_s)
         except BaseException:
             with contextlib.suppress(Exception):

@@ -222,10 +222,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_transfer_bytes=settings.egress_max_transfer_mb * 1024 * 1024,
             politeness_s=settings.egress_politeness_s,
             idle_timeout_s=settings.egress_idle_timeout_s,
-            lifetime_s=settings.egress_tunnel_lifetime_s)
+            lifetime_s=settings.egress_tunnel_lifetime_s,
+            page_budget_bytes=int(settings.browse_page_budget_mb * 1024 * 1024))
         await app.state.egress.start()
         egress.set_proxy_url(app.state.egress.url)
-        log.info("egress proxy on %s", app.state.egress.url)
+        egress.set_view_proxy_url(app.state.egress.view_url)  # #148
+        log.info("egress proxy on %s (view listener: %s)",
+                 app.state.egress.url, app.state.egress.view_url or "off")
         await memory.probe(force=True)
         st = memory.status()
         if st["available"]:
@@ -279,6 +282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.mcp.stop()
             await memory.aclose()
             egress.set_proxy_url(None)
+            egress.set_view_proxy_url(None)
             await app.state.egress.stop()
             events.unbind_loop()
             try:

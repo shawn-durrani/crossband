@@ -293,3 +293,84 @@ def test_fetch_page_reports_a_dead_proxy_honestly(monkeypatch):
     out = asyncio.run(tools.run_tool(
         "fetch_page", {"url": "http://example.com/"}, Settings().as_cfg()))
     assert out.startswith("Error running fetch_page:")
+
+
+# ---------- the per-page budget (#148) ----------
+#
+# One rendered page load opens MANY connections (subresources, iframes,
+# redirects); per-connection caps bound each one but not the page. The
+# budgeted view listener keys every connection with a per-view secret and
+# books all pull-direction bytes into one ledger.
+
+def test_view_listener_opens_only_with_a_budget():
+    async def main():
+        off = _proxy()
+        await off.start()
+        try:
+            assert off.view_url is None
+        finally:
+            await off.stop()
+        on = _proxy(page_budget_bytes=1000)
+        await on.start()
+        try:
+            assert on.view_url and on.view_url != on.url
+        finally:
+            await on.stop()
+    asyncio.run(main())
+
+
+def test_view_listener_challenges_then_admits_the_key():
+    async def main():
+        server, sport = await _serve(_page_handler())
+        proxy = _proxy(page_budget_bytes=1 << 20, http_ports={sport})
+        await proxy.start()
+        try:
+            # keyless: a 407 challenge, the handshake Chromium expects
+            async with httpx.AsyncClient(proxy=proxy.view_url) as client:
+                r = await client.get(f"http://h.test:{sport}/")
+            assert r.status_code == 407
+            assert "proxy-authenticate" in {k.lower() for k in r.headers}
+            # keyed: same vetting, same page, budget engaged
+            keyed = proxy.view_url.replace("http://", "http://view:k1@")
+            async with httpx.AsyncClient(proxy=keyed) as client:
+                r = await client.get(f"http://h.test:{sport}/")
+            assert r.status_code == 200 and r.content == b"hello from vetted"
+        finally:
+            await proxy.stop()
+            server.close()
+    asyncio.run(main())
+
+
+def test_page_budget_spans_connections_and_keys_are_independent():
+    async def main():
+        body = b"x" * 60_000
+        server, sport = await _serve(_page_handler(body=body))
+        proxy = _proxy(page_budget_bytes=100_000, http_ports={sport})
+        await proxy.start()
+        try:
+            k1 = proxy.view_url.replace("http://", "http://view:k1@")
+            async with httpx.AsyncClient(proxy=k1) as client:
+                r = await client.get(f"http://h.test:{sport}/a")
+                assert r.status_code == 200 and len(r.content) == 60_000
+                # the SECOND connection crosses the page total mid-body:
+                # the transfer breaks - never a silently truncated 200
+                with pytest.raises(httpx.HTTPError):
+                    await client.get(f"http://h.test:{sport}/b")
+            # a spent page is refused up front on its next connection
+            async with httpx.AsyncClient(proxy=k1) as client:
+                r = await client.get(f"http://h.test:{sport}/c")
+            assert r.status_code == 403
+            assert b"budget exhausted" in r.content
+            # a DIFFERENT view's key has its own fresh budget
+            k2 = proxy.view_url.replace("http://", "http://view:k2@")
+            async with httpx.AsyncClient(proxy=k2) as client:
+                r = await client.get(f"http://h.test:{sport}/d")
+            assert r.status_code == 200
+            # and the plain listener never budgets (fetch_page's path)
+            async with httpx.AsyncClient(proxy=proxy.url) as client:
+                r = await client.get(f"http://h.test:{sport}/e")
+            assert r.status_code == 200
+        finally:
+            await proxy.stop()
+            server.close()
+    asyncio.run(main())
