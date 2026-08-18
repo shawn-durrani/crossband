@@ -49,6 +49,14 @@ _chat_completions_only: set = set()
 # restart just yields "first-call".
 _last_prefix: dict = {}
 
+# The written-deliverable channel (#80): text at and after this token is
+# transcript-only - the voice client stops feeding TTS when it streams past,
+# so long-form content lands in the SAME reply as its spoken summary instead
+# of being deferred to a "next message" that structurally cannot exist.
+# Changing the literal breaks the client's filter
+# (frontend/src/writtenChannel.js pins the same string).
+WRITTEN_TOKEN = "[written]"
+
 VOICE_INSTRUCTION = (
     "YOU ARE IN A LIVE VOICE CALL - your reply is spoken aloud, not read. HARD "
     "RULES: at most three short sentences (about 50 words). Plain spoken language "
@@ -59,7 +67,13 @@ VOICE_INSTRUCTION = (
     "so don't cover everything yourself. Numbers stay DIGITS - issue and PR "
     "references, ports, versions, amounts (#61, PR 57, port 8902, $40) - never "
     "spelled out as words: the transcript is read later and must match what is "
-    "spoken, and text-to-speech reads digits naturally."
+    "spoken, and text-to-speech reads digits naturally. "
+    "ONE exception to the no-lists rule: when the honest answer IS long-form "
+    "written material (a ranked list, a table, code, a document), give a one-or-"
+    f"two sentence spoken summary, then put {WRITTEN_TOKEN} on its own line and "
+    "the full written version below it. Everything after the token lands in the "
+    "transcript for reading and is never spoken; normal formatting is fine "
+    "there. Being in a voice call is NEVER a reason to defer a deliverable."
 )
 
 
@@ -413,6 +427,11 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "nothing has been sent yet. And never promise what no one here can do: Claude "
         "Code opens pull requests but NEVER merges - the user reviews and merges - so "
         "never offer a merge as part of any plan.",
+        "- You get exactly ONE message per round - there is no \"next message\" you can "
+        "send on your own, so \"I'll put the full list in my next message\" is a promise "
+        "this app makes impossible to keep. Deliver the content in THIS reply, or say "
+        "plainly what you still need before you can. A deliverable someone asked for "
+        "(a ranked list, a table, a plan) belongs in the same reply that mentions it.",
         f"- A message ending in \"[cut off by {user}]\" was interrupted mid-delivery. Drop "
         "that line of thought - respond to what they say next; only resume if they ask.",
         "- If you're asked (by name) to stay silent, hold back, or stop replying for a while, "

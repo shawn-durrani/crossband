@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Copy, Check, FileText, Search, Globe, MessagesSquare, Wrench, AlertTriangle,
   ArrowUp, ArrowDown, Loader2, ChevronRight, Trash2 } from 'lucide-react'
 import { canDiscard, discardWarnings } from '../voiceDiscard.js'
+import { renderWritten } from '../writtenChannel.js'
 import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
 import { chipData, chipSuffix, chipTitle, crosstalkNote, crosstalkSegments } from '../voiceChips'
@@ -238,8 +239,10 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
 
   // Buffer incomplete markdown: an unclosed code fence gets a synthetic close
   // so a half-streamed block still renders as code, never as runaway text.
+  // renderWritten (#80): a [written] token becomes a labelled divider - the
+  // body below it is the reply's written deliverable, transcript-only.
   const fenceOpen = msg.streaming && ((msg.content?.match(/```/g) || []).length % 2 === 1)
-  const displayContent = fenceOpen ? `${msg.content}\n\`\`\`` : msg.content
+  const displayContent = renderWritten(fenceOpen ? `${msg.content}\n\`\`\`` : msg.content)
 
   const mdComponents = { pre: Pre }
   if (msg.streaming) {
