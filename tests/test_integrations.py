@@ -11,6 +11,7 @@ Synthetic data only: fake keys, fake MCP server names, no real credentials.
 Async is driven with asyncio.run (no pytest-asyncio in this suite)."""
 
 import asyncio
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -433,6 +434,34 @@ def test_endpoint_does_not_alter_chat_execution(client):
     assert before["participants"] == after["participants"]
     # setup wizard status endpoint still answers unchanged in shape
     assert set(client.get("/api/setup/status").json()) == {"services", "any_model_key"}
+
+
+def test_github_repo_edits_apply_without_a_restart(client, tmp_path, monkeypatch):
+    """#24: github_repos is re-read per request, so a config.local.json edit
+    (the repo-rename case that filed the issue) shows up on the next status
+    read and state blob with no restart."""
+    from backend import config
+    from backend import tools as tools_mod
+    local = tmp_path / "config.local.json"
+    local.write_text(json.dumps({"github_repos": {"app": "alex/app"}}))
+    real = config.load_settings
+    monkeypatch.setattr(tools_mod, "load_settings",
+                        lambda: real(root=tmp_path, environ={}))
+    monkeypatch.setattr(tools_mod, "github_token", lambda: "tok")
+
+    def gh_entry():
+        entries = client.get("/api/integrations").json()["integrations"]
+        return {e["id"]: e for e in entries}["toolset:github"]
+
+    e = gh_entry()
+    assert e["available"] is True and "app" in e["detail"]
+    assert client.get("/api/state").json()["config"]["github"]["repos"] == ["app"]
+
+    # the server keeps running; only the file changes
+    local.write_text(json.dumps({"github_repos": {"renamed": "alex/renamed"}}))
+    e = gh_entry()
+    assert "renamed" in e["detail"] and "app" not in e["detail"]
+    assert client.get("/api/state").json()["config"]["github"]["repos"] == ["renamed"]
 
 
 # ---------- the room + abilities capabilities ----------

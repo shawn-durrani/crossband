@@ -19,7 +19,7 @@ writes credentials and never touches the participant schema.
 
 from fastapi import APIRouter, Request
 
-from .. import capabilities, db, integrations
+from .. import capabilities, db, integrations, tools
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
@@ -37,6 +37,7 @@ async def list_integrations(request: Request, probe: bool = False):
     # repos a guest may open, which GitHub repos the models may touch, whether
     # ingest requires a token.
     cfg = settings.as_cfg() if settings is not None else {}
+    tools.refresh_github_repos(cfg)  # the live map, not the boot copy (#24)
     entries = await integrations.collect(
         participants=participants,
         memory=request.app.state.memory,
