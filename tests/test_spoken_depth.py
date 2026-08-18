@@ -73,7 +73,8 @@ def test_parse_verdict_is_defensive():
     ok = json.dumps({"changes": [{"seat": "Claude", "depth": "deep"},
                                  {"seat": "all", "depth": "normal"}]})
     assert depth.parse_depth_verdict(ok) == [
-        {"seat": "Claude", "depth": "deep"}, {"seat": "all", "depth": "normal"}]
+        {"seat": "Claude", "depth": "deep", "once": False},
+        {"seat": "all", "depth": "normal", "once": False}]
     # anything off-shape degrades to nothing, never raises
     for bad in (None, "", "no json here", '{"changes": "deep"}',
                 json.dumps({"changes": [{"seat": "Claude", "depth": "warp"}]}),
@@ -190,3 +191,109 @@ def test_scan_leaves_discussion_alone(app, utility):
         asyncio.run(introductions.scan_user_turn(
             chat_id, None, "do you ever slow down and think harder?", CFG))
         assert _seat_state(chat_id) == {}
+
+
+# ---------- the one-reply override (#105 slice 2) ----------
+
+def test_parse_carries_the_once_flag_defensively():
+    ok = json.dumps({"changes": [
+        {"seat": "Claude", "depth": "quick", "once": True},
+        {"seat": "all", "depth": "deep"},
+        {"seat": "gpt", "depth": "deep", "once": "yes"}]})  # non-bool: false
+    assert depth.parse_depth_verdict(ok) == [
+        {"seat": "Claude", "depth": "quick", "once": True},
+        {"seat": "all", "depth": "deep", "once": False},
+        {"seat": "gpt", "depth": "deep", "once": False}]
+
+
+def test_once_parks_quietly_and_normal_once_is_nothing(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        out = depth.apply_depth(
+            chat_id, [{"seat": "Claude", "depth": "quick", "once": True}], CFG)
+        assert out == "depth_once"
+        # nothing persistent changed and no mode notice was posted
+        assert _seat_state(chat_id) == {}
+        assert [m for m in _messages(c, chat_id)
+                if m["speaker"] == "system"] == []
+        # "normal, just this once" instructs nothing
+        assert depth.apply_depth(
+            chat_id, [{"seat": "gpt", "depth": "normal", "once": True}],
+            CFG) == "no_change"
+
+
+def test_once_is_consumed_exactly_once_and_survives_a_clear(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        con = db.connect()
+        try:
+            # pending once on a seat with a persistent depth underneath
+            db.set_chat_seat_depth(con, chat_id, "claude", "high")
+            db.set_chat_seat_once(con, chat_id, "claude", "low")
+            # clearing the persistent depth must not kill the pending once
+            db.set_chat_seat_depth(con, chat_id, "claude", "")
+            assert db.take_chat_seat_once(con, chat_id, "claude") == "low"
+            assert db.take_chat_seat_once(con, chat_id, "claude") == ""
+            # and a consumed once on a persistent seat leaves the depth alone
+            db.set_chat_seat_depth(con, chat_id, "gpt", "max")
+            db.set_chat_seat_once(con, chat_id, "gpt", "low")
+            assert db.take_chat_seat_once(con, chat_id, "gpt") == "low"
+            assert db.get_chat_seat_state(con, chat_id) == {"gpt": "max"}
+        finally:
+            con.close()
+
+
+def test_round_consumes_the_once_then_reverts_to_the_standing_depth(
+        app, monkeypatch):
+    """'Just answer this one quickly' over a standing 'think hard': the next
+    reply runs quick with a THIS-reply-only note; the reply after is back on
+    the standing depth with the standing note."""
+    captured = []
+
+    async def stream_reply(participant, roster, transcript, names, cfg, project,
+                           chat_summary, voice_mode, tools=None, memory=None):
+        captured.append((participant.get("reasoning_effort"),
+                         cfg.get("depth_note", "")))
+        yield ("text", "ok")
+
+    monkeypatch.setattr(engine.providers, "stream_reply", stream_reply)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        depth.apply_depth(chat_id, [{"seat": "Claude", "depth": "deep"}], CFG)
+        depth.apply_depth(
+            chat_id, [{"seat": "Claude", "depth": "quick", "once": True}], CFG)
+        for text in ("first", "second"):
+            with c.stream("POST", f"/api/chats/{chat_id}/send",
+                          json={"text": f"@claude {text}"}) as r:
+                "".join(r.iter_text())
+    (eff1, note1), (eff2, note2) = captured
+    assert eff1 == "low" and "THIS reply only" in note1
+    assert eff2 == "high" and "THIS reply only" not in note2
+    assert "Your reasoning depth" in note2  # the standing mode note is back
+
+
+# ---------- schema migration (v22 -> v23) ----------
+
+def test_v22_to_v23_migration_leaves_old_rows_without_an_override(tmp_path):
+    import sqlite3
+    data = tmp_path / "data2"
+    data.mkdir()
+    con0 = sqlite3.connect(data / "chat.db")
+    con0.executescript(
+        "CREATE TABLE chat_seat_state(chat_id INTEGER NOT NULL,"
+        " slug TEXT NOT NULL, reasoning_effort TEXT NOT NULL DEFAULT '',"
+        " updated_at REAL NOT NULL, PRIMARY KEY (chat_id, slug));"
+        "INSERT INTO chat_seat_state VALUES(1, 'claude', 'high', 0);")
+    con0.execute("PRAGMA user_version = 22")
+    con0.commit()
+    con0.close()
+    db.configure(data)
+    db.init()
+    con = db.connect()
+    try:
+        assert (con.execute("PRAGMA user_version").fetchone()[0]
+                == db.SCHEMA_VERSION)
+        row = con.execute("SELECT * FROM chat_seat_state").fetchone()
+        assert row["once_effort"] == "" and row["reasoning_effort"] == "high"
+    finally:
+        con.close()

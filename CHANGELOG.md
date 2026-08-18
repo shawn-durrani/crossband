@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- "Just answer this one quickly" works as said (#105 slice 2). A spoken
+  depth instruction scoped to the next reply ("think hard about just
+  this next one") applies to exactly that reply and reverts by itself.
+  It outranks the standing depth for that one call and posts no mode
+  notice; the seat is told it is a one-off, so it never adopts it as a
+  mode. A round that dies before the seat speaks keeps the override for
+  the next round. Standing instructions behave exactly as before.
+
 - A quiet voice can be turned UP (#163). Voice volume is now a relative
   weight (up to 300%): boosting one voice plays it at full volume and
   quietens the others proportionally, since a browser cannot push audio

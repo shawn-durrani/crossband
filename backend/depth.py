@@ -68,14 +68,19 @@ def build_depth_prompt(text: str, seat_names: list) -> str:
         "Depth words: 'deep' means think harder / take your time / slow "
         "down; 'quick' means faster, shallower answers; 'max' means the "
         "hardest possible thinking; 'normal' means back to the default. "
-        "A named seat means that seat; no name means every seat. Merely "
+        "A named seat means that seat; no name means every seat. Scope: an "
+        "instruction limited to the next reply ('just answer this one "
+        "quickly', 'think hard about just this next one') is a ONE-OFF - "
+        "set \"once\": true; a standing instruction ('from now on', "
+        "'until I say otherwise', or no limit stated) is not. Merely "
         "DISCUSSING thinking is not an instruction: a question ('are you "
         "thinking hard?'), praise ('good thinking'), or asking for more "
         "thought about a TOPIC in this one answer ('think harder about "
         "whether X is true') must return no changes.\n"
         "Reply with ONLY JSON: {\"changes\": [{\"seat\": \"<seat name or "
-        "all>\", \"depth\": \"deep\"|\"quick\"|\"max\"|\"normal\"}]} - "
-        "an empty list when nothing is instructed.\n\n"
+        "all>\", \"depth\": \"deep\"|\"quick\"|\"max\"|\"normal\", "
+        "\"once\": true|false}]} - an empty list when nothing is "
+        "instructed.\n\n"
         f"Message: {text[:600]}"
     )
 
@@ -102,7 +107,8 @@ def parse_depth_verdict(text) -> list:
         seat = ch.get("seat")
         depth = ch.get("depth")
         if isinstance(seat, str) and seat.strip() and depth in DEPTH_LEVELS:
-            out.append({"seat": seat.strip()[:80], "depth": depth})
+            out.append({"seat": seat.strip()[:80], "depth": depth,
+                        "once": ch.get("once") is True})
     return out
 
 
@@ -136,6 +142,7 @@ def apply_depth(chat_id, changes, cfg) -> str:
             by_key[p["slug"].casefold()] = p
             by_key[(p["name"] or "").casefold()] = p
         current = db.get_chat_seat_state(con, chat_id)
+        once_set = 0
         for ch in changes:
             key = ch["seat"].casefold()
             targets = roster if key == "all" else \
@@ -144,6 +151,14 @@ def apply_depth(chat_id, changes, cfg) -> str:
                 log.info("depth change named no known seat: chat=%s", chat_id)
             for p in targets:
                 effort = DEPTH_LEVELS[ch["depth"]]
+                if ch.get("once"):
+                    # Slice 2: one reply only. Consumed by the seat's next
+                    # call, so no mode notice - nothing persistent changed
+                    # and the effect is over by the time anyone reads it.
+                    if effort:
+                        db.set_chat_seat_once(con, chat_id, p["slug"], effort)
+                        once_set += 1
+                    continue  # "normal, just this once" instructs nothing
                 if current.get(p["slug"], "") == effort:
                     continue  # already there - no state write, no notice
                 if not effort and p["slug"] not in current:
@@ -163,7 +178,21 @@ def apply_depth(chat_id, changes, cfg) -> str:
         return "depth_set"
     if cleared:
         return "depth_cleared"
+    if once_set:
+        return "depth_once"
     return "no_change"
+
+
+def once_note(level, user) -> str:
+    """The volatile prompt note for a consumed one-reply override (#105
+    slice 2) - scoped to THIS reply so the seat neither adopts it as a mode
+    nor announces a change of one."""
+    if not level:
+        return ""
+    word = LEVEL_WORDS.get(level, level)
+    return (f"\n## Your reasoning depth (THIS reply only)\n{user} asked for "
+            f"{word} thinking for just this one reply. It applies now and "
+            f"reverts by itself - do not treat it as a standing mode.")
 
 
 def depth_note(level, user) -> str:
