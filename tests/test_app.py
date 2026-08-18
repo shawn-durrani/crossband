@@ -111,8 +111,11 @@ def test_voice_gain_clamped_roundtrip(app):
         pid = client.get("/api/state").json()["participants"][0]["id"]
         r = client.patch(f"/api/participants/{pid}", json={"voice_gain": 0.6}).json()
         assert r["voice_gain"] == 0.6
+        # #163: above 1.0 is a boost (relative weights, ducked client-side)
+        r = client.patch(f"/api/participants/{pid}", json={"voice_gain": 2.0}).json()
+        assert r["voice_gain"] == 2.0
         r = client.patch(f"/api/participants/{pid}", json={"voice_gain": 5}).json()
-        assert r["voice_gain"] == 1.0  # clamped
+        assert r["voice_gain"] == 3.0  # clamped
         r = client.patch(f"/api/participants/{pid}", json={"voice_gain": 0.01}).json()
         assert r["voice_gain"] == 0.2  # clamped
 

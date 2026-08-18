@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS participants(
   system_prompt TEXT NOT NULL DEFAULT '',
   color TEXT NOT NULL DEFAULT '#a1a1aa',
   voice_id TEXT NOT NULL DEFAULT '',
-  voice_gain REAL NOT NULL DEFAULT 1.0,  -- playback volume 0.2–1.0 (normalize loud voices)
+  voice_gain REAL NOT NULL DEFAULT 1.0,  -- relative voice weight 0.2–3.0 (#163: >1 boosts by ducking the rest)
   reasoning_effort TEXT NOT NULL DEFAULT '',
   -- How this seat asks an OpenAI-compatible server to skip its hidden
   -- reasoning trace. '' = send nothing (every hosted seat). The other values

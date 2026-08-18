@@ -645,12 +645,13 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                 <span className="text-sm text-ink-mid">
                   Voice volume{' '}
                   <span className="text-ink-faint">
-                    (turn a loud voice down so everyone speaks at the same level)
+                    (relative: above 100% boosts this voice by quietening the
+                    others; below 100% turns just this voice down)
                   </span>
                 </span>
                 <span className="mt-1 flex items-center gap-2 text-xs text-ink-dim">
                   <input
-                    type="range" min="0.2" max="1" step="0.05"
+                    type="range" min="0.2" max="3" step="0.05"
                     value={editing.voice_gain ?? 1}
                     onChange={(e) => setEditing({ ...editing, voice_gain: Number(e.target.value) })}
                     className="w-40 accent-sky-500 cursor-pointer"

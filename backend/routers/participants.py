@@ -41,7 +41,7 @@ class ParticipantIn(BaseModel):
     color: str | None = None
     enabled: bool | None = None
     voice_id: str | None = None
-    voice_gain: float | None = None  # playback volume, clamped 0.2–1.0
+    voice_gain: float | None = None  # relative voice weight, clamped 0.2–3.0 (#163)
     reasoning_effort: str | None = None
     thinking_control: str | None = None  # local-endpoint thinking opt-out (#159)
     lifecycle: str | None = None  # 'trial' | 'onboarded'
@@ -49,7 +49,9 @@ class ParticipantIn(BaseModel):
     @field_validator("voice_gain")
     @classmethod
     def _clamp_gain(cls, v):
-        return v if v is None else min(1.0, max(0.2, v))
+        # #163: above 1.0 is a BOOST - the client plays this voice at full
+        # volume and ducks the others proportionally (relative weights).
+        return v if v is None else min(3.0, max(0.2, v))
 
     @field_validator("lifecycle")
     @classmethod
