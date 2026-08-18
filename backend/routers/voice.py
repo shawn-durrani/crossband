@@ -101,7 +101,14 @@ def voice_assign():
     voices = voice.list_voices()
     by_name = {v["name"]: v["voice_id"] for v in voices}
     pool = [by_name[n] for n in PREFERRED_VOICES if n in by_name]
-    pool += [v["voice_id"] for v in voices if v["voice_id"] not in pool]
+    # #161: the provider's list order floats between calls, so the
+    # remainder pool is sorted - two assign passes over the same account
+    # pick the same voices, instead of re-rolling into whatever custom or
+    # cloned voice happened to list first that day.
+    pool += [v["voice_id"]
+             for v in sorted(voices,
+                             key=lambda x: ((x.get("name") or ""), x["voice_id"]))
+             if v["voice_id"] not in pool]
     con = db.connect()
     participants = db.get_participants(con, enabled_only=True)
     used = {p["voice_id"] for p in participants if p["voice_id"]}

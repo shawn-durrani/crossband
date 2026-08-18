@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A chosen participant voice now survives seat edits and voice starts
+  (#161). Saving an unrelated seat edit re-sent the editor's stale
+  blank voice selector, clearing an assignment made after the editor
+  opened; the next voice start then re-rolled a different voice from
+  the provider's floating list order. A save now carries the voice
+  only when the selector actually changed, and the fallback pool is
+  sorted, so identical accounts assign identical voices.
+
 - A wedged seat can no longer hold a round hostage (#168). A seat that
   produces no stream event at all for three minutes - no text, no tool
   event, no liveness check-in - is errored and the round moves on, with
