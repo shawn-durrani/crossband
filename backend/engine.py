@@ -18,6 +18,7 @@ import time
 
 from . import attachments as att_mod
 from . import chat_memory, db, guest, passes, person_sync
+from . import depth as depth_mod
 from . import memory_client as memory_client_mod
 from . import providers
 from . import provenance as prov
@@ -212,6 +213,10 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0):
                 "names": names, "messages": messages, "last_seen_id": last_seen_id,
                 "labels_cursor": labels_cursor, "room_names": room_names,
                 "preferred_names": preferred_names,
+                # #105: spoken per-chat depth per seat. Read per seat like
+                # everything else here, so a mid-round "think harder" applies
+                # from the next seat's boundary.
+                "seat_state": db.get_chat_seat_state(con, chat_id),
                 "shared_instructions": db.get_setting(con, "shared_instructions")}
     finally:
         con.close()
@@ -570,6 +575,15 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         write_warning = bool(memory is not None and memory.any_write_failed())
         voice_mode = bool(chat["voice_mode"])
         round_cfg = dict(cfg)
+        # #105: the owner's spoken depth for this seat overrides its
+        # configured default for this call, and the seat is told its mode
+        # (volatile tail - per-seat content must never sit in the cached
+        # stable block).
+        spoken_depth = state["seat_state"].get(participant["slug"], "")
+        if spoken_depth:
+            participant = {**participant, "reasoning_effort": spoken_depth}
+        round_cfg["depth_note"] = depth_mod.depth_note(
+            spoken_depth, cfg.get("user_name", "User"))
         round_cfg["memory_write_warning"] = (
             "a recent memory save failed, so some facts from a just-finished chat "
             "may not be recorded yet - don't assume they're stored."

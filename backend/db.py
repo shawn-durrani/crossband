@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 20  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84)
+SCHEMA_VERSION = 21  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -216,6 +216,18 @@ CREATE TABLE IF NOT EXISTS command_acks(
   -- meaning to any command - this records only that SOMETHING read it.
   message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   acked_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_seat_state(
+  -- Per-chat, per-seat conversation state the owner sets by voice (#105):
+  -- today one field, the spoken reasoning depth. No row (or an empty
+  -- value) means the seat's configured default applies. Persistent until
+  -- changed - "back to normal" deletes the row; there is no automatic
+  -- de-escalation by design.
+  chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
+  reasoning_effort TEXT NOT NULL DEFAULT '',
+  updated_at REAL NOT NULL,
+  PRIMARY KEY (chat_id, slug)
 );
 CREATE TABLE IF NOT EXISTS guest_jobs(
   -- Async Claude Code guest execution: a guest run is a BACKGROUND job,
@@ -1039,6 +1051,31 @@ def ack_command(con, chat_id, message_id) -> bool:
 def command_acked(con, message_id) -> bool:
     return bool(con.execute("SELECT 1 FROM command_acks WHERE message_id=?",
                             (message_id,)).fetchone())
+
+
+def get_chat_seat_state(con, chat_id) -> dict:
+    """slug -> stored reasoning_effort, for seats with spoken per-chat depth
+    (#105). Seats without a row (the normal case) are simply absent."""
+    return {r["slug"]: r["reasoning_effort"] for r in con.execute(
+        "SELECT slug, reasoning_effort FROM chat_seat_state WHERE chat_id=?",
+        (chat_id,)) if r["reasoning_effort"]}
+
+
+def set_chat_seat_depth(con, chat_id, slug, effort):
+    """Set one seat's spoken per-chat depth; '' clears it back to the seat's
+    configured default (the row is deleted, not blanked)."""
+    if effort:
+        con.execute(
+            "INSERT INTO chat_seat_state(chat_id, slug, reasoning_effort, "
+            "updated_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(chat_id, slug) DO UPDATE SET "
+            "reasoning_effort=excluded.reasoning_effort, "
+            "updated_at=excluded.updated_at",
+            (chat_id, slug, effort, now()))
+    else:
+        con.execute("DELETE FROM chat_seat_state WHERE chat_id=? AND slug=?",
+                    (chat_id, slug))
+    con.commit()
 
 
 def mark_room_person_left(con, chat_id, name):

@@ -32,7 +32,7 @@ import logging
 import re
 import unicodedata
 
-from . import anchors, db, diarize, llm_util
+from . import anchors, db, depth, diarize, llm_util
 
 log = logging.getLogger("crossband.introductions")
 
@@ -745,6 +745,8 @@ SCAN_OUTCOMES = (
                             # pronounced Y") put both names on one person
     "correction_unmatched", # a correction confirmed, but no unambiguous
                             # target person - nothing changed, by design
+    "depth_set",            # spoken reasoning depth set for seat(s) (#105)
+    "depth_cleared",        # spoken reasoning depth back to default (#105)
     "no_change",            # a confirmed verdict that changed nothing
     "scan_error",           # the scan itself failed (detail logged below it)
 )
@@ -763,7 +765,8 @@ def schedule_scan(chat_id, message_id, text, cfg):
     room-mode commands), so every user turn still ends in exactly one
     verdict line."""
     if not prefilter(text) and not command_prefilter(text) \
-            and not correction_prefilter(text):
+            and not correction_prefilter(text) \
+            and not depth.depth_prefilter(text):
         _log_verdict(chat_id, "no_prefilter_match")
         return None
     task = asyncio.get_running_loop().create_task(
@@ -823,6 +826,18 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
                     apply_corrections, chat_id, corrections, cfg)
                 if outcome is None or outcome == "no_change":
                     outcome = corr_outcome
+        if depth.depth_prefilter(text):
+            # Spoken reasoning depth (#105): own prefilter + utility call,
+            # same fire-and-forget scan, still one verdict line per turn.
+            seats = await asyncio.to_thread(_all_participant_names)
+            reply = await llm_util.utility_complete(
+                depth.build_depth_prompt(text, seats), cfg, max_tokens=200)
+            changes = depth.parse_depth_verdict(reply)
+            if changes:
+                depth_outcome = await asyncio.to_thread(
+                    depth.apply_depth, chat_id, changes, cfg)
+                if outcome is None or outcome == "no_change":
+                    outcome = depth_outcome
         if outcome is None:
             # A confirmed command that changed nothing (arm while already
             # armed, disarm while off) is an honest no_change; with nothing
