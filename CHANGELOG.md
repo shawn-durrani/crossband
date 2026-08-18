@@ -5,6 +5,12 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A guest resume whose session transcript is gone now retries fresh
+  (#17). continue_last resumes Claude Code's previous visit by id; a
+  cleaned ~/.claude or a new machine made that resume fail the whole
+  guest turn. The visit now restarts fresh instead, saying so in its
+  first line. Other launch failures still fail loudly.
+
 - GitHub repo config edits apply without a restart (#24). The
   `github_repos` map was read once at boot, so after a repo rename the
   models' allowed-repo list and the integrations tile stayed stale

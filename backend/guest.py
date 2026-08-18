@@ -749,6 +749,17 @@ def _result_text(content) -> str:
     return ""
 
 
+def _resume_lost(e) -> bool:
+    """The #17 shape: the CLI could not find the resumed session's transcript
+    (a cleaned ~/.claude, a new machine, a renamed project namespace) - as
+    opposed to any other launch failure, which must still fail loudly. Matched
+    on the CLI's own wording, stderr included when the SDK carries it."""
+    s = f"{e} {getattr(e, 'stderr', '')}".lower()
+    return ("no conversation found" in s
+            or ("session" in s and ("not found" in s
+                                    or "could not be found" in s)))
+
+
 def build_prompt(task, context, mode="investigate", resumed=False) -> str:
     opening = ("The group chat summoned you again - continue from your "
                "previous visit." if resumed else
@@ -928,7 +939,10 @@ async def run_guest(task, repo_key, context, cfg, mode="investigate",
     # any resolved-elsewhere tier) to the real model that ran.
     verified_model = None
     verified_usage_models: list[str] = []
-    it = sdk.query(prompt=build_prompt(task, context, mode, resumed=bool(resume)),
+    attempt_resume = resume
+    streamed_any = False  # has anything (text/tool) reached the chat yet?
+    it = sdk.query(prompt=build_prompt(task, context, mode,
+                                       resumed=bool(attempt_resume)),
                    options=options).__aiter__()
     try:
         while True:
@@ -945,6 +959,33 @@ async def run_guest(task, repo_key, context, cfg, mode="investigate",
                 yield ("text", "\n\n[Claude Code hit its time limit and "
                                "was cut off]")
                 break
+            except Exception as e:
+                # #17: a resume whose transcript is gone fails at launch,
+                # before anything streams. Retry the visit FRESH (once), with
+                # an honest first line, instead of failing the guest turn.
+                # Any other error - or one after output started - still
+                # propagates to the caller's failure path.
+                if attempt_resume and not streamed_any and _resume_lost(e):
+                    log.warning("guest resume %s not found (chat %s) - "
+                                "retrying fresh: %s", attempt_resume, chat_id, e)
+                    aclose = getattr(it, "aclose", None)
+                    if aclose:
+                        try:
+                            await asyncio.wait_for(aclose(),
+                                                   timeout=GUEST_TEARDOWN_S)
+                        except (asyncio.TimeoutError, Exception):
+                            pass
+                    attempt_resume = None
+                    options.resume = None
+                    yield ("text",
+                           "[Couldn't resume the previous visit - its session "
+                           "transcript is gone from this machine. Starting a "
+                           "fresh visit instead.]\n\n")
+                    it = sdk.query(prompt=build_prompt(task, context, mode,
+                                                       resumed=False),
+                                   options=options).__aiter__()
+                    continue
+                raise
 
             if isinstance(msg, sdk.StreamEvent):
                 if msg.parent_tool_use_id:  # subagent internals stay internal
@@ -953,6 +994,7 @@ async def run_guest(task, repo_key, context, cfg, mode="investigate",
                 delta = ev.get("delta") or {}
                 if (ev.get("type") == "content_block_delta"
                         and delta.get("type") == "text_delta"):
+                    streamed_any = True
                     yield ("text", delta.get("text", ""))
             elif isinstance(msg, sdk.AssistantMessage):
                 if msg.parent_tool_use_id:
@@ -970,6 +1012,7 @@ async def run_guest(task, repo_key, context, cfg, mode="investigate",
                         rec = tools_in_flight.pop(block.tool_use_id, None)
                         if rec:
                             rec["output"] = _result_text(block.content)[:2000]
+                            streamed_any = True
                             yield ("tool", rec)
             elif isinstance(msg, sdk.ResultMessage):
                 u = msg.usage or {}

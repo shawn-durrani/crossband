@@ -1524,3 +1524,90 @@ def test_continue_last_repo_mismatch_starts_fresh_and_says_so(app, monkeypatch):
     assert seen["repo"] == "other", "the explicit repo must win"
     assert "continue_last ignored" in row["content"], \
         "the chat must be told the context was not carried over"
+
+
+# ---------- resume fallback when the transcript is gone (#17) ----------
+
+def _flaky_resume_sdk(monkeypatch, tmp_path, error_text, fresh_events=None):
+    """Fake SDK whose query DIES when launched with a resume id and streams
+    normally when launched fresh. Returns the per-launch call log."""
+    import claude_agent_sdk as sdk
+    calls = []
+
+    def fake_query(*, prompt, options=None, transport=None):
+        calls.append({"prompt": prompt, "resume": options.resume})
+        if options.resume:
+            async def dead():
+                raise RuntimeError(error_text)
+                yield  # noqa: W0101 - makes this an async generator
+            return dead()
+
+        async def gen():
+            for ev in (fresh_events or []):
+                yield ev
+            yield sdk.ResultMessage(
+                subtype="success", duration_ms=1, duration_api_ms=1,
+                is_error=False, num_turns=1, session_id="s-2",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 5, "output_tokens": 2}, result="done")
+        return gen()
+
+    class FakeSdk:
+        ClaudeAgentOptions = sdk.ClaudeAgentOptions
+        AssistantMessage = sdk.AssistantMessage
+        UserMessage = sdk.UserMessage
+        ResultMessage = sdk.ResultMessage
+        StreamEvent = sdk.StreamEvent
+        TextBlock = sdk.TextBlock
+        ToolUseBlock = sdk.ToolUseBlock
+        ToolResultBlock = sdk.ToolResultBlock
+        query = staticmethod(fake_query)
+
+    monkeypatch.setattr(guest, "_sdk", lambda: FakeSdk)
+    _git_repo(tmp_path)
+    return calls
+
+
+def test_resume_falls_back_to_fresh_when_transcript_gone(tmp_path, monkeypatch):
+    """#17: a resume whose session transcript is gone (a cleaned ~/.claude, a
+    new machine, a renamed project namespace) retries the visit FRESH with an
+    honest first line, instead of failing the guest turn."""
+    import claude_agent_sdk as sdk
+    fresh = [sdk.StreamEvent(
+        uuid="u1", session_id="s-2", parent_tool_use_id=None,
+        event={"type": "content_block_delta",
+               "delta": {"type": "text_delta", "text": "fresh answer"}})]
+    calls = _flaky_resume_sdk(
+        monkeypatch, tmp_path,
+        "No conversation found with session ID: sess-9", fresh_events=fresh)
+    cfg = {"code_repos": {"demo": str(tmp_path)}}
+
+    async def drain():
+        return [ev async for ev in guest.run_guest(
+            "t", "demo", "ctx", cfg, resume="sess-9")]
+
+    events = asyncio.run(drain())
+    text = "".join(p for k, p in events if k == "text")
+    # the honest note leads; the fresh visit's answer follows
+    assert text.startswith("[Couldn't resume the previous visit")
+    assert "fresh answer" in text
+    # two launches: the failed resume, then fresh - with the fresh opening
+    assert [c["resume"] for c in calls] == ["sess-9", None]
+    assert "continue from your previous visit" not in calls[1]["prompt"]
+    # the usage row carries the NEW session id for the next continue_last
+    assert next(p for k, p in events if k == "usage")["session_id"] == "s-2"
+
+
+def test_other_launch_failures_still_fail_loudly(tmp_path, monkeypatch):
+    """Only the missing-session shape retries. Any other resume-time error
+    propagates to the caller's failure path unchanged."""
+    calls = _flaky_resume_sdk(monkeypatch, tmp_path, "CLI exploded: exit 1")
+    cfg = {"code_repos": {"demo": str(tmp_path)}}
+
+    async def drain():
+        return [ev async for ev in guest.run_guest(
+            "t", "demo", "ctx", cfg, resume="sess-9")]
+
+    with pytest.raises(RuntimeError, match="CLI exploded"):
+        asyncio.run(drain())
+    assert [c["resume"] for c in calls] == ["sess-9"]  # no silent fresh retry
