@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The Connections page shows repo access per surface (#86). One table
+  says, per repo, whether the models' GitHub tools reach it (and which
+  owner/repo that means) and whether the coding guest can open it in an
+  isolated worktree, read-only or with writes. MCP servers are named as
+  live-machine surfaces, kept apart from repo rows. The room asserted
+  contradictory access facts for days because nothing displayed them.
+  The guest's repo map now also re-reads from config per round, like the
+  GitHub map already did, so edits apply without a restart.
+
 - A guest resume whose session transcript is gone now retries fresh
   (#17). continue_last resumes Claude Code's previous visit by id; a
   cleaned ~/.claude or a new machine made that resume fail the whole

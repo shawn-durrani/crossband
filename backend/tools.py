@@ -339,21 +339,24 @@ def code_tool_definitions(cfg):
 _gh_token_cache = {"value": None, "checked": False}
 
 
-def refresh_github_repos(cfg):
-    """Overlay the live `github_repos` map onto cfg, in place (#24).
+def refresh_repo_maps(cfg):
+    """Overlay the live repo maps onto cfg, in place (#24, #86).
 
-    The map is hand-maintained in config.local.json and was read once at
-    boot, so after a repo rename both the tools' allowed-repo list and the
-    integrations tile stayed stale until a restart. Mirrors
+    `github_repos` and `code_repos` are hand-maintained in config.local.json
+    and were read once at boot, so after a repo rename or an added checkout
+    the tools' allowed-repo lists, the guest's summon menu and the
+    integrations tiles stayed stale until a restart. Mirrors
     routers/pricing.py: a fresh load_settings() per use. An unreadable
-    config keeps the copy already in cfg rather than dropping the tools
+    config keeps the copies already in cfg rather than dropping the tools
     mid-session. Callers pass a per-request/per-round dict, never a shared
     one.
     """
     try:
-        cfg["github_repos"] = load_settings().github_repos or {}
+        fresh = load_settings()
     except Exception:
-        pass
+        return cfg
+    cfg["github_repos"] = fresh.github_repos or {}
+    cfg["code_repos"] = fresh.code_repos or {}
     return cfg
 
 

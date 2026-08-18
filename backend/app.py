@@ -360,7 +360,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/state")
     async def get_state():
         cfg = settings.as_cfg()
-        tools_mod.refresh_github_repos(cfg)  # the live map, not the boot copy (#24)
+        tools_mod.refresh_repo_maps(cfg)  # the live maps, not the boot copies (#24, #86)
         con = db.connect()
         projects = [dict(r) for r in con.execute("SELECT * FROM projects ORDER BY created_at")]
         chats = [dict(r) for r in con.execute(

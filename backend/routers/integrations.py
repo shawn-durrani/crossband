@@ -37,7 +37,7 @@ async def list_integrations(request: Request, probe: bool = False):
     # repos a guest may open, which GitHub repos the models may touch, whether
     # ingest requires a token.
     cfg = settings.as_cfg() if settings is not None else {}
-    tools.refresh_github_repos(cfg)  # the live map, not the boot copy (#24)
+    tools.refresh_repo_maps(cfg)  # the live maps, not the boot copies (#24, #86)
     entries = await integrations.collect(
         participants=participants,
         memory=request.app.state.memory,

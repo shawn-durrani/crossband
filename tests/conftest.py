@@ -29,10 +29,10 @@ def _voiceid_offline(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_disk_config_in_tools(monkeypatch):
-    """#24 re-reads github_repos from disk per round/request. In tests the cfg
-    a test builds is the whole truth - never the developer's own
-    config.local.json. The raise lands in refresh_github_repos' fallback, which
-    keeps the passed copy. Tests of the live re-read override this with a
+    """#24/#86 re-read the repo maps from disk per round/request. In tests the
+    cfg a test builds is the whole truth - never the developer's own
+    config.local.json. The raise lands in refresh_repo_maps' fallback, which
+    keeps the passed copies. Tests of the live re-read override this with a
     tmp-root loader."""
     from backend import tools as tools_mod
 
