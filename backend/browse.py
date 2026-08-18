@@ -17,11 +17,13 @@ Availability: the playwright package plus an installed Chromium
 either, the tool is not offered and models keep fetch_page.
 """
 
+import contextlib
 import json
 import logging
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -155,23 +157,34 @@ def render(url: str, cfg) -> dict:
         req["proxy_pass"] = secrets.token_hex(16)
     profile_dir = tempfile.mkdtemp(prefix="crossband-browse-")
     try:
-        proc = subprocess.run(
+        # start_new_session puts the worker in its OWN process group (#153):
+        # the Playwright driver and Chromium are grandchildren, and a plain
+        # timeout kill of the direct child would orphan them at several
+        # hundred MB each. On timeout the whole group dies together.
+        proc = subprocess.Popen(
             [sys.executable, str(_WORKER)],
-            input=json.dumps(req).encode(),
-            capture_output=True,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=_worker_env(profile_dir),
-            timeout=timeout + 5,  # the worker's own budgets end first
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        raise ValueError(
-            f"page render exceeded {timeout:.0f}s and was stopped")
+        try:
+            stdout, stderr = proc.communicate(
+                json.dumps(req).encode(),
+                timeout=timeout + 5)  # the worker's own budgets end first
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            raise ValueError(
+                f"page render exceeded {timeout:.0f}s and was stopped")
     finally:
         shutil.rmtree(profile_dir, ignore_errors=True)
-    if proc.stderr:
+    if stderr:
         log.debug("browse worker stderr: %s",
-                  proc.stderr[:_STDERR_LOG_CAP].decode("utf-8", "replace"))
+                  stderr[:_STDERR_LOG_CAP].decode("utf-8", "replace"))
     try:
-        out = json.loads(proc.stdout.decode("utf-8", "replace").strip() or "{}")
+        out = json.loads(stdout.decode("utf-8", "replace").strip() or "{}")
     except ValueError:
         raise ValueError("page renderer returned no usable result")
     if not isinstance(out, dict) or (not out.get("error") and "text" not in out):

@@ -138,18 +138,33 @@ def test_transfer_cap_breaks_the_connection():
     asyncio.run(main())
 
 
-def test_per_host_pacing_spaces_connects():
+def test_per_host_pacing_spaces_bursts_not_connections():
+    """#153: politeness is per BURST. A rendered page opens many same-host
+    connections in seconds; pacing each one queued tens of seconds of
+    spacing inside the render budget. Connects inside the burst window flow
+    unpaced; the next burst after the window still pays the interval from
+    the previous burst's start."""
     async def main():
         server, sport = await _serve(_page_handler())
-        proxy = _proxy(politeness_s=0.4, http_ports={sport})
+        proxy = _proxy(politeness_s=0.4, burst_window_s=0.2,
+                       http_ports={sport})
         await proxy.start()
         try:
             async with httpx.AsyncClient(proxy=proxy.url) as client:
                 t0 = time.monotonic()
                 await client.get(f"http://h.test:{sport}/one")
                 await client.get(f"http://h.test:{sport}/two")
-                elapsed = time.monotonic() - t0
-            assert elapsed >= 0.35
+                await client.get(f"http://h.test:{sport}/three")
+                burst = time.monotonic() - t0
+                assert burst < 0.35  # one burst: no per-connection spacing
+                await asyncio.sleep(0.25)  # the burst window lapses
+                t1 = time.monotonic()
+                await client.get(f"http://h.test:{sport}/four")
+                spaced = time.monotonic() - t1
+            # the fresh burst honoured the interval from the previous
+            # burst's start: it waited out the remainder of the 0.4s
+            assert spaced >= 0.05
+            assert burst + 0.25 + spaced >= 0.38
         finally:
             await proxy.stop()
             server.close()

@@ -146,7 +146,7 @@ class EgressProxy:
     def __init__(self, *, max_transfer_bytes, politeness_s, idle_timeout_s,
                  lifetime_s, resolver=None, address_policy=None,
                  http_ports=(80,), connect_ports=(443,),
-                 page_budget_bytes=0):
+                 page_budget_bytes=0, burst_window_s=10.0):
         self.max_transfer_bytes = int(max_transfer_bytes)
         self.politeness_s = float(politeness_s)
         self.idle_timeout_s = float(idle_timeout_s)
@@ -155,6 +155,9 @@ class EgressProxy:
         # listener where every connection carries a per-view key. 0 = the
         # view listener does not open at all.
         self.page_budget_bytes = int(page_budget_bytes)
+        # #153: how long one page load's same-host connects count as ONE
+        # burst for pacing purposes. Subresources land within seconds.
+        self.burst_window_s = float(burst_window_s)
         self._resolver = resolver
         self._policy = address_policy
         self.http_ports = set(http_ports)
@@ -162,7 +165,7 @@ class EgressProxy:
         self._server = None
         self._view_server = None
         self._pace_lock = asyncio.Lock()
-        self._next_by_host = {}
+        self._pace_state = {}  # host -> {"burst_start", "next"} (#153)
         self._budgets = {}  # view key -> response bytes moved so far (#148)
         self._conns = set()  # live handler tasks, cancelled on stop()
         self.port = None
@@ -345,16 +348,34 @@ class EgressProxy:
         await self._refuse(writer, 403, f"could not connect: {err}")
 
     async def _pace(self, host):
-        """At most one connect per host per politeness window."""
+        """At most one BURST per host per politeness window (#153).
+
+        Pacing used to be per connection, and a rendered page opens many to
+        one host - a dozen same-host subresources queued tens of seconds of
+        spacing inside a 20s render budget, and every one pushed the host's
+        next slot further out, delaying the NEXT fetch too. Politeness is
+        about not hammering a host with repeated visits, so the unit is the
+        burst: the first connect of a burst pays the interval and opens a
+        window; same-host connects inside the window flow unpaced (they are
+        the same page load); the next burst after the window waits the
+        interval from the previous burst's start."""
         async with self._pace_lock:
             now = time.monotonic()
-            nxt = self._next_by_host.get(host, now)
-            wait = max(0.0, nxt - now)
-            self._next_by_host[host] = max(now, nxt) + self.politeness_s
-            if len(self._next_by_host) > 1024:
-                for k in sorted(self._next_by_host,
-                                key=self._next_by_host.get)[:512]:
-                    del self._next_by_host[k]
+            st = self._pace_state.get(host)
+            if st and (now - st["burst_start"]) <= self.burst_window_s:
+                # join the running burst - but never jump ahead of its
+                # leader while the leader is still waiting out the interval
+                wait = max(0.0, st["burst_start"] - now)
+            else:
+                nxt = st["next"] if st else now
+                wait = max(0.0, nxt - now)
+                start = max(now, nxt)
+                self._pace_state[host] = {"burst_start": start,
+                                          "next": start + self.politeness_s}
+            if len(self._pace_state) > 1024:
+                for k in sorted(self._pace_state,
+                                key=lambda h: self._pace_state[h]["next"])[:512]:
+                    del self._pace_state[k]
         if wait:
             await asyncio.sleep(wait)
 

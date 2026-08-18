@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Rendered pages stop paying politeness per subresource, and a stuck
+  render can no longer leak browsers (#153). The egress proxy paces
+  connection BURSTS, not connections: a page's dozen same-host
+  subresources no longer queue tens of seconds of spacing inside the
+  render budget or delay the next fetch to that host. And the render
+  worker now runs in its own process group, so the deadline kill takes
+  Chromium and the Playwright driver with it instead of orphaning them
+  at several hundred MB each.
+
 - A rendered page load now has a whole-page transfer budget (#148,
   second half). The egress proxy grew a budgeted view listener: every
   connection a `view_page` render opens carries a per-view key, and all

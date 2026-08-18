@@ -273,3 +273,40 @@ def test_view_page_refuses_a_challenge_with_one_clean_line(tmp_path, monkeypatch
     assert "gated.test" not in out          # no URL laundering, ever
     assert "cdn-cgi" not in out
     assert "checking your browser" not in out  # interstitial text dropped
+
+
+# ---------- the deadline kills the whole tree (#153) ----------
+
+def _gone_or_zombie(pid):
+    import subprocess as sp
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    out = sp.run(["ps", "-o", "stat=", "-p", str(pid)],
+                 capture_output=True, text=True).stdout.strip()
+    return (not out) or out.startswith("Z")
+
+
+def test_deadline_kills_the_whole_worker_tree(tmp_path, monkeypatch):
+    """#153: the Playwright driver and Chromium are GRANDCHILDREN of the
+    worker; a timeout kill of the direct child alone would orphan them at
+    several hundred MB each. The worker runs in its own process group and
+    the whole group dies at the deadline."""
+    import time as _time
+    marker = tmp_path / "grandchild.pid"
+    _fake_worker(tmp_path, monkeypatch, (
+        "import subprocess, time\n"
+        "child = subprocess.Popen(['sleep', '120'])\n"
+        f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(120)\n"))
+    with pytest.raises(ValueError, match="stopped"):
+        browse.render("https://example.com/", _cfg(browse_timeout_s=0.5))
+    gpid = int(marker.read_text())
+    deadline = _time.time() + 3
+    while _time.time() < deadline:
+        if _gone_or_zombie(gpid):
+            break
+        _time.sleep(0.05)
+    else:
+        raise AssertionError("grandchild survived the deadline kill")

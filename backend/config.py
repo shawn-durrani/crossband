@@ -339,7 +339,7 @@ class Settings(BaseModel):
     # (podcast audio rides the same path); fetch_max_page_mb is the tighter
     # decoded-bytes cap fetch_page enforces itself.
     egress_max_transfer_mb: int = 64
-    egress_politeness_s: float = 2.0  # per-host spacing between connects
+    egress_politeness_s: float = 2.0  # per-host spacing between bursts (#153)
     egress_idle_timeout_s: float = 60.0
     egress_tunnel_lifetime_s: float = 300.0
     fetch_max_page_mb: int = 10
