@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The voice tick stops posing as a live verdict (#139). A green tick
+  beside a person means their profile holds enough approved audio to
+  recognise them; it said turns "are named automatically", which read
+  as recognition of the turn being spoken even while that turn sat on
+  "Identity pending". The tick's copy now scopes itself to the profile
+  and points at each turn's own label for the live answer.
+
 - A chosen participant voice now survives seat edits and voice starts
   (#161). Saving an unrelated seat edit re-sent the editor's stale
   blank voice selector, clearing an assignment made after the editor

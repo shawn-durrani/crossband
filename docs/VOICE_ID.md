@@ -168,9 +168,11 @@ When tuning, change one knob at a time and check the voice dock first.
 Its top row leads with the room indicator ("room on · N", "listening" or
 "solo") and shows one chip per person - a tick once their voice is
 remembered, "learning 4s" while it is still being learnt - plus how fast
-the last turn was identified. The matcher's own state and any "sound
-close" warning sit behind the settings button beside the controls, along
-with the manual room switches.
+the last turn was identified. The tick describes the stored profile, not
+the turn being spoken. Each turn's own label shows the live attribution,
+and a hard turn can stay uncertain under a green tick. The matcher's own
+state and any "sound close" warning sit behind the settings button
+beside the controls, along with the manual room switches.
 
 ## Similar-voice households
 
