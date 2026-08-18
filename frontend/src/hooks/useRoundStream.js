@@ -153,7 +153,7 @@ export function useRoundStream({
                 workStatus: null,
                 tool_events: [
                   ...(msg.tool_events || []),
-                  { id: `${id}-t${(msg.tool_events || []).length}`, tool: ev.tool, input_json: ev.input_json, output_text: ev.output_text },
+                  { id: `${id}-t${(msg.tool_events || []).length}`, tool: ev.tool, input_json: ev.input_json, output_text: ev.output_text, attachment_id: ev.attachment_id || null },
                 ],
               }
             : msg,

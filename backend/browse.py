@@ -36,6 +36,7 @@ _WORKER = Path(__file__).with_name("browse_worker.py")
 _NAV_SHARE, _SETTLE_SHARE = 0.6, 0.2
 _MAX_LINKS = 40
 _STDERR_LOG_CAP = 800
+_MAX_SHOT_BYTES = 1_500_000  # a viewport PNG is typically well under this
 
 _available: bool | None = None  # cached per process
 
@@ -138,6 +139,9 @@ def render(url: str, cfg) -> dict:
         "settle_timeout_ms": int(timeout * _SETTLE_SHARE * 1000),
         "max_text": int(cfg["max_tool_output"]) * 4,  # pre-format slack; the tool caps the final text
         "max_links": _MAX_LINKS,
+        # #149: viewport screenshot budget. A capture bigger than this is
+        # dropped by the worker; the render itself is never affected.
+        "max_shot_bytes": _MAX_SHOT_BYTES,
     }
     profile_dir = tempfile.mkdtemp(prefix="crossband-browse-")
     try:

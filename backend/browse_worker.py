@@ -19,10 +19,16 @@ Containment, per the issue:
 
 Protocol: one JSON object on stdin ->  one JSON object on stdout.
 In:  {url, proxy, user_agent, nav_timeout_ms, settle_timeout_ms,
-      max_text, max_links}
-Out: {final_url, title, text, links: [{t, h}, ...]}  or  {error}
+      max_text, max_links, max_shot_bytes?}
+Out: {final_url, title, text, links: [{t, h}, ...], shot_b64?}  or  {error}
+
+shot_b64 (#149): a viewport PNG of what was rendered, base64, so the user
+can SEE exactly what was viewed. Best-effort and bounded by
+max_shot_bytes - a failed or oversized capture drops the field, never the
+render.
 """
 
+import base64
 import json
 import sys
 
@@ -72,6 +78,13 @@ def render(req: dict) -> dict:
                 if h.startswith(("http://", "https://")) and h not in seen:
                     seen.add(h)
                     deduped.append(l)
+            shot_b64 = None
+            try:
+                raw = page.screenshot(type="png")  # viewport, not full page
+                if len(raw) <= int(req.get("max_shot_bytes") or 0):
+                    shot_b64 = base64.b64encode(raw).decode()
+            except Exception:
+                pass  # a failed capture never costs the render
             return {
                 "final_url": page.url,
                 "title": page.title(),
@@ -79,6 +92,7 @@ def render(req: dict) -> dict:
                     "() => document.body ? document.body.innerText : ''"
                 )[:req["max_text"]],
                 "links": deduped[:req["max_links"]],
+                "shot_b64": shot_b64,
             }
         finally:
             browser.close()

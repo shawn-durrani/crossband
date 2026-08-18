@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The view_page tool row carries a screenshot of what was viewed (#149).
+  The rendered-viewing worker captures a viewport PNG; it lands in the
+  ordinary attachment store keyed to the assistant message, and the tool
+  chip shows it when expanded - so you can see exactly what the model
+  saw, not just the extracted text. Capture is best-effort and bounded:
+  a failed or oversized shot never costs the view its text. Feeding
+  screenshots to vision models stays out of scope.
+
 - A verification interstitial reads as one clean line (#150, first
   half). When a rendered page turns out to be a human-verification
   challenge ("Just a moment..."), view_page now says so in a single

@@ -83,6 +83,16 @@ function AttachmentChip({ att }) {
   )
 }
 
+// #149: an attachment a TOOL produced (view_page's screenshot) renders
+// collapsed inside its tool chip, so the message-level strip shows only the
+// files that arrived as ordinary attachments - never the same image twice.
+function looseAttachments(msg) {
+  const toolAtt = new Set(
+    (msg.tool_events || []).map((t) => t.attachment_id).filter(Boolean),
+  )
+  return (msg.attachments || []).filter((a) => !toolAtt.has(a.id))
+}
+
 const TOOL_ICONS = { web_search: Search, fetch_page: Globe, fetch_reddit_thread: MessagesSquare }
 
 // One-line chip: [icon] tool name (mono) · arg summary · status. Click expands.
@@ -105,7 +115,23 @@ function ToolChip({ ev, running }) {
             : <Check size={12} style={{ color: 'var(--t-ok)' }} />}
         </span>
       </summary>
-      <pre className="px-3 pb-2.5 pt-1 whitespace-pre-wrap break-words text-ink-mid max-h-64 overflow-y-auto border-t border-edge">
+      {ev.attachment_id && (
+        <a
+          href={`/api/attachments/${ev.attachment_id}/file`}
+          target="_blank"
+          rel="noreferrer"
+          className="block px-3 pt-2 border-t border-edge"
+          title="Screenshot of exactly what was viewed"
+        >
+          <img
+            src={`/api/attachments/${ev.attachment_id}/file`}
+            alt="screenshot of the viewed page"
+            loading="lazy"
+            className="max-h-64 rounded border border-edge"
+          />
+        </a>
+      )}
+      <pre className={`px-3 pb-2.5 pt-1 whitespace-pre-wrap break-words text-ink-mid max-h-64 overflow-y-auto ${ev.attachment_id ? '' : 'border-t border-edge'}`}>
         {ev.output_text}
       </pre>
     </details>
@@ -456,9 +482,9 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
       {msg.tool_events?.length > 0 && (
         <ToolChips events={msg.tool_events} streaming={msg.streaming} />
       )}
-      {msg.attachments?.length > 0 && (
+      {looseAttachments(msg).length > 0 && (
         <div className="flex flex-wrap gap-2 mb-1.5">
-          {msg.attachments.map((a) => (
+          {looseAttachments(msg).map((a) => (
             <AttachmentChip key={a.id} att={a} />
           ))}
         </div>
