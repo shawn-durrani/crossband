@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Promised deliverables arrive in the same reply, voice included (#80).
+  A participant gets exactly one message per round, so "I'll put the
+  full list in my next message" was a promise the app made impossible
+  to keep - one morning produced four such promises and no list. Seats
+  are now told that truth plainly. In voice, a reply can carry a spoken
+  summary and then a full written deliverable below a [written] line:
+  the written part lands in the transcript under a labelled divider and
+  is never read aloud, so "too long to say" no longer means "defer".
+
 - The Connections page shows repo access per surface (#86). One table
   says, per repo, whether the models' GitHub tools reach it (and which
   owner/repo that means) and whether the coding guest can open it in an

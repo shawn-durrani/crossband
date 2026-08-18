@@ -3,6 +3,7 @@ import { sidToKill } from './micRegistry.js'
 import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { couldBePass } from './voiceView.js'
+import { WrittenFilter } from './writtenChannel.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
@@ -175,6 +176,10 @@ export default class VoiceController {
     this.playing = 0
     this.roundActive = false
     this.dropQueue = false
+    // #80 written-deliverable channel: per-speaker stream filters that stop
+    // feeding TTS at the [written] token, so a reply's long-form body lands
+    // in the transcript unspoken. Fresh per speaker_start.
+    this._writtenFilters = new Map()
     // Round liveness clock for the wedged-gate escape hatch (roundGuard.js):
     // stamped on EVERY incoming round event, read by the VAD's gated branch.
     this._lastRoundEventAt = 0
@@ -1106,6 +1111,7 @@ export default class VoiceController {
       // Defer opening TTS until the reply has real content, so a benched model's
       // ellipsis-only "…" reply is never voiced (ElevenLabs otherwise breathes it).
       this._pendingSpeaker = { slug: ev.speaker, text: '', started: false }
+      this._writtenFilters.set(ev.speaker, new WrittenFilter()) // #80
     } else if (ev.type === 'delta') {
       // First streamed token of the round, and of this speaker: the model +
       // orchestration wait resolves here.
@@ -1122,8 +1128,13 @@ export default class VoiceController {
       if (p && p.slug === ev.speaker && !p.started) {
         this._pendingSpeaker = null // ellipsis/empty reply - never opened, nothing to flush
       } else {
+        // #80: release any held could-still-be-the-token tail before the
+        // final flush, so trailing words are spoken, never lost.
+        const rest = this._writtenFilters.get(ev.speaker)?.flush()
+        if (rest) this.sockets.get(ev.speaker)?.send({ text: rest })
         this.sockets.get(ev.speaker)?.send({ flush: true, done: true })
       }
+      this._writtenFilters.delete(ev.speaker)
     }
     // 'work_status' deliberately has NO playback branch here: it's a
     // structured liveness signal for the text/UI chip only. Speaking it
@@ -1143,11 +1154,20 @@ export default class VoiceController {
         p.started = true
         this._pendingSpeaker = null
         this._beginSpeaker(slug)
-        this.sockets.get(slug)?.send({ text: p.text })
+        this._sendSpeech(slug, p.text)
       }
       return
     }
-    this.sockets.get(slug)?.send({ text })
+    this._sendSpeech(slug, text)
+  }
+
+  // #80: everything bound for TTS passes through the speaker's written-channel
+  // filter - text after a [written] token is transcript-only, never spoken.
+  // Empty results (mid-token holdback, or post-token silence) send nothing.
+  _sendSpeech(slug, text) {
+    const filter = this._writtenFilters.get(slug)
+    const speak = filter ? filter.feed(text) : text
+    if (speak) this.sockets.get(slug)?.send({ text: speak })
   }
 
   onRoundDone() {
