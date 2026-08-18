@@ -323,7 +323,7 @@ def test_room_mode_on_leaves_upstream_frames_byte_for_byte_identical(
 # ── 2. the tee slices on commit boundaries ──────────────────────────────────
 
 def test_tee_slices_utterances_on_the_same_commit_boundaries(
-        app, relay, batch_stt, matcher):
+        app, relay, batch_stt, matcher, monkeypatch):
     """Each commit fires ONE crosstalk batch call (matcher stubbed to
     "multi" - the sole EL trigger since #28 PR-B) carrying the anchor prefix
     plus exactly that utterance's audio (including the commit frame's own
@@ -338,6 +338,19 @@ def test_tee_slices_utterances_on_the_same_commit_boundaries(
     u2 = [_frame(b"\x44\x44" * 80), _frame(b"\x55\x55" * 80, commit=True)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat, pid = _room_chat(c)
+        # #155: two nondeterminisms made this flake on runner pace, neither
+        # of them the tee. (1) The two passes are fire-and-forget tasks, so
+        # the captured calls order by COMPLETION - under load pass 2 lands
+        # first and an index-based assertion compares the wrong pair (the
+        # observed 160-byte RIFF drift is exactly len(pcm1)-len(pcm2)). The
+        # assertion below is order-independent. (2) The crosstalk path banks
+        # each speaker's split, every bank rewrites the index fingerprint,
+        # and build_prefix follows the fingerprint - so the prefix a pass
+        # embeds could grow mid-test. Freeze the banks and pin the prefix
+        # now: commit-boundary slicing is what this test pins.
+        monkeypatch.setattr(anchors.AnchorStore, "add_clip",
+                            lambda self, *a, **kw: False)
+        prefix_pcm, _ = anchors.store().build_prefix([pid], 16000)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             assert ws.receive_json()["session"]  # #134 handshake
@@ -346,13 +359,13 @@ def test_tee_slices_utterances_on_the_same_commit_boundaries(
                 ws.receive_json()
             assert _wait_for(lambda: len(batch_stt["calls"]) == 2)
             ws.send_json({"done": True})
-    prefix_pcm, _ = anchors.store().build_prefix([pid], 16000)
     pcm1 = b"".join(base64.b64decode(f["audio"]) for f in u1)
     pcm2 = b"".join(base64.b64decode(f["audio"]) for f in u2)
-    assert batch_stt["calls"][0]["audio"] == diarize.pcm16_wav(
-        prefix_pcm + pcm1, 16000)
-    assert batch_stt["calls"][1]["audio"] == diarize.pcm16_wav(
-        prefix_pcm + pcm2, 16000)
+    # One call per utterance, each exactly prefix + that utterance - in
+    # whichever order the two passes happened to finish (#155).
+    assert {c["audio"] for c in batch_stt["calls"]} == {
+        diarize.pcm16_wav(prefix_pcm + pcm1, 16000),
+        diarize.pcm16_wav(prefix_pcm + pcm2, 16000)}
     for call in batch_stt["calls"]:
         assert call["data"]["diarize"] == "true"
         assert call["data"]["num_speakers"] == "2"   # roster (1) + 1
