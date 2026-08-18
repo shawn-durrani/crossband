@@ -747,6 +747,7 @@ SCAN_OUTCOMES = (
                             # target person - nothing changed, by design
     "depth_set",            # spoken reasoning depth set for seat(s) (#105)
     "depth_cleared",        # spoken reasoning depth back to default (#105)
+    "depth_once",           # a one-reply depth override parked (#105 slice 2)
     "no_change",            # a confirmed verdict that changed nothing
     "scan_error",           # the scan itself failed (detail logged below it)
 )

@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 22  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149)
+SCHEMA_VERSION = 23  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149) · v23: chat_seat_state.once_effort (one-reply spoken depth override, #105 slice 2)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -222,14 +222,17 @@ CREATE TABLE IF NOT EXISTS command_acks(
   acked_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chat_seat_state(
-  -- Per-chat, per-seat conversation state the owner sets by voice (#105):
-  -- today one field, the spoken reasoning depth. No row (or an empty
-  -- value) means the seat's configured default applies. Persistent until
-  -- changed - "back to normal" deletes the row; there is no automatic
-  -- de-escalation by design.
+  -- Per-chat, per-seat conversation state the owner sets by voice (#105).
+  -- reasoning_effort: the PERSISTENT spoken depth - no row (or empty)
+  -- means the seat's configured default; "back to normal" clears it and
+  -- there is no automatic de-escalation by design. once_effort (slice 2):
+  -- a one-reply override ("just answer this one quickly") consumed by the
+  -- next call that seat actually makes, then gone - it outranks the
+  -- persistent depth for exactly that call.
   chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
   slug TEXT NOT NULL,
   reasoning_effort TEXT NOT NULL DEFAULT '',
+  once_effort TEXT NOT NULL DEFAULT '',
   updated_at REAL NOT NULL,
   PRIMARY KEY (chat_id, slug)
 );
@@ -598,6 +601,13 @@ def init(settings=None):
                        "AND name='tool_events'").fetchone():
             con.execute("ALTER TABLE tool_events ADD COLUMN attachment_id "
                         "INTEGER REFERENCES attachments(id) ON DELETE SET NULL")
+    if 1 <= version <= 22:  # v23: chat_seat_state.once_effort (#105 slice 2).
+        # Default-empty, so every existing per-chat depth row simply has no
+        # pending one-reply override - exactly what was true before.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='chat_seat_state'").fetchone():
+            con.execute("ALTER TABLE chat_seat_state ADD COLUMN once_effort "
+                        "TEXT NOT NULL DEFAULT ''")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -1075,7 +1085,8 @@ def get_chat_seat_state(con, chat_id) -> dict:
 
 def set_chat_seat_depth(con, chat_id, slug, effort):
     """Set one seat's spoken per-chat depth; '' clears it back to the seat's
-    configured default (the row is deleted, not blanked)."""
+    configured default. A cleared row survives (blanked) while it still holds
+    a pending one-reply override, and is deleted once fully empty."""
     if effort:
         con.execute(
             "INSERT INTO chat_seat_state(chat_id, slug, reasoning_effort, "
@@ -1085,9 +1096,46 @@ def set_chat_seat_depth(con, chat_id, slug, effort):
             "updated_at=excluded.updated_at",
             (chat_id, slug, effort, now()))
     else:
+        con.execute(
+            "UPDATE chat_seat_state SET reasoning_effort='', updated_at=? "
+            "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
+        con.execute(
+            "DELETE FROM chat_seat_state WHERE chat_id=? AND slug=? "
+            "AND once_effort=''", (chat_id, slug))
+    con.commit()
+
+
+def set_chat_seat_once(con, chat_id, slug, effort):
+    """Park a one-reply depth override (#105 slice 2). Replaces any pending
+    one - the newest spoken instruction wins."""
+    con.execute(
+        "INSERT INTO chat_seat_state(chat_id, slug, once_effort, updated_at) "
+        "VALUES(?,?,?,?) "
+        "ON CONFLICT(chat_id, slug) DO UPDATE SET "
+        "once_effort=excluded.once_effort, updated_at=excluded.updated_at",
+        (chat_id, slug, effort, now()))
+    con.commit()
+
+
+def take_chat_seat_once(con, chat_id, slug) -> str:
+    """Consume the pending one-reply override, if any: it applies to exactly
+    one call, so reading it clears it. A round that dies BEFORE the seat's
+    call is built never reaches this, so the override survives for the next
+    round - consumed at use, not at dispatch."""
+    row = con.execute(
+        "SELECT once_effort, reasoning_effort FROM chat_seat_state "
+        "WHERE chat_id=? AND slug=?", (chat_id, slug)).fetchone()
+    if not row or not row["once_effort"]:
+        return ""
+    if row["reasoning_effort"]:
+        con.execute(
+            "UPDATE chat_seat_state SET once_effort='', updated_at=? "
+            "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
+    else:
         con.execute("DELETE FROM chat_seat_state WHERE chat_id=? AND slug=?",
                     (chat_id, slug))
     con.commit()
+    return row["once_effort"]
 
 
 def mark_room_person_left(con, chat_id, name):

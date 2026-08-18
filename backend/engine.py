@@ -139,7 +139,8 @@ async def _adopted_result(task):
         return []
 
 
-def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0):
+def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0,
+                      slug=""):
     """One speaker's DB reads, in one connection, on one worker thread: the
     cheap per-speaker row reads that deliberately stay per-speaker, plus the
     transcript delta. Returns None when the chat vanished mid-round. The
@@ -215,8 +216,13 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0):
                 "preferred_names": preferred_names,
                 # #105: spoken per-chat depth per seat. Read per seat like
                 # everything else here, so a mid-round "think harder" applies
-                # from the next seat's boundary.
+                # from the next seat's boundary. once_effort (slice 2) is
+                # CONSUMED here, on the worker thread, for exactly the seat
+                # whose call is being built - a round that dies earlier never
+                # reaches this, so the override keeps for the next round.
                 "seat_state": db.get_chat_seat_state(con, chat_id),
+                "once_effort": (db.take_chat_seat_once(con, chat_id, slug)
+                                if slug else ""),
                 "shared_instructions": db.get_setting(con, "shared_instructions")}
     finally:
         con.close()
@@ -539,7 +545,8 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # must not pin the event loop that is simultaneously relaying live
         # voice websockets and SSE streams.
         state = await asyncio.to_thread(_load_round_state, chat_id, messages,
-                                        last_seen_id, labels_cursor)
+                                        last_seen_id, labels_cursor,
+                                        participant["slug"])
         if state is None:
             break
         chat = state["chat"]
@@ -580,12 +587,19 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # #105: the owner's spoken depth for this seat overrides its
         # configured default for this call, and the seat is told its mode
         # (volatile tail - per-seat content must never sit in the cached
-        # stable block).
+        # stable block). A one-reply override (slice 2, already consumed by
+        # the state read above) outranks the persistent depth for exactly
+        # this call and carries its own scoped note.
         spoken_depth = state["seat_state"].get(participant["slug"], "")
-        if spoken_depth:
-            participant = {**participant, "reasoning_effort": spoken_depth}
-        round_cfg["depth_note"] = depth_mod.depth_note(
-            spoken_depth, cfg.get("user_name", "User"))
+        once_depth = state.get("once_effort", "")
+        level = once_depth or spoken_depth
+        if level:
+            participant = {**participant, "reasoning_effort": level}
+        user_name = cfg.get("user_name", "User")
+        round_cfg["depth_note"] = (depth_mod.once_note(once_depth, user_name)
+                                   if once_depth else
+                                   depth_mod.depth_note(spoken_depth,
+                                                        user_name))
         round_cfg["memory_write_warning"] = (
             "a recent memory save failed, so some facts from a just-finished chat "
             "may not be recorded yet - don't assume they're stored."
