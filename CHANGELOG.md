@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A verification interstitial reads as one clean line (#150, first
+  half). When a rendered page turns out to be a human-verification
+  challenge ("Just a moment..."), view_page now says so in a single
+  sentence pointing at the paste-into-chat path, instead of dumping the
+  interstitial's own text into the transcript. None of the challenge's
+  URLs can enter the seen-URL ledger. Completing challenges stays out
+  of scope by design; the renderer-identity question stays open on the
+  issue.
+
 - Reasoning depth answers to your voice, per seat, per chat (#105 slice
   1). "Slow down and think harder", "take your time Claude", "quick
   answers from now on", "back to normal": a cheap prefilter plus the
