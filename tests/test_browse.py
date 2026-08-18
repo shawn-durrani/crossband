@@ -183,3 +183,55 @@ def test_real_render_through_a_live_proxy():
         assert "static-only" not in out["text"]
         assert any(l["h"].endswith("/next") for l in out["links"])
     asyncio.run(main())
+
+
+# ---------- challenge detection (#150) ----------
+
+def test_challenge_page_recognises_interstitials():
+    # Cloudflare's actual shape from the first field test: tiny page,
+    # "Just a moment..." title, challenge-platform resources.
+    assert browse.challenge_page({
+        "final_url": "https://claude.ai/share/abc?__cf_chl_tk=x",
+        "title": "Just a moment...",
+        "text": "claude.ai needs to review the security of your connection."})
+    # a challenge-platform URL is decisive on its own
+    assert browse.challenge_page({
+        "final_url": "https://x.test/cdn-cgi/challenge-platform/h/b",
+        "title": "", "text": ""})
+    # body phrase on a tiny document
+    assert browse.challenge_page({
+        "final_url": "https://x.test/page", "title": "x",
+        "text": "Verify you are human by completing the action below."})
+
+
+def test_challenge_page_never_trips_on_real_pages():
+    # an article ABOUT captchas: big body, ordinary URL and title
+    assert not browse.challenge_page({
+        "final_url": "https://blog.test/how-captchas-work",
+        "title": "How CAPTCHAs work, and why 'verify you are human' fails",
+        "text": ("verify you are human appears on many interstitials. "
+                 + "analysis " * 900)})
+    # an ordinary small page with none of the phrases
+    assert not browse.challenge_page({
+        "final_url": "https://x.test/about", "title": "About us",
+        "text": "We make things."})
+
+
+def test_view_page_refuses_a_challenge_with_one_clean_line(tmp_path, monkeypatch):
+    """The interstitial's text and links never reach the transcript, and the
+    Error prefix keeps every URL in the reply out of the seen-URL ledger."""
+    _fake_worker(tmp_path, monkeypatch, (
+        "import json, sys\nsys.stdin.read()\n"
+        "print(json.dumps({"
+        "'final_url': 'https://gated.test/x?__cf_chl_tk=abc',"
+        "'title': 'Just a moment...',"
+        "'text': 'checking your browser before accessing gated.test',"
+        "'links': [{'t': 'challenge', 'h': 'https://gated.test/cdn-cgi/x'}]}))\n"))
+    monkeypatch.setattr(tools, "_assert_public_url", lambda u: u)
+    out = asyncio.run(tools.run_tool(
+        "view_page", {"url": "https://gated.test/x"}, _cfg()))
+    assert out.startswith("Error running view_page:")
+    assert "paste the content" in out
+    assert "gated.test" not in out          # no URL laundering, ever
+    assert "cdn-cgi" not in out
+    assert "checking your browser" not in out  # interstitial text dropped

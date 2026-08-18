@@ -1061,6 +1061,16 @@ def view_page(args, cfg):
     from . import browse
     url = _assert_public_url((args.get("url") or "").strip())
     out = browse.render(url, cfg)
+    if browse.challenge_page(out):
+        # #150: the interstitial's text is junk and its links would launder
+        # challenge URLs into the seen-URL ledger. Raised as the tool error
+        # so the ledger's Error% filter keeps every URL in this reply out;
+        # the wording points at the one path that works.
+        raise ValueError(
+            "this site gates automated readers behind a human-verification "
+            "challenge, which stays closed by design - ask "
+            f"{cfg.get('user_name', 'the user')} to paste the content into "
+            "the chat instead")
     final = out.get("final_url") or url
     head = [f"Viewed: {final}"]
     if out.get("title"):

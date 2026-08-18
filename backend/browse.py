@@ -39,6 +39,40 @@ _STDERR_LOG_CAP = 800
 
 _available: bool | None = None  # cached per process
 
+# ---------- challenge detection (#150) ----------
+#
+# A human-verification interstitial ("Just a moment...") is not the page: its
+# text is junk in the transcript and its links would launder challenge URLs
+# into the seen-URL ledger. Signals are held tight so a real article ABOUT
+# captchas never trips them: challenge-platform URL paths are decisive on
+# their own; title and body phrases only count on the tiny documents these
+# interstitials actually are.
+
+_CHALLENGE_URL_BITS = ("/cdn-cgi/challenge-platform", "__cf_chl",
+                       "challenge_redirect", "/captcha")
+_CHALLENGE_TITLES = ("just a moment", "checking your browser",
+                     "attention required", "verify you are human",
+                     "verifying you are human", "security check")
+_CHALLENGE_PHRASES = ("verify you are human", "checking your browser",
+                      "enable javascript and cookies to continue",
+                      "review the security of your connection",
+                      "complete the action below to continue")
+_CHALLENGE_MAX_CHARS = 4000  # real pages dwarf this; interstitials never do
+
+
+def challenge_page(out: dict) -> bool:
+    """Is this render a verification interstitial rather than the page
+    itself? Pure; drives the one-line refusal in tools.view_page."""
+    url = (out.get("final_url") or "").casefold()
+    if any(b in url for b in _CHALLENGE_URL_BITS):
+        return True
+    text = (out.get("text") or "").strip().casefold()
+    if len(text) > _CHALLENGE_MAX_CHARS:
+        return False
+    title = (out.get("title") or "").strip().casefold()
+    return (any(t in title for t in _CHALLENGE_TITLES)
+            or any(p in text for p in _CHALLENGE_PHRASES))
+
 
 def _chromium_installed() -> bool:
     """True when Playwright's Chromium build exists on disk. Checked without
