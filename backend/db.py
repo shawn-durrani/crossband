@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 19  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159)
+SCHEMA_VERSION = 20  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -260,6 +260,16 @@ CREATE TABLE IF NOT EXISTS room_roster(
   status TEXT NOT NULL DEFAULT 'present',  -- 'present' | 'left'
   joined_at REAL NOT NULL,
   left_at REAL,
+  -- How this seat happened (#84), stamped at write time and never backfilled,
+  -- so the next seat forensic is one query instead of an evening of log
+  -- correlation. seated_via: 'introduction' | 'voice-match' | 'owner'
+  -- ('' on rows written before v20; 'cold-start' is reserved - elimination
+  -- banks audio into an EXISTING pending seat and never creates one).
+  -- seated_by_message_id is the triggering message when the writer had one
+  -- in hand (introduction scans, corrections); voice-match seats happen
+  -- before the turn's message exists, so theirs stays NULL.
+  seated_by_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  seated_via TEXT NOT NULL DEFAULT '',
   updated_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS room_flags(
@@ -553,6 +563,17 @@ def init(settings=None):
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                        "AND name='participants'").fetchone():
             con.execute("ALTER TABLE participants ADD COLUMN thinking_control "
+                        "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 19:  # v20: room_roster seat provenance (#84).
+        # Both nullable/default-empty, so every existing row simply has no
+        # recorded seat trigger - exactly what was knowable before the
+        # columns existed. Never backfilled by design.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='room_roster'").fetchone():
+            con.execute("ALTER TABLE room_roster ADD COLUMN "
+                        "seated_by_message_id INTEGER "
+                        "REFERENCES messages(id) ON DELETE SET NULL")
+            con.execute("ALTER TABLE room_roster ADD COLUMN seated_via "
                         "TEXT NOT NULL DEFAULT ''")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -945,14 +966,21 @@ def get_room_roster(con, chat_id, present_only=False):
     return [dict(r) for r in con.execute(q + " ORDER BY id", (chat_id,))]
 
 
-def add_room_person(con, chat_id, name, person_id=""):
+def add_room_person(con, chat_id, name, person_id="",
+                    seated_by_message_id=None, seated_via=""):
     """Append one person to a chat's roster (or re-mark a previously-left row
     present). Returns the row, or None for a refused name. Cap enforcement is
     the CALLER's job (introductions.apply_scan) - this is a thin writer, with
     ONE refusal of its own (#65): an AI participant's exact slug or display
     name never becomes a roster person, whatever path asked. Spelt-by-ear
     variants are the scan layer's job (participant_alias); this is the
-    last-ditch guard under every seat writer."""
+    last-ditch guard under every seat writer.
+
+    seated_by_message_id/seated_via (#84) record how THIS seat happened,
+    at write time. A previously-left row re-marked present is a new seating
+    event and gets the new trigger; a row already present keeps its original
+    provenance (the answer to "how did this seat happen" must not drift
+    under later idempotent re-writes)."""
     if con.execute(
             "SELECT 1 FROM participants WHERE lower(slug)=lower(?) "
             "OR lower(name)=lower(?)", (name, name)).fetchone():
@@ -961,18 +989,29 @@ def add_room_person(con, chat_id, name, person_id=""):
         "SELECT * FROM room_roster WHERE chat_id=? AND lower(name)=lower(?)",
         (chat_id, name)).fetchone()
     if row:
-        con.execute(
-            "UPDATE room_roster SET status='present', left_at=NULL, "
-            "person_id=CASE WHEN person_id='' THEN ? ELSE person_id END, "
-            "updated_at=? WHERE id=?", (person_id, now(), row["id"]))
+        if row["status"] == "left":
+            con.execute(
+                "UPDATE room_roster SET status='present', left_at=NULL, "
+                "person_id=CASE WHEN person_id='' THEN ? ELSE person_id END, "
+                "seated_by_message_id=?, seated_via=?, "
+                "updated_at=? WHERE id=?",
+                (person_id, seated_by_message_id, seated_via, now(),
+                 row["id"]))
+        else:
+            con.execute(
+                "UPDATE room_roster SET status='present', left_at=NULL, "
+                "person_id=CASE WHEN person_id='' THEN ? ELSE person_id END, "
+                "updated_at=? WHERE id=?", (person_id, now(), row["id"]))
         con.commit()
         out = dict(con.execute("SELECT * FROM room_roster WHERE id=?",
                                (row["id"],)).fetchone())
     else:
         cur = con.execute(
             "INSERT INTO room_roster(chat_id, name, person_id, status, "
-            "joined_at, updated_at) VALUES(?,?,?,'present',?,?)",
-            (chat_id, name, person_id, now(), now()))
+            "joined_at, seated_by_message_id, seated_via, updated_at) "
+            "VALUES(?,?,?,'present',?,?,?,?)",
+            (chat_id, name, person_id, now(), seated_by_message_id,
+             seated_via, now()))
         con.commit()
         out = dict(con.execute("SELECT * FROM room_roster WHERE id=?",
                                (cur.lastrowid,)).fetchone())

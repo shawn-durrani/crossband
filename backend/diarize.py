@@ -1289,7 +1289,11 @@ def _roster_remembered(chat_id, name, person_id, cfg):
             log.info("roster cap reached; matched voice not rostered: "
                      "chat=%s cap=%d", chat_id, cap)
             return
-        db.add_room_person(con, chat_id, name, person_id=person_id or "")
+        # #84: the turn's message does not exist yet at seat time (the label
+        # parks under turn_id and attaches later), so the trigger is the
+        # path, message-less.
+        db.add_room_person(con, chat_id, name, person_id=person_id or "",
+                           seated_via="voice-match")
         db.resolve_room_flags(con, chat_id, kind="unknown_voice")
         log.info("remembered voice rostered by local match: chat=%s", chat_id)
     finally:
@@ -1648,7 +1652,8 @@ def _arm_known(chat_id, matched, cfg):
                 continue
             person = store.find_by_name(name)
             pid = person["person_id"] if person else ""
-            db.add_room_person(con, chat_id, name, person_id=pid)
+            db.add_room_person(con, chat_id, name, person_id=pid,
+                               seated_via="voice-match")
             present.add(name.lower())
     finally:
         con.close()

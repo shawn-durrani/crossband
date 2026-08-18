@@ -1172,7 +1172,9 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                     _raise_merge_question(con, chat_id, name, variant)
                     log.info("introduction close to a remembered name: "
                              "chat=%s merge question raised", chat_id)
-                db.add_room_person(con, chat_id, roster_name, person_id=pid)
+                db.add_room_person(con, chat_id, roster_name, person_id=pid,
+                                   seated_by_message_id=message_id,
+                                   seated_via="introduction")
             added = min(allowed, len(new))
             log.info("roster grew: chat=%s added=%d", chat_id, added)
             if not seed_owner:
@@ -1196,7 +1198,7 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                 # armed the room. Seeding is gated on THIS scan having
                 # armed the room, when the stash is plausibly the
                 # introduction utterance itself.
-                _seed_owner_anchor(chat_id, cfg)
+                _seed_owner_anchor(chat_id, cfg, message_id=message_id)
         for name in departs:
             if db.mark_room_person_left(con, chat_id, name):
                 departed += 1
@@ -1289,11 +1291,13 @@ def _voice_matched_person(chat_id, people, cfg, owner, message_id=None,
                  if p["person_id"] == verdict["person_id"]), None)
 
 
-def _seed_owner_anchor(chat_id, cfg):
+def _seed_owner_anchor(chat_id, cfg, message_id=None):
     """The owner's anchor comes from the introduction utterance: the relay
     stashes each finished utterance while room mode is off, and the voice
     that spoke the introduction is the owner's by design. Quietly a no-op
-    when there is no live voice session (a TYPED introduction has no audio)."""
+    when there is no live voice session (a TYPED introduction has no audio).
+    `message_id` (#84): the triggering message when the caller has one (the
+    introduction scan does; a command arm names no message)."""
     stashed = diarize.take_stashed_utterance(chat_id)
     if not stashed:
         return
@@ -1313,7 +1317,9 @@ def _seed_owner_anchor(chat_id, cfg):
         present = {p["name"].lower()
                    for p in db.get_room_roster(con, chat_id, present_only=True)}
         if owner.lower() not in present:
-            db.add_room_person(con, chat_id, owner, person_id=pid)
+            db.add_room_person(con, chat_id, owner, person_id=pid,
+                               seated_by_message_id=message_id,
+                               seated_via="owner")
         else:
             db.link_room_person(con, chat_id, owner, pid)
     finally:
@@ -1407,7 +1413,8 @@ def _roster_owner(con, chat_id, cfg):
     present = {p["name"].lower()
                for p in db.get_room_roster(con, chat_id, present_only=True)}
     if owner.lower() not in present:
-        db.add_room_person(con, chat_id, owner, person_id=pid)
+        db.add_room_person(con, chat_id, owner, person_id=pid,
+                           seated_via="owner")
     elif pid:
         db.link_room_person(con, chat_id, owner, pid)
 

@@ -489,8 +489,11 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
                 learned = store.add_clip(pid, pcm, sample_rate,
                                          source="correction")
         # The corrected person is evidently in the room: put them on the
-        # roster (or re-mark them present) and link their anchors.
-        db.add_room_person(con, chat_id, name, person_id=pid)
+        # roster (or re-mark them present) and link their anchors. The seat
+        # trigger (#84) is the corrected message, by the owner's hand.
+        db.add_room_person(con, chat_id, name, person_id=pid,
+                           seated_by_message_id=message_id,
+                           seated_via="owner")
         db.link_room_person(con, chat_id, name, pid)
     finally:
         con.close()
