@@ -31,4 +31,4 @@ pytest
 # Chromium build it drives is an operator step (`.venv/bin/playwright
 # install chromium`, ~160MB). backend/browse.py gates the tool on both, so
 # absence just means models keep fetch_page.
-playwright>=1.45
+playwright>=1.62.0
