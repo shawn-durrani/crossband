@@ -31,6 +31,7 @@ from .config import (ROOT, Settings, deprecated_env_vars, key_status,
 from .memory_client import MemoryClient
 from .routers import attachments as attachments_router
 from .routers import auth as auth_router
+from .routers import benchmark as benchmark_router
 from .routers import chats as chats_router
 from .routers import events as events_router
 from .routers import import_export as import_router
@@ -416,6 +417,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(voice_router.router)
     app.include_router(room_router.router)
     app.include_router(models_router.router)
+    app.include_router(benchmark_router.router)
     app.include_router(settings_router.router)
     app.include_router(pricing_router.router)
     app.include_router(setup_router.router)

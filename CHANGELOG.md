@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The seats can be raced on identical scripted cases (#94). A Benchmark
+  panel on the Models page runs your chosen models through fixed cases
+  and compares stage timings side by side: text replies, speech-to-text
+  on a spoken fixture, each seat's own voice, and the full
+  listen-think-speak pipeline. Synthetic by design - no microphone, no
+  playback, results labelled as not-live-turn numbers - with generated
+  audio saved for your own ears and deletable per run. See
+  docs/BENCHMARK.md.
+
 - "Just answer this one quickly" works as said (#105 slice 2). A spoken
   depth instruction scoped to the next reply ("think hard about just
   this next one") applies to exactly that reply and reverts by itself.
