@@ -12,12 +12,12 @@ websockets
 youtube-transcript-api
 claude-agent-sdk  # summon_claude_code guest (needs the Claude Code CLI at runtime)
 # The MCP client/server SDK. A DIRECT dependency (backend/mcp_client.py,
-# backend/diag_mcp.py, tests/fake_mcp.py) that previously rode in
-# transitively via claude-agent-sdk, so its version floated on someone
-# else's constraint choices. mcp 2.0 removed the embedded FastMCP server
-# and the in-memory test session both sides use; migrating is its own
-# reviewed change (#198). Until then: the 1.x line, declared here.
-mcp>=1.23,<2
+# tests/fake_mcp.py) that previously rode in transitively via
+# claude-agent-sdk, so its version floated on someone else's constraint
+# choices. On the 2.x line since #198; capped at <3 because the last
+# major silently removed APIs this repo imports, so the next one is its
+# own reviewed change.
+mcp>=2,<3
 # Passkey (WebAuthn) verification for the browser gate (#25): vetted parsing
 # and verification of authenticator responses; pulls in cryptography + cbor2.
 # Capped at <3: verification semantics are security-load-bearing, so a major

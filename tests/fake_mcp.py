@@ -1,7 +1,7 @@
 """A real (tiny) MCP server for the client-layer tests - stdio, keyless."""
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
-mcp = FastMCP("fake")
+mcp = MCPServer("fake")
 
 
 @mcp.tool()

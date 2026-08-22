@@ -22,12 +22,37 @@ Guardrails pinned here:
 import asyncio
 import json
 import subprocess
+from contextlib import asynccontextmanager
 
 import pytest
 
 from backend import db, diag_mcp, guest, voice_trace
 from backend.app import create_app
 from backend.config import Settings
+
+
+@asynccontextmanager
+async def connected_session(server):
+    """An initialized in-memory ClientSession talking to `server` (the SDK
+    MCP server's underlying lowlevel Server object). mcp 2.0 removed the 1.x
+    create_connected_server_and_client_session helper (#198); this is the
+    same recipe rebuilt on the primitives 2.x kept."""
+    import anyio
+    from mcp import ClientSession
+    from mcp.shared.memory import create_client_server_memory_streams
+
+    async with create_client_server_memory_streams() as (client_io, server_io):
+        client_read, client_write = client_io
+        server_read, server_write = server_io
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(lambda: server.run(
+                server_read, server_write,
+                server.create_initialization_options(),
+                raise_exceptions=True))
+            async with ClientSession(client_read, client_write) as session:
+                await session.initialize()
+                yield session
+            tg.cancel_scope.cancel()
 
 
 @pytest.fixture
@@ -278,18 +303,15 @@ def test_e2e_guest_can_call_get_diagnostic_through_the_mounted_mcp_surface(
     assert "mcp__crossband-diag" in opts.allowed_tools   # offered to the guest
     server_config = opts.mcp_servers["crossband-diag"]   # the exact mounted server
 
-    from mcp.shared.memory import create_connected_server_and_client_session
-
     async def talk_to_it():
-        async with create_connected_server_and_client_session(
-                server_config["instance"]) as session:
+        async with connected_session(server_config["instance"]) as session:
             listed = await session.list_tools()
             assert [t.name for t in listed.tools] == ["get_diagnostic"]
-            schema = listed.tools[0].inputSchema
+            schema = listed.tools[0].input_schema
             assert schema["properties"]["name"]["enum"] == list(diag_mcp.DIAGNOSTIC_NAMES)
 
             ok = await session.call_tool("get_diagnostic", {"name": "models"})
-            assert ok.isError is not True
+            assert ok.is_error is not True
             payload = json.loads(ok.content[0].text)
             assert "participants" in payload
             assert {p["slug"] for p in payload["participants"]} >= {"claude", "gpt"}
@@ -302,7 +324,7 @@ def test_e2e_guest_can_call_get_diagnostic_through_the_mounted_mcp_surface(
             # in the unit tests above, is the defense-in-depth layer under
             # THAT - for a caller that bypasses schema validation entirely).
             refused = await session.call_tool("get_diagnostic", {"name": "shell"})
-            assert refused.isError is True
+            assert refused.is_error is True
             refusal_text = refused.content[0].text
             assert "shell" in refusal_text  # names what was rejected
             # never a diagnostic payload leaking through a rejected call
@@ -384,14 +406,11 @@ def test_e2e_guest_conversation_spend_is_scoped_to_the_summoning_chat(
     opts = captured["options"]
     server_config = opts.mcp_servers["crossband-diag"]
 
-    from mcp.shared.memory import create_connected_server_and_client_session
-
     async def talk_to_it():
-        async with create_connected_server_and_client_session(
-                server_config["instance"]) as session:
+        async with connected_session(server_config["instance"]) as session:
             result = await session.call_tool(
                 "get_diagnostic", {"name": "conversation_spend"})
-            assert result.isError is not True
+            assert result.is_error is not True
             payload = json.loads(result.content[0].text)
             assert payload["active_conversation"] is True
             assert payload["chat_id"] == summoning_chat
