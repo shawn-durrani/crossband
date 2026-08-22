@@ -400,7 +400,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "max_attachment_mb": cfg["max_attachment_mb"],
                 "keys": key_status(),
                 "search": tools_mod.available_backends(),
-                "voice_enabled": voice.enabled(),
+                "voice_enabled": voice.provider_for(cfg) != voice.NO_VOICE,
                 "code": guest.status(cfg),
                 "github": {"available": tools_mod.github_available(cfg),
                            "repos": sorted((cfg.get("github_repos") or {}))},

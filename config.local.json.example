@@ -3,6 +3,8 @@
 
   "user_name": "Alex",
 
+  "voice_provider": "auto",
+
   "code_repos": {
     "myapp": "/Users/you/dev/myapp"
   },

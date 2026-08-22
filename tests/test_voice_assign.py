@@ -16,7 +16,11 @@ from backend.config import Settings
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(voice, "enabled", lambda: True)
+    # The suite is keyless by design, so the fixture simulates a keyed
+    # account through the seam's own selection point (provider_for was the
+    # key check "enabled" before the provider seam existed).
+    monkeypatch.setattr(voice, "provider_for",
+                        lambda cfg: voice.PROVIDER_ELEVENLABS)
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     with TestClient(create_app(settings), base_url="http://127.0.0.1") as c:

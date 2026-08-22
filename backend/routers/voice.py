@@ -73,7 +73,8 @@ def capture_profile(msg) -> str:
 
 @router.get("/api/voice/status")
 def voice_status(request: Request):
-    if not voice.enabled():
+    cfg = request.app.state.settings.as_cfg()
+    if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
         return {"enabled": False}
     out = {"enabled": True, "tts_model": request.app.state.settings.tts_model}
     try:
@@ -84,9 +85,10 @@ def voice_status(request: Request):
 
 
 @router.get("/api/voice/voices")
-def voice_voices():
-    if not voice.enabled():
-        raise HTTPException(400, "ELEVENLABS_API_KEY not set")
+def voice_voices(request: Request):
+    cfg = request.app.state.settings.as_cfg()
+    if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
+        raise HTTPException(400, voice.disabled_reason(cfg))
     try:
         return {"voices": voice.list_voices()}
     except Exception as e:
@@ -94,10 +96,11 @@ def voice_voices():
 
 
 @router.post("/api/voice/assign")
-def voice_assign():
+def voice_assign(request: Request):
     """Give every enabled participant a distinct voice if it doesn't have one."""
-    if not voice.enabled():
-        raise HTTPException(400, "ELEVENLABS_API_KEY not set")
+    cfg = request.app.state.settings.as_cfg()
+    if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
+        raise HTTPException(400, voice.disabled_reason(cfg))
     voices = voice.list_voices()
     by_name = {v["name"]: v["voice_id"] for v in voices}
     pool = [by_name[n] for n in PREFERRED_VOICES if n in by_name]
@@ -128,9 +131,9 @@ def voice_assign():
 @router.post("/api/chats/{chat_id}/stt")
 def stt(chat_id: int, request: Request, file: UploadFile = File(...),
         duration_ms: int = Form(0)):
-    if not voice.enabled():
-        raise HTTPException(400, "ELEVENLABS_API_KEY not set")
     cfg = request.app.state.settings.as_cfg()
+    if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
+        raise HTTPException(400, voice.disabled_reason(cfg))
     data = file.file.read()
     if not data:
         raise HTTPException(400, "Empty audio")
@@ -230,11 +233,11 @@ async def tts_relay(ws: WebSocket):
         await ws.close(code=4403)
         return
     await ws.accept()
-    if not voice.enabled():
-        await ws.send_json({"error": "ELEVENLABS_API_KEY not set"})
+    cfg = ws.app.state.settings.as_cfg()
+    if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
+        await ws.send_json({"error": voice.disabled_reason(cfg)})
         await ws.close()
         return
-    cfg = ws.app.state.settings.as_cfg()
     try:
         init = await ws.receive_json()
     except WebSocketDisconnect:
@@ -399,11 +402,11 @@ async def stt_stream_relay(ws: WebSocket):
         await ws.close(code=4403)
         return
     await ws.accept()
-    if not voice.enabled():
-        await ws.send_json({"error": "ELEVENLABS_API_KEY not set"})
+    cfg = ws.app.state.settings.as_cfg()
+    if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
+        await ws.send_json({"error": voice.disabled_reason(cfg)})
         await ws.close()
         return
-    cfg = ws.app.state.settings.as_cfg()
     try:
         init = await ws.receive_json()
     except WebSocketDisconnect:
