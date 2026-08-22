@@ -7,6 +7,7 @@ import { lifecycleBadge, promoteState, addSeatNotice } from '../lifecycle'
 import { thinkingOptions, thinkingSupport, normalizeThinkingControl } from '../thinkingControl'
 import { voiceIdPatch } from '../seatSave'
 import RateCardsPanel from './RateCardsPanel'
+import BenchmarkPanel from './BenchmarkPanel'
 
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
@@ -419,6 +420,11 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
             )})}
           </div>
         )}
+
+        {/* #94: compare the seats above on identical scripted cases. Below
+            the roster because it acts on it; collapsed so it costs nothing
+            until wanted. */}
+        {!editing && <BenchmarkPanel />}
 
         {editing && (
           <div className="space-y-3">

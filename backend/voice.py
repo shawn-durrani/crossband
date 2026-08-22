@@ -135,6 +135,27 @@ def transcribe_diarized(audio_bytes, mime, cfg, num_speakers=None):
     raise RuntimeError(f"Diarized speech-to-text failed ({r.status_code}: {r.text[:200]})")
 
 
+def synthesize(text, voice_id, cfg):
+    """Non-streaming TTS for the synthetic benchmark (#94): one POST, the
+    whole mp3 back. The live voice path stays on the streaming websocket;
+    this exists so a benchmark can time and retain synthesis without playing
+    it. Voice settings mirror tts_init_message so the artefact sounds like
+    the room."""
+    model_id = cfg.get("tts_model") or "eleven_flash_v2_5"
+    r = httpx.post(
+        f"{ELEVEN_BASE}/v1/text-to-speech/{voice_id}",
+        params={"output_format": "mp3_44100_128"},
+        headers=_headers(),
+        json={"text": text, "model_id": model_id,
+              "voice_settings": {"stability": 0.5, "similarity_boost": 0.75,
+                                 "speed": cfg.get("tts_speed", 1.0)}},
+        timeout=60,
+    )
+    if r.status_code < 400:
+        return r.content
+    raise RuntimeError(f"Text-to-speech failed ({r.status_code}: {r.text[:200]})")
+
+
 def tts_init_message(cfg):
     """First message on the ElevenLabs TTS websocket: auth + adaptive chunking.
     Small first chunk for fast time-to-first-audio, larger after for prosody."""

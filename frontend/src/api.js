@@ -105,6 +105,17 @@ export const api = {
   deleteRateCard: (model) => fetch(`/api/pricing/${encodeURIComponent(model)}`, {
     method: 'DELETE',
   }).then(json),
+  // Synthetic voice benchmark (#94): catalogue, one-at-a-time runs, results
+  // polling, and per-run deletion (the retention control for saved audio).
+  benchmarkCatalogue: () => fetch('/api/benchmark').then(json),
+  benchmarkRuns: () => fetch('/api/benchmark/runs').then(json),
+  benchmarkRun: (id) => fetch(`/api/benchmark/runs/${encodeURIComponent(id)}`).then(json),
+  benchmarkStart: (body) => fetch('/api/benchmark/runs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then(json),
+  benchmarkDelete: (id) => fetch(`/api/benchmark/runs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }).then(json),
   distill: (id) => fetch(`/api/chats/${id}/distill`, { method: 'POST' }).then(json),
   uploadAttachment: (file) => {
     const fd = new FormData()
