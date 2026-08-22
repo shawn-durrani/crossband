@@ -5,6 +5,17 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Ollama seats can keep their model loaded between turns. Ollama unloads a
+  model five minutes after its last request, so a quiet chat costs a reload
+  before the next first word. A new **Keep model loaded** setting on an
+  Ollama seat names the window - `30m`, `1h`, `24h`, or `-1` for
+  indefinitely - and Crossband now asks Ollama to hold the model in memory
+  around each of that seat's requests. Left empty (the default) nothing
+  changes, and Ollama's own five-minute unload still applies. It speaks
+  Ollama's native keep-alive call, because the field cannot ride the
+  OpenAI-compatible requests the seat already uses. See
+  [docs/MODELS.md](docs/MODELS.md).
+
 - The seats can be raced on identical scripted cases (#94). A Benchmark
   panel on the Models page runs your chosen models through fixed cases
   and compares stage timings side by side: text replies, speech-to-text
