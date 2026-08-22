@@ -89,7 +89,7 @@ class McpManager:
                     "name": q,
                     "description": ((t.description or t.name).strip()[:900]
                                     + f" (external tool from \"{name}\")"),
-                    "input_schema": t.inputSchema
+                    "input_schema": t.input_schema
                     or {"type": "object", "properties": {}},
                 })
             self.errors.pop(name, None)
@@ -143,6 +143,6 @@ class McpManager:
         parts = [c.text for c in (res.content or [])
                  if getattr(c, "text", None)]
         out = "\n".join(parts).strip() or "(empty result)"
-        if getattr(res, "isError", False) and not out.lower().startswith("error"):
+        if res.is_error and not out.lower().startswith("error"):
             out = "Error: " + out
         return out[:cap]
