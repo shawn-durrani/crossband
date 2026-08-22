@@ -31,7 +31,7 @@ webauthn>=2.2,<3
 # runtime: backend/voiceid.py guards the import and falls back to the ElevenLabs
 # path if either is absent, so this never becomes a hard dependency of the app.
 # The 38MB model itself is fetched once at runtime and never committed.
-sherpa-onnx>=1.13.5,<2
+sherpa-onnx>=1.13.6,<2
 numpy
 pytest
 # Rendered page viewing (view_page, #138): the pip package is small; the
