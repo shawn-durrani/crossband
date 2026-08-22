@@ -28,8 +28,10 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from . import egress
+from . import db, egress, sandbox
+from .config import ROOT
 
 log = logging.getLogger("crossband.browse")
 
@@ -155,31 +157,60 @@ def render(url: str, cfg) -> dict:
         req["proxy"] = view_proxy
         req["proxy_user"] = "view"
         req["proxy_pass"] = secrets.token_hex(16)
-    profile_dir = tempfile.mkdtemp(prefix="crossband-browse-")
-    try:
-        # start_new_session puts the worker in its OWN process group (#153):
-        # the Playwright driver and Chromium are grandchildren, and a plain
-        # timeout kill of the direct child would orphan them at several
-        # hundred MB each. On timeout the whole group dies together.
-        proc = subprocess.Popen(
-            [sys.executable, str(_WORKER)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_worker_env(profile_dir),
-            start_new_session=True,
-        )
+    # #148 point 1 (macOS): wrap the worker in an OS sandbox profile scoped
+    # to this render - no IP traffic except the proxy port, no writes
+    # outside the throwaway profile dir, no reads of the data dir / .env /
+    # ~/.ssh. Defence in depth over the scrubbed env and Chromium's own
+    # sandbox, never the boundary: a refused profile falls back to exactly
+    # the old launch (once per process, loudly - see backend/sandbox.py).
+    attempts = ["sandboxed", "plain"] if (
+        cfg.get("browse_sandbox", True) and sandbox.available()) else ["plain"]
+    stdout = stderr = b""
+    for attempt in attempts:
+        argv = [sys.executable, str(_WORKER)]
+        profile_dir = tempfile.mkdtemp(prefix="crossband-browse-")
+        if attempt == "sandboxed":
+            try:
+                argv = sandbox.wrap(argv, sandbox.profile(
+                    profile_dir=profile_dir,
+                    port=urlsplit(req["proxy"]).port or 0,
+                    data_dir=str(db.DATA_DIR),
+                    env_file=str(ROOT / ".env"),
+                    ssh_dir=os.path.join(
+                        os.environ.get("HOME") or "/var/empty", ".ssh")))
+            except ValueError as e:
+                log.warning("OS sandbox skipped for this render: %s", e)
+                shutil.rmtree(profile_dir, ignore_errors=True)
+                continue
         try:
-            stdout, stderr = proc.communicate(
-                json.dumps(req).encode(),
-                timeout=timeout + 5)  # the worker's own budgets end first
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-            raise ValueError(
-                f"page render exceeded {timeout:.0f}s and was stopped")
-    finally:
-        shutil.rmtree(profile_dir, ignore_errors=True)
+            # start_new_session puts the worker in its OWN process group
+            # (#153): the Playwright driver and Chromium are grandchildren,
+            # and a plain timeout kill of the direct child would orphan them
+            # at several hundred MB each. On timeout the whole group dies
+            # together.
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=_worker_env(profile_dir),
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = proc.communicate(
+                    json.dumps(req).encode(),
+                    timeout=timeout + 5)  # the worker's own budgets end first
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+                raise ValueError(
+                    f"page render exceeded {timeout:.0f}s and was stopped")
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+        if attempt == "sandboxed" and sandbox.refused(stdout, stderr):
+            sandbox.mark_broken(stderr[:300].decode("utf-8", "replace"))
+            continue  # retry this render unwrapped; later renders skip the wrap
+        break
     if stderr:
         log.debug("browse worker stderr: %s",
                   stderr[:_STDERR_LOG_CAP].decode("utf-8", "replace"))

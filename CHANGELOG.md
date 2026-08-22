@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The page renderer is boxed in by the operating system too (#148). On
+  macOS the render worker now runs inside an OS sandbox profile: no
+  network except the vetting proxy's port, no writes outside its
+  throwaway profile folder, and no reads of your data, `.env` or
+  `~/.ssh`. It sits on top of the existing containment rather than
+  replacing any of it, and a machine that refuses the profile renders
+  exactly as before, saying so once. `scripts/sandbox_probe.py` proves
+  the profile on a new machine.
+
 - The seats can be raced on identical scripted cases (#94). A Benchmark
   panel on the Models page runs your chosen models through fixed cases
   and compares stage timings side by side: text replies, speech-to-text

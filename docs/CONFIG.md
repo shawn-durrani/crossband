@@ -179,6 +179,7 @@ allow/deny lists only together with that document.
 | `fetch_max_page_mb` | `10` | `fetch_page` decoded-body cap; a bigger page errors instead of ballooning in RAM. |
 | `browse_timeout_s` | `20` | Wall clock for one rendered view (`view_page`), worker process included. Rendering needs Playwright plus `.venv/bin/playwright install chromium` (~160MB); absent either, the tool is simply not offered. |
 | `browse_page_budget_mb` | `30` | Total bytes one rendered page load may pull across all its connections, subresources included. `0` turns the budget off, leaving per-connection caps only. |
+| `browse_sandbox` | `true` | On macOS, wrap the render worker in an OS sandbox profile: network limited to the proxy port, writes to its throwaway profile folder, no reads of the data directory, `.env` or `~/.ssh`. Defence in depth; refused profiles render as before. |
 
 ## Backups
 

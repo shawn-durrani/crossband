@@ -89,7 +89,13 @@ path for gated sources.
 - One page per call, on request. There is no crawling.
 - Logged-in browsing does not exist. No cookies or credentials are ever
   sent, and no page can ask for them.
-- The rendering worker is a separate process, not an OS-level sandbox.
+- On macOS the rendering worker also runs inside an OS sandbox profile.
+  It allows no network except the proxy port, no writes outside the
+  worker's throwaway profile directory, and no reads of the data
+  directory, `.env` or `~/.ssh`. This is defence in depth over the proxy
+  and Chromium's own sandbox, never the boundary. Other platforms run
+  the worker unwrapped; `scripts/sandbox_probe.py` proves the profile on
+  a new machine.
 - A rendered page load also carries a whole-page transfer budget
   (`browse_page_budget_mb`, 30MB); plain fetches keep per-connection
   caps only.
