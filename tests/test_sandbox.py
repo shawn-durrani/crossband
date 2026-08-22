@@ -36,15 +36,15 @@ def _cfg(**over):
 
 def test_profile_scopes_exactly_what_it_is_given():
     p = sandbox.profile(profile_dir="/tmp/x1", port=8931,
-                        data_dir="/home/o/data", env_file="/home/o/.env",
-                        ssh_dir="/home/o/.ssh")
+                        data_dir="/home/you/data", env_file="/home/you/.env",
+                        ssh_dir="/home/you/.ssh")
     assert '(allow network-outbound (remote tcp "localhost:8931"))' in p
     assert "(deny network-outbound (remote ip))" in p
     assert "(deny file-write*)" in p
     assert '(subpath "/tmp/x1")' in p
-    assert '(subpath "/home/o/data")' in p
-    assert '(literal "/home/o/.env")' in p
-    assert '(subpath "/home/o/.ssh")' in p
+    assert '(subpath "/home/you/data")' in p
+    assert '(literal "/home/you/.env")' in p
+    assert '(subpath "/home/you/.ssh")' in p
     # last-match-wins: the port allow must come AFTER the ip deny
     assert p.index("(deny network-outbound") < p.index("localhost:8931")
 
