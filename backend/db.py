@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 23  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149) · v23: chat_seat_state.once_effort (one-reply spoken depth override, #105 slice 2)
+SCHEMA_VERSION = 24  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149) · v23: chat_seat_state.once_effort (one-reply spoken depth override, #105 slice 2) · v24: participants.keep_alive (keep an Ollama seat's model loaded between turns: native-API keep_alive nudge)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -145,6 +145,12 @@ CREATE TABLE IF NOT EXISTS participants(
   -- name the mechanism the server documents; see providers.
   -- THINKING_CONTROL_CHOICES.
   thinking_control TEXT NOT NULL DEFAULT '',
+  -- How long Ollama should hold this seat's model loaded following a
+  -- request: an Ollama duration ('30m', '1h', '24h') or '-1' (indefinite).
+  -- '' = unset: Ollama's own 5-minute unload applies, exactly as before.
+  -- Delivered as a native-API keep-alive nudge (see providers.
+  -- keep_alive_nudge); Ollama seats only, inert on every other seat.
+  keep_alive TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
   -- Onboarding lifecycle: 'trial' = added for manual evaluation
   -- only, never selectable-by-default or auto-selectable; 'onboarded' = has an
@@ -607,6 +613,15 @@ def init(settings=None):
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                        "AND name='chat_seat_state'").fetchone():
             con.execute("ALTER TABLE chat_seat_state ADD COLUMN once_effort "
+                        "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 23:  # v24: participants.keep_alive (Ollama model retention).
+        # Defaults empty, which keeps Ollama's own 5-minute unload applying
+        # for every existing seat - exactly the pre-migration behaviour. Only
+        # a seat the owner explicitly points at an Ollama endpoint and sets
+        # a window on ever sends the native keep-alive nudge.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='participants'").fetchone():
+            con.execute("ALTER TABLE participants ADD COLUMN keep_alive "
                         "TEXT NOT NULL DEFAULT ''")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

@@ -5,6 +5,7 @@ import { PRESETS, matchPreset } from '../presets'
 import { modelReadoutLines } from '../modelReadout'
 import { lifecycleBadge, promoteState, addSeatNotice } from '../lifecycle'
 import { thinkingOptions, thinkingSupport, normalizeThinkingControl } from '../thinkingControl'
+import { keepAliveSupport, validKeepAliveValue, normalizeKeepAlive } from '../keepalive'
 import { voiceIdPatch } from '../seatSave'
 import RateCardsPanel from './RateCardsPanel'
 import BenchmarkPanel from './BenchmarkPanel'
@@ -12,7 +13,7 @@ import BenchmarkPanel from './BenchmarkPanel'
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
   system_prompt: '', color: '#a78bfa', enabled: true, reasoning_effort: '',
-  thinking_control: '',
+  thinking_control: '', keep_alive: '',
 }
 
 // Does this model support a reasoning-effort setting? Mirrors the per-provider
@@ -239,6 +240,10 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
         // the saved row can never claim a control the request never sends.
         thinking_control: normalizeThinkingControl(
           editing.provider, editing.base_url, editing.thinking_control),
+        // Cleared when it does not apply (see normalizeKeepAlive), so the saved
+        // row can never claim a window the nudge never fires.
+        keep_alive: normalizeKeepAlive(
+          editing.provider, editing.base_url, editing.keep_alive),
       }
       if (editing.id) await api.updateParticipant(editing.id, body)
       else await api.createParticipant(body)
@@ -282,6 +287,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
   const field = 'mt-1 w-full bg-app border border-edge2 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-edge3'
   const eff = editing ? effortSupport(editing.provider, editing.model) : null
   const think = editing ? thinkingSupport(editing.provider, editing.base_url) : null
+  const keep = editing ? keepAliveSupport(editing.provider, editing.base_url) : null
   // Which preset the current base_url/api_key_env corresponds to (openai style only).
   const presetId = editing && editing.provider === 'openai' ? matchPreset(editing) : null
   const preset = presetId ? PRESETS.find((p) => p.id === presetId) : null
@@ -598,6 +604,26 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                 <span className="mt-1 block text-xs text-ink-faint">
                   {thinkingOptions(editing.provider)
                     .find((o) => o.value === editing.thinking_control)?.hint}
+                </span>
+              ) : null}
+            </label>
+            <label className="block">
+              <span className="text-sm text-ink-mid">
+                Keep model loaded{' '}
+                <span className="text-ink-faint">(Ollama only - hold the model in memory after each of the seat's requests, so a quiet chat does not cost a reload)</span>
+              </span>
+              <input
+                type="text"
+                spellCheck={false}
+                className={`${field} disabled:opacity-50 disabled:cursor-not-allowed`}
+                disabled={!keep?.ok}
+                value={keep?.ok ? (editing.keep_alive || '') : ''}
+                placeholder="30m, 1h, 24h, or -1 to hold indefinitely"
+                onChange={(e) => setEditing({ ...editing, keep_alive: e.target.value })} />
+              <span className={`mt-1 block text-xs ${keep?.ok ? 'text-ink-faint' : 'text-amber-500'}`}>{keep?.note}</span>
+              {keep?.ok && (editing.keep_alive || '').trim() && !validKeepAliveValue(editing.keep_alive) ? (
+                <span className="mt-1 block text-xs text-amber-500">
+                  Ollama durations: a number plus a unit (30m, 1h, 24h), or -1 for indefinitely. A plain number or unknown word is not sent.
                 </span>
               ) : null}
             </label>
