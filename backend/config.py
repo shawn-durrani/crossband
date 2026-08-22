@@ -352,6 +352,12 @@ class Settings(BaseModel):
     # disables the listener and a render falls back to the per-connection
     # caps alone.
     browse_page_budget_mb: float = 30.0
+    # #148: on macOS, wrap the render worker in an OS sandbox profile (no IP
+    # traffic except the proxy port, no writes outside its throwaway profile
+    # dir, no reads of the data dir / .env / ~/.ssh). Defence in depth, never
+    # the boundary: platforms without sandbox-exec, and any OS-refused
+    # profile, render exactly as before. False turns the wrap off entirely.
+    browse_sandbox: bool = True
 
     # backups
     backup_keep: int = 14
