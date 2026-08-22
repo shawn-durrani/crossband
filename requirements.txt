@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pydantic>=2.13.4
 anthropic
-openai>=2.48.0
+openai>=3.1.0
 httpx
 python-dotenv
 python-multipart
@@ -31,11 +31,11 @@ webauthn>=2.2,<3
 # runtime: backend/voiceid.py guards the import and falls back to the ElevenLabs
 # path if either is absent, so this never becomes a hard dependency of the app.
 # The 38MB model itself is fetched once at runtime and never committed.
-sherpa-onnx>=1.13,<2
+sherpa-onnx>=1.13.5,<2
 numpy
 pytest
 # Rendered page viewing (view_page, #138): the pip package is small; the
 # Chromium build it drives is an operator step (`.venv/bin/playwright
 # install chromium`, ~160MB). backend/browse.py gates the tool on both, so
 # absence just means models keep fetch_page.
-playwright>=1.45
+playwright>=1.62
