@@ -295,6 +295,122 @@ def thinking_prompt_hint(participant):
     return NO_THINK_HINT if _thinking_control(participant) == "no_think_hint" else ""
 
 
+# ---------- Ollama keep-alive: hold the seat's model loaded ----------
+#
+# Ollama unloads a model five minutes after its last request, so every
+# conversation gap that long costs a reload before the first word. A seat
+# talks to Ollama through its OpenAI-compatible layer, and that layer has
+# no keep_alive field at all - verified against Ollama's OpenAI-compat
+# source (openai/openai.go) and its API docs: keep_alive exists only on
+# the native API. So the field travels on the native leg, not the wire
+# shape the seat already uses.
+#
+# The seat's `keep_alive` names how long Ollama should hold the model
+# loaded following a request. It is delivered with Ollama's documented
+# retention mechanism: a near-empty native /api/generate call (empty
+# prompt) carrying that field, sent just before the seat's real request.
+# Ollama's own docs use exactly this shape to UNLOAD a model (empty
+# prompt + keep_alive=0), which is what makes the held-for-window reading
+# the documented one, not an assumption. The real request itself -
+# Responses leg, chat-completions fallback, tools, thinking control - is
+# untouched, byte for byte.
+#
+# '' = unset = exactly today's behaviour (Ollama's 5-minute unload).
+# Valid values are Ollama durations: "30m", "1h", "24h", "1h30m" - or
+# "-1" to hold the model indefinitely.
+#
+# A nudge that the endpoint rejects means the endpoint is not Ollama's
+# native API: the turn then proceeds exactly as it always did, with a
+# loud warning naming the setting. Failing the seat's own speech over a
+# retention hint is the wrong trade in either direction - the hint is a
+# side channel, the request is the point.
+
+_KEEP_ALIVE_RE = re.compile(
+    r"^-1$|^\d+(?:\.\d+)?(?:ms|s|m|h|d)(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))*$")
+
+# Bounded, on the _chat_ping policy (#151): a cold local model may take a
+# couple of minutes to page in (fine), but a wedged or wrong endpoint must
+# fail the nudge in bounded time, not hold the open turn for it.
+_KEEP_ALIVE_TIMEOUT_S = 180.0
+
+
+def valid_keep_alive(provider, value):
+    """Is `value` ('' counts as unset) a recognized keep-alive value for
+    this provider id? routers/participants.py rejects anything else with a
+    400 rather than storing a setting that would silently never apply.
+    Unset is valid for every provider: it is the default, and it must stay
+    saveable on Anthropic seats, which also never carry the field.
+    Non-empty values are Ollama durations ("30m", "1h", "24h") or "-1"
+    (indefinite) and only an openai provider can apply them - there is no
+    local model of a Claude seat to keep loaded."""
+    v = (value or "").strip()
+    if v == "":
+        return True
+    return provider == "openai" and bool(_KEEP_ALIVE_RE.match(v))
+
+
+def keep_alive_nudge(participant):
+    """The keep-alive value this seat actually applies, or "" for none.
+    Gated exactly like _thinking_control: provider 'openai' AND its own
+    base_url (Ollama seats arrive that way; no base_url is OpenAI proper,
+    where the native API has no home for this, so the setting stays inert
+    instead of failing every turn). A stored value that no longer parses
+    is not a guess about what the server wanted - the same rule as
+    thinking control's inert-on-bogus, so a hand-edited row can't spin a
+    nudge the endpoint will reject."""
+    value = (participant.get("keep_alive") or "").strip()
+    if not value:
+        return ""
+    if not _KEEP_ALIVE_RE.fullmatch(value):
+        return ""
+    if participant.get("provider") != "openai":
+        return ""
+    if not (participant.get("base_url") or "").strip():
+        return ""
+    return value
+
+
+def keep_alive_url(participant):
+    """The native Ollama /api/generate URL for this seat, or "" if none:
+    the seat's OpenAI-compatible base_url with its /v1 route stripped
+    (http://127.0.0.1:11434/v1 -> http://127.0.0.1:11434). A base_url
+    without a path works as-is, since both spellings point at the same
+    server."""
+    base = (participant.get("base_url") or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    return base + "/api/generate"
+
+
+async def ollama_keep_alive(p, value):
+    """Ask Ollama to hold this seat's model in memory for `value`.
+
+    A near-empty native /api/generate call (empty prompt - the shape
+    Ollama's own docs use to unload a model with keep_alive=0) is the
+    only documented home for the field, because the OpenAI-compatible
+    layer cannot carry it at all. Retention nudge, not the seat's real
+    request: a server that rejects it (an endpoint that is not Ollama) or
+    a timed-out one means the setting did not apply - the seat speaks
+    anyway, and the warning says so by name."""
+    import httpx
+    url = keep_alive_url(p)
+    try:
+        async with httpx.AsyncClient(timeout=_KEEP_ALIVE_TIMEOUT_S) as client:
+            resp = await client.post(
+                url, json={"model": p["model"], "prompt": "", "keep_alive": value})
+        if resp.status_code >= 400:
+            log.warning(
+                "keep_alive nudge to %s answered HTTP %d (%s) - the seat's "
+                "keep_alive '%s' did not apply; this endpoint does not speak "
+                "Ollama's native API", url, resp.status_code, resp.text[:200],
+                value)
+    except httpx.HTTPError as exc:
+        log.warning("keep_alive nudge to %s failed: %s - the seat's "
+                    "keep_alive '%s' did not apply", url, exc, value)
+
+
 def _key_for(participant, allow_missing=False):
     default_env = "ANTHROPIC_API_KEY" if participant["provider"] == "anthropic" else "OPENAI_API_KEY"
     env_name = participant.get("api_key_env") or default_env
@@ -1579,6 +1695,13 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
     caching for the entire request: almost nothing was ever read back from
     cache."""
     client = _openai_client(p)
+    ka = keep_alive_nudge(p)
+    if ka:
+        # Once per reply, before the seat's first request: from this moment
+        # Ollama holds the model loaded for the seat's window, so the real
+        # (OpenAI-compatible) request runs on a warm model. The nudge never
+        # fails the turn - see ollama_keep_alive for why.
+        await ollama_keep_alive(p, ka)
     input_items = build_openai_input(p["slug"], transcript, names, cfg)
     if volatile:
         input_items.append({"role": "developer", "content": [{

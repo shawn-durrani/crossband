@@ -122,6 +122,28 @@ base URL, because OpenAI's own endpoint has no such field. If your server
 rejects the choice, the turn fails and names it, rather than leaving you to
 wonder whether it applied.
 
+## Keeping a local model loaded (Ollama)
+
+Ollama unloads a model from memory five minutes after its last request. A quiet
+chat crosses that gap, and the next turn pays the reload before the first
+word - seconds to minutes on a large model.
+
+The **Keep model loaded** field on an Ollama seat names the window to hold it
+instead. It takes an Ollama duration: `30m`, `1h`, `24h` - or `-1` to hold
+the model indefinitely.
+
+Two things are worth knowing about how it works:
+
+- Crossband talks to Ollama through its OpenAI-compatible API, and that API
+  carries no keep-alive field at all. The window therefore travels Ollama's
+  native route: a near-empty keep-alive call just before each of the seat's
+  requests, in the same shape Ollama's docs use to unload a model. The
+  seat's real requests - tools and all - are unchanged.
+- Leave the field empty and nothing changes: Ollama's own five-minute
+  unload applies, exactly as before. Point it at a non-Ollama endpoint and
+  the seat keeps speaking as it always did; the log names the setting and
+  says it did not apply, instead of failing the turn.
+
 ## Trial seats: why your new model stays quiet
 
 Every model you add yourself starts as a **Trial** seat. That's a real

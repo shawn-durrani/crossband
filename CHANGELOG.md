@@ -5,6 +5,17 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Ollama seats can keep their model loaded between turns (#203). Ollama
+  unloads a model five minutes after its last request, so a quiet chat
+  costs a reload before the next first word. A new **Keep model loaded**
+  setting on an Ollama seat names the window - `30m`, `1h`, `24h`, or `-1`
+  for indefinitely - and Crossband now asks Ollama to hold the model in
+  memory around each of that seat's requests. Left empty (the default)
+  nothing changes, and Ollama's own five-minute unload still applies. It
+  speaks Ollama's native keep-alive call, because the field cannot ride
+  the OpenAI-compatible requests the seat already uses. See
+  [docs/MODELS.md](docs/MODELS.md).
+
 - Other apps' passkeys no longer crowd crossband's unlock sheet
   (#204). The fleet's apps share the browser's localhost passkey scope,
   so the sheet used to offer every app's key here. The gate now tells
