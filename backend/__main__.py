@@ -46,13 +46,17 @@ def uvicorn_config(app, settings) -> uvicorn.Config:
 
 def main():
     settings = load_settings()
-    app = create_app(settings)
+    # Refuse BEFORE create_app: building the app initialises the database,
+    # and a misconfigured host must not touch the store on its way out
+    # (#208 - it also kept the boundary test writing to the repo's real
+    # data directory).
     if settings.host not in ("127.0.0.1", "localhost", "::1"):
         raise SystemExit(
             f"refusing to bind {settings.host}: this app is localhost-only by "
             "design - the browser gate (#25) protects the UI, but wider reach "
             "goes through a tailnet proxy (tailscale serve) plus "
             "CROSSBAND_TRUSTED_HOSTS, never a direct bind")
+    app = create_app(settings)
     _Server(uvicorn_config(app, settings)).run()
 
 
