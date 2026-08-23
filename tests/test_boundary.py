@@ -45,10 +45,14 @@ def test_trusted_host_allowed_others_still_refused(tmp_path):
                       ).get("/api/state").status_code == 403      # stranger still refused
 
 
-def test_nonloopback_bind_refused(monkeypatch):
+def test_nonloopback_bind_refused(tmp_path, monkeypatch):
     import backend.__main__ as entry
     from backend.config import Settings
-    monkeypatch.setattr(entry, "load_settings", lambda: Settings(host="0.0.0.0"),
+    # tmp_path data_dir: the refusal must fire before the store is touched,
+    # and this test must never write the repo's real data/ either way (#208).
+    monkeypatch.setattr(entry, "load_settings",
+                        lambda: Settings(host="0.0.0.0",
+                                         data_dir=str(tmp_path / "data")),
                         raising=False)
     # __main__.main() should refuse before uvicorn ever runs
     import uvicorn
@@ -56,6 +60,8 @@ def test_nonloopback_bind_refused(monkeypatch):
                         lambda *a, **k: pytest.fail("uvicorn.run reached with 0.0.0.0"))
     with pytest.raises(SystemExit, match="refusing to bind"):
         entry.main()
+    assert not (tmp_path / "data").exists(), \
+        "a refused bind must not initialise the store"
 
 
 def test_non_hex_participant_color_rejected(client_factory):
