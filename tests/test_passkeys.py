@@ -260,14 +260,17 @@ def test_duplicate_enrolment_refused(app):
     assert _enrol_passkey(owner, pk=pk)[1].status_code == 409
 
 
-def test_login_options_disclose_no_credential_ids(app):
+def test_login_options_disclose_no_key_material(app):
+    """Narrowed since the sheet-scoping change (#204, owner call): the login
+    OPTIONS now deliberately name this app's credential ids, so the line
+    held here is what still matters - no surface ever carries key
+    material."""
     pk, _ = _enrol_passkey(_owner(app))
     options = _client(app).post("/api/webauthn/login/options",
                                 headers={"Origin": LOCAL_ORIGIN}).json()
     text = json.dumps(options)
-    assert bytes_to_base64url(pk.cred_id) not in text
     assert "public_key" not in text
-    assert not options["publicKey"].get("allowCredentials")
+    assert bytes_to_base64url(pk._cose_key()) not in text
 
 
 # ── lifecycle ───────────────────────────────────────────────────────────────
@@ -366,3 +369,18 @@ def test_successful_unlock_stamps_last_used(app):
     assert _passkey_login(anon, pk).status_code == 200
     creds = owner.get("/api/webauthn/credentials").json()["credentials"]
     assert creds[0]["last_used_at"] is not None
+
+
+def test_login_sheet_offers_only_this_apps_keys(app):
+    """The fleet shares the localhost RP, so an empty allow-list meant every
+    app's sheet offered every app's passkey (#204). The gate now names
+    exactly its own enrolled ids - a deliberate owner-approved disclosure:
+    an id is a key handle, not a secret, and existence was already
+    disclosed by the no-passkey 400."""
+    c = _owner(app)
+    pk, r = _enrol_passkey(c)
+    assert r.status_code == 200, r.text
+    o = _client(app).post("/api/webauthn/login/options",
+                          headers={"Origin": LOCAL_ORIGIN})
+    allowed = o.json()["publicKey"]["allowCredentials"]
+    assert [a["id"] for a in allowed] == [bytes_to_base64url(pk.cred_id)]

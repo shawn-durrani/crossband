@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Other apps' passkeys no longer crowd crossband's unlock sheet
+  (#204). The fleet's apps share the browser's localhost passkey scope,
+  so the sheet used to offer every app's key here. The gate now tells
+  the browser exactly which keys are crossband's own. The trade, made
+  deliberately: the lock screen now names those key ids to anyone who
+  can reach it - an id is a serial number for the key, not a secret,
+  and it cannot unlock anything.
+
 - The page renderer is boxed in by the operating system too (#148). On
   macOS the render worker now runs inside an OS sandbox profile: no
   network except the vetting proxy's port, no writes outside its
