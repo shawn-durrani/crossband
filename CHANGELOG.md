@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Voice has one engine selector (#202). A new `voice_provider` setting
+  names which engine serves speech. `auto` (the default) is exactly
+  today's behaviour: ElevenLabs when its key is set, no voice when it is
+  not. `elevenlabs` makes that choice explicit. `local` is reserved for
+  a future local engine and, until one ships, selects nothing - even
+  with a cloud key present, so choosing local can never quietly mean
+  cloud. Every voice surface, the benchmark panel included, now resolves
+  through this one choke point.
+
 - Ollama seats can keep their model loaded between turns (#203). Ollama
   unloads a model five minutes after its last request, so a quiet chat
   costs a reload before the next first word. A new **Keep model loaded**

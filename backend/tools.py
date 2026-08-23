@@ -141,7 +141,7 @@ def tool_definitions(cfg):
         },
     })
     from . import voice as _voice
-    if _voice.enabled():
+    if _voice.provider_for(cfg) == _voice.PROVIDER_ELEVENLABS:
         defs.append({
             "name": "transcribe_audio_url",
             "description": (
@@ -1185,8 +1185,8 @@ def fetch_youtube_transcript(args, cfg):
 
 def transcribe_audio_url(args, cfg):
     from . import db, voice
-    if not voice.enabled():
-        return "Error: ELEVENLABS_API_KEY not set - cannot transcribe audio"
+    if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
+        return f"Error: {voice.disabled_reason(cfg)} - cannot transcribe audio"
     max_bytes = cfg["max_audio_mb"] * 1024 * 1024
     url = _assert_public_url((args.get("url") or "").strip())
     buf = b""

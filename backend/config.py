@@ -195,6 +195,14 @@ class Settings(BaseModel):
     attribution_audit: bool = True
 
     # voice
+    # Provider seam: which engine serves STT/TTS. "auto" (default) =
+    # current behaviour exactly: ElevenLabs when ELEVENLABS_API_KEY is
+    # present, otherwise voice is cleanly unavailable. "elevenlabs" is the
+    # same choice made explicit. "local" is RESERVED for a fully local
+    # STT/TTS stack (zero cloud egress) and resolves to "voice unavailable"
+    # until such an engine lands: a reserved provider must never leak audio
+    # bytes to the cloud.
+    voice_provider: str = "auto"
     tts_model: str = "eleven_flash_v2_5"
     tts_speed: float = 1.0  # 0.7-1.2; ElevenLabs speaking speed
     stt_model: str = "scribe_v2"
