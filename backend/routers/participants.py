@@ -31,6 +31,19 @@ def _thinking_error(provider):
             f"for provider '{provider}'")
 
 
+def _keep_alive_error(provider):
+    """The 400 for a keep_alive a seat can never apply. Anthropic seats get
+    a message naming why there is nothing to keep loaded, not a duration
+    list that would never fire for them."""
+    if provider == "anthropic":
+        return ("keep_alive only applies to Ollama seats (provider 'openai' "
+                "with a base URL) - a Claude seat has no local model to keep "
+                "loaded. Clear the field to save.")
+    return ("keep_alive must be an Ollama duration like '30m', '1h', '24h' "
+            "or -1 (indefinite); empty clears it. It applies to Ollama seats "
+            "only - the native API is the only home for the field.")
+
+
 class ParticipantIn(BaseModel):
     name: str | None = None
     provider: str | None = None
@@ -44,6 +57,7 @@ class ParticipantIn(BaseModel):
     voice_gain: float | None = None  # relative voice weight, clamped 0.2–3.0 (#163)
     reasoning_effort: str | None = None
     thinking_control: str | None = None  # local-endpoint thinking opt-out (#159)
+    keep_alive: str | None = None  # Ollama model retention: duration or -1 ('' = Ollama's 5m unload)
     lifecycle: str | None = None  # 'trial' | 'onboarded'
 
     @field_validator("voice_gain")
@@ -81,6 +95,8 @@ def create_participant(body: ParticipantIn):
         raise HTTPException(400, _reasoning_error(body.provider))
     if not providers.valid_thinking_control(body.provider, body.thinking_control):
         raise HTTPException(400, _thinking_error(body.provider))
+    if not providers.valid_keep_alive(body.provider, body.keep_alive):
+        raise HTTPException(400, _keep_alive_error(body.provider))
     con = db.connect()
     slug = base_slug = slugify(body.name)
     n = 2
@@ -90,11 +106,13 @@ def create_participant(body: ParticipantIn):
     pos = con.execute("SELECT COALESCE(MAX(position),0)+1 FROM participants").fetchone()[0]
     cur = con.execute(
         "INSERT INTO participants(slug, name, provider, model, base_url, api_key_env, "
-        "system_prompt, color, reasoning_effort, thinking_control, position, created_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "system_prompt, color, reasoning_effort, thinking_control, keep_alive, "
+        "position, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (slug, body.name, body.provider, body.model, body.base_url or None,
          body.api_key_env or None, body.system_prompt or "", body.color or "#a78bfa",
-         body.reasoning_effort or "", body.thinking_control or "", pos, db.now()),
+         body.reasoning_effort or "", body.thinking_control or "",
+         body.keep_alive or "", pos, db.now()),
     )
     # newcomers only join NEW chats by default; existing rosters are untouched
     con.commit()
@@ -132,6 +150,14 @@ def update_participant(pid: int, body: ParticipantIn):
                                                 updates["thinking_control"]):
             con.close()
             raise HTTPException(400, _thinking_error(effective_provider))
+    if "keep_alive" in updates:
+        # Same effective-provider rule as thinking_control above: a PATCH may
+        # move the seat to Anthropic and set a window in one body, and the
+        # value must validate against where the seat ends up.
+        effective_provider = updates.get("provider", row["provider"])
+        if not providers.valid_keep_alive(effective_provider, updates["keep_alive"]):
+            con.close()
+            raise HTTPException(400, _keep_alive_error(effective_provider))
     if "enabled" in updates:
         updates["enabled"] = int(updates["enabled"])
     # Onboarding gate: a seat may become 'onboarded' only once an
