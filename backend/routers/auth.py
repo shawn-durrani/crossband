@@ -326,10 +326,14 @@ def webauthn_register(body: WebAuthnFinishBody, request: Request) -> dict:
 
 @router.post("/api/webauthn/login/options")
 def webauthn_login_options(request: Request) -> dict:
-    """Anonymous by design (the lock screen), disclosing only what the lock
-    screen already says: a passkey exists here. Credentials are enrolled as
-    discoverable, so allowCredentials stays empty and no credential ids ever
-    reach an anonymous caller."""
+    """Anonymous by design (the lock screen). The sheet is narrowed to THIS
+    app's own keys: the fleet's apps share the localhost RP (ports don't
+    count), and with an empty allowCredentials every app's sheet listed
+    every app's passkey (#204). Naming our enrolled ids to an anonymous
+    caller is a deliberate disclosure (owner call, 2026-08-23, reversing
+    the earlier ids-stay-private posture): a credential id is a public key
+    handle, not a secret, and this endpoint's 400 already said whether a
+    passkey exists here at all."""
     ctx = _ceremony_context(request)
     if ctx is None:
         raise HTTPException(status_code=400,
@@ -338,14 +342,18 @@ def webauthn_login_options(request: Request) -> dict:
     origin, rp = ctx
     con = db.connect()
     try:
-        enrolled_here = bool(passkeys.credentials_for_rp(con, rp))
+        rows = passkeys.credentials_for_rp(con, rp)
     finally:
         con.close()
-    if not enrolled_here:
+    if not rows:
         raise HTTPException(status_code=400,
                             detail="no passkey is enrolled for this origin")
     opts = webauthn_lib.generate_authentication_options(
-        rp_id=rp, user_verification=UserVerificationRequirement.REQUIRED)
+        rp_id=rp,
+        allow_credentials=[
+            PublicKeyCredentialDescriptor(id=base64url_to_bytes(r["id"]))
+            for r in rows],
+        user_verification=UserVerificationRequirement.REQUIRED)
     cid = _ceremony_mint(request.app, "login", opts.challenge, rp, origin)
     return {"cid": cid,
             "publicKey": json.loads(webauthn_lib.options_to_json(opts))}
