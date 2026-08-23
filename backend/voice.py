@@ -64,16 +64,19 @@ def enabled():
     return bool(api_key())
 
 
-# ---- provider seam (local-voice series PR1) ----
+# ---- provider seam ----
 # Every voice surface (both relays, the batch STT upload, voice listing and
-# assign, transcribe_audio_url, the /api/state echo) resolves through
-# provider_for(), never enabled(), so the choice of engine lives in exactly
-# one place. A later local-engine PR registers an engine under one of these
-# names and flips the reserved branch below: it does not touch endpoints.
+# assign, transcribe_audio_url, the /api/state echo, the benchmark
+# catalogue) resolves through provider_for(), never enabled(), so the
+# choice of engine lives in exactly one place. A later local-engine PR
+# registers an engine under one of these names and flips the reserved
+# branch below: it does not touch endpoints.
 PROVIDER_ELEVENLABS = "elevenlabs"
-# RESERVED, not implemented here: faster-whisper (large-v3) or Moonshine STT
-# plus Kokoro-82M TTS, all local, no cloud egress.
-PROVIDER_LOCAL = "local-whisper-kokoro"
+# RESERVED, not implemented here: a fully local STT/TTS stack (candidates
+# include faster-whisper or Moonshine for STT, Kokoro for TTS), no cloud
+# egress. The value names the class, not an engine choice: whichever local
+# stack lands, the setting stays truthful.
+PROVIDER_LOCAL = "local"
 # Voice unavailable: the same clean state a keyless machine has today.
 NO_VOICE = "none"
 
@@ -87,7 +90,7 @@ def provider_for(cfg) -> str:
     - "auto" (default): ElevenLabs when ELEVENLABS_API_KEY exists, else
       NO_VOICE. Byte-for-byte today's semantics, keyless state included.
     - "elevenlabs": the same, chosen explicitly.
-    - "local-whisper-kokoro": NO_VOICE while the engine PR is out, even with
+    - "local": NO_VOICE while no local engine is installed, even with
       a key set: reserved and unimplemented, so it can never egress.
     - anything else (typo, non-string): treated as "auto" - the repo
       convention that a bad value is ignored, not crashed on, and auto's
@@ -111,7 +114,7 @@ def disabled_reason(cfg) -> str:
     installed yet, so the reason is honest in both states."""
     want = (cfg or {}).get("voice_provider")
     if isinstance(want, str) and want.strip() == PROVIDER_LOCAL:
-        return ("Local voice engines (voice_provider=local-whisper-kokoro) "
+        return ("Local voice engines (voice_provider=local) "
                 "are not installed yet")
     return "ELEVENLABS_API_KEY not set"
 

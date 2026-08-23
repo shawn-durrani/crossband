@@ -1,4 +1,4 @@
-"""Provider seam (local-voice series PR1): `voice_provider` resolves voice
+"""Provider seam: `voice_provider` resolves voice
 to exactly one engine, or to the clean "voice unavailable" state.
 
 What these tests pin, in order:
@@ -10,9 +10,9 @@ What these tests pin, in order:
 2. THE KEY GATES ELEVENLABS IN BOTH WORDINGS. `auto` and explicit
    `elevenlabs` both need ELEVENLABS_API_KEY, and both select ElevenLabs
    when it is present.
-3. THE RESERVED LOCAL PROVIDER NEVER EGRESS. `local-whisper-kokoro`
-   resolves to unavailable even WHEN a key is set: its engine lands in a
-   later PR, and before that the value must mean "nothing", not "cloud".
+3. THE RESERVED LOCAL PROVIDER NEVER EGRESS. `local`
+   resolves to unavailable even WHEN a key is set: no local engine ships
+   yet, and until one does the value must mean "nothing", not "cloud".
    Its rejection sentence then names the reservation, not the key.
 4. BAD VALUES NEVER CRASH AND NEVER INVENT. Typos and non-string
    providers degrade to `auto` semantics: ElevenLabs with the key,
@@ -71,7 +71,7 @@ def test_explicit_elevenlabs_still_needs_the_key(tmp_path):
 def test_reserved_local_never_egress(tmp_path, monkeypatch):
     # The trap this file exists to close: the operator asks for the local
     # engines AND holds a key. The reserved provider must mean "nothing"
-    # until the engine PR lands, never "cloud".
+    # until a local engine ships, never "cloud".
     monkeypatch.setenv("ELEVENLABS_API_KEY", "xi-test")
     cfg = _cfg(tmp_path, local={"voice_provider": voice.PROVIDER_LOCAL})
     assert voice.provider_for(cfg) == voice.NO_VOICE
@@ -119,3 +119,21 @@ def test_status_endpoint_reflects_the_provider(tmp_path, monkeypatch):
                      memory_url="http://127.0.0.1:1")
     with TestClient(create_app(plain), base_url="http://127.0.0.1") as c:
         assert c.get("/api/voice/status").json()["enabled"] is True
+
+
+def test_benchmark_catalogue_follows_the_provider(tmp_path, monkeypatch):
+    """The benchmark panel's voice-legs flag rides the seam too: reserving
+    the local provider reads as no voice even with a key in the
+    environment, so the panel can never offer ElevenLabs legs the resolved
+    provider would refuse."""
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "xi-test")
+    local = Settings(data_dir=str(tmp_path / "data"),
+                     memory_url="http://127.0.0.1:1",
+                     voice_provider=voice.PROVIDER_LOCAL)
+    with TestClient(create_app(local), base_url="http://127.0.0.1") as c:
+        assert c.get("/api/benchmark").json()["eleven"] is False
+
+    plain = Settings(data_dir=str(tmp_path / "data"),
+                     memory_url="http://127.0.0.1:1")
+    with TestClient(create_app(plain), base_url="http://127.0.0.1") as c:
+        assert c.get("/api/benchmark").json()["eleven"] is True

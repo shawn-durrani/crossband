@@ -89,7 +89,7 @@ lengths and offsets, never the conversation text.
 
 | key | default | what it does |
 |---|---|---|
-| `voice_provider` | `auto` | STT/TTS engine selection. `auto` (default) is exactly today: ElevenLabs when `ELEVENLABS_API_KEY` is set, no voice when it is not; `elevenlabs` makes that choice explicit. `local-whisper-kokoro` is reserved for the local engines (no cloud egress) and, until they land, selects nothing. |
+| `voice_provider` | `auto` | STT/TTS engine selection. `auto` (default) is exactly today: ElevenLabs when `ELEVENLABS_API_KEY` is set, no voice when it is not; `elevenlabs` makes that choice explicit. `local` is reserved for a local engine (no cloud egress) and, until one lands, selects nothing. |
 | `tts_model` | `eleven_flash_v2_5` | ElevenLabs streaming TTS model. |
 | `tts_speed` | `1.0` | Speaking speed, 0.7–1.2. (Playback speed also has a live slider in the voice dock.) |
 | `stt_model` | `scribe_v2` | Transcription model; realtime variant is used automatically when available. |
