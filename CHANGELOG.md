@@ -5,6 +5,19 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A reply that mostly restates what the chat already holds is dropped
+  (#210). After a seat's reply completes, a word-overlap check compares
+  it against the seat's own previous message and the replies already
+  given this round. A near-copy is dropped and the seat re-runs once,
+  told to add something new or pass; a copy on the retry is suppressed
+  the way an insisted pass is, and a pass there is always accepted.
+  Verbatim-leaning on purpose: quoting to answer, short agreements,
+  repeat requests, tool-using replies and true paraphrase all stay
+  untouched. Voice rounds only log, since the reply has been spoken by
+  the time it can be judged. The scan runs in process after streaming
+  ends, so reply latency is unchanged. `CROSSBAND_ECHO_GUARD=false`
+  turns it off.
+
 - Voice has one engine selector (#202). A new `voice_provider` setting
   names which engine serves speech. `auto` (the default) is exactly
   today's behaviour: ElevenLabs when its key is set, no voice when it is
