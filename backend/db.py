@@ -19,7 +19,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 24  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149) · v23: chat_seat_state.once_effort (one-reply spoken depth override, #105 slice 2) · v24: participants.keep_alive (keep an Ollama seat's model loaded between turns: native-API keep_alive nudge)
+SCHEMA_VERSION = 25  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149) · v23: chat_seat_state.once_effort (one-reply spoken depth override, #105 slice 2) · v24: participants.keep_alive (keep an Ollama seat's model loaded between turns: native-API keep_alive nudge) · v25: messages.audit_flags (per-reply attribution-audit findings for the row's quiet chip, #211)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -112,7 +112,12 @@ CREATE TABLE IF NOT EXISTS messages(
   -- #138 slice 4: json list of web sources (domains, or "web-search") the
   -- round that produced this assistant message read, or ''. Rides /ingest so
   -- the memory service can hold web-derived facts for review.
-  web_sources TEXT NOT NULL DEFAULT ''
+  web_sources TEXT NOT NULL DEFAULT '',
+  -- #211: json list of attribution-audit findings for this assistant reply
+  -- ([{kind, who, claim}]), or ''. A finding means "said-claim not found
+  -- verbatim in that speaker's turns in the window" - a flag for the row's
+  -- quiet chip, never a fabrication verdict and never a block.
+  audit_flags TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_messages_voice_turn
   ON messages(voice_turn_id) WHERE voice_turn_id != '';
@@ -490,6 +495,11 @@ def init(settings=None):
         if mcols and "web_sources" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN web_sources "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 24:  # v25: attribution-audit flags on messages (#211)
+        mcols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
+        if mcols and "audit_flags" not in mcols:
+            con.execute("ALTER TABLE messages ADD COLUMN audit_flags "
+                        "TEXT NOT NULL DEFAULT ''")
     # v6: inbound_events - new table, created by the executescript below
     if 1 <= version <= 6:  # v7: per-seat onboarding lifecycle. The
         # column DEFAULTS to 'trial' (conservative), so the ALTER lands every
@@ -838,7 +848,7 @@ def get_messages_after(con, since, chat_id=None):
 def insert_message(con, chat_id, speaker, content, *, usage_json=None,
                     import_uuid=None, tool_events=None, attachment_ids=None,
                     notify=True, voice_turn_id="", voice_labels=None,
-                    web_sources=None):
+                    web_sources=None, audit_flags=None):
     """THE single write path for a LIVE message - every insert
     that should be pushed to a connected client goes through here, not a raw
     `INSERT INTO messages`. Centralizing this is what makes the live-events
@@ -862,11 +872,13 @@ def insert_message(con, chat_id, speaker, content, *, usage_json=None,
     labels_json = _json_dumps(voice_labels) if voice_labels else ""
     cur = con.execute(
         "INSERT INTO messages(chat_id, speaker, content, usage_json, created_at, "
-        "import_uuid, voice_turn_id, voice_labels, labels_updated_at, web_sources) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "import_uuid, voice_turn_id, voice_labels, labels_updated_at, web_sources, "
+        "audit_flags) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         (chat_id, speaker, content, usage_json, now(), import_uuid,
          voice_turn_id or "", labels_json, now() if labels_json else 0,
-         _json_dumps(sorted(web_sources)) if web_sources else ""),
+         _json_dumps(sorted(web_sources)) if web_sources else "",
+         _json_dumps(audit_flags) if audit_flags else ""),
     )
     msg_id = cur.lastrowid
     for att_id in (attachment_ids or []):

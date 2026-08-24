@@ -457,7 +457,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     # once the round has read the web, every later assistant message in it
     # carries the stamp (#138 slice 4).
     live = {"participant": None, "content": "", "tools": [], "usage": None,
-            "web_domains": set(), "attachments": []}
+            "web_domains": set(), "attachments": [], "audit": []}
 
     def persist_live(interrupted=False):
         p = live["participant"]
@@ -492,13 +492,15 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         msg = db.insert_message(con, chat_id, p["slug"], content,
                                 usage_json=usage_json, tool_events=live["tools"],
                                 attachment_ids=live.get("attachments"),
-                                web_sources=live.get("web_domains"))
+                                web_sources=live.get("web_domains"),
+                                audit_flags=live.get("audit"))
         con.close()
         live["participant"] = None
         live["content"] = ""
         live["tools"] = []
         live["usage"] = None
         live["attachments"] = []
+        live["audit"] = []
         return msg
 
     try:
@@ -733,6 +735,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             live["tools"] = []
             live["usage"] = None
             live["attachments"] = []
+            live["audit"] = []
             yield sse({"type": "speaker_start", "speaker": participant["slug"]})
             t_provider_call = time.monotonic() if t_iter_start is not None else None
             stream = providers.stream_reply(
@@ -771,6 +774,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                         yield sse({"type": "delta", "speaker": participant["slug"], "text": payload})
                     elif kind == "usage":
                         live["usage"] = payload
+                    elif kind == "audit":
+                        # #211: attribution-audit findings for this completed
+                        # reply - persisted on the row, rendered as a quiet
+                        # chip. Arrives once, at natural completion.
+                        live["audit"] = payload
                     elif kind == "tool":
                         # #149: a tool that produced a file (view_page's
                         # screenshot) parked it on round_cfg keyed by tool +

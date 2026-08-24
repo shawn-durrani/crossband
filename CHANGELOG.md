@@ -5,6 +5,16 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Misquotes of chat members now show up where they happen (#211). The
+  attribution audit covers third-person claims too ("Claude said …",
+  checked against Claude's own turns, with a they-to-I flip so faithful
+  reports never flag), returns its findings to the round, and each
+  flagged reply carries a quiet amber chip quoting the claim that has no
+  word-for-word match. The chip is a prompt to check, never a misquote
+  verdict: paraphrase and summary-folded history look the same. Audit
+  log lines move to WARNING so a default deploy records them; they stay
+  content-free, since the claim text lives only on your own message row.
+
 - Voice has one engine selector (#202). A new `voice_provider` setting
   names which engine serves speech. `auto` (the default) is exactly
   today's behaviour: ElevenLabs when its key is set, no voice when it is

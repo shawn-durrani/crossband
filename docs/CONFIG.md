@@ -76,14 +76,18 @@ the whole procedure, including the local `$0` case.
 | `summary_threshold_chars` | `60000` | Conversation weight that triggers the rolling summary. Counts message text **plus attachments** (images priced at the resolution providers actually tokenise, files by length), expressed in character-equivalents so this number keeps its original meaning. It measured text only until 2026-08-02, so photo-heavy chats never folded. |
 | `keep_recent_messages` | `12` | Messages always kept verbatim below the summary. |
 | `max_attachment_mb` | `20` | Upload size cap, applied to the file as you send it. Photos are downscaled to ~1568px on arrival, so what gets stored, and re-sent to every participant on every turn, is typically a tenth of this. |
-| `attribution_audit` | `true` | Flags when a model's "you said…" claim has no word-for-word match in the current window. Writes one content-free log line and never blocks or edits a reply. See below. |
+| `attribution_audit` | `true` | Flags when a model's "you said…" or "Claude said…" claim has no word-for-word match in that speaker's turns in the current window. Shows a quiet chip on the reply and writes one content-free log line; never blocks or edits a reply. See below. |
 
 ### Reading an attribution-audit flag
 
 A "no verbatim match" is a signal for review, not a verdict that the model
 made something up. It also fires when the moment was summarised or
-paraphrased. The log line carries a one-way fingerprint of the claim plus
-lengths and offsets, never the conversation text.
+paraphrased. Claims are checked against the named speaker's own turns: "you
+said…" against yours, "GPT said…" against GPT's. A flagged claim renders as
+an amber chip under the reply, quoting the claim, since your own transcript
+already holds the text. The log line stays content-free: a one-way
+fingerprint of the claim plus lengths and offsets, at WARNING so a default
+deploy records it.
 
 ## Voice
 
