@@ -194,6 +194,16 @@ class Settings(BaseModel):
     # diagnostic off entirely.
     attribution_audit: bool = True
 
+    # After a completed TEXT reply, drop a draft that mostly restates the
+    # seat's own previous message or a reply already given this round: one
+    # retry with the guard stated, then suppression, mirroring the refused
+    # pass (backend/echo.py, engine round loop). Verbatim-leaning by design:
+    # a paraphrase passes it, quoted lines are stripped before judging, and
+    # short agreements are never judged. Voice rounds only log a warning,
+    # since by completion the reply has already been spoken. Set false
+    # (CROSSBAND_ECHO_GUARD=false) to turn enforcement off entirely.
+    echo_guard: bool = True
+
     # voice
     # Provider seam: which engine serves STT/TTS. "auto" (default) =
     # current behaviour exactly: ElevenLabs when ELEVENLABS_API_KEY is
