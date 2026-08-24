@@ -18,19 +18,29 @@ export function auditChips(auditFlagsJson) {
   if (!Array.isArray(flags)) return []
   const out = []
   for (const f of flags) {
-    if (!f || f.kind !== 'attribution' || !f.who || !f.claim) continue
+    if (!f || !f.claim) continue
     const claim = String(f.claim)
     const shown = claim.length > MAX_CLAIM
       ? `${claim.slice(0, MAX_CLAIM - 1)}…`
       : claim
-    out.push({
-      label: `“${shown}” – not found in ${f.who}'s messages here`,
-      title:
-        `This reply quotes ${f.who} saying something with no word-for-word ` +
-        `match in ${f.who}'s messages in the visible window. A paraphrase, ` +
-        'or an older message folded into the summary, looks exactly the ' +
-        'same - treat this as a prompt to check, not proof of a misquote.',
-    })
+    if (f.kind === 'attribution' && f.who) {
+      out.push({
+        label: `“${shown}” – not found in ${f.who}'s messages here`,
+        title:
+          `This reply quotes ${f.who} saying something with no word-for-word ` +
+          `match in ${f.who}'s messages in the visible window. A paraphrase, ` +
+          'or an older message folded into the summary, looks exactly the ' +
+          'same - treat this as a prompt to check, not proof of a misquote.',
+      })
+    } else if (f.kind === 'citation') {
+      out.push({
+        label: `“${shown}” – cites a source, nothing fetched this turn`,
+        title:
+          'This reply cites a source, but no search or fetch ran in it. ' +
+          'The claim may still be right from training or memory - treat ' +
+          'it as unverified until checked.',
+      })
+    }
   }
   return out
 }

@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A cited source with nothing fetched behind it is flagged (#213). A
+  "the docs say…" claim in a reply that ran no tools gets the same
+  quiet chip as a misquote: the claim may still be right from training
+  or memory, so the chip says unverified, never wrong. Any tool row in
+  the reply skips the check, and it never retries or blocks.
+  `CROSSBAND_CITATION_CHECK=false` turns it off.
+
 - Misquotes of chat members now show up where they happen (#211). The
   attribution audit covers third-person claims too ("Claude said …",
   checked against Claude's own turns, with a they-to-I flip so faithful

@@ -17,7 +17,7 @@ import re
 import time
 
 from . import attachments as att_mod
-from . import chat_memory, db, echo, guest, passes, person_sync
+from . import chat_memory, citations, db, echo, guest, passes, person_sync
 from . import depth as depth_mod
 from . import memory_client as memory_client_mod
 from . import providers
@@ -910,6 +910,16 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         round_cfg["echo_refused"] = ""
         if skip_speaker:
             continue
+        # #213: a citation-shaped claim in a reply that fetched nothing gets
+        # the same quiet chip as a misquote - the #172 dispatch-claims class
+        # on the citation side. Informational only, never a retry; any tool
+        # row in the reply skips it.
+        if round_cfg.get("citation_check", True):
+            cites = citations.uncited_claims(live["content"], live["tools"])
+            if cites:
+                log.warning("citation_check result=uncited count=%d speaker=%s",
+                            len(cites), participant["slug"])
+                live["audit"] = (live.get("audit") or []) + cites
         # The between-speakers persist (INSERT + fsync) runs on a worker
         # thread. The abort-path persist in run_round deliberately stays
         # synchronous: it executes inside GeneratorExit/CancelledError

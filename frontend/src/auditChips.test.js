@@ -35,3 +35,12 @@ test('junk never renders and never throws', () => {
     { kind: 'other', who: 'Claude', claim: 'x' },  // unknown kind
   ])), [])
 })
+
+test('a citation finding renders unverified-until-checked copy', () => {
+  const chips = auditChips(JSON.stringify([
+    { kind: 'citation', claim: "Akai's own docs say you need the adapter." },
+  ]))
+  assert.equal(chips.length, 1)
+  assert.match(chips[0].label, /cites a source, nothing fetched this turn/)
+  assert.match(chips[0].title, /unverified until checked/)
+})
