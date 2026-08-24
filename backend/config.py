@@ -204,6 +204,14 @@ class Settings(BaseModel):
     # (CROSSBAND_ECHO_GUARD=false) to turn enforcement off entirely.
     echo_guard: bool = True
 
+    # Flag a citation-shaped claim ("the docs say ...") in a reply that ran
+    # no tools: same quiet chip as the attribution audit, one content-free
+    # WARNING line, never a retry or a block (backend/citations.py). A model
+    # may cite from training or memory; the chip only says nothing was
+    # fetched this turn. Any tool row in the reply skips the check. Set
+    # false (CROSSBAND_CITATION_CHECK=false) to turn it off.
+    citation_check: bool = True
+
     # voice
     # Provider seam: which engine serves STT/TTS. "auto" (default) =
     # current behaviour exactly: ElevenLabs when ELEVENLABS_API_KEY is

@@ -78,6 +78,7 @@ the whole procedure, including the local `$0` case.
 | `max_attachment_mb` | `20` | Upload size cap, applied to the file as you send it. Photos are downscaled to ~1568px on arrival, so what gets stored, and re-sent to every participant on every turn, is typically a tenth of this. |
 | `attribution_audit` | `true` | Flags when a model's "you said…" or "Claude said…" claim has no word-for-word match in that speaker's turns in the current window. Shows a quiet chip on the reply and writes one content-free log line; never blocks or edits a reply. See below. |
 | `echo_guard` | `true` | Drops a text reply that mostly restates the seat's own previous message or a reply already given this round: one retry with the reason stated, then suppression. Quotes, short agreements, repeat requests, tool replies and paraphrase are exempt; voice rounds only log. |
+| `citation_check` | `true` | Flags a "the docs say…" claim in a reply that ran no tools, on the audit's chip surface. The claim may still be right from memory, so the chip says unverified. Never a retry or a block. |
 
 ### Reading an attribution-audit flag
 
