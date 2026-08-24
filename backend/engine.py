@@ -17,7 +17,7 @@ import re
 import time
 
 from . import attachments as att_mod
-from . import chat_memory, db, guest, passes, person_sync
+from . import chat_memory, db, echo, guest, passes, person_sync
 from . import depth as depth_mod
 from . import memory_client as memory_client_mod
 from . import providers
@@ -727,9 +727,15 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # after refusal - suppresses the turn entirely: nothing persisted,
         # nothing spoken, the round moves on.
         pass_note = ""
+        # #210: what this seat's completed reply is judged against - its own
+        # most recent message and the replies this round already collected.
+        echo_note = ""
+        echo_refs = echo.references_for(transcript, participant["slug"],
+                                        {p["slug"] for p in roster}, names)
         skip_speaker = False
         while True:
             round_cfg["pass_refused"] = pass_note
+            round_cfg["echo_refused"] = echo_note
             live["participant"] = participant
             live["content"] = ""
             live["tools"] = []
@@ -848,11 +854,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 # while the text could still be a bare pass, so nothing was
                 # spoken either.
                 yield sse({"type": "passed", "speaker": participant["slug"]})
-                if pass_note or passes.may_pass(
+                if pass_note or echo_note or passes.may_pass(
                         idx, participant["slug"] in addressed, user_text):
                     # allowed - or the seat insisted after one refusal, and
                     # a seat that insists has nothing: suppress the turn
                     # entirely (nothing persisted, later seats still run).
+                    # A pass on an echo retry (#210) is always accepted: the
+                    # retry note promised it, and the alternative on offer
+                    # was a restatement.
                     live["participant"] = None
                     live["content"] = ""
                     live["usage"] = None
@@ -861,8 +870,44 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 # refused: re-run this seat ONCE with the guard stated
                 pass_note = passes.GUARD_NOTE.format(user=cfg["user_name"])
                 continue
+            # #210: the echo guard. One in-process text scan after streaming
+            # ends - nothing on the reply's wait path. Tool rounds are exempt
+            # (fresh results get engaged with legitimately), a round whose
+            # trigger asks for repetition is exempt (restating is then the
+            # job), and voice only logs: by completion the reply has already
+            # been spoken, so a retry would say everything twice.
+            if (round_cfg.get("echo_guard", True) and not live["tools"]
+                    and not echo.requested_repeat(user_text)):
+                restated = echo.find_restated(live["content"], echo_refs)
+                if restated and voice_mode:
+                    log.warning("echo_guard result=hit action=logged "
+                                "speaker=%s ref=%s", participant["slug"],
+                                "own" if restated == echo.OWN_LABEL else "round")
+                elif restated and (echo_note or pass_note):
+                    # A restatement on its one retry - or on a forced answer
+                    # after a refused pass - is suppressed like an insisted
+                    # pass: nothing persisted, later seats still run.
+                    log.warning("echo_guard result=hit action=suppressed "
+                                "speaker=%s ref=%s", participant["slug"],
+                                "own" if restated == echo.OWN_LABEL else "round")
+                    yield sse({"type": "passed", "speaker": participant["slug"]})
+                    live["participant"] = None
+                    live["content"] = ""
+                    live["usage"] = None
+                    skip_speaker = True
+                    break
+                elif restated:
+                    # Same client shape as a refused pass: the streamed
+                    # bubble drops on "passed", the retry opens fresh.
+                    log.warning("echo_guard result=hit action=retry "
+                                "speaker=%s ref=%s", participant["slug"],
+                                "own" if restated == echo.OWN_LABEL else "round")
+                    yield sse({"type": "passed", "speaker": participant["slug"]})
+                    echo_note = echo.RETRY_NOTE.format(what=restated)
+                    continue
             break
         round_cfg["pass_refused"] = ""
+        round_cfg["echo_refused"] = ""
         if skip_speaker:
             continue
         # The between-speakers persist (INSERT + fsync) runs on a worker

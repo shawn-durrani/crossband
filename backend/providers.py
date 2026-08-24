@@ -738,6 +738,12 @@ def _volatile_system_parts(cfg):
         # direct question, or addressed by name) and is re-running it once.
         # Volatile by nature - present for exactly one retry call.
         parts.append("\n## Pass refused - you must answer\n" + refused)
+    echoed = (cfg.get("echo_refused") or "").strip()
+    if echoed:
+        # #210: the engine dropped this seat's restated draft and is
+        # re-running it once. Volatile - present for exactly one retry call.
+        parts.append("\n## Restatement refused - add something new or pass\n"
+                     + echoed)
     preds = cfg.get("round_predecessors") or []
     if preds:
         parts.append(
