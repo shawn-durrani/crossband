@@ -205,3 +205,91 @@ def test_attribution_audit_setting_is_env_overridable():
     s = load_settings(environ={"CROSSBAND_ATTRIBUTION_AUDIT": "false"})
     assert s.attribution_audit is False
     assert s.as_cfg()["attribution_audit"] is False
+
+
+# ---------- #211: third-person claims over the roster and the user's name ----------
+
+NAMES = {"claude": "Claude", "gpt": "GPT"}
+
+
+def _run3(caplog, reply_text, transcript, cfg=None):
+    caplog.set_level(logging.INFO, logger="crossband.providers")
+    flags = providers._check_attribution(reply_text, transcript, PARTICIPANT,
+                                         cfg or {}, NAMES)
+    return flags, [r for r in caplog.records
+                   if "attribution_audit" in r.getMessage()]
+
+
+def test_flags_a_claim_about_another_seat_that_seat_never_made(caplog):
+    """The 2026-08-23 field shape: words pinned on a named member with no
+    match in that member's own turns."""
+    transcript = [make_msg(1, "user", "how did the deploy go?"),
+                  make_msg(2, "claude", "The deploy finished cleanly at nine.")]
+    reply = "Claude said the deploy was reverted overnight, so let's check."
+    flags, hits = _run3(caplog, reply, transcript)
+    assert len(flags) == 1
+    assert flags[0]["kind"] == "attribution" and flags[0]["who"] == "Claude"
+    assert "reverted overnight" in flags[0]["claim"]
+    assert len(hits) == 1
+    msg = hits[0].getMessage()
+    assert "result=no_verbatim_member_match" in msg
+    # WARNING so a default deploy (log_level empty = WARNING+) records it
+    assert hits[0].levelname == "WARNING"
+    # still content-free in the LOG (the finding itself carries the claim,
+    # for the owner's own transcript view only)
+    assert "reverted" not in msg
+
+
+def test_a_correct_quote_of_another_seat_is_never_flagged(caplog):
+    transcript = [make_msg(1, "user", "how did the deploy go?"),
+                  make_msg(2, "claude", "The deploy finished cleanly at nine.")]
+    reply = "Claude said the deploy finished cleanly at nine, so we're good."
+    flags, hits = _run3(caplog, reply, transcript)
+    assert flags == [] and hits == []
+
+
+def test_third_person_pronoun_flip_grounds_a_faithful_report(caplog):
+    """'GPT said they'd hold the release' must ground against GPT's own
+    first-person turn, exactly as the you->I flip does for the user."""
+    transcript = [make_msg(1, "user", "thoughts?"),
+                  make_msg(2, "gpt",
+                           "I'd hold the release until the smoke test passes.")]
+    reply = "GPT said they'd hold the release until the smoke test passes."
+    flags, _ = _run3(caplog, reply, transcript)
+    assert flags == []
+
+
+def test_a_seat_with_no_turns_in_window_stays_silent(caplog):
+    """Same rule as the user path: nothing to ground against means no flag -
+    the quoted moment may simply be folded into the rolling summary."""
+    transcript = [make_msg(1, "user", "hi")]
+    reply = "GPT said the config was broken yesterday evening."
+    flags, hits = _run3(caplog, reply, transcript)
+    assert flags == [] and hits == []
+
+
+def test_the_users_name_grounds_against_user_turns(caplog):
+    transcript = [make_msg(1, "user", "I want the header in green now.")]
+    bad = "Alex said the header should be blue forever and ever."
+    flags, _ = _run3(caplog, bad, transcript, cfg={"user_name": "Alex"})
+    assert len(flags) == 1 and flags[0]["who"] == "Alex"
+    ok = "Alex said they want the header in green now."
+    flags_ok, _ = _run3(caplog, ok, transcript, cfg={"user_name": "Alex"})
+    assert flags_ok == []
+
+
+def test_second_person_findings_are_returned_for_the_chip_too(caplog):
+    transcript = [make_msg(1, "user", "morning all")]
+    reply = "Sure — you told me to keep replies concise, so here it is."
+    flags = providers._check_attribution(reply, transcript, PARTICIPANT,
+                                         {"user_name": "Alex"}, NAMES)
+    assert len(flags) == 1 and flags[0]["who"] == "Alex"
+    assert "keep replies concise" in flags[0]["claim"]
+
+
+def test_without_names_only_the_second_person_shape_runs(caplog):
+    transcript = [make_msg(1, "user", "how did it go?"),
+                  make_msg(2, "claude", "All good.")]
+    reply = "Claude said the deploy exploded spectacularly last night."
+    hits = _run(caplog, reply, transcript)
+    assert hits == []

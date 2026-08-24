@@ -9,6 +9,7 @@ import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
 import { chipData, chipSuffix, chipTitle, crosstalkNote, crosstalkSegments } from '../voiceChips'
 import { flagCopy, reassignOptions } from '../roomState'
+import { auditChips } from '../auditChips'
 
 // Same-speaker messages closer than this group into one visual run
 // (header suppressed, tight 4px rhythm - Discord cozy mode).
@@ -501,6 +502,14 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
           <AlertTriangle size={13} /> {msg.error}
         </div>
       )}
+      {/* #211: attribution-audit chip - a check to make, never a verdict.
+          Copy decisions live in auditChips.js (pure, node --test). */}
+      {!msg.streaming && auditChips(msg.audit_flags).map((c, i) => (
+        <div key={i} className="text-[11px] text-amber-300/90 mt-1 max-w-[68ch]"
+             title={c.title}>
+          {c.label}
+        </div>
+      ))}
       {!msg.streaming && <UsageFooter usageJson={msg.usage_json} speaker={msg.speaker} />}
     </div>
   )
@@ -562,6 +571,7 @@ function propsEqual(prev, next) {
     a.error !== b.error ||
     a.usage_json !== b.usage_json ||
     (a.voice_labels || '') !== (b.voice_labels || '') ||  // room-mode labels land AFTER insert
+    (a.audit_flags || '') !== (b.audit_flags || '') ||  // #211 chip rides the persisted row
     (a.workStatus?.label || '') !== (b.workStatus?.label || '') ||
     !sameAttachments(a.attachments, b.attachments) ||
     !sameToolEvents(a.tool_events, b.tool_events)

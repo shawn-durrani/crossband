@@ -1349,6 +1349,23 @@ _ATTRIBUTION_CLAIM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #211: the same audit for THIRD-person said-verb claims ("Claude said …",
+# "GPT told you …"), grounded against the named member's own turns. Built per
+# call because the alternation is the live roster's names. Possessive event
+# references ("Claude's correction") are deliberately out of scope for this
+# deterministic layer: grounding them needs semantics, not a substring.
+_MEMBER_VERBS = r"(?:said|says|said\s+that|told\s+(?:me|you|us)|asked|wrote|mentioned|claimed)"
+
+
+def _member_claim_re(display_names):
+    alts = "|".join(sorted((re.escape(n) for n in display_names if n),
+                           key=len, reverse=True))
+    return re.compile(
+        rf"\b(?P<who>{alts})\s+{_MEMBER_VERBS}\b\s*(?:that\s+)?[:,]?\s*"
+        r"(?P<claim>[^.?!\n]{8,200})",
+        re.IGNORECASE,
+    )
+
 
 def _norm_for_match(text):
     """Lowercase, alphanumeric-only, whitespace-collapsed - deliberately crude
@@ -1380,6 +1397,37 @@ def _flip_to_first_person(text):
     return text
 
 
+# The third-person analogue: "Claude said he'd rather wait" reports words
+# Claude phrased as "I'd rather wait". Same fixed transform discipline; the
+# flipped form is only an ADDITIONAL candidate needle, so an imperfect flip
+# ("he's" as a contraction of "he has") can only over-accept, never flag a
+# correct quote.
+_THIRD_PRONOUN_FLIP = [
+    (re.compile(r"\b(?:he|she|they)'re\b", re.IGNORECASE), "i'm"),
+    (re.compile(r"\b(?:he|she|they)'s\b", re.IGNORECASE), "i'm"),
+    (re.compile(r"\b(?:he|she|they)'ve\b", re.IGNORECASE), "i've"),
+    (re.compile(r"\b(?:he|she|they)'d\b", re.IGNORECASE), "i'd"),
+    (re.compile(r"\b(?:he|she|they)'ll\b", re.IGNORECASE), "i'll"),
+    (re.compile(r"\b(?:his|hers|theirs)\b", re.IGNORECASE), "mine"),
+    (re.compile(r"\b(?:his|her|their)\b", re.IGNORECASE), "my"),
+    (re.compile(r"\b(?:he|she|they)\b", re.IGNORECASE), "i"),
+]
+
+
+def _flip_third_to_first(text):
+    for pat, repl in _THIRD_PRONOUN_FLIP:
+        text = pat.sub(repl, text)
+    return text
+
+
+def _speaker_turns_text(transcript, speaker):
+    """Concatenated, normalised content of every raw turn by exactly
+    `speaker` - the ground truth for '<speaker> said X' within this window."""
+    return _norm_for_match(
+        " ".join((m.get("content") or "") for m in transcript
+                 if m.get("speaker") == speaker))
+
+
 def _user_turns_text(transcript):
     """The ONLY ground truth for 'the User said X': concatenated content
     of every raw turn whose speaker is EXACTLY PRIMARY_HUMAN_SPEAKER. Persona,
@@ -1389,9 +1437,7 @@ def _user_turns_text(transcript):
     single-primary-human invariant (see PRIMARY_HUMAN_SPEAKER): a hypothetical
     second human under a `user:<id>` speaker would NOT silently widen this
     bucket - it would simply not ground, forcing a deliberate redesign."""
-    return _norm_for_match(
-        " ".join((m.get("content") or "") for m in transcript
-                 if m.get("speaker") == PRIMARY_HUMAN_SPEAKER))
+    return _speaker_turns_text(transcript, PRIMARY_HUMAN_SPEAKER)
 
 
 def _claim_fingerprint(normalized_claim):
@@ -1402,47 +1448,107 @@ def _claim_fingerprint(normalized_claim):
     return hashlib.sha256(normalized_claim.encode("utf-8")).hexdigest()[:12]
 
 
-def _check_attribution(reply_text, transcript, participant, cfg):
-    """Scan a completed reply for "you said/asked/…" claims and log a
-    CONTENT-FREE structured diagnostic for any not found VERBATIM in the raw
-    speaker==PRIMARY_HUMAN_SPEAKER turns in this window. Called once per
-    completed turn, near the existing per-turn cache/usage logging in
-    _stream_anthropic/_stream_openai.
+def _check_attribution(reply_text, transcript, participant, cfg, names=None):
+    """Scan a completed reply for said-verb attribution claims and return the
+    ones not found VERBATIM in the named speaker's raw turns in this window,
+    as [{kind, who, claim}] for the message row's quiet chip (#211). Called
+    once per completed turn, near the existing per-turn cache/usage logging
+    in _stream_anthropic/_stream_openai. Two claim shapes:
 
-    Privacy: the log line carries NO conversation text - only a one-way
+    - second person ("you said …"), grounded against the raw
+      speaker==PRIMARY_HUMAN_SPEAKER turns, as before;
+    - third person over the roster and the user's name ("Claude said …",
+      "Alex told us …"), grounded against that member's own raw turns.
+      `names` is the engine's slug->display map; without it only the
+      second-person shape is checked.
+
+    Privacy: the LOG line carries NO conversation text - only a one-way
     fingerprint of the normalized claim, its normalized length, its offset/index
-    in the reply, the length of the available User text, and participant/model.
-    Nothing here reconstructs what was said.
+    in the reply, the length of the available grounding text, and
+    participant/model. The RETURNED findings do carry the claim span: they are
+    stored on the message row and rendered only in the owner's own transcript
+    view, which already holds the full text. Logged at WARNING so a default
+    deploy (log_level empty = WARNING+) actually records hits.
 
-    Semantics: `result=no_verbatim_user_match` means exactly 'this phrase
-    was not found verbatim in the raw User turns available in this window' - NOT
-    that the model fabricated it and NOT that it is ungrounded. Compression (the
-    grounding turn folded into the rolling summary) or paraphrase can produce a
-    hit for a perfectly true claim. It is a diagnostic observation for review,
-    never a fabrication verdict, and never blocks or edits a reply."""
+    Semantics: a finding means exactly 'this phrase was not found verbatim in
+    that speaker's raw turns available in this window' - NOT that the model
+    fabricated it and NOT that it is ungrounded. Compression (the grounding
+    turn folded into the rolling summary) or paraphrase can produce a hit for
+    a perfectly true claim. It is a diagnostic observation for review, never
+    a fabrication verdict, and never blocks or edits a reply."""
+    findings = []
     if not reply_text or not cfg.get("attribution_audit", True):
-        return
+        return findings
+
+    def _audit(matches, who_display, ground_text, result, flips):
+        ground_len = len(ground_text)
+        for idx, m in enumerate(matches):
+            claim = m.group("claim")
+            needle = _norm_for_match(claim)[:60]
+            if len(needle) < 8:
+                continue  # too short to check meaningfully
+            # The regex cannot see where a quote ends, so "said X, so we're
+            # good" captures the reply's own clause too. Also try the claim
+            # truncated at its first clause boundary: a grounded leading
+            # clause can only over-accept, never flag a correct quote.
+            head = re.split(r"[,;]|\s[-—]\s", claim, 1)[0]
+            variants = [claim] + ([head] if head != claim else [])
+            candidates = []
+            for v in variants:
+                candidates.append(_norm_for_match(v)[:60])
+                candidates += [_norm_for_match(f(v))[:60] for f in flips]
+            candidates = [c for c in candidates if len(c) >= 8]
+            if any(c in ground_text for c in candidates):
+                continue  # found verbatim, directly or via a pronoun flip
+            log.warning(
+                "attribution_audit result=%s speaker=%s model=%s "
+                "claim_fp=%s claim_norm_len=%d claim_offset=%d claim_index=%d "
+                "ground_turns_norm_len=%d",
+                result,
+                participant.get("slug") or participant.get("name"),
+                participant.get("model"),
+                _claim_fingerprint(needle), len(needle),
+                m.start("claim"), idx, ground_len,
+            )
+            findings.append({"kind": "attribution", "who": who_display,
+                             "claim": claim.strip()[:160]})
+
+    user_name = (cfg.get("user_name") or "").strip()
     user_text = _user_turns_text(transcript)
-    if not user_text:
-        return  # no raw User turns in this window at all -- nothing to ground against
-    user_len = len(user_text)
-    for idx, m in enumerate(_ATTRIBUTION_CLAIM_RE.finditer(reply_text)):
-        claim = m.group("claim")
-        needle = _norm_for_match(claim)[:60]
-        needle_first_person = _norm_for_match(_flip_to_first_person(claim))[:60]
-        if len(needle) < 8:
-            continue  # too short to check meaningfully
-        if needle in user_text or needle_first_person in user_text:
-            continue  # found verbatim in a raw User turn, directly or via you->I
-        log.info(
-            "attribution_audit result=no_verbatim_user_match speaker=%s model=%s "
-            "claim_fp=%s claim_norm_len=%d claim_offset=%d claim_index=%d "
-            "user_turns_norm_len=%d",
-            participant.get("slug") or participant.get("name"),
-            participant.get("model"),
-            _claim_fingerprint(needle), len(needle),
-            m.start("claim"), idx, user_len,
-        )
+    if user_text:
+        # no raw User turns in this window = nothing to ground against
+        _audit(_ATTRIBUTION_CLAIM_RE.finditer(reply_text), user_name or "you",
+               user_text, "no_verbatim_user_match", [_flip_to_first_person])
+
+    by_name = {}
+    for slug, display in (names or {}).items():
+        if display:
+            by_name[display.lower()] = slug
+    if user_name:
+        by_name[user_name.lower()] = PRIMARY_HUMAN_SPEAKER
+    if by_name:
+        member_re = _member_claim_re(by_name.keys())
+        by_slug_matches = {}
+        for m in member_re.finditer(reply_text):
+            slug = by_name[m.group("who").lower()]
+            by_slug_matches.setdefault(slug, []).append(m)
+        for slug, matches in by_slug_matches.items():
+            ground = (_user_turns_text(transcript)
+                      if slug == PRIMARY_HUMAN_SPEAKER
+                      else _speaker_turns_text(transcript, slug))
+            if not ground:
+                continue  # that speaker has no raw turns in this window
+            # A by-name claim reports its speaker in the third person, so the
+            # third-person flip applies to everyone; for the user, "you"
+            # forms can also appear inside the claim tail, so keep that flip
+            # too.
+            flips = ([_flip_third_to_first, _flip_to_first_person]
+                     if slug == PRIMARY_HUMAN_SPEAKER
+                     else [_flip_third_to_first])
+            _audit(matches, matches[0].group("who"), ground,
+                   "no_verbatim_user_match" if slug == PRIMARY_HUMAN_SPEAKER
+                   else "no_verbatim_member_match", flips)
+    return findings
 
 
 # ---------- announce pending external work before dead air -----
@@ -1645,7 +1751,10 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             u.output_tokens or 0,
         )
         if final.stop_reason != "tool_use":
-            _check_attribution("".join(reply_text_parts), transcript, p, cfg)
+            flags = _check_attribution("".join(reply_text_parts), transcript,
+                                       p, cfg, names)
+            if flags:
+                yield ("audit", flags)
             yield ("usage", usage)
             return
         messages.append({"role": "assistant", "content": final.content})
@@ -1793,7 +1902,10 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
             elif etype in ("response.completed", "response.incomplete"):
                 final = event.response
         if final is None:
-            _check_attribution("".join(reply_text_parts), transcript, p, cfg)
+            flags = _check_attribution("".join(reply_text_parts), transcript,
+                                       p, cfg, names)
+            if flags:
+                yield ("audit", flags)
             yield ("usage", usage)
             return
         u = getattr(final, "usage", None)
@@ -1808,7 +1920,10 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
         calls = [item for item in (final.output or [])
                  if getattr(item, "type", "") == "function_call"]
         if not calls:
-            _check_attribution("".join(reply_text_parts), transcript, p, cfg)
+            flags = _check_attribution("".join(reply_text_parts), transcript,
+                                       p, cfg, names)
+            if flags:
+                yield ("audit", flags)
             yield ("usage", usage)
             return
         def _tool_input(c):
@@ -1960,7 +2075,10 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
                     if getattr(fn, "arguments", None):
                         slot["arguments"] += fn.arguments
         if finish != "tool_calls" or not calls:
-            _check_attribution("".join(reply_text_parts), transcript, p, cfg)
+            flags = _check_attribution("".join(reply_text_parts), transcript,
+                                       p, cfg, names)
+            if flags:
+                yield ("audit", flags)
             yield ("usage", usage)
             return
         ordered = [calls[i] for i in sorted(calls)]
