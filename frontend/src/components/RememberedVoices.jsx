@@ -10,7 +10,7 @@ import { AudioLines, ChevronDown, ChevronRight, Ear, Pause, Pencil, Play,
          Trash2 } from 'lucide-react'
 
 import { api } from '../api.js'
-import { auditionNotice } from '../roomState.js'
+import { auditionNotice, selfCollectedNotice } from '../roomState.js'
 import { cleanPreferredName, FORGET_EXPLAINER, personSummary,
          sufficiencyProgress } from '../roomState.js'
 import { clipRow, DELETE_CLIP_EXPLAINER, moveTargets } from '../voiceClips.js'
@@ -352,6 +352,13 @@ export default function RememberedVoices() {
                       >
                         Yes, this is {p.preferred_name || p.name}
                       </button>
+                    </div>
+                  )}
+                  {/* #221's quieter half: strong scores keep the bank
+                      working, but its human backing has rotated away. */}
+                  {selfCollectedNotice(p) && (
+                    <div className="text-[11px] text-amber-300/70 mt-0.5">
+                      {selfCollectedNotice(p)}
                     </div>
                   )}
                   {prog && !prog.done && (

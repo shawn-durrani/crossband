@@ -394,11 +394,32 @@ export const FORGET_EXPLAINER =
 // #83: a bank that crossed sufficiency with no human ever standing behind
 // it (no introduction, no owner correction) is exactly the phantom shape
 // from the #65 incident - surface it for the owner's ear. Returns null
-// when there is nothing to ask.
+// when there is nothing to ask. #221 adds the outlived-backing shape: the
+// bank WAS vouched, but accumulation replaced every human-backed clip and
+// the replacements matched only weakly - the ask must say that, not
+// "learnt without an introduction", which would be untrue.
 export function auditionNotice(person) {
   if (!person || !person.needs_audition) return null
   const name = person.preferred_name || person.name
+  if (person.trust === 'low') {
+    return person.id_paused
+      ? 'Every recording a person stood behind has been replaced, and the '
+        + 'newer ones matched only weakly - not naming or seating anyone '
+        + `until you listen and confirm this is really ${name}.`
+      : 'Every recording a person stood behind has been replaced - listen '
+        + `and confirm this is really ${name}.`
+  }
   return person.id_paused
     ? `Learnt without an introduction - not naming or seating anyone until you listen and confirm this is really ${name}.`
     : `Learnt without an introduction - listen to the clips and confirm this is really ${name}.`
+}
+
+// #221's quieter half: the bank keeps working (its save-time scores read
+// strong), but it now rests wholly on self-collected audio - say so in
+// Remembered voices so the owner knows a listen is worth their while.
+export function selfCollectedNotice(person) {
+  if (!person || person.trust !== 'high') return ''
+  return 'Every recording a person stood behind has rotated out; this '
+    + 'voice now rests on self-collected audio. Worth a listen when you '
+    + 'have a moment.'
 }

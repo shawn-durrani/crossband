@@ -1328,8 +1328,10 @@ def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None,
         return
     from . import anchors
     store = anchors.store()
+    # #221: the match score rides the clip, stamped at write time - it is
+    # what a bank that outlives its human backing is later judged by.
     changed = store.add_clip(person_id, pcm, sample_rate,
-                             source="accumulated")
+                             source="accumulated", score=score)
     sr = sample_rate or 16000
     seconds = len(pcm) / 2 / sr
     if seconds >= 2 * anchors.SHORT_CLIP_MAX_SECONDS:
@@ -1338,7 +1340,8 @@ def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None,
         span = int(anchors.SHORT_CLIP_MAX_SECONDS * 0.75 * sr) * 2
         mid = (len(pcm) - span) // 2
         changed = store.add_clip(person_id, pcm[mid:mid + span], sr,
-                                 source="harvested-short") or changed
+                                 source="harvested-short",
+                                 score=score) or changed
     if changed:
         voiceid.audit_banks_if_changed(cfg or {})
 

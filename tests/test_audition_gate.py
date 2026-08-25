@@ -134,3 +134,99 @@ def test_vouching_survives_a_merge(app):
         assert survivor is not None
         assert _flags(store, survivor)["vouched"] is True
         assert _flags(store, survivor)["needs_audition"] is False
+
+
+# ── confidence-driven re-audition (#221) ────────────────────────────────────
+#
+# Vouching is person-level and permanent, but accumulation can replace a
+# vouched bank's entire CONTENT afterwards - the takeover shape of the
+# 2026-08-24 incident. The save-time match scores now decide such a bank's
+# standing: low pauses identification for the owner's ear (same #83 flow,
+# same already-seated exception), high keeps working but is flagged. A
+# fully self-collected bank always carries the ask, whatever its scores:
+# save-time confidence is graded against the bank itself, and the polluted
+# bank graded its own donor highly.
+
+def _auto(added_at, score=None, seconds=2.0):
+    c = {"file": f"f{added_at}", "seconds": seconds, "score": 1.0,
+         "source": "accumulated", "added_at": added_at, "sample_rate": 16000}
+    if score is not None:
+        c["match_score"] = score
+    return c
+
+
+def test_trust_rule_and_floor():
+    human = {"clips": [_auto(1, 0.5),
+                       {"file": "i", "seconds": 2.0, "source": "introduction",
+                        "added_at": 0}], "vouched_at": 1.0}
+    assert anchors.bank_trust(human) == "human"
+    moved = {"clips": [_auto(1, 0.5) | {"moved_at": 5}], "vouched_at": 1.0}
+    assert anchors.bank_trust(moved) == "human"     # owner-moved counts
+    # vouched once, human backing rotated out: the save-time scores decide
+    weak = {"clips": [_auto(i, 0.55) for i in range(4)], "vouched_at": 1.0}
+    strong = {"clips": [_auto(i, 0.72) for i in range(4)], "vouched_at": 1.0}
+    assert anchors.bank_trust(weak) == "low"
+    assert anchors.bank_trust(strong) == "high"
+    # pre-#221 clips carry no scores: high, never an upgrade shock
+    unscored = {"clips": [_auto(i) for i in range(4)], "vouched_at": 1.0}
+    assert anchors.bank_trust(unscored) == "high"
+    # the floor: never human-backed is 'self' whatever the scores say
+    selfmade = {"clips": [_auto(i, 0.9) for i in range(4)]}
+    assert anchors.bank_trust(selfmade) == "self"
+    # an audition newer than the newest clip is the owner's ear on today's
+    # content; clips banked after it reopen the question
+    heard = {"clips": [_auto(i, 0.55) for i in range(4)],
+             "vouched_at": 1.0, "audition_confirmed_at": 10.0}
+    assert anchors.bank_trust(heard) == "human"
+    stale = {"clips": [_auto(i, 0.55) for i in range(4)] + [_auto(99, 0.55)],
+             "vouched_at": 1.0, "audition_confirmed_at": 10.0}
+    assert anchors.bank_trust(stale) == "low"
+
+
+def test_low_trust_asks_and_pauses_high_trust_only_flags():
+    low = {"clips": [_auto(i, 0.55) for i in range(4)], "vouched_at": 1.0}
+    assert anchors.needs_audition(low) is True
+    assert anchors.identification_paused(low) is True   # no stamp needed
+    high = {"clips": [_auto(i, 0.72) for i in range(4)], "vouched_at": 1.0}
+    assert anchors.needs_audition(high) is False
+    assert anchors.identification_paused(high) is False
+    # the floor: fully self-collected always carries the ask, even with
+    # strong scores - they were graded against the bank itself
+    selfmade = {"clips": [_auto(i, 0.9) for i in range(4)]}
+    assert anchors.needs_audition(selfmade) is True
+    # an insufficient bank asks nothing yet
+    young = {"clips": [_auto(1, 0.55)], "vouched_at": 1.0}
+    assert anchors.needs_audition(young) is False
+
+
+def test_low_trust_pause_honours_the_already_seated_exception(app):
+    with TestClient(app, base_url="http://127.0.0.1"):
+        store = anchors.store()
+        pid = store.ensure_person("Alex")
+        store.add_clip(pid, _pcm(), 16000, source="introduction")
+        _fill(store, pid)
+        # rotation replaces the human-backed clip; the survivors banked weak
+        data = store._load()
+        data["people"][pid]["clips"] = [
+            c | {"source": "accumulated", "match_score": 0.55}
+            for c in data["people"][pid]["clips"]]
+        store._save(data)
+        assert _flags(store, pid) == {"sufficient": True, "vouched": True,
+                                      "needs_audition": True,
+                                      "id_paused": True}
+        # dropped from every fresh candidate list, but a person already
+        # seated in the live chat keeps being identified (#83's exception)
+        assert _candidate_ids(store) == set()
+        assert _candidate_ids(store, rostered={pid}) == {pid}
+
+
+def test_accumulation_stamps_the_match_score(app):
+    with TestClient(app, base_url="http://127.0.0.1"):
+        from backend import diarize
+        store = anchors.store()
+        pid = store.ensure_person("Alex")
+        diarize._accumulate_fast_anchor(pid, _pcm(5.0), 16000, {}, score=0.71)
+        clips = store._load()["people"][pid]["clips"]
+        assert clips and all(c.get("match_score") == 0.71 for c in clips)
+        assert {c["source"] for c in clips} == {"accumulated",
+                                               "harvested-short"}
