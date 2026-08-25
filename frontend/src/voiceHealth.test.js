@@ -273,6 +273,10 @@ test('the pulse says WHY a turn went unnamed, not just that it did', () => {
   const unsure = pulseReadout({ path: 'unresolved', reason: 'below_threshold', ms: 90 })
   assert.match(unsure.label, /not recognised/)
   assert.match(unsure.title, /did not match a remembered voice/)
+  // the speech gate's defer reads as "not a voice", never as a shrug
+  const noise = pulseReadout({ path: 'unresolved', reason: 'not_speech', ms: 12 })
+  assert.match(noise.label, /not a voice/)
+  assert.match(noise.title, /not speech/)
   // an unknown reason still degrades to something honest
   assert.match(pulseReadout({ path: 'unresolved', reason: 'wat', ms: 1 }).label,
     /not named/)

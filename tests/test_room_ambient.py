@@ -227,8 +227,9 @@ def test_ambient_decision_table():
     assert diarize.ambient_decision(below, "Alex", True) == "arm_unknown"
     # without the owner enrolled, "below threshold" could BE the owner
     assert diarize.ambient_decision(below, "Alex", False) == "defer"
-    for reason in ("ambiguous", "multi", "too_short", "unavailable",
-                   "no_candidates"):
+    # not_speech included (#217): a static burst must never arm anything
+    for reason in ("ambiguous", "multi", "too_short", "not_speech",
+                   "unavailable", "no_candidates"):
         assert diarize.ambient_decision(_verdict_defer(reason),
                                         "Alex", True) == "defer"
     assert diarize.ambient_decision(None, "Alex", True) == "defer"
