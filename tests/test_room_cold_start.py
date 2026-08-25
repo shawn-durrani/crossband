@@ -44,11 +44,12 @@ from backend.providers import (LEARNING_SUFFIX, PENDING_IDENTITY_HEAD,
                                build_anthropic_messages, split_system_prompt)
 from tests.conftest import make_msg
 from tests.test_projection import PARTICIPANT, ROSTER
+from tests.conftest import speech_pcm
 
 
 def loud_pcm(seconds, sample_rate=16000):
-    """PCM-16 loud enough to clear the anchor store's quality gate."""
-    return b"\x00\x40" * int(seconds * sample_rate)
+    # Speech-shaped since #218: the anchor gate rejects non-speech.
+    return speech_pcm(seconds, sample_rate)
 
 
 def _defer(reason, score=0.3):

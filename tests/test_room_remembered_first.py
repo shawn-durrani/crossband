@@ -48,6 +48,7 @@ from fastapi.testclient import TestClient
 from backend import anchors, db, diarize, voiceid
 from backend.app import create_app
 from backend.config import Settings
+from tests.conftest import speech_pcm
 
 CFG = {"user_name": "Alex", "room_roster_max": 6}
 
@@ -102,7 +103,8 @@ def sam_matcher(monkeypatch):
 
 
 def loud_pcm(seconds, sample_rate=16000):
-    return b"\x00\x40" * int(seconds * sample_rate)
+    # Speech-shaped since #218: the anchor gate rejects non-speech.
+    return speech_pcm(seconds, sample_rate)
 
 
 def _remember(name, clips=3):

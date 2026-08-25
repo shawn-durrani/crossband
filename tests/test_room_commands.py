@@ -39,6 +39,7 @@ from fastapi.testclient import TestClient
 from backend import anchors, db, diarize, engine, introductions
 from backend.app import create_app
 from backend.config import Settings
+from tests.conftest import speech_pcm
 
 
 @pytest.fixture
@@ -120,7 +121,8 @@ def utility(monkeypatch):
 
 
 def loud_pcm(seconds, sample_rate=16000):
-    return b"\x00\x40" * int(seconds * sample_rate)
+    # Speech-shaped since #218: the anchor gate rejects non-speech.
+    return speech_pcm(seconds, sample_rate)
 
 
 CFG = {"user_name": "Shawn", "room_roster_max": 6}

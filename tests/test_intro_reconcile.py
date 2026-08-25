@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 from backend import anchors, db, diarize, introductions
 from backend.app import create_app
 from backend.config import Settings
+from tests.conftest import speech_pcm
 
 
 @pytest.fixture
@@ -46,9 +47,13 @@ def world(tmp_path):
     store = anchors.store()
     sam = store.ensure_person("Sam")
     dave = store.ensure_person("Dave")
-    for pid, fill in ((sam, b"\x00\x20"), (dave, b"\x00\x30")):
-        store.add_clip(pid, fill * 32000, 16000, source="introduction")
-    utterance = b"\x00\x40" * 48000          # 3s, distinct from every clip
+    # Speech-shaped since #218 (the clip gate rejects non-speech); a distinct
+    # amplitude per source keeps every clip's bytes distinguishable, which is
+    # what the contested-clip containment check reads.
+    for pid, amp in ((sam, 9000), (dave, 7000)):
+        store.add_clip(pid, speech_pcm(2.0, 16000, amp=amp), 16000,
+                       source="introduction")
+    utterance = speech_pcm(3.0, 16000, amp=11000)   # distinct from every clip
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat_id = c.post("/api/chats", json={"participant_ids": []}).json()["id"]
     con = db.connect()

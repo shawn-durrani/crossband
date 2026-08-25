@@ -5,6 +5,12 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Non-speech audio can no longer be stored as anyone's voice sample
+  (#218). The clip acceptance gate now includes the speech check, so no
+  path into the voice store - accumulation, harvesting, cold start,
+  introduction or correction - can bank noise, and loud static can no
+  longer displace genuine quiet speech from a stored voice.
+
 - A spoken self-introduction now overrules the voice guess on its own
   turn (#220). When someone introduces a remembered name but the turn's
   audio had already been confidently labelled as a different remembered

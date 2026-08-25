@@ -42,6 +42,7 @@ from backend import anchors, db, diarize, events, introductions
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
+from tests.conftest import speech_pcm
 
 
 @pytest.fixture
@@ -132,7 +133,8 @@ def _resp(*entries):
 
 
 def loud_pcm(seconds, sample_rate=16000):
-    return b"\x00\x40" * int(seconds * sample_rate)
+    # Speech-shaped since #218: the anchor gate rejects non-speech.
+    return speech_pcm(seconds, sample_rate)
 
 
 def _frame(data, commit=False):

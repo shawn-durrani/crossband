@@ -48,6 +48,7 @@ from backend import anchors, db, diarize, introductions, memory_client
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import _crosstalk_tail, _user_turn_head
+from tests.conftest import speech_pcm
 
 
 @pytest.fixture
@@ -80,7 +81,8 @@ def utility(monkeypatch):
 
 
 def loud_pcm(seconds, sample_rate=16000):
-    return b"\x00\x40" * int(seconds * sample_rate)
+    # Speech-shaped since #218: the anchor gate rejects non-speech.
+    return speech_pcm(seconds, sample_rate)
 
 
 def _wait_for(pred, timeout=6.0, interval=0.02):
