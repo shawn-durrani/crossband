@@ -109,6 +109,13 @@ MATCH_MARGIN = 0.12
 # lets elimination bank the pending person. Overridable via
 # voice_id_pending_extra; 0 disables.
 PENDING_EXTRA_THRESHOLD = 0.08
+# The banking bar (#222). A verdict clearing the threshold may LABEL a turn,
+# but a borderline match must not also feed the very bank that produced it -
+# accumulated clips of borderline matches are how a bank is taken over, one
+# compounding mistake at a time. Accumulation and short-slice harvesting
+# therefore demand this much score on top of the threshold; naming keeps its
+# existing bar. Overridable via voice_id_banking_extra; 0 disables the split.
+BANKING_EXTRA_THRESHOLD = 0.10
 WINDOW_SECONDS = 1.5
 WINDOW_HOP_SECONDS = 0.75
 MIN_STRONG_WINDOWS = 2
@@ -498,6 +505,31 @@ def _pending_extra(cfg) -> float:
     except (TypeError, ValueError):
         return PENDING_EXTRA_THRESHOLD
     return e if 0.0 <= e < 0.5 else PENDING_EXTRA_THRESHOLD
+
+
+def _banking_extra(cfg) -> float:
+    """The banking bump knob (#222; voice_id_banking_extra). Same guard
+    shape as _pending_extra; 0.0 is a valid value (split off)."""
+    try:
+        raw = (cfg or {}).get("voice_id_banking_extra")
+        e = BANKING_EXTRA_THRESHOLD if raw is None else float(raw)
+    except (TypeError, ValueError):
+        return BANKING_EXTRA_THRESHOLD
+    return e if 0.0 <= e < 0.5 else BANKING_EXTRA_THRESHOLD
+
+
+def score_banks(score, cfg) -> bool:
+    """May a confident match's audio be BANKED (#222)? Naming and banking
+    are split bars: the threshold names a turn, while accumulation and
+    short-slice harvesting also require the score to clear the threshold
+    plus voice_id_banking_extra. A borderline match keeps its label and
+    feeds nothing. Cold-start banking is by elimination, not score, so it
+    never passes through here."""
+    try:
+        s = float(score or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return s >= _threshold(cfg) + _banking_extra(cfg)
 
 
 def _model_url(cfg) -> str:

@@ -794,3 +794,60 @@ def test_pending_extra_zero_is_the_old_behaviour():
     q = voiceid.l2_normalize([0.66, 0.75, 0.0])
     v = voiceid.classify_utterance(q, [], enr, threshold=0.6, pending_extra=0.0)
     assert v["status"] == "match"
+
+
+# ── the banking bar (#222) ───────────────────────────────────────────────────
+#
+# A verdict clearing the threshold both LABELLED the turn and BANKED its
+# audio, so borderline wrong matches fed the very bank that produced them -
+# the compounding half of the 2026-08-24 takeover. Naming and banking are
+# split bars now: labelling keeps the threshold, banking demands
+# voice_id_banking_extra on top.
+
+def test_score_banks_splits_the_bars():
+    cfg = _cfg()   # threshold 0.5, banking extra 0.1
+    assert voiceid.score_banks(0.55, cfg) is False   # labels, must not bank
+    assert voiceid.score_banks(0.60, cfg) is True    # at the banking bar
+    assert voiceid.score_banks(0.85, cfg) is True    # a strong match banks
+    assert voiceid.score_banks(None, cfg) is False   # no score, no banking
+    assert voiceid.score_banks(0.55, _cfg(voice_id_banking_extra=0)) is True
+    # the knob guards like its siblings: junk keeps the default
+    assert voiceid.score_banks(0.55, _cfg(voice_id_banking_extra="wat")) is False
+
+
+def test_borderline_match_labels_but_does_not_bank(store):
+    """#222 acceptance, through the accumulation path: a score under the
+    banking bar leaves the matched person's bank untouched - no accumulated
+    clip and no harvested short slice."""
+    before = store["store"].clips_of(store["alex"])
+    diarize._accumulate_fast_anchor(store["alex"], _tone(_ALEX_VAL, 5), 16000,
+                                    _cfg(), score=0.55)
+    assert store["store"].clips_of(store["alex"]) == before
+
+
+def test_strong_match_still_banks_and_harvests(store):
+    before = len(store["store"].clips_of(store["alex"]))
+    diarize._accumulate_fast_anchor(store["alex"], _tone(_ALEX_VAL, 5), 16000,
+                                    _cfg(), score=0.85)
+    clips = store["store"].clips_of(store["alex"])
+    assert len(clips) > before
+    assert any(c["source"] == "harvested-short" for c in clips)
+
+
+def test_fast_label_pass_carries_the_score_to_banking(monkeypatch):
+    """The wiring: the verdict's score reaches _accumulate_fast_anchor, so
+    the banking decision is made from the real match confidence."""
+    seen = {}
+
+    async def fake_attach(chat_id, commit_ts, payload, session, turn_id=None):
+        return 7
+    monkeypatch.setattr(diarize, "_attach_until_deadline", fake_attach)
+    monkeypatch.setattr(diarize, "_accumulate_fast_anchor",
+                        lambda pid, pcm, sr, cfg=None, score=None:
+                        seen.__setitem__("score", score))
+    verdict = {"status": "match", "person_id": "p1", "name": "Alex",
+               "score": 0.55, "reason": "match"}
+    _run(diarize._fast_label_pass(1, b"\x00\x40" * 32000, 16000, 1000.0,
+                                  diarize.RoomSession(enabled=True), _cfg(),
+                                  verdict, turn_id="t1"))
+    assert seen["score"] == 0.55
