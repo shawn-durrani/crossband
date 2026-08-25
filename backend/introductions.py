@@ -1135,6 +1135,20 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                         variant = None
                         log.info("introduction variant re-identified a "
                                  "remembered person: chat=%s", chat_id)
+                if known is not None:
+                    # The introduced name IS remembered. If this very turn's
+                    # voice label confidently names a DIFFERENT remembered
+                    # person, the label, the seat and the banked audio are
+                    # contested (#220) - the words win, and the contradiction
+                    # is unwound before the introduction seats anyone.
+                    try:
+                        _reconcile_intro_label(con, chat_id, message_id,
+                                               known, owner, cfg)
+                    except Exception:
+                        log.info("introduction label reconcile failed: "
+                                 "chat=%s", chat_id)
+                        log.debug("label reconcile failure detail",
+                                  exc_info=True)
                 if known is None and voice_person is not None:
                     if voice_match_name_compatible(name, voice_person):
                         known = voice_person
@@ -1244,6 +1258,94 @@ def _raise_unnamed_intro_ask(con, chat_id):
                  if f["kind"] == "unknown_voice"]
     if not open_asks:
         db.insert_room_flag(con, chat_id, "unknown_voice")
+
+
+def _turn_confident_label(con, message_id) -> str:
+    """The message's own voice label, when it is a confident SINGLE name:
+    exactly one label, nothing uncertain, no crosstalk, not owner-corrected.
+    Empty string otherwise - a doubtful label contradicts nothing."""
+    if not message_id:
+        return ""
+    row = con.execute("SELECT voice_labels FROM messages WHERE id=?",
+                      (message_id,)).fetchone()
+    if not row or not row["voice_labels"]:
+        return ""
+    try:
+        data = json.loads(row["voice_labels"])
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict) or data.get("crosstalk") is True \
+            or data.get("corrected") is True:
+        return ""
+    labels = data.get("labels") or []
+    if len(labels) != 1 or (data.get("uncertain") or []):
+        return ""
+    return str(labels[0] or "")
+
+
+def _reconcile_intro_label(con, chat_id, message_id, known, owner, cfg):
+    """An explicit self-introduction outranks an implicit voice match (#220)
+    even when BOTH names are remembered people. Field failure 2026-08-24:
+    an introduction turn's own audio had already been confidently labelled
+    as remembered person B - seating B (voice-match) and banking the
+    utterance into B's bank - while the words introduced remembered person
+    A. The nobody's-spelling machinery in apply_scan never sees that shape,
+    because A resolved by name. Here the words win: relabel the turn to A,
+    retract B's automated voice-match seat, retract the clips this
+    utterance banked to B, and raise the merge question so the owner learns
+    the two banks are colliding. Returns True when a contradiction was
+    found and unwound."""
+    label = _turn_confident_label(con, message_id)
+    if not label or owner_alias(label, owner):
+        # No confident label, or the OWNER spoke the introduction ("say hi
+        # to Alex") - nothing contradicts.
+        return False
+    a_names = {known["name"].casefold(),
+               (known.get("preferred_name") or "").casefold()} \
+        | {m.casefold() for m in known.get("merged_names") or []}
+    if label.casefold() in a_names:
+        return False   # label and words agree: ordinary re-identification
+    store = anchors.store()
+    other = store.find_by_name(label)
+    if other is None or other["person_id"] == known["person_id"]:
+        # The label is not a remembered person's (or the same person under
+        # another spelling): the existing variant/voice doors own that.
+        return False
+    # 1. The turn's label: the introduced name replaces the matched one.
+    row = con.execute("SELECT voice_labels FROM messages WHERE id=?",
+                      (message_id,)).fetchone()
+    try:
+        old = json.loads(row["voice_labels"])
+    except (TypeError, json.JSONDecodeError):
+        old = {}
+    db.set_message_voice_labels(con, message_id, {
+        "clusters": old.get("clusters") or ["local"],
+        "labels": [known["name"]], "uncertain": [],
+        "source": old.get("source") or "local"})
+    # 2. The seat: only B's AUTOMATED seat retracts. A seat a human placed
+    # (introduction, correction, owner) is never unwound by this path.
+    seat_retracted = False
+    for seat in db.get_room_roster(con, chat_id, present_only=True):
+        if seat["name"].casefold() == (other["name"] or "").casefold() \
+                and seat.get("seated_via") == "voice-match":
+            seat_retracted = db.mark_room_person_left(con, chat_id,
+                                                      seat["name"])
+    # 3. The contested clips this utterance banked to B, where the audio is
+    # still known (single-voice, remembered per message id).
+    removed = 0
+    entry = anchors.peek_audio(message_id)
+    if entry and entry[2] == 1:
+        removed = store.retract_utterance_clips(other["person_id"], entry[0])
+        if removed:
+            from . import voiceid
+            voiceid.audit_banks_if_changed(cfg)
+    # 4. The owner learns the two banks collide.
+    _raise_merge_question(con, chat_id,
+                          known.get("preferred_name") or known["name"], other)
+    log.info("introduction contradicted the turn's voice label: chat=%s "
+             "seat_retracted=%d clips_retracted=%d", chat_id,
+             1 if seat_retracted else 0, removed)
+    return True
 
 
 def _raise_merge_question(con, chat_id, new_name, existing_person):

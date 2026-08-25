@@ -881,6 +881,51 @@ class AnchorStore:
                 self._prefix_cache.popitem(last=False)
         return prefix, segments
 
+    def retract_utterance_clips(self, person_id: str, pcm: bytes) -> int:
+        """Remove the clips ONE utterance banked to this person (#220): an
+        introduction turn's own words named someone else, so the audio the
+        voice match banked here is contested. The accumulated clip is the
+        (trimmed) utterance and the harvested short slice a middle cut of
+        it, so a clip is this utterance's exactly when its stored bytes are
+        a contiguous slice of the utterance. Only automated match captures
+        are eligible - a clip a human stood behind is never retracted by an
+        automated path. Deletions are recorded for the durable home like an
+        owner correction, so the clip cannot resurrect through a rebuild.
+        Returns how many clips were removed."""
+        if not pcm:
+            return 0
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id)
+            if person is None:
+                return 0
+            keep, gone = [], []
+            for c in person.get("clips", []):
+                contested = False
+                if c.get("source") in ("accumulated", "harvested-short"):
+                    try:
+                        clip_pcm = self._read_clip_pcm(c["file"])
+                        contested = bool(clip_pcm) and clip_pcm in pcm
+                    except OSError:
+                        log.warning("anchor clip unreadable: %s", c["file"])
+                if contested:
+                    gone.append(c["file"])
+                else:
+                    keep.append(c)
+            if not gone:
+                return 0
+            person["clips"] = keep
+            for fname in gone:
+                sha = self._clip_sha(fname)
+                if sha:
+                    self._record_correction(data, {
+                        "kind": "delete", "from": person_id, "sha": sha})
+            self._save(data)
+            for fname in gone:
+                self._delete_file(fname)
+        log.info("contested clips retracted: person=1 clips=%d", len(gone))
+        return len(gone)
+
     def enrollment_clips(self, person_ids: list, sample_rate: int,
                          max_clips: int = ENROLL_CLIPS) -> dict:
         """Per-person clip PCM for the local voice-id matcher (#28 part 2):
