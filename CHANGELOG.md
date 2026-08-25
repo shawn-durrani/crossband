@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The voice hygiene audit now also hears "not a voice" (#219). Each
+  stored clip is checked for actual speech during the audit; a noise
+  clip is set aside under its own reason, shown distinctly in
+  Remembered voices ("not a voice" rather than "sounded like someone
+  else"), and existing installs clean themselves on their next audit
+  with no manual hunting.
+
 - Non-speech audio can no longer be stored as anyone's voice sample
   (#218). The clip acceptance gate now includes the speech check, so no
   path into the voice store - accumulation, harvesting, cold start,

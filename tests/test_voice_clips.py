@@ -50,7 +50,8 @@ def test_clip_list_is_metadata_only_newest_first(app):
         clips = r.json()["clips"]
         assert len(clips) == 3
         assert set(clips[0]) == {"file", "source", "added_at", "seconds",
-                                 "score", "quarantined", "moved"}
+                                 "score", "quarantined", "quarantine_reason",
+                                 "moved"}
         assert [c_["added_at"] for c_ in clips] == sorted(
             (c_["added_at"] for c_ in clips), reverse=True)
         assert c.get("/api/voice/people/nobody-000000/clips").status_code == 404

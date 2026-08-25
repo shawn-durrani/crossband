@@ -349,6 +349,19 @@ export function personSummary(person, sufficientSeconds, minShortClips) {
   }
   const shown = displayName(person) || person.name
   const aside = Number(person.quarantined_count) || 0
+  const noise = Number(person.noise_count) || 0
+  const mixed = aside - noise
+  const bits = []
+  if (mixed > 0) {
+    bits.push(`${mixed} clip${mixed === 1 ? '' : 's'} set aside - they `
+      + 'sounded more like another remembered voice')
+  }
+  if (noise > 0) {
+    // #219: the second reason, named separately - a noise clip belongs to
+    // nobody, so "sounded like someone else" would misdirect the remedy.
+    bits.push(`${noise} clip${noise === 1 ? '' : 's'} set aside - not a `
+      + 'voice at all (noise, not speech)')
+  }
   return {
     name: shown,
     // Honesty when a preferred spelling differs from the introduced name:
@@ -357,10 +370,8 @@ export function personSummary(person, sufficientSeconds, minShortClips) {
     detail: `${person.clip_count || 0} clip${person.clip_count === 1 ? '' : 's'}, `
       + `${secs.toFixed(1)}s`,
     status,
-    setAside: aside > 0
-      ? `${aside} clip${aside === 1 ? '' : 's'} set aside - they sounded `
-        + 'more like another remembered voice, so they no longer take part '
-        + 'in matching'
+    setAside: bits.length
+      ? `${bits.join('; ')}; they no longer take part in matching`
       : '',
   }
 }

@@ -17,6 +17,26 @@ test('a reassigned clip says so and drops the closer-listen flag', () => {
   assert.equal(row.needsEar, false)
 })
 
+test('a set-aside clip says WHY, and noise is not "sounded like" (#219)', () => {
+  const mixed = clipRow({ file: 'a', source: 'accumulated', seconds: 2,
+                          quarantined: true,
+                          quarantine_reason: 'contaminated' })
+  assert.equal(mixed.quarantineChip, 'set aside')
+  assert.match(mixed.quarantineTitle, /another remembered voice/)
+  const noise = clipRow({ file: 'b', source: 'accumulated', seconds: 2,
+                          quarantined: true, quarantine_reason: 'not_speech' })
+  assert.equal(noise.quarantineChip, 'not a voice')
+  assert.match(noise.quarantineTitle, /no speech was heard/)
+  // pre-#219 quarantines carry no reason and read as the pairwise verdict
+  const legacy = clipRow({ file: 'c', source: 'accumulated', seconds: 2,
+                           quarantined: true })
+  assert.equal(legacy.quarantineChip, 'set aside')
+  // a live clip carries no quarantine copy at all
+  const live = clipRow({ file: 'd', source: 'accumulated', seconds: 2 })
+  assert.equal(live.quarantineChip, '')
+  assert.equal(live.quarantineTitle, '')
+})
+
 test('move targets are every other person by display name', () => {
   const people = [
     { person_id: 'a-1', name: 'Catriona', preferred_name: 'Cat' },

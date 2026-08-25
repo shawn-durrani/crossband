@@ -233,6 +233,53 @@ def test_audit_banks_persists_quarantine_and_close_pairs(store, monkeypatch):
     assert s.close_pairs() == []
 
 
+def test_audit_sets_noise_clips_aside_with_their_own_reason(store, monkeypatch):
+    """#219: the pairwise rules cannot see a noise clip - it is near
+    nobody's centroid - so the audit's speech test catches it, under its
+    own reason. The installed base self-cleans on its next audit: this
+    clip entered the store the way an older build would have banked it,
+    with no acceptance gate."""
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "_embed", _fake_embed)
+    s = store["store"]
+    noise = _noise(3.0)
+    fname = s._write_clip(noise, 16000, store["alex"])
+    with s._lock:
+        data = s._load()
+        data["people"][store["alex"]]["clips"].append(
+            {"file": fname, "seconds": 3.0, "rms": 7000, "score": 3.0,
+             "sample_rate": 16000, "source": "accumulated",
+             "added_at": time.time()})
+        s._save(data)
+    before = {p["person_id"]: p for p in s.people()}
+    seconds_before = before[store["alex"]]["seconds"]
+    assert voiceid.audit_banks(_cfg()) is True
+    after = {p["person_id"]: p for p in s.people()}
+    assert after[store["alex"]]["quarantined_count"] == 1
+    assert after[store["alex"]]["noise_count"] == 1
+    # sufficiency and seconds recompute without the noise clip
+    assert after[store["alex"]]["seconds"] < seconds_before
+    aside = [c for c in s.clips_of(store["alex"]) if c["quarantined"]]
+    assert [c["quarantine_reason"] for c in aside] == ["not_speech"]
+    # and enrolment never sees it
+    enr = s.enrollment_clips([store["alex"]], 16000)
+    assert fname not in enr[store["alex"]]["fingerprint"]
+
+
+def test_set_hygiene_accepts_both_reason_shapes(store):
+    s = store["store"]
+    first = s.clips_of(store["alex"])[0]["file"]
+    s.set_hygiene({store["alex"]: [first]}, [])            # legacy iterable
+    row = next(c for c in s.clips_of(store["alex"]) if c["file"] == first)
+    assert row["quarantined"] and row["quarantine_reason"] == "contaminated"
+    s.set_hygiene({store["alex"]: {first: "not_speech"}}, [])
+    row = next(c for c in s.clips_of(store["alex"]) if c["file"] == first)
+    assert row["quarantine_reason"] == "not_speech"
+    s.set_hygiene({}, [])                                  # reinstated whole
+    row = next(c for c in s.clips_of(store["alex"]) if c["file"] == first)
+    assert not row["quarantined"] and row["quarantine_reason"] == ""
+
+
 def test_audit_banks_is_a_noop_without_the_extractor(store):
     # conftest keeps the matcher offline: the audit must decline honestly.
     assert voiceid.audit_banks(_cfg()) is False

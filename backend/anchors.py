@@ -384,6 +384,12 @@ class AnchorStore:
                 # audit set aside (kept on disk, excluded from matching),
                 # and which other people this person's voice sits close to.
                 "quarantined_count": len(all_clips) - len(clips),
+                # #219: how many of those were set aside as not a voice at
+                # all, so the panel can say which problem this bank has.
+                "noise_count": sum(
+                    1 for c in all_clips
+                    if c.get("quarantined")
+                    and c.get("quarantine_reason") == "not_speech"),
                 "close_to": list(close.get(pid, [])),
                 "sufficient": is_sufficient(all_clips),
                 # #83: has a human ever stood behind this bank, does it
@@ -707,6 +713,11 @@ class AnchorStore:
             "seconds": round(float(c.get("seconds", 0)), 1),
             "score": round(float(c.get("score", 0)), 1),
             "quarantined": bool(c.get("quarantined")),
+            # #219: WHY it was set aside - "contaminated" (sounded like
+            # another person) or "not_speech" (not a voice at all). Empty
+            # for clips quarantined before reasons existed.
+            "quarantine_reason": c.get("quarantine_reason", "")
+            if c.get("quarantined") else "",
             # #90: owner-reassigned clips say so - the strongest provenance.
             "moved": bool(c.get("moved_at")),
         } for c in sorted(person.get("clips", []),
@@ -1031,21 +1042,31 @@ class AnchorStore:
             for pid, p in data["people"].items()))
 
     def set_hygiene(self, quarantine: dict, close_pairs: list):
-        """Persist one audit's verdicts. `quarantine`: {pid: iterable of
-        clip filenames to set aside} - every clip not named is reinstated,
-        so the audit's output IS the quarantine state. `close_pairs`:
-        [(pid_a, pid_b, cosine), ...]. Set-aside clips past QUARANTINE_MAX
-        per person are deleted for real (oldest first) - set aside is not a
-        licence to hoard audio."""
-        quarantine = {pid: set(files or ()) for pid, files
-                      in (quarantine or {}).items()}
+        """Persist one audit's verdicts. `quarantine`: {pid: {clip filename:
+        reason}} - or an iterable of filenames, read as the pairwise
+        audit's "contaminated" (#219 added the second reason, "not_speech").
+        Every clip not named is reinstated, so the audit's output IS the
+        quarantine state. `close_pairs`: [(pid_a, pid_b, cosine), ...].
+        Set-aside clips past QUARANTINE_MAX per person are deleted for real
+        (oldest first) - set aside is not a licence to hoard audio."""
+        norm = {}
+        for pid, files in (quarantine or {}).items():
+            if isinstance(files, dict):
+                norm[pid] = {f: str(r or "contaminated")
+                             for f, r in files.items()}
+            else:
+                norm[pid] = {f: "contaminated" for f in files or ()}
         with self._lock:
             data = self._load()
             for pid, person in data["people"].items():
-                bad = quarantine.get(pid, set())
+                bad = norm.get(pid, {})
                 kept, evict = [], []
                 for c in person.get("clips", []):
                     c["quarantined"] = c["file"] in bad
+                    if c["quarantined"]:
+                        c["quarantine_reason"] = bad[c["file"]]
+                    else:
+                        c.pop("quarantine_reason", None)
                     kept.append(c)
                 q = [c for c in kept if c["quarantined"]]
                 if len(q) > QUARANTINE_MAX:

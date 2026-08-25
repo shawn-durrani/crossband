@@ -24,13 +24,35 @@ export function needsEar(clip) {
   return clip.source === 'cold-start'
 }
 
+// Why a clip was set aside -> [chip, tooltip] (#219). The reason decides
+// the remedy: a contaminated clip may belong to the other person (move
+// it), a noise clip belongs to nobody (delete it) - so the row must not
+// blur the two. A reasonless quarantine predates reasons and reads as the
+// original pairwise verdict.
+const QUARANTINE_COPY = {
+  contaminated: ['set aside',
+    'Set aside by the hygiene audit - it sounded more like another '
+    + 'remembered voice. Stored but not used for matching.'],
+  not_speech: ['not a voice',
+    'Set aside by the hygiene audit - no speech was heard in this '
+    + 'recording. Stored but not used for matching.'],
+}
+
+export function quarantineCopy(clip) {
+  if (!clip.quarantined) return ['', '']
+  return QUARANTINE_COPY[clip.quarantine_reason] || QUARANTINE_COPY.contaminated
+}
+
 export function clipRow(clip) {
   const secs = Number(clip.seconds || 0)
+  const [qChip, qTitle] = quarantineCopy(clip)
   return {
     file: clip.file,
     source: clip.moved ? 'reassigned by you' : sourceLabel(clip.source),
     needsEar: needsEar(clip) && !clip.moved,
     quarantined: Boolean(clip.quarantined),
+    quarantineChip: qChip,
+    quarantineTitle: qTitle,
     duration: `${secs.toFixed(1)}s`,
     when: clip.added_at
       ? new Date(clip.added_at * 1000).toLocaleString([], {
