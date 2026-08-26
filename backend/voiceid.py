@@ -887,14 +887,22 @@ _audit_fingerprint = None
 AUDIT_MIN_INTERVAL_S = 20.0
 _audit_last_ran = 0.0
 _clip_emb_cache: dict = {}  # clip filename -> embedding (files are immutable)
+_clip_voiced_cache: dict = {}  # clip filename -> voiced fraction (#219)
 
 
 def audit_banks(cfg, sample_rate=16000):
-    """One pairwise hygiene audit (#28 PR-B): embed every stored clip
-    (cached per file - clip files never change once written), quarantine
-    clips sitting closer to another person's centroid than their own, flag
-    close centroid pairs, and persist both through the anchor store. Never
-    raises; returns True when an audit actually ran."""
+    """One hygiene audit (#28 PR-B): embed every stored clip (cached per
+    file - clip files never change once written), quarantine clips sitting
+    closer to another person's centroid than their own, flag close centroid
+    pairs, and persist all of it through the anchor store.
+
+    The speech test rides the same sweep (#219): the pairwise rules cannot
+    see a NOISE clip - it is near nobody's centroid, and a mostly-taken-over
+    bank's clips defend their own - so each clip's voiced fraction (cached
+    per file, like the embeddings) is checked first. A non-speech clip is
+    set aside under its own reason, never embedded, and never joins the
+    centroids it would corrupt; existing installs self-clean on their next
+    audit. Never raises; returns True when an audit actually ran."""
     try:
         if not enabled(cfg):
             return False
@@ -904,9 +912,19 @@ def audit_banks(cfg, sample_rate=16000):
         store = anchors.store()
         bank = store.bank_clips(sample_rate)
         per_person = {}
+        noise = {}
         for pid, info in bank.items():
             clips = []
             for fname, pcm in info["clips"]:
+                voiced = _clip_voiced_cache.get(fname)
+                if voiced is None:
+                    voiced = voiced_fraction(pcm, sample_rate)
+                    _clip_voiced_cache[fname] = voiced
+                    while len(_clip_voiced_cache) > CLIP_EMB_CACHE_MAX:
+                        _clip_voiced_cache.pop(next(iter(_clip_voiced_cache)))
+                if voiced < SPEECH_MIN_VOICED_FRACTION:
+                    noise.setdefault(pid, []).append(fname)
+                    continue
                 emb = _clip_emb_cache.get(fname)
                 if emb is None:
                     emb = _embed(ex, _pcm_to_float(pcm), sample_rate)
@@ -919,14 +937,22 @@ def audit_banks(cfg, sample_rate=16000):
             if clips:
                 per_person[pid] = clips
         quarantine = quarantine_verdicts(per_person)
+        reasons = {}
+        for pid, files in quarantine.items():
+            reasons.setdefault(pid, {}).update(
+                {f: "contaminated" for f in files})
+        for pid, files in noise.items():
+            reasons.setdefault(pid, {}).update({f: NOT_SPEECH for f in files})
         pairs = close_centroid_pairs(bank_centroids(
             {pid: [(n, e) for n, e in clips
                    if n not in set(quarantine.get(pid, ()))]
              for pid, clips in per_person.items()}))
-        store.set_hygiene(quarantine, pairs)
-        if quarantine or pairs:
-            log.info("voiceid audit: quarantined=%d close_pairs=%d",
-                     sum(len(v) for v in quarantine.values()), len(pairs))
+        store.set_hygiene(reasons, pairs)
+        if reasons or pairs:
+            log.info("voiceid audit: quarantined=%d not_speech=%d "
+                     "close_pairs=%d",
+                     sum(len(v) for v in quarantine.values()),
+                     sum(len(v) for v in noise.values()), len(pairs))
         return True
     except Exception:
         log.warning("voiceid audit failed; banks left as they were",
@@ -983,5 +1009,6 @@ def _reset_for_tests():
         _state = "cold"
     _enroll_cache.clear()
     _clip_emb_cache.clear()
+    _clip_voiced_cache.clear()
     _audit_fingerprint = None
     _audit_last_ran = 0.0

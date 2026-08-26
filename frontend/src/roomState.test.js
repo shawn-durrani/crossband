@@ -274,6 +274,18 @@ test('person summary carries the two-part learning copy and the set-aside line',
   const clean = personSummary(
     { name: 'Sam', seconds: 8, clip_count: 4, sufficient: true }, 6, 2)
   assert.equal(clean.setAside, '')
+  // #219: noise clips are named as their own problem, not blurred into
+  // "sounded like someone else" - the remedies differ.
+  const noisy = personSummary(
+    { name: 'Sam', seconds: 8, clip_count: 4, sufficient: true,
+      quarantined_count: 3, noise_count: 2 }, 6, 2)
+  assert.match(noisy.setAside, /1 clip set aside - they sounded more like/)
+  assert.match(noisy.setAside, /2 clips set aside - not a voice at all/)
+  const allNoise = personSummary(
+    { name: 'Sam', seconds: 8, clip_count: 4, sufficient: true,
+      quarantined_count: 1, noise_count: 1 }, 6, 2)
+  assert.match(allNoise.setAside, /not a voice at all/)
+  assert.doesNotMatch(allNoise.setAside, /another remembered voice/)
 })
 
 test('the roster hint shows each learner\'s progress when the snapshot carries it', () => {

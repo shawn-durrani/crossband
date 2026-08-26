@@ -413,8 +413,8 @@ export default function RememberedVoices() {
                             )}
                             {row.quarantined && (
                               <span className="text-amber-300/90"
-                                    title="Set aside by the hygiene audit - stored but not used for matching.">
-                                set aside
+                                    title={row.quarantineTitle}>
+                                {row.quarantineChip}
                               </span>
                             )}
                             <span className="text-ink-faint">{row.when}</span>
