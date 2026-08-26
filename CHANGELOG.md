@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Non-speech audio can no longer be named as a person (#217). Every
+  utterance now passes a local speech check before the voice matcher may
+  ask whose voice it is, so a static burst can no longer match a
+  remembered voice, seat an absent person, bank itself as their sample,
+  or start a cold-start bank. The identity pulse reports the new state
+  as "not a voice".
+
 - A cited source with nothing fetched behind it is flagged (#213). A
   "the docs say…" claim in a reply that ran no tools gets the same
   quiet chip as a misquote: the claim may still be right from training

@@ -40,6 +40,7 @@ Design map:
     raising into the pass.
 """
 
+import array
 import hashlib
 import logging
 import math
@@ -132,12 +133,31 @@ CLOSE_PAIR_EXTRA_MARGIN = 0.10
 ENROLL_CACHE_MAX = 64  # per-person averaged embeddings kept, keyed by clip set
 CLIP_EMB_CACHE_MAX = 256  # per-clip audit embeddings (clip files never change)
 
+# The speech gate (#217). The speaker model answers "whose voice is this",
+# never "is this a voice": a static burst embeds like anything else and can
+# match a stored bank at threshold, so the voice question is asked FIRST.
+# The test is the server twin of the client's per-frame check
+# (frontend/src/voice.js _frameVoiced): a frame is voiced when it is loud
+# enough AND its energy concentrates in the speech band (80-1200Hz) rather
+# than the broadband/high signature of static, hiss and clicks; an utterance
+# is speech when a majority of its sampled frames are voiced.
+SPEECH_LOW_HZ = (80.0, 1200.0)
+SPEECH_HIGH_HZ = (3500.0, 10000.0)
+SPEECH_FRAME_SECONDS = 0.032
+SPEECH_FRAME_HOP_SECONDS = 0.016
+SPEECH_GATE_MAX_FRAMES = 32   # frames sampled across the utterance: bounds the
+                              # numpy-free fallback's cost on long audio
+SPEECH_FRAME_MIN_RMS = 100.0  # int16 scale; a near-silent frame is not voiced
+SPEECH_BAND_RATIO = 2.0       # low-band mean power must beat high-band by this
+SPEECH_MIN_VOICED_FRACTION = 0.5
+
 # A verdict's status. "match" means name this turn locally; "defer" means the
 # turn stays unresolved - honestly uncertain - EXCEPT the "multi" reason,
 # which routes the one remaining ElevenLabs job (crosstalk word-splitting).
 MATCH = "match"
 DEFER = "defer"
 MULTI = "multi"  # the defer reason that is the batch pass's only trigger
+NOT_SPEECH = "not_speech"  # the speech gate's defer: audio, but not a voice
 
 
 # ================= pure math seam (no numpy, no ONNX) =====================
@@ -347,6 +367,99 @@ def close_centroid_pairs(centroids, close=CLOSE_PAIR_COSINE) -> list:
             if cos >= close:
                 out.append((a, b, round(cos, 4)))
     return out
+
+
+# ---- the speech gate, pure with numpy-optional maths (#217) --------------
+#
+# Field failure 2026-08-24: a static burst was embedded, matched a remembered
+# guest's bank at threshold, seated her while absent and banked itself as her
+# voice sample. These functions answer the question the speaker model never
+# asks - is this a voice at all? No I/O and no model: plain PCM in, a
+# fraction out, so the keyless suite pins them with synthetic audio. numpy
+# accelerates the per-frame spectra when present (same contract as
+# _pcm_to_float); the stdlib fallback computes the same DFT bins by Goertzel.
+
+def _band_bins(n, sample_rate):
+    """DFT bin indices for the two bands of an n-sample frame. The high band
+    is capped at Nyquist and sampled every second bin past 40 (a mean over
+    half the bins reads the same and halves the fallback's work); empty when
+    the sample rate cannot see it."""
+    hz = sample_rate / n
+    def rng(lo, hi):
+        lo_k = max(1, math.ceil(lo / hz))
+        hi_k = min(n // 2, int(hi / hz))
+        return list(range(lo_k, hi_k + 1))
+    low = rng(*SPEECH_LOW_HZ)
+    high = rng(*SPEECH_HIGH_HZ)
+    if len(high) > 40:
+        high = high[::2]
+    return low, high
+
+
+def _goertzel_power(frame, k, n):
+    """|DFT bin k|^2 of an n-sample frame, one O(n) pass, stdlib only."""
+    w = 2.0 * math.pi * k / n
+    coeff = 2.0 * math.cos(w)
+    s_prev = s_prev2 = 0.0
+    for x in frame:
+        s = x + coeff * s_prev - s_prev2
+        s_prev2 = s_prev
+        s_prev = s
+    return s_prev * s_prev + s_prev2 * s_prev2 - coeff * s_prev * s_prev2
+
+
+def voiced_fraction(pcm, sample_rate) -> float:
+    """What fraction of this PCM-16 utterance's frames are voiced? A frame
+    is voiced when its RMS clears the floor AND its speech-band energy beats
+    the high band by SPEECH_BAND_RATIO. Frames are sampled evenly, at most
+    SPEECH_GATE_MAX_FRAMES of them. 0.0 for audio too short to frame."""
+    sr = sample_rate or 16000
+    n = int(SPEECH_FRAME_SECONDS * sr)
+    hop = max(1, int(SPEECH_FRAME_HOP_SECONDS * sr))
+    usable = (len(pcm) - (len(pcm) % 2)) // 2
+    if n <= 0 or usable < n:
+        return 0.0
+    try:
+        import numpy as np
+        samples = np.frombuffer(pcm[:usable * 2], dtype="<i2").astype("f8")
+    except Exception:
+        np = None
+        samples = array.array("h")
+        samples.frombytes(pcm[:usable * 2])
+    starts = list(range(0, usable - n + 1, hop))
+    if len(starts) > SPEECH_GATE_MAX_FRAMES:
+        step = len(starts) / SPEECH_GATE_MAX_FRAMES
+        starts = [starts[int(i * step)] for i in range(SPEECH_GATE_MAX_FRAMES)]
+    low_bins, high_bins = _band_bins(n, sr)
+    voiced = 0
+    for s0 in starts:
+        frame = samples[s0:s0 + n]
+        if np is not None:
+            rms = math.sqrt(float((frame * frame).mean()))
+        else:
+            rms = math.sqrt(sum(x * x for x in frame) / n)
+        if rms < SPEECH_FRAME_MIN_RMS:
+            continue
+        if not high_bins:
+            voiced += 1  # the rate cannot see the noise band: loudness only
+            continue
+        if np is not None:
+            spec = np.abs(np.fft.rfft(frame)) ** 2
+            low = float(spec[low_bins].mean())
+            high = float(spec[high_bins].mean())
+        else:
+            low = sum(_goertzel_power(frame, k, n)
+                      for k in low_bins) / len(low_bins)
+            high = sum(_goertzel_power(frame, k, n)
+                       for k in high_bins) / len(high_bins)
+        if low > high * SPEECH_BAND_RATIO:
+            voiced += 1
+    return voiced / len(starts)
+
+
+def is_speech(pcm, sample_rate) -> bool:
+    """The gate itself: a majority of frames voiced."""
+    return voiced_fraction(pcm, sample_rate) >= SPEECH_MIN_VOICED_FRACTION
 
 
 # ================= config helpers =========================================
@@ -685,6 +798,11 @@ def identify_utterance(pcm, sample_rate, candidates, cfg,
         # honestly too short to judge.
         if anchors.pcm_rms(pcm) < MIN_SHORT_IDENTIFY_RMS:
             return _defer("too_short")
+    if not is_speech(pcm, sr):
+        # The speech gate (#217): non-speech must never reach the matcher -
+        # it can only answer "whose voice", and a static burst embedded and
+        # matched a stored bank at threshold in the field.
+        return _defer(NOT_SPEECH)
     try:
         enrolled = _enrolled_embeddings(candidates, sr, ex)
     except Exception:

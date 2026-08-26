@@ -119,6 +119,7 @@ export function modeReadout(health) {
 // reason; this just says it.
 export const UNRESOLVED_COPY = {
   too_short: ['too short to judge', 'That turn was too brief to identify a voice from.'],
+  not_speech: ['not a voice', 'That sound was not speech, so no match was attempted.'],
   below_threshold: ['voice not recognised', 'Heard clearly, but it did not match a remembered voice closely enough.'],
   ambiguous: ['too close to call', 'It sat between two remembered voices, so it was left unnamed rather than guessed.'],
   multi: ['more than one voice', 'Two people spoke over each other, so the turn went to the crosstalk split.'],

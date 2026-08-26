@@ -31,7 +31,9 @@ model and WITHOUT sherpa-onnx present:
 import time
 import asyncio
 import hashlib
+import math
 import os
+import struct
 
 import pytest
 
@@ -427,10 +429,17 @@ _VEC = {_ALEX_VAL: [1.0, 0.0, 0.0], _SAM_VAL: [0.0, 1.0, 0.0],
 
 
 def _tone(value, seconds, sr=16000):
-    """Constant-value PCM-16 - loud and long enough to pass the anchor gate,
-    and its mean value is the identity code the fake extractor reads back."""
-    import struct
-    return struct.pack("<h", value) * int(seconds * sr)
+    """Speech-shaped PCM-16 riding a constant offset: the offset is the
+    identity code the fake extractor reads back (the MEAN sample value), and
+    the low-band harmonics carry it past the speech gate (#217) - the old
+    bare constant was DC, which the gate rightly rejects."""
+    out = bytearray()
+    for i in range(int(seconds * sr)):
+        t = i / sr
+        ac = sum(a * math.sin(2 * math.pi * f * t) for f, a in
+                 ((140, 2500), (280, 1600), (420, 1000), (560, 600)))
+        out += struct.pack("<h", int(max(-32000, min(32000, value + ac))))
+    return bytes(out)
 
 
 def _fake_embed(_ex, audio_float, _sr):
@@ -515,6 +524,81 @@ def test_enrolment_embedding_is_cached_by_clip_set(store, monkeypatch):
     assert calls["n"] == 1     # enrolment served from cache; only the utterance
 
 
+# ============================ 4a. the speech gate (#217) ==================
+#
+# Field failure 2026-08-24: a static burst embedded, matched a remembered
+# bank at threshold, seated an absent person and banked itself as her voice
+# sample. The gate asks "is this a voice at all" BEFORE the matcher may ask
+# "whose voice" - and its defer can neither cold-start-bank nor arm.
+
+def _noise(seconds, sr=16000, seed=7):
+    """Deterministic white noise: the broadband shape of a static burst."""
+    import random
+    rng = random.Random(seed)
+    return b"".join(struct.pack("<h", rng.randint(-12000, 12000))
+                    for _ in range(int(seconds * sr)))
+
+
+def _hiss(seconds, sr=16000):
+    """Band-limited high-frequency noise: static without the low end."""
+    out = bytearray()
+    for i in range(int(seconds * sr)):
+        t = i / sr
+        ac = sum(3000 * math.sin(2 * math.pi * f * t + ph)
+                 for f, ph in ((4100, 0.3), (4900, 1.7), (5600, 2.9),
+                               (6400, 0.9), (7300, 2.1)))
+        out += struct.pack("<h", int(max(-32000, min(32000, ac))))
+    return bytes(out)
+
+
+def test_voiced_fraction_separates_speech_from_noise():
+    assert voiceid.voiced_fraction(_tone(0, 1.5), 16000) >= 0.9
+    assert voiceid.voiced_fraction(_noise(1.5), 16000) <= 0.1
+    assert voiceid.voiced_fraction(_hiss(1.5), 16000) <= 0.1
+    assert voiceid.voiced_fraction(b"\x00\x00" * 24000, 16000) == 0.0  # silence
+    assert voiceid.is_speech(_tone(0, 1.5), 16000) is True
+    assert voiceid.is_speech(_noise(1.5), 16000) is False
+
+
+def test_voiced_fraction_stdlib_fallback_agrees(monkeypatch):
+    """numpy is optional (the _pcm_to_float contract): the Goertzel fallback
+    must reach the same verdicts."""
+    import sys
+    speech, noise = _tone(0, 1.0), _noise(1.0)
+    with_np = (voiceid.voiced_fraction(speech, 16000),
+               voiceid.voiced_fraction(noise, 16000))
+    monkeypatch.setitem(sys.modules, "numpy", None)   # import now fails
+    without = (voiceid.voiced_fraction(speech, 16000),
+               voiceid.voiced_fraction(noise, 16000))
+    assert without[0] >= 0.9 and without[1] <= 0.1
+    assert with_np == pytest.approx(without, abs=0.1)
+
+
+def test_identify_defers_non_speech_before_embedding(store, monkeypatch):
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "_embed",
+                        lambda *a: pytest.fail("non-speech must never embed"))
+    for pcm in (_noise(1.5), _hiss(1.5)):
+        v = voiceid.identify_utterance(pcm, 16000, _candidates(store), _cfg())
+        assert v["status"] == "defer" and v["reason"] == "not_speech"
+
+
+def test_cold_start_never_banks_non_speech():
+    """#217 acceptance: a not_speech defer is nobody's by elimination."""
+    v = {"status": "defer", "person_id": None, "name": None, "score": 0.0,
+         "reason": "not_speech"}
+    assert diarize.cold_start_person(v, "Mateo") is None
+    # an ordinary defer still elects the solo pending person
+    assert diarize.cold_start_person(
+        dict(v, reason="below_threshold"), "Mateo") == "Mateo"
+
+
+def test_not_speech_reason_reaches_the_pulse():
+    diarize.record_decision(991, diarize.DECISION_UNRESOLVED, 12.0,
+                            "not_speech")
+    assert diarize.last_decision(991)["reason"] == "not_speech"
+
+
 # ============================ 4b. run_pass wiring =========================
 
 def _run(coro):
@@ -572,7 +656,7 @@ def test_run_pass_defer_fires_no_batch_call(monkeypatch):
     test_run_pass_defer_runs_batch): a deferred verdict leaves the turn
     unresolved - NO ElevenLabs call, NO label, NO metering. Every defer
     reason takes the same silent exit."""
-    for reason in ("below_threshold", "ambiguous", "too_short",
+    for reason in ("below_threshold", "ambiguous", "too_short", "not_speech",
                    "unavailable", "no_candidates", "no_enrolled"):
         monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
         monkeypatch.setattr(diarize.voiceid, "identify_utterance",

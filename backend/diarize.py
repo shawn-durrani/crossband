@@ -298,6 +298,9 @@ def ambient_decision(verdict, owner, owner_ok) -> str:
 # The guards are what keep it conservative:
 # - a MULTI verdict never qualifies. Overlapping speech is the one thing
 #   elimination cannot survive, and it has its own path.
+# - a NOT_SPEECH verdict (#217) never qualifies. Elimination answers WHO
+#   spoke; the speech gate just said nobody did, and banking a static burst
+#   would poison the pending person's first clips.
 # - two or more UNIDENTIFIABLE present people never qualify. The audio
 #   could be either of them, and that is exactly what the ask-fallback
 #   exists for.
@@ -319,7 +322,7 @@ def cold_start_person(verdict, solo_pending):
         return None
     if not verdict or verdict.get("status") != voiceid.DEFER:
         return None
-    if verdict.get("reason") == voiceid.MULTI:
+    if verdict.get("reason") in (voiceid.MULTI, voiceid.NOT_SPEECH):
         return None
     return solo_pending
 
@@ -400,7 +403,8 @@ DECISION_UNRESOLVED = "unresolved"
 # The allowlist for what may leave the process as a reason - content-free by
 # construction, like every other value here.
 DEFER_REASONS = {"too_short", "below_threshold", "ambiguous", "multi",
-                 "no_candidates", "unavailable", "disabled", "error"}
+                 "not_speech", "no_candidates", "unavailable", "disabled",
+                 "error"}
 
 
 def record_decision(chat_id, path, ms, reason=""):
