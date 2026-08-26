@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A spoken self-introduction now overrules the voice guess on its own
+  turn (#220). When someone introduces a remembered name but the turn's
+  audio had already been confidently labelled as a different remembered
+  person, the introduced name wins: the turn is relabelled, the wrong
+  automated seat is withdrawn, the contested audio leaves the wrongly
+  fed voice record, and a merge question tells you the two stored
+  voices are colliding. Labels you corrected by hand, and seats placed
+  by a person, are never unwound.
+
 - Storing a voice sample now demands more certainty than naming a turn
   (#222). A borderline match keeps its label, but its audio is only
   added to the person's stored voice when the match also clears a new
