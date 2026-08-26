@@ -220,6 +220,14 @@ Banks already sufficient when this shipped keep working while flagged -
 pausing the installed base on upgrade would be a regression, not a
 safeguard.
 
+Vouching can also be outlived. Accumulation records the match score each
+clip banked at. When rotation has replaced every clip a human stood
+behind, those scores decide the bank's standing. Weak scores pause
+identification until your ear confirms the voice again; strong scores
+keep it working, with a note in Remembered voices. The already-seated
+exception above applies to this pause too. Clips stored before scores
+were recorded carry none, and such a bank keeps working.
+
 ## The durable home (membro#33)
 
 Learned voices no longer live only in this app's data directory. When

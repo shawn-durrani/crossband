@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   adoptRoomMode, AMBIENT_EXPLAINER, askFlag, cleanPreferredName, displayName,
-  auditionNotice,
+  auditionNotice, selfCollectedNotice,
   flagCopy, FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
   reassignOptions, rosterChipText, rosterTitle, sufficiencyProgress,
   CHIP_CONFIRMED, CHIP_LEARNING, CHIP_PENDING, voiceChips, voicePersonChip,
@@ -490,4 +490,23 @@ test('the audition ask (#83): only unvouched sufficient banks, honest about paus
     name: 'Sam' })
   assert.match(legacy, /listen to the clips/)
   assert.ok(!/not naming/.test(legacy))
+})
+
+test('the outlived-backing ask (#221) says what actually happened', () => {
+  // A vouched bank whose human-backed clips rotated out was NOT "learnt
+  // without an introduction" - the copy must not claim it was.
+  const low = auditionNotice({ needs_audition: true, id_paused: true,
+    trust: 'low', name: 'Sam' })
+  assert.match(low, /stood behind has been replaced/)
+  assert.match(low, /matched only weakly/)
+  assert.match(low, /not naming or seating anyone/)
+  assert.ok(!/without an introduction/.test(low))
+  // high trust: no ask, just the quieter self-collected note
+  assert.equal(auditionNotice({ needs_audition: false, trust: 'high' }), null)
+  const note = selfCollectedNotice({ trust: 'high', name: 'Sam' })
+  assert.match(note, /rotated out/)
+  assert.match(note, /self-collected/)
+  assert.equal(selfCollectedNotice({ trust: 'human' }), '')
+  assert.equal(selfCollectedNotice({ trust: 'low' }), '')
+  assert.equal(selfCollectedNotice(null), '')
 })

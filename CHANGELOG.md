@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A stored voice that outlives its human backing must earn your ear
+  again (#221). Each automatically stored clip now records the match
+  confidence it banked at. When rotation has replaced every recording a
+  person stood behind, those scores decide: weak ones pause the voice
+  from naming or seating anyone until you listen and confirm (people
+  already seated in a live chat keep being identified), strong ones
+  keep working with a note in Remembered voices. A voice with no human
+  backing at all keeps its existing audition ask regardless of scores.
+
 - The voice hygiene audit now also hears "not a voice" (#219). Each
   stored clip is checked for actual speech during the audit; a noise
   clip is set aside under its own reason, shown distinctly in

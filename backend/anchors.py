@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import statistics
 import threading
 import time
 import uuid
@@ -200,6 +201,14 @@ def is_short_ready(clips: list) -> bool:
 
 VOUCH_SOURCES = ("introduction", "correction")
 
+# #221: when rotation has replaced every clip a human stood behind, the
+# save-time match scores of the survivors decide the bank's standing. The
+# bar sits inside the measured same-speaker range (0.63-0.73 on the pinned
+# model) and above the borderline-steal shape that hovers near the naming
+# threshold: a genuine bank's accumulations clear it comfortably, a
+# taken-over bank's early thefts do not.
+TRUST_SCORE_BAR = 0.65
+
 
 def bank_vouched(person: dict) -> bool:
     """A human has stood behind this bank (#83): someone voice-introduced
@@ -212,24 +221,74 @@ def bank_vouched(person: dict) -> bool:
                for c in person.get("clips", []))
 
 
+def surviving_human_clip(clips: list) -> bool:
+    """Is a clip a human stood behind still IN the bank (#221)? Vouching
+    stamps are person-level and permanent; this is the clip-level question
+    rotation can change."""
+    return any(c.get("source") in VOUCH_SOURCES or c.get("moved_at")
+               for c in active_clips(clips))
+
+
+def bank_trust(person: dict) -> str:
+    """The bank's standing (#221), one of:
+
+    - 'human': a human-backed clip survives, or the owner's audition is
+      newer than the newest clip - their ear has heard today's content;
+    - 'self': never human-backed at all. The #83 floor owns this shape:
+      it always carries the flag and the audition ask, whatever the
+      scores say, because save-time confidence is graded against the bank
+      itself - a polluted bank grades its own donor highly;
+    - 'high' / 'low': vouched once, but accumulation has replaced every
+      human-backed clip. The save-time scores of the survivors decide:
+      a median at TRUST_SCORE_BAR or above keeps working (flagged), below
+      it identification pauses for the owner's ear. Clips banked before
+      scores were recorded carry none and are left out; with no scored
+      clip at all the verdict is 'high', because pausing the installed
+      base on upgrade would be a regression, not a safeguard (#83's own
+      lesson)."""
+    clips = person.get("clips", [])
+    if surviving_human_clip(clips):
+        return "human"
+    if not (person.get("vouched_at") or person.get("audition_confirmed_at")):
+        return "self"
+    confirmed = person.get("audition_confirmed_at") or 0
+    newest = max((c.get("added_at", 0) for c in active_clips(clips)),
+                 default=0)
+    if confirmed and confirmed >= newest:
+        return "human"
+    scored = [c["match_score"] for c in active_clips(clips)
+              if c.get("match_score") is not None]
+    if not scored:
+        return "high"
+    return "high" if statistics.median(scored) >= TRUST_SCORE_BAR else "low"
+
+
 def needs_audition(person: dict) -> bool:
-    """Sufficient, and nobody human ever stood behind it: ask for the
-    owner's ear (#83). The phantom banks (#65) were exactly this shape and
-    passed every automated check - internal consistency cannot catch a bank
-    that is wholly someone ELSE'S voice under the wrong name."""
-    return (is_sufficient(person.get("clips", []))
-            and not bank_vouched(person))
+    """Ask for the owner's ear (#83/#221): the bank is sufficient, and
+    either nobody human ever stood behind it (the phantom shape - #65
+    banks passed every automated check), or its human backing has rotated
+    away and the surviving save-time scores read low."""
+    if not is_sufficient(person.get("clips", [])):
+        return False
+    if not bank_vouched(person):
+        return True
+    return bank_trust(person) == "low"
 
 
 def identification_paused(person: dict) -> bool:
     """Excluded from the anchor prefix and matcher enrolment until the
-    owner auditions (#83). Applies only to banks whose sufficiency CROSSING
-    was observed (the stamp exists only post-#83): a pre-existing
-    sufficient bank keeps working while it awaits the owner's ear, because
-    pausing the whole installed base on upgrade would be a regression, not
-    a safeguard."""
-    return (bool(person.get("sufficiency_crossed_at"))
-            and needs_audition(person))
+    owner auditions (#83/#221). For a never-vouched bank this applies only
+    when the sufficiency CROSSING was observed (the stamp exists only
+    post-#83): a pre-existing sufficient bank keeps working while it
+    awaits the owner's ear, because pausing the whole installed base on
+    upgrade would be a regression, not a safeguard. A LOW-TRUST bank
+    (#221) needs no stamp: low trust can only arise from match scores
+    recorded after this shipped, so it cannot shock the installed base."""
+    if not needs_audition(person):
+        return False
+    if bank_vouched(person):
+        return True
+    return bool(person.get("sufficiency_crossed_at"))
 
 
 def trim_clip(pcm: bytes, sample_rate: int) -> bytes:
@@ -399,6 +458,8 @@ class AnchorStore:
                 "vouched": bank_vouched(p),
                 "needs_audition": needs_audition(p),
                 "id_paused": identification_paused(p),
+                # #221: the bank's standing once vouching is outlived.
+                "trust": bank_trust(p),
             })
         return out
 
@@ -643,7 +704,7 @@ class AnchorStore:
         return survivor_id
 
     def add_clip(self, person_id: str, pcm: bytes, sample_rate: int,
-                 source: str) -> bool:
+                 source: str, score=None) -> bool:
         """Offer one utterance's audio as an anchor clip. Applies the quality
         gate, the trim cap and the keep-best-N refresh; evicted clips have
         their files deleted. Returns True if the clip was accepted.
@@ -651,7 +712,9 @@ class AnchorStore:
         'correction' | 'cold-start' - recorded so the store stays
         explainable. 'cold-start' (#28) is the by-elimination clip banked
         for the only person in an armed room whose bank cannot identify
-        them yet."""
+        them yet. `score` (#221) is the MATCH score this clip banked at,
+        recorded at write time like every provenance stamp: it is what a
+        bank that outlives its human backing is later judged by."""
         pcm = trim_clip(pcm or b"", sample_rate)
         q = clip_quality(pcm, sample_rate)
         if not accepts_clip(q):
@@ -664,10 +727,16 @@ class AnchorStore:
             fname = self._write_clip(pcm, sample_rate, person_id)
             clips = person.get("clips", [])
             was_sufficient = is_sufficient(clips)
-            clips.append({"file": fname, "seconds": q["seconds"],
-                          "rms": q["rms"], "score": q["score"],
-                          "sample_rate": sample_rate, "source": source,
-                          "added_at": time.time()})
+            entry = {"file": fname, "seconds": q["seconds"],
+                     "rms": q["rms"], "score": q["score"],
+                     "sample_rate": sample_rate, "source": source,
+                     "added_at": time.time()}
+            if score is not None:
+                try:
+                    entry["match_score"] = round(float(score), 4)
+                except (TypeError, ValueError):
+                    pass
+            clips.append(entry)
             # Keep-best-N ranks ACTIVE clips only (#28 PR-B): quarantined
             # clips are set aside, not competing, and the keep policy may
             # neither evict them nor be crowded out by them.
