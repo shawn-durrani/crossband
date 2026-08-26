@@ -1260,7 +1260,7 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # cluster; on the fast path this is the ONLY thing that keeps the person's
     # anchors fresh, since the batch pass no longer runs for them.
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
-                            sample_rate, cfg)
+                            sample_rate, cfg, verdict.get("score"))
     if not target_id:
         return
     from . import anchors
@@ -1304,17 +1304,28 @@ def _roster_remembered(chat_id, name, person_id, cfg):
         con.close()
 
 
-def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None):
+def _accumulate_fast_anchor(person_id, pcm, sample_rate, cfg=None,
+                            score=None):
     """Refresh a fast-matched person's anchors (worker thread). Confident-
     match accumulation continues indefinitely (#28 PR-B) - keep-best-N per
     length class bounds the bank - and every accepted clip re-runs the
     pairwise hygiene audit.
+
+    The banking bar (#222): `score` is the verdict's match score, and both
+    accumulation and harvesting require it to clear the threshold plus
+    voice_id_banking_extra - a borderline match may label its turn but must
+    not feed the very bank that produced it. None means the caller has no
+    verdict score (a legacy path); banking proceeds as before.
 
     Short-slice harvesting (#28, tenth field test): a confident LONG match
     also banks a short slice cut from its own audio, so the short class
     fills itself from ordinary speech and the short-utterance deadlock
     (cannot match without short clips, cannot bank short clips without
     matching) can never form."""
+    if score is not None and not voiceid.score_banks(score, cfg or {}):
+        log.info("anchor accumulation skipped (#222): score=%.3f under the "
+                 "banking bar", float(score))
+        return
     from . import anchors
     store = anchors.store()
     changed = store.add_clip(person_id, pcm, sample_rate,
@@ -1398,7 +1409,7 @@ async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
     await _attach_until_deadline(chat_id, commit_ts, payload, session,
                                  turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"],
-                            pcm, sample_rate, cfg)
+                            pcm, sample_rate, cfg, verdict.get("score"))
 
 
 async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
@@ -1424,7 +1435,7 @@ async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
                                              session, turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
-                            sample_rate, cfg)
+                            sample_rate, cfg, verdict.get("score"))
     if target_id:
         from . import anchors
         anchors.remember_audio(target_id, pcm, sample_rate, 1)

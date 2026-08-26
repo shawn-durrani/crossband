@@ -160,6 +160,7 @@ an adult child) are exactly the case where the defaults may need moving.
 | `voice_id_threshold` | `0.5` | How similar a voice must be to a stored one before it can be named at all. Raise it and fewer, more certain names appear; lower it and more turns get named, less certainly. |
 | `voice_id_margin` | `0.12` | How clearly the best match must beat the second-best before it is trusted. This is the knob that protects similar-sounding households; the hygiene guard widens it automatically for any two stored voices it finds sitting close together. |
 | `voice_id_pending_extra` | `0.08` | How much higher the naming bar sits while anyone in the room is unlearnt. Protects a new guest from having their turns claimed by a similar-sounding regular, and from never getting a first clip. `0` turns it off. |
+| `voice_id_banking_extra` | `0.1` | How much higher than the naming bar a match must score before its audio is stored as an anchor clip. A borderline match keeps its label but feeds nothing, so one wrong name cannot compound into a polluted bank. `0` turns it off. |
 | `voice_id_sufficient_seconds` | `6.0` | How much clear speech must be stored before a person's voice is trusted for identification at all. Below the bar their turns stay uncertain. |
 | `voice_id_min_short_clips` | `2` | The second half of that bar: how many short (one-to-two-second) clips the stored voice must include, so quick interjections ("yes", "hang on") can be recognised, not just full sentences. |
 | `room_roster_max` | `6` | How many people the room can hold at once. |

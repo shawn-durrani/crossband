@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Storing a voice sample now demands more certainty than naming a turn
+  (#222). A borderline match keeps its label, but its audio is only
+  added to the person's stored voice when the match also clears a new
+  banking bar (`voice_id_banking_extra`, default 0.1 above the naming
+  threshold). One wrong name can no longer feed the very voice record
+  that produced it.
+
 - Non-speech audio can no longer be named as a person (#217). Every
   utterance now passes a local speech check before the voice matcher may
   ask whose voice it is, so a static burst can no longer match a

@@ -253,6 +253,12 @@ class Settings(BaseModel):
     # bank to score against, so borderline matches to remembered people
     # defer instead of confidently stealing a new guest's turns. 0 = off.
     voice_id_pending_extra: float = 0.08
+    # #222: how much score, on top of the threshold, a match needs before
+    # its audio may be BANKED (accumulation and short-slice harvesting).
+    # Naming keeps the plain threshold; this keeps borderline matches from
+    # feeding the very bank that produced them. 0 = banking at the naming
+    # bar, the pre-#222 behaviour.
+    voice_id_banking_extra: float = 0.10
     # The two-part anchor sufficiency bar (#28 PR-B): accepted seconds AND a
     # minimum number of short (~1-2s) clips before a voice counts as
     # identifiable - so second-long interjections have something like
