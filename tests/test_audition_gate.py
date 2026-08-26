@@ -28,6 +28,7 @@ from backend import anchors
 from backend.app import create_app
 from backend.config import Settings
 from backend.diarize import remembered_candidates
+from tests.conftest import speech_pcm
 
 
 @pytest.fixture
@@ -37,8 +38,8 @@ def app(tmp_path):
 
 
 def _pcm(seconds=2.0, rate=16000, amp=6000):
-    n = int(seconds * rate)
-    return struct.pack(f"<{n}h", *([amp, -amp] * (n // 2)))
+    # Speech-shaped since #218: the anchor gate rejects a Nyquist square.
+    return speech_pcm(seconds, rate, amp=amp)
 
 
 def _fill(store, pid, source="accumulated", clips=4):

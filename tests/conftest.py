@@ -1,3 +1,5 @@
+import math
+import struct
 import sys
 from pathlib import Path
 
@@ -8,6 +10,29 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.config import Settings  # noqa: E402
+
+_SPEECH_BLOCKS: dict = {}  # (sample_rate, amp) -> one second of samples
+
+
+def speech_pcm(seconds, sample_rate=16000, amp=9000):
+    """Speech-shaped PCM-16 for anchor and matcher fixtures: low-band
+    harmonics at a strong level, so the speech gate (#218) hears a voice.
+    The old constant-value and Nyquist-square fixtures are exactly the
+    shapes the gate exists to reject. One second is synthesised per
+    (rate, amp) and tiled - the harmonics are integer Hz, so the block is
+    seamlessly periodic."""
+    key = (sample_rate, amp)
+    block = _SPEECH_BLOCKS.get(key)
+    if block is None:
+        block = b"".join(
+            struct.pack("<h", int(
+                amp * math.sin(2 * math.pi * 140 * i / sample_rate)
+                + 0.55 * amp * math.sin(2 * math.pi * 280 * i / sample_rate)
+                + 0.33 * amp * math.sin(2 * math.pi * 420 * i / sample_rate)))
+            for i in range(sample_rate))
+        _SPEECH_BLOCKS[key] = block
+    n = int(seconds * sample_rate) * 2
+    return (block * (n // len(block) + 1))[:n]
 
 
 @pytest.fixture(autouse=True)

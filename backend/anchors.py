@@ -121,18 +121,30 @@ def pcm_rms(pcm: bytes) -> int:
 
 def clip_quality(pcm: bytes, sample_rate: int) -> dict:
     """Content-free quality measures for one candidate clip: duration, int16
-    RMS, and a comparable score (capped seconds, discounted while quiet)."""
+    RMS, the voiced fraction (#218), and a comparable score (capped seconds,
+    discounted while quiet)."""
+    from . import voiceid
     sr = sample_rate or 16000
     seconds = len(pcm) / 2 / sr
     rms = pcm_rms(pcm)
     score = min(seconds, MAX_CLIP_SECONDS) * min(1.0, rms / 1000.0)
-    return {"seconds": round(seconds, 2), "rms": rms, "score": round(score, 3)}
+    return {"seconds": round(seconds, 2), "rms": rms,
+            "voiced": round(voiceid.voiced_fraction(pcm, sr), 3),
+            "score": round(score, 3)}
 
 
 def accepts_clip(quality: dict) -> bool:
-    """The gate: long enough to carry a voice, loud enough to be one."""
+    """The gate: long enough to carry a voice, loud enough to be one - and
+    actually speech (#218). Loud static used to clear the first two bars,
+    bank as an anchor, and its seconds-times-loudness score could then
+    EVICT genuine quiet speech under keep-best-N; the voiced fraction is
+    what says a voice is in there at all. Every add_clip call site passes
+    through here, so no source can bank non-speech, whatever the caller."""
+    from . import voiceid
     return (quality["seconds"] >= MIN_CLIP_SECONDS
-            and quality["rms"] >= MIN_CLIP_RMS)
+            and quality["rms"] >= MIN_CLIP_RMS
+            and quality.get("voiced", 1.0)
+            >= voiceid.SPEECH_MIN_VOICED_FRACTION)
 
 
 def is_short(clip: dict) -> bool:

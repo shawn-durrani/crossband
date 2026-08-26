@@ -26,6 +26,7 @@ from backend import anchors, person_sync
 from backend.app import create_app
 from backend.config import Settings
 from backend.diarize import pcm16_wav
+from tests.conftest import speech_pcm
 
 
 @pytest.fixture
@@ -37,8 +38,8 @@ def app(tmp_path, monkeypatch):
 
 
 def _pcm(seconds=2.0, rate=16000, amp=6000):
-    n = int(seconds * rate)
-    return struct.pack(f"<{n}h", *([amp, -amp] * (n // 2)))
+    # Speech-shaped since #218: the anchor gate rejects a Nyquist square.
+    return speech_pcm(seconds, rate, amp=amp)
 
 
 class FakeMembro:

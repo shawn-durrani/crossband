@@ -19,16 +19,26 @@ import os
 import pytest
 
 from backend import anchors
+from tests.conftest import speech_pcm
 
 
-def loud_pcm(seconds, sample_rate=16000, amp=b"\x00\x40"):
-    """PCM-16 with a strong level (0x4000 samples) - passes the RMS gate."""
-    return amp * int(seconds * sample_rate)
+def loud_pcm(seconds, sample_rate=16000):
+    """Speech-shaped PCM-16 at a strong level - passes every gate (#218)."""
+    return speech_pcm(seconds, sample_rate)
 
 
 def quiet_pcm(seconds, sample_rate=16000):
     """Near-silence (sample value 1) - fails the RMS gate."""
     return b"\x01\x00" * int(seconds * sample_rate)
+
+
+def noise_pcm(seconds, sample_rate=16000, seed=11):
+    """Deterministic white noise: loud, long - and not a voice (#218)."""
+    import random
+    import struct
+    rng = random.Random(seed)
+    return b"".join(struct.pack("<h", rng.randint(-12000, 12000))
+                    for _ in range(int(seconds * sample_rate)))
 
 
 @pytest.fixture
@@ -41,7 +51,7 @@ def store(tmp_path):
 def test_clip_quality_measures_duration_and_level():
     q = anchors.clip_quality(loud_pcm(2.0), 16000)
     assert q["seconds"] == pytest.approx(2.0)
-    assert q["rms"] >= 16000  # 0x4000 samples
+    assert q["rms"] >= 5000  # a strong level
     assert q["score"] > 0
     silent = anchors.clip_quality(b"\x00\x00" * 16000, 16000)
     assert silent["rms"] == 0 and silent["score"] == 0
@@ -51,6 +61,23 @@ def test_quality_gate_rejects_short_and_quiet():
     assert anchors.accepts_clip(anchors.clip_quality(loud_pcm(1.0), 16000))
     assert not anchors.accepts_clip(anchors.clip_quality(loud_pcm(0.5), 16000))
     assert not anchors.accepts_clip(anchors.clip_quality(quiet_pcm(3.0), 16000))
+
+
+def test_quality_gate_rejects_non_speech(store):
+    """#218: loud, long static cleared the old gate and its
+    seconds-times-loudness score could EVICT genuine speech under
+    keep-best-N. The gate now asks the speech question, so no source can
+    bank noise - however any caller reached add_clip."""
+    noisy = anchors.clip_quality(noise_pcm(3.0), 16000)
+    assert noisy["seconds"] >= 1.0 and noisy["rms"] >= 120  # old gate passed
+    assert not anchors.accepts_clip(noisy)
+    pid = store.ensure_person("Alex")
+    for source in ("introduction", "accumulated", "harvested-short",
+                   "correction", "cold-start"):
+        assert not store.add_clip(pid, noise_pcm(3.0), 16000, source=source)
+    assert store.clips_of(pid) == []
+    # speech through the same call sites is unaffected
+    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
 
 
 def test_keep_policy_keeps_the_best_n_per_length_class():
