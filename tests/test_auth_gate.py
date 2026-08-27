@@ -191,6 +191,34 @@ def test_ws_guard_open_before_enrolment_gated_after(app):
     assert _ws_local(_ws_stub(app, cookies={"cb_session": "forged"})) is False
 
 
+def test_ws_guard_holds_the_tailnet_before_enrolment(app):
+    """The pre-enrolment posture has two answers, not one.
+
+    Loopback is open before a password exists; a trusted non-loopback host is
+    not, because the tailnet should never see more than the lock screen. The
+    HTTP middleware has always drawn that line. This guard did not, so a
+    tailnet client refused on every /api route could still open the metered
+    ElevenLabs relays. The relays are the whole reason the guard exists."""
+    assert _ws_local(_ws_stub(app)) is True                      # loopback: open
+    assert _ws_local(_ws_stub(app, host=TAILNET)) is False        # tailnet: gated
+    assert _ws_local(_ws_stub(app, host=TAILNET,
+                              origin=f"https://{TAILNET}")) is False
+    # A session still lets the tailnet through, before enrolment as after.
+    sid = auth.mint_session(app)
+    assert _ws_local(_ws_stub(app, host=TAILNET,
+                              cookies={"cb_session": sid})) is True
+
+
+def test_ws_guard_and_http_gate_agree_on_loopback(app):
+    """One set, read by both guards. config._LOOPBACK_HOSTS answers a different
+    question and carries 0.0.0.0; a bind address is not a caller, so it must
+    never widen a gate."""
+    assert "0.0.0.0" not in auth.GATE_LOOPBACK_HOSTS
+    for host in auth.GATE_LOOPBACK_HOSTS:
+        assert _ws_local(_ws_stub(app, host=host)) is True
+    assert app.state.allowed_hosts >= auth.GATE_LOOPBACK_HOSTS
+
+
 def test_ws_guard_still_enforces_host_and_origin(app):
     sid = auth.mint_session(app)
     ok = {"cb_session": sid}

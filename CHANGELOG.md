@@ -5,6 +5,13 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Voice over a tailnet now waits for the lock screen, like everything
+  else. Before an owner password is enrolled, a trusted non-loopback
+  host is held to the login surface on every API route, and the voice
+  relays now follow the same rule instead of staying open. On loopback
+  nothing changes. If you use voice from your phone and have never
+  enrolled a password, enrol one and the phone works again.
+
 - A stored voice that outlives its human backing must earn your ear
   again (#221). Each automatically stored clip now records the match
   confidence it banked at. When rotation has replaced every recording a
