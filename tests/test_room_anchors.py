@@ -19,12 +19,8 @@ import os
 import pytest
 
 from backend import anchors
+from roomkit import loud_pcm
 from tests.conftest import speech_pcm
-
-
-def loud_pcm(seconds, sample_rate=16000):
-    """Speech-shaped PCM-16 at a strong level - passes every gate (#218)."""
-    return speech_pcm(seconds, sample_rate)
 
 
 def quiet_pcm(seconds, sample_rate=16000):

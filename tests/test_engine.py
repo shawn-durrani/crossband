@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from backend import db, engine
 from backend.app import create_app
 from backend.config import Settings
+from roomkit import sse_events
 
 
 @pytest.fixture
@@ -27,11 +28,6 @@ def fake_stream(text_chunks):
             yield ("text", ch)
         yield ("usage", {"input": 10, "cache_read": 2, "cache_creation": 1, "output": 5})
     return stream_reply
-
-
-def sse_events(body):
-    return [json.loads(line[6:]) for line in body.splitlines()
-            if line.startswith("data: ")]
 
 
 def test_send_streams_full_round_and_persists(app, monkeypatch):

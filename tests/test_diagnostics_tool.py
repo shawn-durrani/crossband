@@ -32,6 +32,7 @@ from backend import diag_mcp, diagnostics, engine
 from backend import tools as tools_mod
 from backend.app import create_app
 from backend.config import Settings
+from roomkit import sse_events
 
 
 # ---------- one dispatch map behind both surfaces (no drift possible) ----------
@@ -176,11 +177,6 @@ def app(tmp_path):
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     return create_app(settings)
-
-
-def sse_events(body):
-    return [json.loads(line[6:]) for line in body.splitlines()
-            if line.startswith("data: ")]
 
 
 def test_get_diagnostic_is_offered_even_with_every_other_toggle_off(app, monkeypatch):

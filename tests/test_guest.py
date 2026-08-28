@@ -16,6 +16,7 @@ from backend import db, engine, guest, guestjobs
 from backend import tools as tools_mod
 from backend.app import create_app
 from backend.config import Settings
+from roomkit import sse_events
 
 
 @pytest.fixture(autouse=True)
@@ -49,11 +50,6 @@ def fake_guest(events):
         for ev in events:
             yield ev
     return run_guest
-
-
-def sse_events(body):
-    return [json.loads(line[6:]) for line in body.splitlines()
-            if line.startswith("data: ")]
 
 
 # ---------- schema + toggle ----------

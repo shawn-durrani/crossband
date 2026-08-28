@@ -36,6 +36,44 @@ def speech_pcm(seconds, sample_rate=16000, amp=9000):
 
 
 @pytest.fixture(autouse=True)
+def _room_state_clean():
+    """Reset every process global the room subsystem keeps, before and after
+    each test (#238).
+
+    These were reset per file, and the lists had drifted: 13 files cleared
+    `diarize._ROOM_ENABLED`, 12 cleared `_STASHED`, 5 cleared `_AMBIENT_OFF`,
+    4 cleared `_LAST_DECISION`, 1 cleared `_PENDING_LABELS`, and nothing ever
+    cleared `introductions._TASKS` or `mismatch._TASKS`. A fourteenth global
+    meant a thirteen-file audit, and a test leaking room state into the next
+    one was a matter of which file happened to clear which name.
+
+    This is the single list. Adding a global here is the whole change.
+    """
+    _reset_room_state()
+    yield
+    _reset_room_state()
+
+
+def _reset_room_state():
+    from backend import anchors, diarize, introductions, mismatch
+
+    for mod, name in (
+        (diarize, "_TASKS"),
+        (diarize, "_ROOM_ENABLED"),
+        (diarize, "_STASHED"),
+        (diarize, "_PENDING_LABELS"),
+        (diarize, "_AMBIENT_OFF"),
+        (diarize, "_LAST_DECISION"),
+        (introductions, "_TASKS"),
+        (mismatch, "_TASKS"),
+    ):
+        container = getattr(mod, name, None)
+        if container is not None:
+            container.clear()
+    anchors.clear_recent_audio()
+
+
+@pytest.fixture(autouse=True)
 def _voiceid_offline(monkeypatch):
     """Keep the local speaker matcher (#28) OFFLINE for the keyless suite:
     stub the one-time background model fetch to a no-op and reset the

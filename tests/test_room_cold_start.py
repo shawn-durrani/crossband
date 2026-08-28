@@ -45,11 +45,7 @@ from backend.providers import (LEARNING_SUFFIX, PENDING_IDENTITY_HEAD,
 from tests.conftest import make_msg
 from tests.test_projection import PARTICIPANT, ROSTER
 from tests.conftest import speech_pcm
-
-
-def loud_pcm(seconds, sample_rate=16000):
-    # Speech-shaped since #218: the anchor gate rejects non-speech.
-    return speech_pcm(seconds, sample_rate)
+from roomkit import loud_pcm
 
 
 def _defer(reason, score=0.3):
@@ -64,11 +60,6 @@ def _match(name, pid, score=0.9):
 
 @pytest.fixture
 def app(tmp_path):
-    diarize._ROOM_ENABLED.clear()
-    diarize._AMBIENT_OFF.clear()
-    diarize._STASHED.clear()
-    diarize._LAST_DECISION.clear()
-    anchors.clear_recent_audio()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1", user_name="Alex")
     return create_app(settings)
