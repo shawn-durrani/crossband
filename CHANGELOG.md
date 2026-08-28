@@ -23,6 +23,18 @@ entry to a short paragraph; the issue holds the detail.
   at that moment. They are now read once and reused. On a three-model
   round over one 20MB PDF that is about half a second back per round.
 
+- A rate card you save now prices the very next round (#230). Saved
+  cards were reaching the pricing screen and nothing else, so rounds
+  kept using whatever the app read at startup. Because the cost source
+  is recorded at the moment a reply is written, those rows could not be
+  corrected afterwards by fixing the card. Hand-edited prices in
+  `config.local.json` reach a round now too.
+
+- The Spend page no longer shows $0.00 for cache writes on a model you
+  priced yourself (#230). It was reading the built-in price list rather
+  than yours. Some historical cache-write figures will go up as a
+  result, because they were understated rather than free.
+
 - Documentation corrections (#233). The web research page said a
   rendered view shows text and not a screenshot, which stopped being
   true when the screenshot shipped, and it sat in the list of that

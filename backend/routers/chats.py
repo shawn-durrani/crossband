@@ -620,7 +620,7 @@ def _blank_chat_usage(messages=0):
 
 
 @router.get("/api/usage/chats")
-def chats_usage():
+def chats_usage(request: Request):
     """Per-chat totals for the export picker: messages, tokens, and cost split
     across the three provenance buckets.
 
@@ -636,7 +636,8 @@ def chats_usage():
     con = db.connect()
     counts = {r["chat_id"]: r["c"] for r in con.execute(
         "SELECT chat_id, COUNT(*) c FROM messages GROUP BY chat_id")}
-    events = list(accounting.iter_cost_events(con))
+    events = list(accounting.iter_cost_events(
+        con, pricing=request.app.state.settings.as_cfg().get("pricing")))
     con.close()
 
     out = {cid: _blank_chat_usage(n) for cid, n in counts.items()}
@@ -688,7 +689,7 @@ def usage_summary(request: Request, window: str = "all"):
     }
 
     con = db.connect()
-    events = list(accounting.iter_cost_events(con))
+    events = list(accounting.iter_cost_events(con, pricing=cfg.get("pricing")))
     titles = {r["id"]: r["title"] for r in con.execute("SELECT id, title FROM chats")}
     con.close()
 

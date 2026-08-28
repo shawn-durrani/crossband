@@ -345,14 +345,20 @@ _gh_token_cache = {"value": None, "checked": False}
 def refresh_repo_maps(cfg):
     """Overlay the live repo maps onto cfg, in place (#24, #86).
 
-    `github_repos` and `code_repos` are hand-maintained in config.local.json
-    and were read once at boot, so after a repo rename or an added checkout
-    the tools' allowed-repo lists, the guest's summon menu and the
-    integrations tiles stayed stale until a restart. Mirrors
-    routers/pricing.py: a fresh load_settings() per use. An unreadable
-    config keeps the copies already in cfg rather than dropping the tools
-    mid-session. Callers pass a per-request/per-round dict, never a shared
-    one.
+    `github_repos`, `code_repos` and `pricing` are hand-maintained in
+    config.local.json and were read once at boot, so after a repo rename, an
+    added checkout or a saved rate card the tools' allowed-repo lists, the
+    guest's summon menu, the integrations tiles and the round's prices stayed
+    stale until a restart. Mirrors routers/pricing.py: a fresh load_settings()
+    per use. An unreadable config keeps the copies already in cfg rather than
+    dropping the tools mid-session. Callers pass a per-request/per-round dict,
+    never a shared one.
+
+    Pricing joined the overlay because engine.run_round stamps provenance at
+    turn time (engine.py:485-486), so a round priced from a stale table writes
+    rows that are permanently wrong rather than recoverably wrong. The
+    pricing router's own docstring already promised a saved card reaches the
+    next round; before this it only reached the router's own response.
     """
     try:
         fresh = load_settings()
@@ -360,6 +366,8 @@ def refresh_repo_maps(cfg):
         return cfg
     cfg["github_repos"] = fresh.github_repos or {}
     cfg["code_repos"] = fresh.code_repos or {}
+    if fresh.pricing:
+        cfg["pricing"] = fresh.pricing
     return cfg
 
 

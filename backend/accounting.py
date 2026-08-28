@@ -211,9 +211,12 @@ def iter_cost_events(con, *, code_slug=CODE_SLUG, chat_id=None, pricing=None):
     Single scan used by both the per-chat and cumulative surfaces. Pass
     ``chat_id`` to scope to one chat; omit it for all chats.
 
-    ``pricing`` (the live price table) is only a FALLBACK used to classify the
-    provenance of historical rows that predate per-turn provenance capture; a
-    row that recorded its own provenance keeps it regardless of the table."""
+    ``pricing`` (the live price table) does two jobs. It classifies the
+    provenance of historical rows that predate per-turn provenance capture,
+    where a row that recorded its own provenance keeps it regardless of the
+    table. It also prices cache writes, which are computed on read rather than
+    stamped, so a caller that omits it prices those against DEFAULT_PRICING and
+    reads $0.00 for any model the operator priced by override."""
     pricing = DEFAULT_PRICING if pricing is None else pricing
     # base_url/api_key_env ride along because they are part of resolving a
     # historical row's provenance: a keyless loopback seat is self-hosted,
