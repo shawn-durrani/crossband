@@ -5,12 +5,17 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
-- Voice over a tailnet now waits for the lock screen, like everything
-  else. Before an owner password is enrolled, a trusted non-loopback
-  host is held to the login surface on every API route, and the voice
-  relays now follow the same rule instead of staying open. On loopback
-  nothing changes. If you use voice from your phone and have never
-  enrolled a password, enrol one and the phone works again.
+- Closed a gap in the voice relays. On an install that has a trusted
+  host configured and has never enrolled an owner password, anything
+  that could reach that host could open the two voice relays without
+  passing the lock screen, and spend against your ElevenLabs key. Every
+  other API route already refused those callers. The relays now refuse
+  them too. Loopback is unchanged.
+
+  Only the tailnet could reach it, and no released version is affected:
+  the browser gate did not exist in 0.1.0, 0.1.1 or 0.2.0. If you have
+  been running from main and have not enrolled a password, enrol one.
+  That closes it on every surface and brings voice back on your phone.
 
 - A stored voice that outlives its human backing must earn your ear
   again (#221). Each automatically stored clip now records the match
