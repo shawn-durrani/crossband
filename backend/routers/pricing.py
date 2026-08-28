@@ -27,7 +27,7 @@ import os
 import shutil
 import tempfile
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import provenance as prov
@@ -36,6 +36,22 @@ from ..config import (DEFAULT_PRICING, LOCAL_CONFIG_PATH, _read_json,
                       load_settings, price_for)
 
 router = APIRouter(prefix="/api/pricing", tags=["pricing"])
+
+
+def _refresh_settings(request):
+    """Re-read config and republish it as the app's shared snapshot.
+
+    app.state.settings is assigned once, at app.py:359, and every request-time
+    consumer reads it: the benchmark, the voice routes, the attachment cap. A
+    saved card has to reach those too, not only the round (which picks it up
+    through tools.refresh_repo_maps) and not only this router's own response.
+    """
+    fresh = load_settings()
+    try:
+        request.app.state.settings = fresh
+    except AttributeError:      # a bare app object in a unit test
+        pass
+    return fresh
 
 # The two provenances an operator may attest on a static card.
 # `provider_reported` and `subscription_equivalent` are DERIVED per turn
@@ -173,7 +189,7 @@ def list_rate_cards():
 
 
 @router.put("/{model:path}")
-def upsert_rate_card(model: str, body: RateCardIn):
+def upsert_rate_card(model: str, body: RateCardIn, request: Request):
     """Validated by `ratecard.validate_and_build`, which is where every
     safety invariant is proven: only the two operator-declarable provenances,
     finite bounded rates, real ISO dates, an http(s) source for an estimate,
@@ -202,11 +218,11 @@ def upsert_rate_card(model: str, body: RateCardIn):
     block = _overrides()
     block[model_id] = card
     _write_overrides(block)
-    return _card_row(model_id, load_settings().pricing, _overrides())
+    return _card_row(model_id, _refresh_settings(request).pricing, _overrides())
 
 
 @router.delete("/{model:path}")
-def delete_rate_card(model: str):
+def delete_rate_card(model: str, request: Request):
     """Drop an override. Falls back to the built-in card, or - honestly - to
     unpriced when there is no built-in. Never leaves a stale figure behind."""
     model = model.strip()
@@ -216,5 +232,5 @@ def delete_rate_card(model: str):
                             detail=f"no local rate card for {model!r}")
     block.pop(model)
     _write_overrides(block)
-    effective = load_settings().pricing
+    effective = _refresh_settings(request).pricing
     return _card_row(model, effective, _overrides())
