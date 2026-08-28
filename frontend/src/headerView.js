@@ -83,10 +83,13 @@ export function usageSummary(chatTotal, voice) {
   if (!tokens && !chars) return null
   return {
     tokens: `Σ ${fmtCount(tokens)} tok`,
+    // Chars and seconds only. The dollar figure used to ride here because
+    // the header's total counted messages alone; the total now comes from
+    // the server and already contains voice, so printing it again would
+    // state the same money twice.
     voice: chars > 0
       ? ` · voice ${fmtCount(chars)} ch`
         + (voice.stt_seconds > 0 ? ` / ${Math.round(voice.stt_seconds)}s` : '')
-        + (voice.cost > 0 ? ` · ~$${voice.cost.toFixed(3)}` : '')
       : '',
   }
 }

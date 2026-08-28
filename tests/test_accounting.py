@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from backend import accounting, db
+from backend import accounting, db, provenance
 from backend.config import Settings
 
 
@@ -555,3 +555,103 @@ def test_an_unpriced_model_reports_cache_tokens_but_no_write_cost(con):
     s = accounting.summarize(list(accounting.iter_cost_events(con)))
     assert s["cache"]["written"] == 500
     assert s["cache"]["write_cost"] == 0.0
+
+
+def test_the_chat_header_reads_the_same_total_as_the_export_picker(tmp_path):
+    """The defect this closes (#231). The header derived its own total in the
+    browser by summing usage_json off message rows, which can only ever see
+    messages. Voice spend reached it separately, outside the billed figure,
+    and utility spend could not reach it at all, because those calls never go
+    through db.insert_message. Three sources, two of them missing, one
+    formatter: two different dollar figures for one chat."""
+    from fastapi.testclient import TestClient
+    from backend.app import create_app
+    settings = Settings(data_dir=str(tmp_path / "data"),
+                        memory_url="http://127.0.0.1:1")
+    with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+        chat = client.post("/api/chats", json={}).json()
+        cid = chat["id"]
+        con = db.connect()
+        con.execute(
+            "INSERT INTO messages(chat_id, speaker, content, usage_json, created_at) "
+            "VALUES(?,?,?,?,?)",
+            (cid, "claude", "x", json.dumps({"input": 10, "output": 20,
+                                             "cost": 2.0}), time.time()))
+        con.execute(
+            "INSERT INTO voice_usage(chat_id, kind, units, cost, created_at) "
+            "VALUES(?,?,?,?,?)", (cid, "tts", 400, 0.25, time.time()))
+        db.log_utility_usage(con, cid, "title", "claude-haiku-4-5", 100, 10,
+                             0.5, provenance=provenance.RATE_CARD_ESTIMATE)
+        con.commit()
+        con.close()
+
+        picker = client.get("/api/usage/chats").json()[str(cid)]
+        header = client.get(f"/api/chats/{cid}").json()["chat"]["cost"]
+
+    for cat in accounting.CATEGORIES:
+        assert header[cat] == pytest.approx(picker[cat]), cat
+    assert header["tokens"] == picker["tokens"]
+    assert header["not_tracked"] == picker["not_tracked"]
+    # All three sources are in it, which is the whole point.
+    assert header["metered"] == pytest.approx(2.0 + 0.25 + 0.5)
+
+
+def test_a_chat_whose_only_spend_is_utility_still_reports_it(tmp_path):
+    """The headline case. Today that chat's header shows nothing at all while
+    the picker shows the cost."""
+    from fastapi.testclient import TestClient
+    from backend.app import create_app
+    settings = Settings(data_dir=str(tmp_path / "data"),
+                        memory_url="http://127.0.0.1:1")
+    with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+        chat = client.post("/api/chats", json={}).json()
+        con = db.connect()
+        db.log_utility_usage(con, chat["id"], "title", "claude-haiku-4-5",
+                             100, 10, 0.5,
+                             provenance=provenance.RATE_CARD_ESTIMATE)
+        con.commit()
+        con.close()
+        header = client.get(f"/api/chats/{chat['id']}").json()["chat"]["cost"]
+
+    assert header["metered"] == pytest.approx(0.5)
+    assert header["tokens"] == 110
+
+
+def test_voice_cost_is_counted_once_not_twice(tmp_path):
+    """Voice now sits inside the billed figure. chat['voice'] keeps carrying
+    the chars and seconds for the readout beside it, so the header must not
+    print the same dollars in both places. headerView.usageSummary drops the
+    voice cost clause for exactly this reason."""
+    from fastapi.testclient import TestClient
+    from backend.app import create_app
+    settings = Settings(data_dir=str(tmp_path / "data"),
+                        memory_url="http://127.0.0.1:1")
+    with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+        chat = client.post("/api/chats", json={}).json()
+        con = db.connect()
+        con.execute(
+            "INSERT INTO voice_usage(chat_id, kind, units, cost, created_at) "
+            "VALUES(?,?,?,?,?)", (chat["id"], "tts", 400, 0.25, time.time()))
+        con.commit()
+        con.close()
+        payload = client.get(f"/api/chats/{chat['id']}").json()["chat"]
+
+    assert payload["cost"]["metered"] == pytest.approx(0.25)
+    assert payload["voice"]["cost"] == pytest.approx(0.25)
+    assert payload["voice"]["tts_chars"] == 400
+
+
+def test_a_patched_chat_keeps_its_cost_block(tmp_path):
+    """PATCH returns the same payload, so a capability toggle must not blank
+    the header's total."""
+    from fastapi.testclient import TestClient
+    from backend.app import create_app
+    settings = Settings(data_dir=str(tmp_path / "data"),
+                        memory_url="http://127.0.0.1:1")
+    with TestClient(create_app(settings), base_url="http://127.0.0.1") as client:
+        chat = client.post("/api/chats", json={}).json()
+        assert "cost" in chat
+        patched = client.patch(f"/api/chats/{chat['id']}",
+                               json={"title": "renamed"}).json()
+    assert "cost" in patched
+    assert set(patched["cost"]) >= set(accounting.CATEGORIES)

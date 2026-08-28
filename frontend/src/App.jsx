@@ -24,7 +24,6 @@ import { participantInfo } from './speakers'
 import { pendingCount } from './textQueue'
 import { computeRunningChats, isChatRunning, shouldPollRunning } from './runningState'
 import { resolveHeaderTitle } from './headerState'
-import { chatCostTotals } from './messageCost'
 import { contextGauge } from './headerView'
 import { useEventStream } from './hooks/useEventStream'
 import { useRoundStream } from './hooks/useRoundStream'
@@ -720,11 +719,11 @@ export default function App() {
   const lastMsg = messages[messages.length - 1]
   const canContinue = !streaming && lastMsg && lastMsg.speaker !== 'user'
 
-  // Running chat total from per-message usage. Billed spend, subscription-
-  // covered usage and unprovable cost are counted apart and never summed
-  // - same rule the Spend page has always applied, same vocabulary. ChatHeader
-  // does the naming; this just supplies the numbers.
-  const chatTotal = chatCostTotals(messages)
+  // The chat total comes from the server, off the same scan the export
+  // picker reads, so the two surfaces cannot print different dollars for one
+  // chat. It refreshes when the chat opens and at round end, not per token:
+  // voice and utility spend live in tables the browser never sees.
+  const chatTotal = activeChat?.cost
   // The bar above the composer; the header ring reads the same gauge.
   const composerGauge = contextGauge(activeChat?.context)
 

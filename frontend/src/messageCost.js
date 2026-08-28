@@ -11,12 +11,18 @@
 // stays near zero, and you have a number meant to inform that alarms instead.
 //
 // This module is the chat surface's half of that rule. It mirrors
-// backend/accounting.py's CASH axis one message at a time, and reuses
-// spendView's split so the two surfaces cannot drift apart again.
+// backend/accounting.py's CASH axis for ONE MESSAGE at a time, which is what
+// the per-message chip needs and what no backend endpoint offers.
+//
+// It deliberately does NOT roll a chat up. It used to, by summing usage_json
+// off message rows, and that could only ever see messages: voice spend
+// arrived separately and utility spend not at all, because those calls never
+// go through db.insert_message. The header and the export picker printed
+// different dollars for the same chat through this very formatter. The chat
+// total now comes from the server, off the same scan the picker reads.
 //
 // Pure so the honesty rules are unit-tested rather than argued about in JSX.
 
-import { headline } from './spendView.js'
 
 // The summoned Claude Code guest (backend/guest.py SLUG; the same literal
 // speakers.js badges). Its turns are the ONLY ones whose billing mode varies at
@@ -147,22 +153,6 @@ export function costLabel(entry) {
       : 'Billed to your metered API key. Estimated from the local price table '
         + '(prices editable in config.json).',
   }
-}
-
-// Roll a chat's messages up onto the same three buckets, then name them with
-// spendView's split - the one place that decides which bucket is "billed".
-export function chatCostTotals(messages) {
-  const totals = { metered: 0, subscription_equiv: 0, unknown: 0 }
-  let tokens = 0
-  let notTracked = false
-  for (const m of messages || []) {
-    const entry = classifyUsage(m?.usage_json, m?.speaker)
-    if (!entry) continue
-    tokens += entry.tokens
-    if (entry.hasCost) totals[entry.category] += entry.cost
-    else notTracked = true
-  }
-  return { tokens, totals, notTracked, ...headline(totals) }
 }
 
 // The chat total as labelled figures, biggest question first. Every dollar

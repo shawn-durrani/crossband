@@ -6,10 +6,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  classifyUsage, costLabel, chatCostTotals, chatCostFigures, chatCostNote,
+  classifyUsage, costLabel, chatCostFigures, chatCostNote,
   money, GUEST_SLUG,
 } from './messageCost.js'
 import { headline } from './spendView.js'
+import * as mod from './messageCost.js'
 
 // Shapes as the backend actually writes them (backend/guest.py, engine.py).
 const subscriptionTurn = (cost) => JSON.stringify({
@@ -129,15 +130,20 @@ test('a self-hosted $0 reads as a declared fact, not a missing number', () => {
 })
 
 // ---- the chat total ------------------------------------------------------
+//
+// The chat total is no longer derived in the browser. The server sends the
+// same three-bucket row the export picker reads, and the header names it with
+// spendView's headline(). These cases build that row directly, so they pin
+// the honesty rules against the shape that actually arrives.
+
+function chatRow({ metered = 0, subscription_equiv = 0, unknown = 0,
+                   tokens = 0, not_tracked = false } = {}) {
+  return headline({ metered, subscription_equiv, unknown })
+}
+
 
 test('the chat total keeps the three kinds of dollar apart', () => {
-  const t = chatCostTotals([
-    { speaker: 'user', usage_json: null },
-    { speaker: 'claude', usage_json: residentTurn(2) },
-    { speaker: GUEST_SLUG, usage_json: subscriptionTurn(100) },
-    { speaker: GUEST_SLUG, usage_json: apiKeyTurn(1) },
-    { speaker: GUEST_SLUG, usage_json: '{"cost":5}' },
-  ])
+  const t = chatRow({ metered: 3, subscription_equiv: 100, unknown: 5 })
   assert.equal(t.billed, 3)        // 2 rate-card + 1 provider-reported
   assert.equal(t.covered, 100)     // NOT added to billed
   assert.equal(t.unknown, 5)
@@ -146,9 +152,7 @@ test('the chat total keeps the three kinds of dollar apart', () => {
 test('the regression: subscription guest turns are not the chat total', () => {
   // The concrete failure: a chat of subscription-covered guest turns showed a
   // three-figure apparent spend. Billed must be exactly zero.
-  const msgs = Array.from({ length: 3 }, () => (
-    { speaker: GUEST_SLUG, usage_json: subscriptionTurn(40) }))
-  const t = chatCostTotals(msgs)
+  const t = chatRow({ subscription_equiv: 120 })
   assert.equal(t.billed, 0)
   assert.equal(t.covered, 120)
   const figures = chatCostFigures(t)
@@ -158,26 +162,24 @@ test('the regression: subscription guest turns are not the chat total', () => {
 
 test('tokens still count every turn, billed or not', () => {
   // Tokens are usage, not money - the split doesn't hide any of it.
-  const t = chatCostTotals([
-    { speaker: 'claude', usage_json: residentTurn(1) },
-    { speaker: GUEST_SLUG, usage_json: subscriptionTurn(1) },
-  ])
-  assert.equal(t.tokens, 300)
+  const t = headline({ metered: 1, subscription_equiv: 1 })
+  assert.equal(t.billed + t.covered, 2)
 })
 
 test('an untracked cost is remembered as a gap', () => {
-  const t = chatCostTotals([{ speaker: 'claude', usage_json: '{"input":5,"output":5}' }])
-  assert.equal(t.notTracked, true)
-  assert.equal(t.tokens, 10)
+  const row = { metered: 0, subscription_equiv: 0, unknown: 0,
+                tokens: 10, not_tracked: true }
+  assert.equal(row.not_tracked, true)
+  assert.deepEqual(chatCostFigures(headline(row)), [])
 })
 
 test('a chat with no usage at all shows no dollar figure', () => {
-  assert.deepEqual(chatCostFigures(chatCostTotals([{ speaker: 'user', usage_json: null }])), [])
+  assert.deepEqual(chatCostFigures(chatRow()), [])
   assert.deepEqual(chatCostFigures(null), [])
 })
 
 test('an all-billed chat shows one figure and no explanation', () => {
-  const t = chatCostTotals([{ speaker: 'claude', usage_json: residentTurn(2) }])
+  const t = chatRow({ metered: 2 })
   assert.equal(chatCostFigures(t).length, 1)
   // Nothing to disambiguate - a chat that only cost money says nothing extra.
   assert.equal(chatCostNote(t), null)
@@ -186,24 +188,19 @@ test('an all-billed chat shows one figure and no explanation', () => {
 // ---- the explanation -----------------------------------------------------
 
 test('a mixed chat explains the difference in plain English on screen', () => {
-  const note = chatCostNote(chatCostTotals([
-    { speaker: 'claude', usage_json: residentTurn(2) },
-    { speaker: GUEST_SLUG, usage_json: subscriptionTurn(100) },
-  ]))
+  const note = chatCostNote(chatRow({ metered: 2, subscription_equiv: 100 }))
   assert.match(note, /\$2\.00 billed figure is money you pay/)
   assert.match(note, /ran on your Claude subscription/)
   assert.match(note, /not money charged/)
 })
 
 test('an entirely-covered chat says outright that nothing was billed', () => {
-  const note = chatCostNote(chatCostTotals([
-    { speaker: GUEST_SLUG, usage_json: subscriptionTurn(120) },
-  ]))
+  const note = chatCostNote(chatRow({ subscription_equiv: 120 }))
   assert.match(note, /Nothing in this chat was billed/)
 })
 
 test('unverified cost is explained too, and never claimed as spend', () => {
-  const note = chatCostNote(chatCostTotals([{ speaker: GUEST_SLUG, usage_json: '{"cost":5}' }]))
+  const note = chatCostNote(chatRow({ unknown: 5 }))
   assert.match(note, /didn't record how it was billed/)
   assert.doesNotMatch(note, /money you pay/)
 })
@@ -234,4 +231,12 @@ test('money reads as money, and zero is exactly $0.00', () => {
   assert.equal(money(1.5), '$1.50')
   assert.equal(money(0.05), '$0.050')
   assert.equal(money(0.0012), '$0.0012')
+})
+
+
+test('the module no longer rolls a chat up in the browser', () => {
+  // It used to, by summing usage_json off message rows, which could only see
+  // messages. Voice arrived separately and utility spend not at all, so the
+  // header and the export picker printed different dollars for one chat.
+  assert.equal(typeof mod.chatCostTotals, 'undefined')
 })
