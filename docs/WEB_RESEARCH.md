@@ -99,6 +99,10 @@ path for gated sources.
 - A rendered page load also carries a whole-page transfer budget
   (`browse_page_budget_mb`, 30MB); plain fetches keep per-connection
   caps only.
-- The transcript shows rendered text, not a screenshot.
+- A rendered view returns the page's visible text, its numbered
+  links, and a screenshot of the viewport. The image is stored as an
+  ordinary attachment on the tool row. It is dropped when it exceeds
+  the capture budget, and a challenge page's shot is discarded along
+  with its text.
 - The provenance label informs the models; it cannot force them. A
   page's text is still input a model may act on.
