@@ -301,7 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # refused. Loopback is always allowed; `trusted_hosts` adds a Tailscale
     # tailnet name (the tailnet is the OUTER boundary - only your devices can
     # reach that name; the session gate below stands inside it).
-    allowed_hosts = {"127.0.0.1", "localhost", "::1"} | {
+    allowed_hosts = set(auth.GATE_LOOPBACK_HOSTS) | {
         h.strip().lower() for h in settings.trusted_hosts.split(",") if h.strip()}
     app.state.allowed_hosts = allowed_hosts
     app.state.recovery_secret = recovery_secret
@@ -344,7 +344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if app.state.auth_enrolled:
                 return JSONResponse(status_code=401, content={
                     "detail": "locked - unlock first"})
-            if host not in ("127.0.0.1", "localhost", "::1"):
+            if host not in auth.GATE_LOOPBACK_HOSTS:
                 return JSONResponse(status_code=401, content={
                     "detail": "no owner password is enrolled yet - enrol from "
                               "the app (recovery secret required) first"})
