@@ -525,11 +525,11 @@ def test_cache_tokens_ride_every_axis_and_reconcile(con):
 
 
 def test_cache_write_cost_is_derived_only_from_a_rate_card(con):
-    """1M cache writes on claude-sonnet-5 = 1M * $3 input * 1.25 = $3.75."""
-    _msg(con, "claude", _base_usage(3.75, model="claude-sonnet-5",
+    """1M cache writes on claude-sonnet-5 = 1M * $2 input * 1.25 = $2.50."""
+    _msg(con, "claude", _base_usage(2.50, model="claude-sonnet-5",
                                     input=0, output=0, cache_creation=1_000_000), NOW)
     s = accounting.summarize(list(accounting.iter_cost_events(con)))
-    assert s["cache"]["write_cost"] == pytest.approx(3.75)
+    assert s["cache"]["write_cost"] == pytest.approx(2.50)
     assert s["cache"]["write_cost_share"] == pytest.approx(1.0)
 
 

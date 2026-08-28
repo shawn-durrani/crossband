@@ -145,8 +145,8 @@ def test_cache_terms_are_per_provider_not_a_global_multiplier():
     happening to differ."""
     from backend.config import compute_cost, _rate_card
     usage = {"cache_creation": 1_000_000}
-    # anthropic sonnet: 1M cache-write * $3 input * 1.25 = $3.75
-    assert compute_cost("claude-sonnet-5", usage, DEFAULT_PRICING) == pytest.approx(3.75)
+    # anthropic sonnet 4.6: 1M cache-write * $3 input * 1.25 = $3.75
+    assert compute_cost("claude-sonnet-4-6", usage, DEFAULT_PRICING) == pytest.approx(3.75)
     # openai terra: $2.00 input * 1.25 = $2.50/M written (verified)
     assert compute_cost("gpt-5.6-terra", usage, DEFAULT_PRICING) == pytest.approx(2.50)
     # a cache READ discounts to 0.1x on both
@@ -223,6 +223,26 @@ def test_current_roster_models_are_priced_and_onboardable():
     assert compute_cost("gpt-oss:20b", {"output": 1_000_000}, DEFAULT_PRICING) == 0.0
     for m in ("claude-sonnet-5", "gpt-oss:20b"):
         assert provenance_for(m, DEFAULT_PRICING)["source"] != "unknown"
+
+
+def test_current_anthropic_flagships_are_priced():
+    """Regression for the card that omitted claude-opus-5 for eight months:
+    the current flagship recorded cost=None with unknown provenance on every
+    turn, and the pricing page only lists a model once a seat already runs
+    it, so the hole was invisible exactly where an operator would look.
+    Also pins Sonnet 5 at the $2/$10 made standard when the scheduled
+    2026-09-01 rise to $3/$15 was cancelled - it reads like a typo and is
+    not."""
+    from backend import provenance
+    from backend.config import provenance_for
+    for m in ("claude-opus-5", "claude-mythos-5"):
+        assert provenance_for(m, DEFAULT_PRICING)["source"] \
+            == provenance.RATE_CARD_ESTIMATE
+    assert compute_cost("claude-opus-5",
+                        {"input": 1_000_000, "output": 1_000_000},
+                        DEFAULT_PRICING) == pytest.approx(30.0)
+    assert DEFAULT_PRICING["claude-sonnet-5"]["input"] == 2.0
+    assert DEFAULT_PRICING["claude-sonnet-5"]["output"] == 10.0
 
 
 def test_provenance_for_known_and_unknown():
