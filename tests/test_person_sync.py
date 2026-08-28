@@ -45,6 +45,7 @@ class FakeMembro:
         self.persons = {}      # slug -> record
         self.anchors = {}      # slug -> [{id, sha256, source, data}]
         self.requests = []
+        self.fail_anchor_lists = False   # 500 every anchors GET when set
 
         fake = self
 
@@ -80,6 +81,9 @@ class FakeMembro:
                 if parts[:2] == ["v1", "persons"] and len(parts) == 2:
                     self._json({"persons": list(fake.persons.values())})
                 elif len(parts) == 4 and parts[3] == "anchors":
+                    if fake.fail_anchor_lists:
+                        self._json({"error": "boom"}, 500)
+                        return
                     rows = [{k: a[k] for k in ("id", "sha256", "source")}
                             for a in fake.anchors.get(parts[2], [])]
                     self._json({"anchors": rows})
@@ -274,6 +278,51 @@ def test_a_local_merge_is_replayed(app, membro):
     out = person_sync.sync_once(membro.url, force=True)
     assert out["replayed"] == 1 and store.pending_corrections() == []
     assert membro.persons[gone_slug]["merged_into"] == survivor
+
+
+def test_an_unreadable_anchor_list_keeps_the_correction_pending(app, membro):
+    """A 401/500 on the clip list is NOT convergence. _find_anchor used to
+    return None for any non-200, and the replay consumed that None as
+    "already converged" - so a stale token or a flaky 500 permanently ate
+    the owner's delete, the exact silent drop the replay promises never to
+    make. An unreadable list now leaves the correction pending and the next
+    pass retries it."""
+    store = anchors.store()
+    a = store.ensure_person("Blair")
+    assert store.add_clip(a, _pcm(), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    gone = store.clips_of(a)[0]["file"]
+    gone_sha = hashlib.sha256((store.root / gone).read_bytes()).hexdigest()
+    assert store.delete_clip(a, gone)
+
+    membro.fail_anchor_lists = True
+    person_sync.sync_once(membro.url, force=True)
+    assert len(store.pending_corrections()) == 1   # kept, not eaten
+
+    membro.fail_anchor_lists = False
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert gone_sha not in {x["sha256"] for x in membro.anchors[a]}
+
+
+def test_watermark_advances_to_the_newest_remote_change(app, membro):
+    """The delta pull is real: the recorded watermark moves to the newest
+    updated_at membro reported, so the next pass asks membro only for what
+    changed since. (Membro-side: /v1/persons must project updated_at -
+    without it every pull re-reads everyone forever.)"""
+    store = anchors.store()
+    membro.persons["p-remote1"] = {
+        "slug": "p-remote1", "display_name": "Robin",
+        "name_owner_set": False, "forgotten_at": None,
+        "updated_at": 250.0, "aliases": [], "clip_count": 0}
+    assert store.get_sync_watermark() == 0
+    person_sync.sync_once(membro.url, force=True)
+    assert store.get_sync_watermark() == 250.0
+    person_sync.sync_once(membro.url, force=True)
+    since = [path for verb, *rest in membro.requests
+             for path in rest[:1]
+             if verb == "GET" and path.startswith("/v1/persons?")][-1]
+    assert "since=250.0" in since
 
 
 def test_corrections_survive_membro_being_down(app, membro):
