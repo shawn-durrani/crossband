@@ -105,7 +105,8 @@ async def check_turn(chat_id, message_id, label, cfg):
             return
         turn_text, roster_names, context_lines = state
         prompt = build_prompt(turn_text, label, roster_names, context_lines)
-        reply = await llm_util.utility_complete(prompt, cfg, max_tokens=120)
+        reply = await llm_util.utility_complete_logged(
+            chat_id, "mismatch_check", prompt, cfg, max_tokens=120)
         verdict = parse_verdict(reply)
         if not verdict["mismatch"]:
             return

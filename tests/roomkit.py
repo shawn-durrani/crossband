@@ -22,7 +22,7 @@ Import what you need. Nothing here is a fixture, so nothing here is magic.
 import json
 import time
 
-from backend import anchors, db
+from backend import anchors, db, llm_util
 
 from conftest import speech_pcm
 
@@ -100,3 +100,21 @@ def _remember(name, clips=3):
     for _ in range(clips - 1):
         assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
     return pid
+
+
+def as_utility_completion(reply_fn, *, input_tokens=120, output_tokens=8):
+    """Adapt a fake that returns reply TEXT into the shape
+    `llm_util.utility_complete_with_usage` returns.
+
+    The scan paths call `utility_complete_logged`, which needs token counts to
+    price the call, so a fake returning a bare string is no longer enough.
+    Patching one rung lower also means the real logging path runs, which is
+    what lets these suites assert a `utility_usage` row appears.
+    """
+    async def fake(prompt, cfg, max_tokens=2000, model=None, timeout=None):
+        text = await reply_fn(prompt, cfg, max_tokens)
+        if text is None:
+            return llm_util.UtilityCompletion(text=None)
+        return llm_util.UtilityCompletion(text=text, input_tokens=input_tokens,
+                                          output_tokens=output_tokens)
+    return fake

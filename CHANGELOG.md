@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The Spend page now counts the background model work behind room mode
+  and voice (#232). Five of the eight cheap-model calls the app makes
+  were spending real money and appearing nowhere: the ones that read a
+  turn for a spoken command, an introduction, a name correction, a
+  reasoning-depth change, or a suspected wrong speaker. Only the title,
+  summary and distillation calls were counted. Your utility total will
+  step up as a result, and on a busy room-mode chat it may step up a
+  lot. That is spend you were already paying, now visible.
+
 - Closed a gap in the voice relays. On an install that has a trusted
   host configured and has never enrolled an owner password, anything
   that could reach that host could open the two voice relays without
