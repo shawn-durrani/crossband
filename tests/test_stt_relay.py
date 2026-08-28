@@ -15,7 +15,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import engine
+from backend import auth, engine
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
@@ -83,6 +83,12 @@ def relay(app, monkeypatch):
     # the TestClient's websocket host is "testserver"; admit it through the
     # same allowlist the real Tailscale host rides in on
     app.state.allowed_hosts = {"testserver", "127.0.0.1", "localhost", "::1"}
+    # These suites drive the relays as a loopback browser would. The
+    # TestClient's websocket host is "testserver", so the gate must read it
+    # as this machine; otherwise it is a trusted non-loopback host and the
+    # pre-enrolment gate correctly holds it (see test_auth_gate).
+    monkeypatch.setattr(auth, "GATE_LOOPBACK_HOSTS",
+                        auth.GATE_LOOPBACK_HOSTS | {"testserver"})
     return fake
 
 
@@ -184,6 +190,12 @@ def _capturing_relay(app, monkeypatch):
     monkeypatch.setattr(voice_router.engine, "prewarm_recall",
                         lambda *a, **kw: None)
     app.state.allowed_hosts = {"testserver", "127.0.0.1", "localhost", "::1"}
+    # These suites drive the relays as a loopback browser would. The
+    # TestClient's websocket host is "testserver", so the gate must read it
+    # as this machine; otherwise it is a trusted non-loopback host and the
+    # pre-enrolment gate correctly holds it (see test_auth_gate).
+    monkeypatch.setattr(auth, "GATE_LOOPBACK_HOSTS",
+                        auth.GATE_LOOPBACK_HOSTS | {"testserver"})
     return seen
 
 

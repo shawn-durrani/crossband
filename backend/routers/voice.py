@@ -32,18 +32,26 @@ def _ws_local(ws) -> bool:
     The session check mirrors the HTTP middleware's enrolment-activated gate:
     cookies ride the websocket handshake, so the browser that unlocked the
     page authenticates here for free, and an anonymous socket is refused the
-    moment a password exists."""
+    moment a password exists. Before enrolment the gate still has two answers,
+    not one: loopback is open and a trusted non-loopback host is not. Both
+    guards read auth.GATE_LOOPBACK_HOSTS so they cannot drift apart again."""
     from .. import auth as auth_mod
     app = ws.app
-    allowed = getattr(app.state, "allowed_hosts", {"127.0.0.1", "localhost", "::1"})
+    allowed = getattr(app.state, "allowed_hosts", auth_mod.GATE_LOOPBACK_HOSTS)
     if (ws.url.hostname or "").lower() not in allowed:
         return False
     origin = ws.headers.get("origin")
     if origin is not None and (urlparse(origin).hostname or "").lower() not in allowed:
         return False
+    if auth_mod.session_ok(app, ws.cookies.get(auth_mod.SESSION_COOKIE)):
+        return True
     if getattr(app.state, "auth_enrolled", False):
-        return auth_mod.session_ok(app, ws.cookies.get(auth_mod.SESSION_COOKIE))
-    return True
+        return False
+    # Pre-enrolment the two postures differ, exactly as they do over HTTP.
+    # Loopback keeps its historical open posture. A trusted non-loopback host
+    # sees the lock screen until an owner password exists, so a tailnet client
+    # refused on every /api route cannot open the metered relays either.
+    return (ws.url.hostname or "").lower() in auth_mod.GATE_LOOPBACK_HOSTS
 import logging
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, WebSocket
