@@ -88,10 +88,15 @@ test('usage summary keeps one decimal, unlike the gauge', () => {
   assert.equal(usageSummary({ tokens: 42 }, null).tokens, 'Σ 42 tok')
 })
 
-test('voice rides along only when there is voice', () => {
+test('voice rides along only when there is voice, and never re-states its cost', () => {
   assert.equal(usageSummary({ tokens: 100 }, { tts_chars: 0 }).voice, '')
   const v = usageSummary({ tokens: 100 }, { tts_chars: 800, stt_seconds: 12.4, cost: 0.085 })
-  assert.equal(v.voice, ' · voice 800 ch / 12s · ~$0.085')
+  // Chars and seconds are usage and appear nowhere else. The dollar figure
+  // used to ride here because the header's total counted messages alone; the
+  // total now comes from the server and already contains voice, so printing
+  // it again would state the same money twice.
+  assert.equal(v.voice, ' · voice 800 ch / 12s')
+  assert.doesNotMatch(v.voice, /\$/)
 })
 
 test('a chat with only voice still reports', () => {

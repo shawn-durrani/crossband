@@ -29,14 +29,53 @@ class ChatIn(BaseModel):
     participant_ids: list[int] | None = None
 
 
-def _chat_payload(con, chat_id):
+def _pricing(request):
+    """The EFFECTIVE price table, never the module-level default. A bare
+    accounting call silently reverts to DEFAULT_PRICING, which is the wiring
+    bug #256 fixed for the two Spend endpoints."""
+    return request.app.state.settings.as_cfg().get("pricing")
+
+
+def _blank_chat_usage(messages=0):
+    return {"messages": messages, "tokens": 0, "not_tracked": False,
+            **{c: 0.0 for c in accounting.CATEGORIES}}
+
+
+def _chat_payload(con, chat_id, *, pricing=None):
     chat = dict(con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone())
     chat["participant_ids"] = [
         r["participant_id"] for r in con.execute(
             "SELECT participant_id FROM chat_participants WHERE chat_id=?", (chat_id,))
     ]
     chat["voice"] = db.chat_voice_totals(con, chat_id)
+    chat["cost"] = _chat_cost(con, chat_id, pricing)
     return chat
+
+
+def _chat_cost(con, chat_id, pricing):
+    """The chat's spend, in the SAME shape and from the SAME scan the export
+    picker uses (`_blank_chat_usage` / `/api/usage/chats`).
+
+    The header used to derive its own total in the browser by summing
+    `usage_json` off message rows, which can only ever see messages. Voice
+    spend reached it separately as a trailing segment outside the billed
+    figure, and utility spend could not reach it at all, because those calls
+    never go through `db.insert_message`. Three sources, two of them missing,
+    one formatter: the header and the picker printed different dollars for
+    the same chat.
+
+    Scoped to one chat and indexed on all three tables, so this is a much
+    smaller scan than the picker's, which sweeps every chat."""
+    row = _blank_chat_usage()
+    events = list(accounting.iter_cost_events(con, chat_id=chat_id, pricing=pricing))
+    for g in accounting.summarize(events)["by_chat"]:
+        if int(g["key"]) != int(chat_id):
+            continue
+        row["tokens"] = g["tokens"]
+        row["not_tracked"] = g["not_tracked"]
+        for cat in accounting.CATEGORIES:
+            row[cat] = g[cat]
+    return row
 
 
 def _context_estimate(chat, msgs, cfg, memory_summary_len=0):
@@ -73,7 +112,7 @@ def create_chat(body: ChatIn, request: Request):
         con.execute("INSERT OR IGNORE INTO chat_participants(chat_id, participant_id) VALUES(?,?)",
                     (chat_id, pid))
     con.commit()
-    chat = _chat_payload(con, chat_id)
+    chat = _chat_payload(con, chat_id, pricing=_pricing(request))
     con.close()
     return chat
 
@@ -85,7 +124,7 @@ async def get_chat(chat_id: int, request: Request):
     if not row:
         con.close()
         raise HTTPException(404)
-    chat = _chat_payload(con, chat_id)
+    chat = _chat_payload(con, chat_id, pricing=_pricing(request))
     msgs = db.get_chat_messages(con, chat_id)
     con.close()
     memory = request.app.state.memory
@@ -184,7 +223,7 @@ def update_chat(chat_id: int, body: ChatIn, request: Request):
                 chat_id, request.app.state.settings.as_cfg())
         from .. import events
         events.notify_room_update()
-    chat = _chat_payload(con, chat_id)
+    chat = _chat_payload(con, chat_id, pricing=_pricing(request))
     con.close()
     return chat
 
@@ -614,11 +653,6 @@ async def distill(chat_id: int, request: Request):
 
 # ---------- export & usage ----------
 
-def _blank_chat_usage(messages=0):
-    return {"messages": messages, "tokens": 0, "not_tracked": False,
-            **{c: 0.0 for c in accounting.CATEGORIES}}
-
-
 @router.get("/api/usage/chats")
 def chats_usage(request: Request):
     """Per-chat totals for the export picker: messages, tokens, and cost split
@@ -627,12 +661,9 @@ def chats_usage(request: Request):
     There is deliberately no single `cost` field. This endpoint used to add
     every `usage_json.cost` plus voice into one number, which presented a Claude
     Code guest turn covered by a subscription as money the user was charged.
-    That is the same defect the chat header's running total fixed one layer up,
-    and one the browser cannot undo once the buckets are collapsed here. Built on backend/accounting so the
-    picker, the chat header and the Spend page all classify a dollar the same
-    way; that also means voice and utility spend are now counted consistently
-    with the Spend page's own per-chat rows, where the hand-rolled query it
-    replaces counted voice but silently dropped utility work."""
+    The browser cannot undo that once the buckets are collapsed here. Built on
+    backend/accounting, so the picker, the Spend page and the chat header all
+    classify a dollar the same way and all read the same three tables."""
     con = db.connect()
     counts = {r["chat_id"]: r["c"] for r in con.execute(
         "SELECT chat_id, COUNT(*) c FROM messages GROUP BY chat_id")}
@@ -658,9 +689,8 @@ def usage_summary(request: Request, window: str = "all"):
 
     Provenance is kept honest: metered spend, subscription-equivalent usage and
     unknown/unverified are reported separately and never collapsed. Shares
-    backend/accounting with every other money-showing surface (the chat header
-    and the export picker), so none of them can diverge.
-    Read-only; touches no provider."""
+    backend/accounting with every other money-showing surface, so none of them
+    can diverge. Read-only; touches no provider."""
     cfg = request.app.state.settings.as_cfg()
     now_ts = datetime_module.datetime.now().timestamp()
     midnight = datetime_module.datetime.now().replace(

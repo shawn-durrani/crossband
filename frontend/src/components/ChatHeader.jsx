@@ -4,6 +4,7 @@ import { Menu, Headphones, MoreHorizontal, Check, Copy, MicOff, Brain, Globe,
 import { withAlpha } from '../speakers'
 import { chatCostFigures, chatCostNote, COST_TONE } from '../messageCost'
 import { contextGauge, usageSummary, capabilityRows } from '../headerView'
+import { headline } from '../spendView'
 
 // The chat's header, both widths (extracted from App.jsx).
 //
@@ -71,8 +72,12 @@ export default function ChatHeader({
 
   const gauge = contextGauge(activeChat?.context)
   const usage = usageSummary(chatTotal, activeChat?.voice)
-  const costFigures = chatCostFigures(chatTotal)
-  const costNote = chatCostNote(chatTotal)
+  // The server sends the raw three-bucket row; headline() names which bucket
+  // is "billed". Exactly what ExportModal does with the same shape, so the
+  // two surfaces cannot disagree about a dollar again.
+  const named = chatTotal ? headline(chatTotal) : null
+  const costFigures = named ? chatCostFigures(named) : []
+  const costNote = named ? chatCostNote(named) : null
 
   // ---- Shared control fragments (desktop header ⇄ mobile overflow) ----
 

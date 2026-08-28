@@ -5,6 +5,16 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The running total in the chat header is now the same number the export
+  picker shows (#231). It was worked out in the browser from the message
+  list, so it could only ever see messages. Voice cost sat outside it and
+  the background model work behind titles, summaries and room mode was
+  missing entirely. The two screens could show different amounts for one
+  chat. The header now reads the figure the server sends, so the token
+  count and the dollar amount will both look higher, and the voice cost
+  appears once rather than beside a total that excluded it. It refreshes
+  when you open a chat and at the end of each round.
+
 - Closed a gap in the voice relays. On an install that has a trusted
   host configured and has never enrolled an owner password, anything
   that could reach that host could open the two voice relays without

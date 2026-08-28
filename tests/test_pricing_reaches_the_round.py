@@ -161,3 +161,30 @@ def test_both_spend_endpoints_take_the_effective_table(api):
     for table in seen["tables"]:
         assert table is not None, "endpoint still calls iter_cost_events bare"
         assert "claude-sonnet-5" in table
+
+
+def test_the_chat_payload_also_takes_the_effective_table(api):
+    """#231 added a third per-chat accounting caller. A bare call reverts to
+    module-level DEFAULT_PRICING, which is the wiring bug this file exists
+    to guard."""
+    client, _, _ = api
+    _save(client)
+    seen = []
+    real = accounting.iter_cost_events
+
+    def spy(con, **kw):
+        seen.append(kw.get("pricing"))
+        return real(con, **kw)
+
+    import backend.routers.chats as chats_router
+    chats_router.accounting.iter_cost_events = spy
+    try:
+        chat = client.post("/api/chats", json={}).json()
+        assert client.get(f"/api/chats/{chat['id']}").status_code == 200
+    finally:
+        chats_router.accounting.iter_cost_events = real
+
+    assert seen, "the chat payload no longer scans accounting at all"
+    for table in seen:
+        assert table is not None, "chat payload calls iter_cost_events bare"
+        assert "claude-sonnet-5" in table

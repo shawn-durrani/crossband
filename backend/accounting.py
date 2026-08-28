@@ -1,13 +1,16 @@
 """Shared cost accounting - the single definition of "what a dollar is" that
 every money-showing surface consumes, so they can never diverge. Build the
 accounting once; each surface is just a different window/grouping over the same
-events. Today that means the cumulative Spend page, the chat header's running
-total and the export picker's per-chat rows.
+events. Today that means the cumulative Spend page, the export picker's
+per-chat rows, the in-call spend diagnostic, and the chat header, which reads
+its total off the chat payload rather than deriving one in the browser.
 
-This docstring used to name a per-chat ``/cost`` slash command as the first
-consumer. **That command does not exist**: it was proposed and never built, and
-the phrase outlived the plan, spreading into ARCHITECTURE.md as a statement of
-fact. Left as a marker: describe what is built, not what was intended.
+This docstring has twice named a consumer that was not one. It named a
+per-chat ``/cost`` slash command that was proposed and never built, and the
+phrase spread into ARCHITECTURE.md as a statement of fact. It then named the
+chat header, which really did derive its own total from message rows alone
+and so could not see voice or utility spend. Left as a marker: describe what
+is built, not what was intended, and check before adding a name here.
 
 PROVENANCE HONESTY. A recorded dollar is not automatically a charged dollar.
 Every cost is sorted into exactly one of three buckets:
