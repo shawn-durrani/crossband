@@ -160,3 +160,58 @@ def test_current_contract_stays_quiet(caplog):
     with caplog.at_level("WARNING"):
         asyncio.run(mc.save_fact("fine", "claude-x", web_sources=["a.example"]))
     assert not [r for r in caplog.records if "predates" in r.message]
+
+
+# ---------- the row-to-wire seam ----------
+
+class _FakeHandoffHttp:
+    """Healthy service, every POST recorded - the leave hook needs get()
+    for the probe and post() for /ingest and /distill."""
+
+    def __init__(self):
+        self.posts = []
+
+    async def get(self, url):
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, json={"status": "ok",
+                                         "contract_version": "1.3"},
+                              request=req)
+
+    async def post(self, url, json=None):
+        self.posts.append((url, json))
+        req = httpx.Request("POST", url)
+        return httpx.Response(200, json={"ok": True, "ingested": 1,
+                                         "skipped": 0, "attached": 0},
+                              request=req)
+
+
+def test_handoff_carries_the_stamp_from_row_to_wire(tmp_path):
+    """End to end across the seam that broke: a stamped ROW must arrive at
+    /ingest still stamped. The row write and the payload mapper each had a
+    test; the query between them selected a fixed column list and silently
+    dropped the stamp, so every mined fact skipped the web-derived hold."""
+    from backend import engine
+    from backend.app import create_app
+
+    create_app(Settings(data_dir=str(tmp_path / "data"),
+                        memory_url="http://127.0.0.1:1"))
+    con = db.connect()
+    cur = con.execute(
+        "INSERT INTO chats(title, created_at, updated_at) VALUES('t', 0, 0)")
+    con.commit()
+    chat_id = cur.lastrowid
+    stamped = db.insert_message(con, chat_id, "claude-x", "web-informed",
+                                notify=False, web_sources={"a.example"})
+    plain = db.insert_message(con, chat_id, "user", "typed", notify=False)
+    con.close()
+
+    mc = memory_client.MemoryClient(base_url="http://127.0.0.1:1")
+    fake = _FakeHandoffHttp()
+    mc._client = fake
+    asyncio.run(engine.leave_chat_job(chat_id, {"user_name": "Owner"}, mc))
+
+    ingests = [body for url, body in fake.posts if url.endswith("/ingest")]
+    assert len(ingests) == 1
+    by_id = {int(m["external_id"]): m for m in ingests[0]["messages"]}
+    assert by_id[stamped["id"]]["web_sources"] == ["a.example"]
+    assert "web_sources" not in by_id[plain["id"]]

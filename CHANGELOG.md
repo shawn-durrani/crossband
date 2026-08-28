@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Facts mined from web-touched rounds now reach the review hold they were
+  built for (#268). The round's web stamp was written to the message row,
+  but the query behind the memory handoff never selected the column, so
+  the stamp never left the app and the memory service treated every
+  web-informed reply as ordinary transcript. The stamp now rides the
+  handoff, and an end-to-end test walks a stamped row all the way to the
+  wire so the seam cannot reopen quietly.
+
 - The Spend page now counts the background model work behind room mode
   and voice (#232). Five of the eight cheap-model calls the app makes
   were spending real money and appearing nowhere: the ones that read a
