@@ -70,7 +70,7 @@ SOURCE_LABELS = {
     SOURCE_CODE: "Coding agent",
     SOURCE_TTS: "Voice · TTS",
     SOURCE_STT: "Voice · STT",
-    SOURCE_UTILITY: "Utility (titles/summaries)",
+    SOURCE_UTILITY: "Utility (background model work)",
 }
 
 # ---- producer classes (the like-with-like axis) ----

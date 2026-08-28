@@ -1,6 +1,6 @@
 """backend.llm_util: routing, degrade-without-keys, and the usage/timeout
 telemetry the critic eval harness needs (utility_complete_with_usage).
-utility_complete itself must keep behaving exactly as before -- it's used by
+utility_complete_with_usage must keep behaving exactly as before -- it's used by
 chat_memory.py's rolling summary/auto-title/distillation paths."""
 
 import asyncio
@@ -78,31 +78,35 @@ def test_model_family_routes_by_prefix():
     assert llm_util.model_family("") == "anthropic"
 
 
-def test_utility_complete_missing_anthropic_key_returns_none():
+def test_utility_completion_missing_anthropic_key_returns_none():
     out = asyncio.run(
-        llm_util.utility_complete("hi", {"utility_model": "claude-haiku-4-5"}))
+        llm_util.utility_complete_with_usage(
+            "hi", {"utility_model": "claude-haiku-4-5"})).text
     assert out is None
 
 
-def test_utility_complete_missing_openai_key_returns_none():
-    out = asyncio.run(llm_util.utility_complete("hi", {"utility_model": "gpt-5.1"}))
+def test_utility_completion_missing_openai_key_returns_none():
+    out = asyncio.run(llm_util.utility_complete_with_usage(
+        "hi", {"utility_model": "gpt-5.1"})).text
     assert out is None
 
 
-def test_utility_complete_anthropic_strips_text(monkeypatch):
+def test_utility_completion_anthropic_strips_text(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     import anthropic
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAsyncAnthropic)
     out = asyncio.run(
-        llm_util.utility_complete("hi", {"utility_model": "claude-haiku-4-5"}))
+        llm_util.utility_complete_with_usage(
+            "hi", {"utility_model": "claude-haiku-4-5"})).text
     assert out == "haiku says hi"
 
 
-def test_utility_complete_openai_strips_text(monkeypatch):
+def test_utility_completion_openai_strips_text(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     import openai
     monkeypatch.setattr(openai, "AsyncOpenAI", FakeAsyncOpenAI)
-    out = asyncio.run(llm_util.utility_complete("hi", {"utility_model": "gpt-5.1"}))
+    out = asyncio.run(llm_util.utility_complete_with_usage(
+        "hi", {"utility_model": "gpt-5.1"})).text
     assert out == "gpt says hi"
 
 
@@ -162,6 +166,7 @@ def test_client_is_built_once_and_reused_across_calls(monkeypatch):
 
     async def go():
         for _ in range(3):
-            await llm_util.utility_complete("p", {"utility_model": "claude-haiku-4-5"})
+            await llm_util.utility_complete_with_usage(
+                "p", {"utility_model": "claude-haiku-4-5"})
     asyncio.run(go())
     assert built["n"] == 1

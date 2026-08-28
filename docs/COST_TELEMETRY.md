@@ -176,12 +176,27 @@ intended shape.
 
 ## 4. Spend attribution: `utility_usage`
 
-`chat_memory._run_utility` (`backend/chat_memory.py`) is the one call site for
-all three utility uses (`kind`: `summarize` | `title` | `distill`). Each real
-call persists one row to `utility_usage` (`chat_id`, `kind`, `model`,
-`input_tokens`, `output_tokens`, `cost`, `provenance`, `created_at`) and
-commits immediately, independent of what the caller does with the reply text
-(a degenerate title/summary is still a call that happened and cost money).
+Two writers persist here, and they share one pricing step
+(`llm_util.price_utility_call`) so neither can price a call the other way.
+`chat_memory._run_utility` covers the chat-side uses (`kind`: `summarize` |
+`title` | `distill`). `llm_util.utility_complete_logged` covers the room and
+voice scans (`command_scan` | `intro_scan` | `correction_scan` |
+`depth_scan` | `mismatch_check`), which have a chat id but no open
+connection, so it opens its own on a worker thread.
+
+Each real call persists one row to `utility_usage` (`chat_id`, `kind`,
+`model`, `input_tokens`, `output_tokens`, `cost`, `provenance`,
+`created_at`) and commits immediately, independent of what the caller does
+with the reply text (a degenerate title or summary is still a call that
+happened and cost money).
+
+The scan writer swallows its own failures. Both its callers wrap the whole
+turn in a handler that abandons the remaining work, so a failed spend insert
+would silently cost you a name correction or a mismatch flag. The reply is
+returned either way.
+
+A busy room-mode turn can fire four scans, and the Spend page folds every
+kind into one utility line. Expect that line to grow once these are counted.
 Nothing is logged when no call went out at all (missing utility-model key),
 which is the same "degrade quietly, log nothing" behaviour the app had before
 the split.

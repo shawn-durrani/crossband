@@ -236,14 +236,18 @@ CREATE TABLE IF NOT EXISTS voice_usage(
   created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS utility_usage(
-  -- Cheap-model spend attribution. chat_memory.py's rolling
-  -- summaries/auto-titles/project-distillation calls never go through
-  -- db.insert_message (they write directly to chats/projects, not the
-  -- transcript) so they had no cost record at all - invisible utility-model
-  -- (typically Haiku) spend. This table is their one, mirroring voice_usage.
+  -- Cheap-model spend attribution. Utility calls never go through
+  -- db.insert_message (they write to chats/projects, or to nothing at all)
+  -- so they had no cost record - invisible utility-model (typically Haiku)
+  -- spend. This table is their one, mirroring voice_usage. Two paths write
+  -- here: chat_memory._run_utility for summaries, titles and distillation,
+  -- and llm_util.utility_complete_logged for the room and voice scans.
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,              -- 'summarize' | 'title' | 'distill'
+  -- 'summarize' | 'title' | 'distill' (chat_memory), and 'command_scan' |
+  -- 'intro_scan' | 'correction_scan' | 'depth_scan' | 'mismatch_check'
+  -- (the room and voice scans).
+  kind TEXT NOT NULL,
   model TEXT NOT NULL DEFAULT '',
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -771,9 +775,8 @@ def chat_voice_totals(con, chat_id):
 
 def log_utility_usage(con, chat_id, kind, model, input_tokens, output_tokens, cost,
                        provenance=None):
-    """Persist one utility-model call's cost - the rolling-summary/
-    auto-title/project-distillation calls in chat_memory.py never go through
-    insert_message, so this is their only cost record. `cost` may be None
+    """Persist one utility-model call's cost - no utility call goes through
+    insert_message, so this is the only cost record for any of them. `cost` may be None
     (model absent from the pricing table) - recorded as-is, same "not
     tracked, not $0.00" honesty as voice_usage.
 

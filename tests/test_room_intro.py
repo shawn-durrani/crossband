@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 from backend import anchors, db, diarize, introductions
 from backend.app import create_app
 from backend.config import Settings, load_settings
-from roomkit import _chat_room_mode, _wait_for, loud_pcm
+from roomkit import _chat_room_mode, _wait_for, as_utility_completion, loud_pcm
 from tests.conftest import speech_pcm
 
 
@@ -74,7 +74,8 @@ def utility(monkeypatch):
             await asyncio.to_thread(state["gate"].wait, 10)
         return json.dumps(state["verdict"])
 
-    monkeypatch.setattr("backend.llm_util.utility_complete", fake_utility)
+    monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
+                        as_utility_completion(fake_utility))
     return state
 
 

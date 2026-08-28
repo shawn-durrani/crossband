@@ -789,7 +789,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
         outcome = None
         command_confirmed = False
         if command_prefilter(text):
-            reply = await llm_util.utility_complete(
+            reply = await llm_util.utility_complete_logged(
+                chat_id, "command_scan",
                 build_command_prompt(text), cfg, max_tokens=60)
             direction = parse_command_verdict(reply)
             if direction:
@@ -803,8 +804,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             agents = await asyncio.to_thread(_all_participant_names)
             prompt = build_prompt(text, cfg.get("user_name", "User"), roster,
                                   participant_names=agents)
-            reply = await llm_util.utility_complete(prompt, cfg,
-                                                    max_tokens=200)
+            reply = await llm_util.utility_complete_logged(
+                chat_id, "intro_scan", prompt, cfg, max_tokens=200)
             verdict = parse_verdict(reply)
             if verdict["introductions"] or verdict["departures"]:
                 intro_outcome = await asyncio.to_thread(apply_scan, chat_id,
@@ -817,7 +818,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             # name, owner-set. Its own prefilter + utility call, same
             # fire-and-forget scan, still one verdict line per turn.
             known = await asyncio.to_thread(_correction_known_names, chat_id)
-            reply = await llm_util.utility_complete(
+            reply = await llm_util.utility_complete_logged(
+                chat_id, "correction_scan",
                 build_correction_prompt(text, cfg.get("user_name", "User"),
                                         known),
                 cfg, max_tokens=120)
@@ -831,7 +833,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             # Spoken reasoning depth (#105): own prefilter + utility call,
             # same fire-and-forget scan, still one verdict line per turn.
             seats = await asyncio.to_thread(_all_participant_names)
-            reply = await llm_util.utility_complete(
+            reply = await llm_util.utility_complete_logged(
+                chat_id, "depth_scan",
                 depth.build_depth_prompt(text, seats), cfg, max_tokens=200)
             changes = depth.parse_depth_verdict(reply)
             if changes:
