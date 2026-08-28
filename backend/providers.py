@@ -1282,9 +1282,39 @@ def _content_hash(text):
     return hashlib.sha256((text or "").encode("utf-8", "ignore")).hexdigest()[:16]
 
 
+# Anything longer than this is an attachment payload rather than prose: base64
+# image data, a PDF, or a framed text file. A long model turn is nowhere near it.
+_BLOB_CHARS = 4096
+
+
+def _digest_blobs(node):
+    """Replace attachment-sized strings with a digest of themselves.
+
+    json.dumps over a 28MB base64 blob costs more than hashing it: measured at
+    83ms to serialise against 25ms to hash, per seat, per round. Digesting each
+    blob first and serialising the small structure that remains changes nothing
+    about what the field detects, because a changed blob still changes its own
+    digest and therefore the whole hash.
+    """
+    if isinstance(node, str):
+        if len(node) <= _BLOB_CHARS:
+            return node
+        return f"<blob:{len(node)}:{_content_hash(node)}>"
+    if isinstance(node, dict):
+        return {k: _digest_blobs(v) for k, v in node.items()}
+    if isinstance(node, (list, tuple)):
+        return [_digest_blobs(v) for v in node]
+    return node
+
+
 def _messages_hash(messages):
+    """A stable fingerprint of the transcript prefix, for the cache diagnostic.
+
+    The value is only ever compared against the previous call's, never to a
+    literal, so the projection below is free to change what it hashes.
+    """
     try:
-        payload = json.dumps(messages, sort_keys=True, default=str)
+        payload = json.dumps(_digest_blobs(messages), sort_keys=True, default=str)
     except (TypeError, ValueError):
         payload = str(messages)
     return _content_hash(payload)
