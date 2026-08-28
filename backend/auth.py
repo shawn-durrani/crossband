@@ -37,6 +37,11 @@ import time
 
 from . import db
 
+# What "this machine" means to the gate. Narrower than config._LOOPBACK_HOSTS,
+# which also carries 0.0.0.0 to answer a different question (is this seat
+# self-hosted). A bind address is not a caller, so it must never widen a gate.
+GATE_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
 SESSION_COOKIE = "cb_session"
 SESSION_TTL_S = 24 * 3600
 VERIFIER_KEY = "owner_password_verifier"
