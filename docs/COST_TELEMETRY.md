@@ -37,10 +37,12 @@ one log line per tool-use round, at `INFO` level, from the `crossband.providers`
 logger, tagged `claude_chat_cache`:
 
 ```
-claude_chat_cache speaker=<slug> model=<model-id> tool_round=<int>
+claude_chat_cache speaker=<slug> model=<model-id> chat=<int> tool_round=<int>
+  tools_hash=<16-hex> tools_n=<int> changed=<csv|none>
   stable_hash=<16-hex> stable_chars=<int>
   volatile_hash=<16-hex> volatile_chars=<int>
   transcript_hash=<16-hex> ttl=<label>
+  thinking=<type|none> effort=<label|default>
   input_tok=<int> cache_read_tok=<int>
   cache_write_5m_tok=<int> cache_write_1h_tok=<int>
   output_tok=<int>
@@ -74,17 +76,22 @@ There is no code path in this feature that writes chat content to the log.
   transcript, since one writer advances `summary_upto` in the same statement,
   so a rebuild already re-writes the transcript. Moving the summary would cost
   uncached tokens every turn to prevent a bust it is not causing.
-- **`chat_id` / `tools_hash` / `tools_n` / `changed`**: the fields that
+- **`chat` / `tools_hash` / `tools_n` / `changed`**: the fields that
   let a miss name its own cause. `tools_hash` covers the tool definitions, which
   lead Anthropic's cache prefix AHEAD of system and messages: change them and
   everything behind is invalidated while every other hash here stays identical
   (`engine.py` adds/removes `summon_claude_code` depending on whether a summons
-  is claimed, exactly that shape). `chat_id` matters just as much: switching
+  is claimed, exactly that shape). `chat` matters just as much: switching
   chats legitimately changes the whole prefix, so without it a benign switch and
   a real break look the same. `changed` lists which components differ from this
   seat's previous call IN THIS CHAT: `none` on a hit, `first-call` after a
   restart. All four also ride `usage_json.cache_prefix`, so this is SQL-queryable
   rather than log-only.
+- **`thinking` / `effort`**: content-free confirmation of what was
+  actually sent on this call. `thinking` is the block type or `none`;
+  `effort` is the seat's reasoning effort or `default`. Both change the
+  request without changing any hash above, so a miss they explain would
+  otherwise have no visible cause.
 - **`transcript_hash`**: a fingerprint of the CACHEABLE conversation
   prefix: the outgoing message list *before* the volatile tail joins it
   (hashing the tail in would show churn by construction). Same value on
@@ -169,12 +176,27 @@ intended shape.
 
 ## 4. Spend attribution: `utility_usage`
 
-`chat_memory._run_utility` (`backend/chat_memory.py`) is the one call site for
-all three utility uses (`kind`: `summarize` | `title` | `distill`). Each real
-call persists one row to `utility_usage` (`chat_id`, `kind`, `model`,
-`input_tokens`, `output_tokens`, `cost`, `provenance`, `created_at`) and
-commits immediately, independent of what the caller does with the reply text
-(a degenerate title/summary is still a call that happened and cost money).
+Two writers persist here, and they share one pricing step
+(`llm_util.price_utility_call`) so neither can price a call the other way.
+`chat_memory._run_utility` covers the chat-side uses (`kind`: `summarize` |
+`title` | `distill`). `llm_util.utility_complete_logged` covers the room and
+voice scans (`command_scan` | `intro_scan` | `correction_scan` |
+`depth_scan` | `mismatch_check`), which have a chat id but no open
+connection, so it opens its own on a worker thread.
+
+Each real call persists one row to `utility_usage` (`chat_id`, `kind`,
+`model`, `input_tokens`, `output_tokens`, `cost`, `provenance`,
+`created_at`) and commits immediately, independent of what the caller does
+with the reply text (a degenerate title or summary is still a call that
+happened and cost money).
+
+The scan writer swallows its own failures. Both its callers wrap the whole
+turn in a handler that abandons the remaining work, so a failed spend insert
+would silently cost you a name correction or a mismatch flag. The reply is
+returned either way.
+
+A busy room-mode turn can fire four scans, and the Spend page folds every
+kind into one utility line. Expect that line to grow once these are counted.
 Nothing is logged when no call went out at all (missing utility-model key),
 which is the same "degrade quietly, log nothing" behaviour the app had before
 the split.

@@ -42,7 +42,7 @@ from backend import anchors, auth, db, diarize, events, introductions
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
-from roomkit import _insert_user_message, _message_labels, _stt_usage_rows, _wait_for, loud_pcm
+from roomkit import _insert_user_message, _message_labels, _stt_usage_rows, _wait_for, as_utility_completion, loud_pcm
 from tests.conftest import speech_pcm
 
 
@@ -344,7 +344,8 @@ def test_mismatch_flags_but_never_mutates_the_label(app, relay, batch_stt, multi
     path from the check to the label."""
     async def fake_utility(prompt, cfg, max_tokens=2000):
         return json.dumps({"mismatch": True, "suspected": "Alex"})
-    monkeypatch.setattr("backend.llm_util.utility_complete", fake_utility)
+    monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
+                        as_utility_completion(fake_utility))
     two = 2 * PREFIX_1  # two sufficient people tile the prefix
     batch_stt["responses"] = [_resp(
         ("speaker_0", 0.4, 0.9),                  # Shawn's anchor segment

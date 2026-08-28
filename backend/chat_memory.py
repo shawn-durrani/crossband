@@ -9,6 +9,7 @@ import re
 from . import attachments as att_mod
 from . import config as config_mod
 from . import context_weight, db
+from . import llm_util
 from .llm_util import utility_complete_with_usage
 
 log = logging.getLogger("crossband.chat_memory")
@@ -40,14 +41,11 @@ async def _run_utility(con, chat_id, kind, prompt, cfg, max_tokens):
     result = await utility_complete_with_usage(prompt, cfg, max_tokens=max_tokens, model=model)
     if result.text is None:
         return None
-    usage = {"input": result.input_tokens, "output": result.output_tokens}
-    pricing = cfg.get("pricing") or config_mod.DEFAULT_PRICING
-    cost = config_mod.compute_cost(model, usage, pricing)
-    # Provenance recorded AT WRITE TIME, not recomputed from
-    # the live rate card later - same reasoning as engine.py's chat turns: a
-    # later rate-card edit must never rewrite what this call's cost meant when
-    # it was actually made.
-    provenance = config_mod.provenance_for(model, pricing)["source"]
+    # Priced through llm_util so this path and utility_complete_logged, the
+    # scan path, cannot price the same call differently. Recorded AT WRITE
+    # TIME, not recomputed from the live rate card later: a later rate-card
+    # edit must never rewrite what this call's cost meant when it was made.
+    cost, provenance = llm_util.price_utility_call(model, result, cfg)
     db.log_utility_usage(con, chat_id, kind, model, result.input_tokens,
                          result.output_tokens, cost, provenance=provenance)
     con.commit()

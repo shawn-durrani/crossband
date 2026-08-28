@@ -28,8 +28,10 @@ maintainer:
   `.secret-scan-local` (note the leading dot); a file named
   `secret-scan-local` without the dot is NOT ignored and must never be
   created.
-- Rules live in pure `.js` modules with `node --test` suites. Logic
-  buried in a component has no automated guard.
+- Rules live in pure `.js` modules with `node --test` suites. Behaviour
+  buried in a component has no automated guard. One render smoke does
+  run in CI (`frontend/scripts/render-smoke.mjs`); it mounts the real
+  message list so a render crash cannot ship. Do not delete it.
 - Every live message insert goes through `db.insert_message`. A raw
   insert elsewhere fails the build, and the guard is deliberate.
 - Cost provenance is stamped at write time and never backfilled.

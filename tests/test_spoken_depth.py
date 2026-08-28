@@ -27,6 +27,7 @@ from backend import db, depth, engine, introductions
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import split_system_prompt
+from roomkit import as_utility_completion
 
 CFG = {"user_name": "Shawn"}
 
@@ -171,7 +172,8 @@ def utility(monkeypatch):
             return json.dumps(state["depth"])
         return json.dumps({"introductions": [], "departures": []})
 
-    monkeypatch.setattr("backend.llm_util.utility_complete", fake_utility)
+    monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
+                        as_utility_completion(fake_utility))
     return state
 
 

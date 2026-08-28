@@ -6,7 +6,10 @@ ledger and full-text history search live in Membro, the companion memory
 service (see backend/memory_client.py). This database only tracks the
 `ingested_upto` watermark per chat for the transcript handoff.
 
-Fresh schema (PRAGMA user_version = 1); no legacy migrations.
+Schema changes ride a migration ladder stamped in PRAGMA user_version.
+Every step is additive: a new table, or an ADD COLUMN with a default, so
+an older database opens and fills in rather than being rewritten. init()
+refuses a database stamped newer than this build.
 """
 
 import os
@@ -19,7 +22,45 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 25  # v2: archived_at · v3: voice_gain · v4: import_uuid · v5: chats.code_enabled · v6: inbound_events · v7: participants.lifecycle (onboarding lifecycle) · v8: guest_jobs (async guest execution) · v9: voice_turn_traces (per-turn latency instrumentation) · v10: utility_usage (Haiku/utility-model spend attribution) · v11: utility_usage.provenance (cost provenance recorded at write time, not recomputed later) · v12: guest_jobs.status_label/status_at (ephemeral work-status ping, queryable on reconnect instead of a persisted fake message) · v13: messages.voice_labels/labels_updated_at (room-mode retro speaker labels, #28 phase 1) · v14: chats.room_mode + room_roster + room_flags (multi-human room mode, #28 phase 2) · v15: messages.voice_turn_id (exact diarization label targeting, #28 phase 3) · v16: chats.ambient_off (owner disarmed ambient room detection, #28) · v17: command_acks (machine tooling acknowledges consumed slash commands, #58) · v18: messages.web_sources (web-touched rounds stamped for the memory hold, #138) · v19: participants.thinking_control (opt out of a local model's hidden reasoning trace, #159) · v20: room_roster.seated_by_message_id/seated_via (which message/path seated a roster row, #84) · v21: chat_seat_state (spoken per-chat per-seat reasoning depth, #105) · v22: tool_events.attachment_id (a tool-produced file - view_page's screenshot - linked to its row, #149) · v23: chat_seat_state.once_effort (one-reply spoken depth override, #105 slice 2) · v24: participants.keep_alive (keep an Ollama seat's model loaded between turns: native-API keep_alive nudge) · v25: messages.audit_flags (per-reply attribution-audit findings for the row's quiet chip, #211)
+SCHEMA_VERSION = 25
+
+# What each version added. Bumping the constant above and adding a step to
+# the ladder in init() are one change, so the list lives here beside the
+# constant. Issue numbers for each are in the CHANGELOG.
+#
+#   v2   archived_at
+#   v3   voice_gain
+#   v4   import_uuid
+#   v5   chats.code_enabled
+#   v6   inbound_events
+#   v7   participants.lifecycle (onboarding lifecycle)
+#   v8   guest_jobs (async guest execution)
+#   v9   voice_turn_traces (per-turn latency instrumentation)
+#   v10  utility_usage (Haiku/utility-model spend attribution)
+#   v11  utility_usage.provenance (cost provenance recorded at write time, not
+#        recomputed later)
+#   v12  guest_jobs.status_label/status_at (ephemeral work-status ping,
+#        queryable on reconnect instead of a persisted fake message)
+#   v13  messages.voice_labels/labels_updated_at (room-mode retro speaker
+#        labels phase 1)
+#   v14  chats.room_mode + room_roster + room_flags (multi-human room mode
+#        phase 2)
+#   v15  messages.voice_turn_id (exact diarization label targeting phase 3)
+#   v16  chats.ambient_off (owner disarmed ambient room detection)
+#   v17  command_acks (machine tooling acknowledges consumed slash commands)
+#   v18  messages.web_sources (web-touched rounds stamped for the memory hold)
+#   v19  participants.thinking_control (opt out of a local model's hidden
+#        reasoning trace)
+#   v20  room_roster.seated_by_message_id/seated_via (which message/path seated
+#        a roster row)
+#   v21  chat_seat_state (spoken per-chat per-seat reasoning depth)
+#   v22  tool_events.attachment_id (a tool-produced file - view_page's
+#        screenshot - linked to its row)
+#   v23  chat_seat_state.once_effort (one-reply spoken depth override slice 2)
+#   v24  participants.keep_alive (keep an Ollama seat's model loaded between
+#        turns: native-API keep_alive nudge)
+#   v25  messages.audit_flags (per-reply attribution-audit findings for the
+#        row's quiet chip)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -195,14 +236,18 @@ CREATE TABLE IF NOT EXISTS voice_usage(
   created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS utility_usage(
-  -- Cheap-model spend attribution. chat_memory.py's rolling
-  -- summaries/auto-titles/project-distillation calls never go through
-  -- db.insert_message (they write directly to chats/projects, not the
-  -- transcript) so they had no cost record at all - invisible utility-model
-  -- (typically Haiku) spend. This table is their one, mirroring voice_usage.
+  -- Cheap-model spend attribution. Utility calls never go through
+  -- db.insert_message (they write to chats/projects, or to nothing at all)
+  -- so they had no cost record - invisible utility-model (typically Haiku)
+  -- spend. This table is their one, mirroring voice_usage. Two paths write
+  -- here: chat_memory._run_utility for summaries, titles and distillation,
+  -- and llm_util.utility_complete_logged for the room and voice scans.
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,              -- 'summarize' | 'title' | 'distill'
+  -- 'summarize' | 'title' | 'distill' (chat_memory), and 'command_scan' |
+  -- 'intro_scan' | 'correction_scan' | 'depth_scan' | 'mismatch_check'
+  -- (the room and voice scans).
+  kind TEXT NOT NULL,
   model TEXT NOT NULL DEFAULT '',
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -463,8 +508,11 @@ def _mirror_snapshot(snapshot_path):
 
 
 def init(settings=None):
-    """Create/verify the schema and seed defaults. Fresh DB only - no legacy
-    migration ladder; user_version stamps the schema for future migrations."""
+    """Create/verify the schema, run the migration ladder, and seed defaults.
+
+    The ladder is the block of `if <= version` steps below, each additive and
+    each safe to re-run on a database that already has the column. See
+    SCHEMA_HISTORY above it for what every version added."""
     backup_database()  # pre-init snapshot, every startup (no-op on first run)
     con = connect()
     # WAL: survives abrupt power-off/kill without corruption, and lets readers
@@ -727,9 +775,8 @@ def chat_voice_totals(con, chat_id):
 
 def log_utility_usage(con, chat_id, kind, model, input_tokens, output_tokens, cost,
                        provenance=None):
-    """Persist one utility-model call's cost - the rolling-summary/
-    auto-title/project-distillation calls in chat_memory.py never go through
-    insert_message, so this is their only cost record. `cost` may be None
+    """Persist one utility-model call's cost - no utility call goes through
+    insert_message, so this is the only cost record for any of them. `cost` may be None
     (model absent from the pricing table) - recorded as-is, same "not
     tracked, not $0.00" honesty as voice_usage.
 

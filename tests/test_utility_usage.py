@@ -4,11 +4,17 @@
 never go through `db.insert_message` -- they write straight to `chats`/
 `projects`, not the transcript -- so they had NO cost record at all, on top
 of `llm_util.utility_complete_with_usage` (which already reports tokens)
-sitting unused. This is the fix: the three call sites now route through it
-and persist cost/model to `utility_usage` (mirroring `voice_usage`), and the
+sitting unused. This is the fix: those call sites route through it and
+persist cost/model to `utility_usage` (mirroring `voice_usage`), and the
 shared accounting module folds those rows in as their own SOURCE_UTILITY
 bucket -- so the Spend page can finally show Claude chat vs Claude Code vs
 Haiku/utility separately instead of the utility spend being invisible.
+
+The room and voice scans in `introductions.py` and `mismatch.py` were the
+other half, and they were still invisible: five metered calls a turn going
+through `llm_util.utility_complete`, which discarded the token counts. They
+now go through `utility_complete_logged`, whose cases are at the bottom of
+this file.
 """
 
 import asyncio
@@ -340,3 +346,144 @@ def test_v10_to_v11_migrated_row_still_resolves_via_live_rate_card(tmp_path):
         assert events[0].provenance == provenance.RATE_CARD_ESTIMATE
     finally:
         c.close()
+
+
+# ---------- the scan paths (#232) ----------
+
+async def _fake_call(text, *, in_tok=120, out_tok=8):
+    async def fake(prompt, cfg, max_tokens=2000, model=None, timeout=None):
+        return UtilityCompletion(text=text, input_tokens=in_tok, output_tokens=out_tok)
+    return fake
+
+
+def _seeded_chat(con):
+    now = db.now()
+    con.execute("INSERT INTO chats(id, title, created_at, updated_at) VALUES(7,'T',?,?)",
+                (now, now))
+    con.commit()
+    return 7
+
+
+def _rows(con):
+    return [dict(r) for r in con.execute(
+        "SELECT chat_id, kind, model, input_tokens, output_tokens, cost, provenance "
+        "FROM utility_usage ORDER BY id")]
+
+
+@pytest.fixture
+def logged(monkeypatch):
+    """utility_complete_logged with the network stubbed at the one rung below
+    it, so the real pricing and the real insert both run."""
+    from backend import llm_util
+
+    def install(text, *, in_tok=120, out_tok=8):
+        async def fake(prompt, cfg, max_tokens=2000, model=None, timeout=None):
+            return UtilityCompletion(text=text, input_tokens=in_tok,
+                                     output_tokens=out_tok)
+        monkeypatch.setattr(llm_util, "utility_complete_with_usage", fake)
+        return llm_util
+    return install
+
+
+def test_a_scan_call_persists_its_cost(con, logged):
+    chat_id = _seeded_chat(con)
+    llm_util = logged('{"introductions": []}')
+    cfg = {"utility_model": "claude-haiku-4-5"}
+    out = asyncio.run(llm_util.utility_complete_logged(
+        chat_id, "intro_scan", "prompt", cfg, max_tokens=200))
+    assert out == '{"introductions": []}'
+    rows = _rows(con)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "intro_scan"
+    assert rows[0]["chat_id"] == chat_id
+    assert rows[0]["input_tokens"] == 120 and rows[0]["output_tokens"] == 8
+    assert rows[0]["cost"] > 0
+    assert rows[0]["provenance"] == provenance.RATE_CARD_ESTIMATE
+
+
+def test_a_call_that_never_went_out_logs_nothing(con, logged):
+    chat_id = _seeded_chat(con)
+    llm_util = logged(None)
+    out = asyncio.run(llm_util.utility_complete_logged(
+        chat_id, "intro_scan", "p", {"utility_model": "claude-haiku-4-5"}))
+    assert out is None
+    assert _rows(con) == []
+
+
+def test_a_logging_failure_never_costs_the_caller_its_reply(con, logged, monkeypatch):
+    """The sharpest rule here. introductions.scan_user_turn wraps its whole
+    body in a try/except that abandons the remaining scans and emits a
+    scan_error verdict, and mismatch.check_turn swallows and loses a real
+    flag. A spend-telemetry fault must not become a room-mode regression."""
+    chat_id = _seeded_chat(con)
+    llm_util = logged('{"ok": true}')
+
+    def boom(*a, **kw):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(llm_util, "_write_utility_row", boom)
+    out = asyncio.run(llm_util.utility_complete_logged(
+        chat_id, "intro_scan", "p", {"utility_model": "claude-haiku-4-5"}))
+    assert out == '{"ok": true}'
+    assert _rows(con) == []
+
+
+def test_an_unpriced_model_records_no_cost_rather_than_zero(con, logged):
+    chat_id = _seeded_chat(con)
+    llm_util = logged("{}")
+    asyncio.run(llm_util.utility_complete_logged(
+        chat_id, "depth_scan", "p", {"utility_model": "acme-forge-1"}))
+    row = _rows(con)[0]
+    assert row["cost"] is None
+    assert row["provenance"] != provenance.RATE_CARD_ESTIMATE
+
+
+def test_the_write_stays_off_the_event_loop(con, logged, monkeypatch):
+    """Both callers run as fire-and-forget tasks on the main loop alongside
+    SSE streaming and the voice websocket, and db.connect() sets
+    busy_timeout = 5000. A synchronous insert under contention would stall
+    everything for five seconds."""
+    import threading
+    chat_id = _seeded_chat(con)
+    llm_util = logged("{}")
+    seen = {}
+    real = llm_util._write_utility_row
+
+    def spy(*a, **kw):
+        seen["thread"] = threading.current_thread()
+        return real(*a, **kw)
+
+    monkeypatch.setattr(llm_util, "_write_utility_row", spy)
+
+    async def drive():
+        seen["main"] = threading.current_thread()
+        await llm_util.utility_complete_logged(
+            chat_id, "mismatch_check", "p", {"utility_model": "claude-haiku-4-5"})
+
+    asyncio.run(drive())
+    assert seen["thread"] is not seen["main"]
+
+
+def test_both_writers_price_a_call_identically(con):
+    """chat_memory._run_utility and utility_complete_logged share
+    llm_util.price_utility_call so the two paths cannot drift."""
+    from backend import llm_util
+    result = UtilityCompletion(text="x", input_tokens=1000, output_tokens=500)
+    cfg = {"utility_model": "claude-haiku-4-5"}
+    cost, prov = llm_util.price_utility_call("claude-haiku-4-5", result, cfg)
+    assert cost > 0
+    assert prov == provenance.RATE_CARD_ESTIMATE
+
+
+def test_every_scan_kind_reaches_the_spend_page(con):
+    """The claim the issue is actually about. Eight kinds, one bucket."""
+    chat_id = _seeded_chat(con)
+    kinds = ["summarize", "title", "distill", "command_scan", "intro_scan",
+             "correction_scan", "depth_scan", "mismatch_check"]
+    for k in kinds:
+        db.log_utility_usage(con, chat_id, k, "claude-haiku-4-5", 100, 10, 0.0001,
+                             provenance=provenance.RATE_CARD_ESTIMATE)
+    con.commit()
+    events = [e for e in accounting.iter_cost_events(con)
+              if e.source == accounting.SOURCE_UTILITY]
+    assert len(events) == len(kinds)

@@ -5,6 +5,15 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- The Spend page now counts the background model work behind room mode
+  and voice (#232). Five of the eight cheap-model calls the app makes
+  were spending real money and appearing nowhere: the ones that read a
+  turn for a spoken command, an introduction, a name correction, a
+  reasoning-depth change, or a suspected wrong speaker. Only the title,
+  summary and distillation calls were counted. Your utility total will
+  step up as a result, and on a busy room-mode chat it may step up a
+  lot. That is spend you were already paying, now visible.
+
 - The running total in the chat header is now the same number the export
   picker shows (#231). It was worked out in the browser from the message
   list, so it could only ever see messages. Voice cost sat outside it and
@@ -44,6 +53,18 @@ entry to a short paragraph; the issue holds the detail.
   priced yourself (#230). It was reading the built-in price list rather
   than yours. Some historical cache-write figures will go up as a
   result, because they were understated rather than free.
+
+- Documentation corrections (#233). The web research page said a
+  rendered view shows text and not a screenshot, which stopped being
+  true when the screenshot shipped, and it sat in the list of that
+  feature's limits. Three documents said there is no component test
+  infrastructure, while CI has been running a render smoke on every
+  change. The setup guide's list of API keys left out Reddit and one of
+  the two GitHub token names. The contributor guide gave one of the
+  three frontend checks as though it were all of them.
+
+- Startup now names a missing Reddit key like every other missing key
+  (#233). It was the only capability the report could not see.
 
 - A stored voice that outlives its human backing must earn your ear
   again (#221). Each automatically stored clip now records the match

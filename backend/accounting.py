@@ -73,7 +73,7 @@ SOURCE_LABELS = {
     SOURCE_CODE: "Coding agent",
     SOURCE_TTS: "Voice · TTS",
     SOURCE_STT: "Voice · STT",
-    SOURCE_UTILITY: "Utility (titles/summaries)",
+    SOURCE_UTILITY: "Utility (background model work)",
 }
 
 # ---- producer classes (the like-with-like axis) ----
@@ -87,7 +87,8 @@ SOURCE_LABELS = {
 PRODUCER_CHAT = "chat"          # resident chat participants
 PRODUCER_AGENT = "agent"        # summoned Claude Code / other agent guests
 PRODUCER_VOICE = "voice"        # ElevenLabs TTS/STT
-PRODUCER_UTILITY = "utility"    # titles / summaries / distillation
+PRODUCER_UTILITY = "utility"    # titles, summaries, distillation,
+                                # and the room and voice scans
 
 SOURCE_PRODUCER = {
     SOURCE_NORMAL: PRODUCER_CHAT,

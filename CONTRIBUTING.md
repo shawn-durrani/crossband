@@ -11,13 +11,14 @@ cd crossband
 ./start.sh                                   # venv, deps, build, serve on 8902
 env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY \
   .venv/bin/python -m pytest -q              # backend, keyless
-node --test frontend/src/*.test.js           # frontend rules
+npm --prefix frontend test                    # lint, rules, render smoke
 ```
 
 Both suites must pass with no API keys set; CI runs them keyless. A
 change that only works with a key needs a keyless fallback. The frontend
-suites are a separate CI step, so a green pytest run is not the whole
-gate.
+command runs three gates: `eslint`, the `node --test` rule suites, and
+the render smoke. CI runs the same three as separate steps, so a green
+pytest run is not the whole gate.
 
 ## How work lands
 

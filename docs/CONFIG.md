@@ -16,9 +16,13 @@ defaults (in code)  ←  config.json (committed)  ←  config.local.json (gitign
 - **Environment**: any setting can be overridden as `CROSSBAND_<NAME>` (upper-case
   the key: `CROSSBAND_PORT=9000`, `CROSSBAND_USER_NAME=Alex`). Dict-valued settings take
   JSON. Unparseable values are ignored rather than crashing startup.
-- **API keys are NOT settings.** They live in `.env` only (`ANTHROPIC_API_KEY`,
-  `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `TAVILY_API_KEY`, `BRAVE_API_KEY`,
-  `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`) and never reach the browser.
+- **API keys are NOT settings.** They live in `.env` only and never reach
+  the browser: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`,
+  `TAVILY_API_KEY`, `BRAVE_API_KEY`, `REDDIT_CLIENT_ID`,
+  `REDDIT_CLIENT_SECRET`, `GITHUB_TOKEN` or `GH_TOKEN`, and
+  `CLAUDE_CODE_OAUTH_TOKEN`. A seat added from a one-click preset takes its
+  own provider key, listed with that preset in
+  [MODELS.md](MODELS.md).
 
 A malformed config file never bricks startup. It reads as empty and the
 layer is skipped. Unknown keys are ignored.

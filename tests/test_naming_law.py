@@ -48,7 +48,7 @@ from backend import anchors, db, diarize, introductions, memory_client
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import _crosstalk_tail, _user_turn_head
-from roomkit import _insert_user_message, _wait_for, loud_pcm
+from roomkit import _insert_user_message, _wait_for, as_utility_completion, loud_pcm
 from tests.conftest import speech_pcm
 
 
@@ -73,7 +73,8 @@ def utility(monkeypatch):
         state["calls"].append(prompt)
         return json.dumps(state["verdict"])
 
-    monkeypatch.setattr("backend.llm_util.utility_complete", fake_utility)
+    monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
+                        as_utility_completion(fake_utility))
     return state
 
 
