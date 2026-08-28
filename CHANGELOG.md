@@ -17,6 +17,12 @@ entry to a short paragraph; the issue holds the detail.
   been running from main and have not enrolled a password, enrol one.
   That closes it on every surface and brings voice back on your phone.
 
+- Chats holding a large PDF or several images reply faster (#229). The
+  files were being re-read and re-encoded once for every model in the
+  round, every round, which stalled everything else the app was doing
+  at that moment. They are now read once and reused. On a three-model
+  round over one 20MB PDF that is about half a second back per round.
+
 - Documentation corrections (#233). The web research page said a
   rendered view shows text and not a screenshot, which stopped being
   true when the screenshot shipped, and it sat in the list of that
