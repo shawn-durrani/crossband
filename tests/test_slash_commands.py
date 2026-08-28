@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from backend import engine
 from backend.app import create_app
 from backend.config import Settings
+from roomkit import sse_events
 
 
 @pytest.fixture
@@ -17,11 +18,6 @@ def app(tmp_path):
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     return create_app(settings)
-
-
-def sse_events(body):
-    return [json.loads(line[6:]) for line in body.splitlines()
-            if line.startswith("data: ")]
 
 
 def fake_stream(text, seen_transcripts):

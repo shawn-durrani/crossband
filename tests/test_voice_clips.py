@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from backend import anchors
 from backend.app import create_app
 from backend.config import Settings
+from roomkit import _pcm
 from tests.conftest import speech_pcm
 
 
@@ -27,11 +28,6 @@ from tests.conftest import speech_pcm
 def app(tmp_path):
     return create_app(Settings(data_dir=str(tmp_path / "data"),
                                memory_url="http://127.0.0.1:1"))
-
-
-def _pcm(seconds=2.0, rate=16000, amp=6000):
-    # Speech-shaped since #218: the anchor gate rejects a Nyquist square.
-    return speech_pcm(seconds, rate, amp=amp)
 
 
 def _grow(name, clips=3):

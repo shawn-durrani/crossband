@@ -28,22 +28,15 @@ from fastapi.testclient import TestClient
 from backend import anchors, db, diarize, voiceid
 from backend.app import create_app
 from backend.config import Settings
+from roomkit import loud_pcm
 from tests.conftest import speech_pcm
 
 
 @pytest.fixture
 def app(tmp_path):
-    diarize._ROOM_ENABLED.clear()
-    diarize._STASHED.clear()
-    diarize._LAST_DECISION.clear()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1", user_name="Alex")
     return create_app(settings)
-
-
-def loud_pcm(seconds, sample_rate=16000):
-    # Speech-shaped since #218: the anchor gate rejects non-speech.
-    return speech_pcm(seconds, sample_rate)
 
 
 def _mint_sufficient(name):

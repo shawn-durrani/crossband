@@ -37,15 +37,12 @@ from backend import anchors, auth, db, diarize, voiceid
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
+from roomkit import _insert_user_message, _message_labels, _remember, _wait_for, loud_pcm
 from tests.conftest import speech_pcm
 
 
 @pytest.fixture
 def app(tmp_path):
-    diarize._ROOM_ENABLED.clear()
-    diarize._AMBIENT_OFF.clear()
-    diarize._STASHED.clear()
-    anchors.clear_recent_audio()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1",
                         user_name="Alex")
@@ -143,36 +140,9 @@ def matcher(monkeypatch):
     return state
 
 
-def loud_pcm(seconds, sample_rate=16000):
-    # Speech-shaped since #218: the anchor gate rejects non-speech.
-    return speech_pcm(seconds, sample_rate)
-
-
 def _frame(data, commit=False):
     return {"audio": base64.b64encode(data).decode(),
             "sample_rate": 16000, "commit": commit}
-
-
-def _wait_for(pred, timeout=6.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        v = pred()
-        if v:
-            return v
-        time.sleep(interval)
-    return pred()
-
-
-def _remember(name, clips=3):
-    store = anchors.store()
-    pid = store.ensure_person(name)
-    # #83: remembered = introduced once, then accumulated - an
-    # accumulation-only bank rightly has no remembered-first rights now
-    # (test_audition_gate.py owns that behaviour).
-    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
-    for _ in range(clips - 1):
-        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
-    return pid
 
 
 def _chat_state(chat_id):
@@ -197,24 +167,6 @@ def _flags(chat_id):
     con = db.connect()
     try:
         return db.get_room_flags(con, chat_id, open_only=True)
-    finally:
-        con.close()
-
-
-def _message_labels(msg_id):
-    con = db.connect()
-    try:
-        row = con.execute("SELECT voice_labels FROM messages WHERE id=?",
-                          (msg_id,)).fetchone()
-        return row["voice_labels"] if row else None
-    finally:
-        con.close()
-
-
-def _insert_user_message(chat_id, text="hello world"):
-    con = db.connect()
-    try:
-        return db.insert_message(con, chat_id, "user", text)
     finally:
         con.close()
 

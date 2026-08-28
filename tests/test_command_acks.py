@@ -23,6 +23,7 @@ from backend import db
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import chats as chats_router
+from roomkit import _wait_for
 
 TIMEOUT = 0.15
 
@@ -42,16 +43,6 @@ def _messages(chat_id):
             (chat_id,))]
     finally:
         con.close()
-
-
-def _wait_for(pred, timeout=3.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        v = pred()
-        if v:
-            return v
-        time.sleep(interval)
-    return pred()
 
 
 def _warnings(chat_id):

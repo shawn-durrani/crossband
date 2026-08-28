@@ -36,9 +36,6 @@ def world(tmp_path):
     """An armed chat where remembered Dave was wrongly matched: Dave seated
     via voice-match, the turn labelled Dave, the utterance banked to Dave -
     and the words are about to introduce remembered Sam."""
-    diarize._ROOM_ENABLED.clear()
-    diarize._STASHED.clear()
-    anchors.clear_recent_audio()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1", user_name="Alex")
     app = create_app(settings)

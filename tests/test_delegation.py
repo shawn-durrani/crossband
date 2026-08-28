@@ -33,6 +33,7 @@ from backend import db, engine, guest, guestjobs, passes
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import group_chat_system
+from roomkit import sse_events
 
 PARTICIPANT = {"name": "Claude", "slug": "claude", "system_prompt": ""}
 ROSTER = [{"name": "Claude", "slug": "claude"}, {"name": "GPT", "slug": "gpt"}]
@@ -53,11 +54,6 @@ def app(tmp_path):
                         memory_url="http://127.0.0.1:1",
                         code_repos={"demo": str(tmp_path)})
     return create_app(settings)
-
-
-def sse_events(body):
-    return [json.loads(line[6:]) for line in body.splitlines()
-            if line.startswith("data: ")]
 
 
 # ---------- guest.claimed() / guest.delegation_note() ----------

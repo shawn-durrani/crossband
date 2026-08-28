@@ -31,36 +31,15 @@ from fastapi.testclient import TestClient
 from backend import anchors, db, diarize, introductions
 from backend.app import create_app
 from backend.config import Settings, load_settings
+from roomkit import _chat_room_mode, _wait_for, loud_pcm
 from tests.conftest import speech_pcm
 
 
 @pytest.fixture
 def app(tmp_path):
-    diarize._ROOM_ENABLED.clear()
-    diarize._STASHED.clear()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     return create_app(settings)
-
-
-def _wait_for(pred, timeout=6.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        v = pred()
-        if v:
-            return v
-        time.sleep(interval)
-    return pred()
-
-
-def _chat_room_mode(chat_id):
-    con = db.connect()
-    try:
-        row = con.execute("SELECT room_mode FROM chats WHERE id=?",
-                          (chat_id,)).fetchone()
-        return bool(row and row["room_mode"])
-    finally:
-        con.close()
 
 
 def _roster(chat_id, present_only=True):
@@ -97,11 +76,6 @@ def utility(monkeypatch):
 
     monkeypatch.setattr("backend.llm_util.utility_complete", fake_utility)
     return state
-
-
-def loud_pcm(seconds, sample_rate=16000):
-    # Speech-shaped since #218: the anchor gate rejects non-speech.
-    return speech_pcm(seconds, sample_rate)
 
 
 # ── 1. the latency pin ──────────────────────────────────────────────────────

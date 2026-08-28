@@ -48,18 +48,15 @@ from backend import anchors, db, diarize, introductions, memory_client
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import _crosstalk_tail, _user_turn_head
+from roomkit import _insert_user_message, _wait_for, loud_pcm
 from tests.conftest import speech_pcm
 
 
 @pytest.fixture
 def app(tmp_path):
-    diarize._ROOM_ENABLED.clear()
-    diarize._STASHED.clear()
-    diarize._LAST_DECISION.clear()
     # The per-message audio memory is process-global and keyed by message
     # id; a fresh test database restarts ids from 1, so stale entries from
     # an earlier test would satisfy this suite's armed voice-arm lookups.
-    anchors.clear_recent_audio()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     return create_app(settings)
@@ -78,21 +75,6 @@ def utility(monkeypatch):
 
     monkeypatch.setattr("backend.llm_util.utility_complete", fake_utility)
     return state
-
-
-def loud_pcm(seconds, sample_rate=16000):
-    # Speech-shaped since #218: the anchor gate rejects non-speech.
-    return speech_pcm(seconds, sample_rate)
-
-
-def _wait_for(pred, timeout=6.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        v = pred()
-        if v:
-            return v
-        time.sleep(interval)
-    return pred()
 
 
 def _mint_sufficient(name, clips=3):
@@ -743,14 +725,6 @@ def _armed_chat_id():
         con.close()
     diarize.set_room_enabled(chat_id, True)
     return chat_id
-
-
-def _insert_user_message(chat_id, text="hello world"):
-    con = db.connect()
-    try:
-        return db.insert_message(con, chat_id, "user", text)
-    finally:
-        con.close()
 
 
 def test_armed_introduction_voice_match_judges_the_turns_own_audio(

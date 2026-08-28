@@ -42,14 +42,12 @@ from backend import anchors, auth, db, diarize, events, introductions
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
+from roomkit import _insert_user_message, _message_labels, _stt_usage_rows, _wait_for, loud_pcm
 from tests.conftest import speech_pcm
 
 
 @pytest.fixture
 def app(tmp_path):
-    diarize._ROOM_ENABLED.clear()
-    diarize._STASHED.clear()
-    anchors.clear_recent_audio()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1")
     return create_app(settings)
@@ -138,51 +136,9 @@ def _resp(*entries):
                       for i, (s, a, b) in enumerate(entries)]}
 
 
-def loud_pcm(seconds, sample_rate=16000):
-    # Speech-shaped since #218: the anchor gate rejects non-speech.
-    return speech_pcm(seconds, sample_rate)
-
-
 def _frame(data, commit=False):
     return {"audio": base64.b64encode(data).decode(),
             "sample_rate": 16000, "commit": commit}
-
-
-def _wait_for(pred, timeout=6.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        v = pred()
-        if v:
-            return v
-        time.sleep(interval)
-    return pred()
-
-
-def _message_labels(msg_id):
-    con = db.connect()
-    try:
-        row = con.execute("SELECT voice_labels FROM messages WHERE id=?",
-                          (msg_id,)).fetchone()
-        return row["voice_labels"] if row else None
-    finally:
-        con.close()
-
-
-def _stt_usage_rows():
-    con = db.connect()
-    try:
-        return con.execute(
-            "SELECT COUNT(*) FROM voice_usage WHERE kind='stt'").fetchone()[0]
-    finally:
-        con.close()
-
-
-def _insert_user_message(chat_id, text="hello world"):
-    con = db.connect()
-    try:
-        return db.insert_message(con, chat_id, "user", text)
-    finally:
-        con.close()
 
 
 def _flags(chat_id, open_only=True):
