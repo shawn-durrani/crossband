@@ -4,11 +4,12 @@ Two suites, both keyless by design:
 
 ```sh
 env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY .venv/bin/python -m pytest -q
-node --test frontend/src/*.test.js
+npm --prefix frontend test
 ```
 
-CI runs them as separate steps, so a green pytest run is not the whole
-gate. Nothing in either suite calls a provider: every network path is
+The frontend command runs three gates: `eslint`, the `node --test` rule
+suites, and the render smoke. CI runs all three as separate steps, so a green
+pytest run is not the whole gate. Nothing in either suite calls a provider: every network path is
 mocked, and a test that needed a key would be a bug in the test.
 
 Every suite file carries its own module docstring saying what it covers
@@ -158,9 +159,13 @@ subscription-versus-metered split, cache-health verdicts, the event and round
 streams including reconnect and lost-wakeup handling, voice gating and
 recovery, rate-card layering, and the header and spend views' arithmetic.
 
-React components have no test infrastructure, deliberately. Anything that
-exists only inside JSX has no automated guard, so running the app is part of
-changing it.
+React components have no behaviour-test infrastructure, deliberately. One
+render smoke is the exception: `frontend/scripts/render-smoke.mjs` bundles
+`src/renderSmoke.entry.jsx` and mounts the real message list against fixture
+messages. A render-time crash, a free identifier or a bad prop shape fails CI
+there instead of blanking every chat. Effects do not run under
+`renderToStaticMarkup`, so behaviour inside a component still has no automated
+guard, and running the app is part of changing it.
 
 ## What neither suite covers
 

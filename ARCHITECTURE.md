@@ -98,7 +98,11 @@ convenient number beside an honest split is the one people quote.
 ## Rules live in pure modules
 
 Anything worth guarding lives in a plain `.js` module with a
-`node --test` suite. React files hold rendering and wiring. There is
-deliberately no component-test infrastructure, and the consequence is
-stated rather than hidden: logic that exists only inside JSX has no
-automated guard, so running the app is part of changing it.
+`node --test` suite. React files hold rendering and wiring.
+
+One render smoke sits beside those suites. It mounts the real message
+list against fixture messages, so a render-time crash fails CI rather
+than blanking every chat. Effects do not run under
+`renderToStaticMarkup`, so it guards the render path and not behaviour.
+Behaviour that exists only inside JSX still has no automated guard, and
+running the app is part of changing it.

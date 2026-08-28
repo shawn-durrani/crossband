@@ -37,10 +37,12 @@ one log line per tool-use round, at `INFO` level, from the `crossband.providers`
 logger, tagged `claude_chat_cache`:
 
 ```
-claude_chat_cache speaker=<slug> model=<model-id> tool_round=<int>
+claude_chat_cache speaker=<slug> model=<model-id> chat=<int> tool_round=<int>
+  tools_hash=<16-hex> tools_n=<int> changed=<csv|none>
   stable_hash=<16-hex> stable_chars=<int>
   volatile_hash=<16-hex> volatile_chars=<int>
   transcript_hash=<16-hex> ttl=<label>
+  thinking=<type|none> effort=<label|default>
   input_tok=<int> cache_read_tok=<int>
   cache_write_5m_tok=<int> cache_write_1h_tok=<int>
   output_tok=<int>
@@ -74,17 +76,22 @@ There is no code path in this feature that writes chat content to the log.
   transcript, since one writer advances `summary_upto` in the same statement,
   so a rebuild already re-writes the transcript. Moving the summary would cost
   uncached tokens every turn to prevent a bust it is not causing.
-- **`chat_id` / `tools_hash` / `tools_n` / `changed`**: the fields that
+- **`chat` / `tools_hash` / `tools_n` / `changed`**: the fields that
   let a miss name its own cause. `tools_hash` covers the tool definitions, which
   lead Anthropic's cache prefix AHEAD of system and messages: change them and
   everything behind is invalidated while every other hash here stays identical
   (`engine.py` adds/removes `summon_claude_code` depending on whether a summons
-  is claimed, exactly that shape). `chat_id` matters just as much: switching
+  is claimed, exactly that shape). `chat` matters just as much: switching
   chats legitimately changes the whole prefix, so without it a benign switch and
   a real break look the same. `changed` lists which components differ from this
   seat's previous call IN THIS CHAT: `none` on a hit, `first-call` after a
   restart. All four also ride `usage_json.cache_prefix`, so this is SQL-queryable
   rather than log-only.
+- **`thinking` / `effort`**: content-free confirmation of what was
+  actually sent on this call. `thinking` is the block type or `none`;
+  `effort` is the seat's reasoning effort or `default`. Both change the
+  request without changing any hash above, so a miss they explain would
+  otherwise have no visible cause.
 - **`transcript_hash`**: a fingerprint of the CACHEABLE conversation
   prefix: the outgoing message list *before* the volatile tail joins it
   (hashing the tail in would show churn by construction). Same value on

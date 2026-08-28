@@ -642,6 +642,10 @@ KEY_ROLES = {
     "ELEVENLABS_API_KEY": "voice mode (TTS/STT) is disabled",
     "TAVILY_API_KEY": "web_search loses the Tavily engine",
     "BRAVE_API_KEY": "web_search loses the Brave engine",
+    # capabilities.py declares these two, so report_missing_keys has to know
+    # them or its promise to name every missing key is not kept.
+    "REDDIT_CLIENT_ID": "search_reddit is unavailable",
+    "REDDIT_CLIENT_SECRET": "search_reddit is unavailable",
 }
 
 
