@@ -5,6 +5,18 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- A rate card you save now prices the very next round (#230). Saved
+  cards were reaching the pricing screen and nothing else, so rounds
+  kept using whatever the app read at startup. Because the cost source
+  is recorded at the moment a reply is written, those rows could not be
+  corrected afterwards by fixing the card. Hand-edited prices in
+  `config.local.json` reach a round now too.
+
+- The Spend page no longer shows $0.00 for cache writes on a model you
+  priced yourself (#230). It was reading the built-in price list rather
+  than yours. Some historical cache-write figures will go up as a
+  result, because they were understated rather than free.
+
 - A stored voice that outlives its human backing must earn your ear
   again (#221). Each automatically stored clip now records the match
   confidence it banked at. When rotation has replaced every recording a
