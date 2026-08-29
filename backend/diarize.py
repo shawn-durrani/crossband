@@ -1108,6 +1108,44 @@ def _room_plan(chat_id, sample_rate):
                                            if row["person_id"]}))
 
 
+def label_payload(labels, *, clusters=("local",), uncertain=(), source="local",
+                  score=None, owner=False, learning=False):
+    """One label write's payload, the shape every consumer of labels_json
+    reads. Six passes hand-built this dict and two of them drifted
+    (workbench review, #237); build it in exactly one place. Consumers
+    ignore unknown keys, so optional markers are simply absent rather than
+    null. Pure, so tests can pin the shape without a room."""
+    payload = {"clusters": list(clusters), "labels": list(labels),
+               "uncertain": list(uncertain)}
+    if source:
+        payload["source"] = source
+    if score is not None:
+        payload["score"] = round(score or 0, 3)
+    if owner:
+        payload["owner"] = True
+    if learning:
+        payload["learning"] = True
+    return payload
+
+
+async def _deliver_label(chat_id, pcm, sample_rate, commit_ts, session,
+                         payload, *, turn_id=None, clusters_remembered=1):
+    """Attach one label payload, then remember the turn's audio for
+    tap-to-correct. The attach comes FIRST (#28, night test 4): the label
+    write is what the seats are waiting on, so no bookkeeping may queue in
+    front of it; remember_audio is an in-memory ring, not a file write.
+    Returns the target message id, or None when no row claimed the label -
+    and None means the post-label bookkeeping that keys off the row (the
+    ask-fallback, the mismatch cross-check) must not run."""
+    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                             session, turn_id=turn_id)
+    if target_id:
+        from . import anchors
+        anchors.remember_audio(target_id, pcm, sample_rate,
+                               clusters_remembered)
+    return target_id
+
+
 async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                            result, segments, pending, prefix_seconds,
                            duration_ms, turn_id=None):
@@ -1127,8 +1165,8 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
              len(resolved["matched"]), len(resolved["ask"]), 1 if ct else 0)
     target_id = None
     if resolved["labels"]:
-        payload = {"clusters": clusters, "labels": resolved["labels"],
-                   "uncertain": resolved["uncertain"]}
+        payload = label_payload(resolved["labels"], clusters=clusters,
+                                uncertain=resolved["uncertain"], source=None)
         if ct:
             # Crosstalk (#28 phase 4): the marker, plus the best-effort split
             # when the word map alternates cleanly. Segment labels reuse the
@@ -1140,11 +1178,9 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                   uncertain_labels=set(resolved["uncertain"]))
             if segs:
                 payload["segments"] = segs
-        # The attach comes FIRST (#28, night test 4): the label write is the
-        # thing the seats are waiting on, so the anchor bookkeeping below -
-        # file writes on a worker thread - may not queue in front of it.
-        target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                                 session, turn_id=turn_id)
+        target_id = await _deliver_label(chat_id, pcm, sample_rate, commit_ts,
+                                         session, payload, turn_id=turn_id,
+                                         clusters_remembered=len(clusters))
     if len(clusters) == 1:
         # A clean single-speaker utterance is anchor food: it refreshes a
         # matched person's clips, and it is the ONLY thing that can build a
@@ -1160,9 +1196,6 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # the ask-fallback. The turn keeps its uncertain ordinal meanwhile.
         await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
     if target_id:
-        from . import anchors
-        # Tap-to-correct's audio source: remembered in memory, bounded.
-        anchors.remember_audio(target_id, pcm, sample_rate, len(clusters))
         primary = _primary_named_label(resolved)
         if primary and len(utter_words) >= MISMATCH_MIN_WORDS:
             from . import mismatch
@@ -1245,16 +1278,15 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # keys. No crosstalk marker - a confident single match is one voice.
     # #33: the matcher's real score rides the label - the ingest identity
     # field turns it into the confidence membro's binding policy reads.
-    payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
-               "source": "local", "score": round(verdict.get("score") or 0, 3)}
-    if name.casefold() == (cfg.get("user_name") or "User").casefold():
-        # #28 PR-C (the owner's identity is shown, not hidden): a confident
-        # OWNER match is marked so the chips can say "voice confirmed". The
-        # projection decides by name, so old payloads without this key still
-        # render the new head; consumers ignore unknown keys as ever.
-        payload["owner"] = True
-    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
+    # #28 PR-C (the owner's identity is shown, not hidden): a confident
+    # OWNER match is marked so the chips can say "voice confirmed". The
+    # projection decides by name, so old payloads without this key still
+    # render the new head; consumers ignore unknown keys as ever.
+    owner = name.casefold() == (cfg.get("user_name") or "User").casefold()
+    target_id = await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
+        label_payload([name], score=verdict.get("score"), owner=owner),
+        turn_id=turn_id)
     # Anchor food: a clean single-speaker utterance refreshes the matched
     # person's clips. The batch room path does the same for a matched single
     # cluster; on the fast path this is the ONLY thing that keeps the person's
@@ -1263,8 +1295,6 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                             sample_rate, cfg, verdict.get("score"))
     if not target_id:
         return
-    from . import anchors
-    anchors.remember_audio(target_id, pcm, sample_rate, 1)
     seconds = len(pcm) / 2 / (sample_rate or 16000)
     if seconds >= FAST_MISMATCH_MIN_SECONDS:
         from . import mismatch
@@ -1365,15 +1395,13 @@ async def _cold_start_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     seats are waiting on), then the banking on a worker thread. Tap-to-
     correct's audio is remembered, so a wrong elimination is one tap from
     being fixed."""
-    payload = {"clusters": ["local"], "labels": [name], "uncertain": [name],
-               "learning": True, "source": COLD_START_SOURCE}
-    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
+    await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
+        label_payload([name], uncertain=[name], source=COLD_START_SOURCE,
+                      learning=True),
+        turn_id=turn_id)
     await _in_voice_thread(_bank_cold_start, chat_id, name, pcm, sample_rate,
                             cfg)
-    if target_id:
-        from . import anchors
-        anchors.remember_audio(target_id, pcm, sample_rate, 1)
 
 
 def _bank_cold_start(chat_id, name, pcm, sample_rate, cfg):
@@ -1406,11 +1434,11 @@ async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
     path always did. Nothing else: no arming, no roster, no ElevenLabs
     call, no metering - a solo session stays solo, it just stops pretending
     the app does not know who is speaking."""
-    payload = {"clusters": ["local"], "labels": [verdict["name"]],
-               "uncertain": [], "source": "local", "owner": True,
-               "score": round(verdict.get("score") or 0, 3)}
-    await _attach_until_deadline(chat_id, commit_ts, payload, session,
-                                 turn_id=turn_id)
+    await _attach_until_deadline(
+        chat_id, commit_ts,
+        label_payload([verdict["name"]], score=verdict.get("score"),
+                      owner=True),
+        session, turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"],
                             pcm, sample_rate, cfg, verdict.get("score"))
 
@@ -1433,15 +1461,12 @@ async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     log.info("diarize pass (ambient voiceid): chat=%s ms=%.0f armed=1",
              chat_id, (time.perf_counter() - t0) * 1000)
     await _in_voice_thread(_arm_known, chat_id, {"local": name}, cfg)
-    payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
-               "source": "local", "score": round(verdict.get("score") or 0, 3)}
-    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
+    await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
+        label_payload([name], score=verdict.get("score")),
+        turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
                             sample_rate, cfg, verdict.get("score"))
-    if target_id:
-        from . import anchors
-        anchors.remember_audio(target_id, pcm, sample_rate, 1)
 
 
 # ---------- the ambient local check (#28) ----------
@@ -1515,11 +1540,11 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if decision == "arm_unknown":
             await _in_voice_thread(_arm_ambient_unknown, chat_id, cfg)
             ordinal = session.assign(["ambient_unknown"])
-            payload = {"clusters": ["ambient_unknown"], "labels": ordinal,
-                       "uncertain": list(ordinal)}
-            target_id = await _attach_until_deadline(chat_id, commit_ts,
-                                                     payload, session,
-                                                     turn_id=turn_id)
+            target_id = await _attach_until_deadline(
+                chat_id, commit_ts,
+                label_payload(ordinal, clusters=["ambient_unknown"],
+                              uncertain=list(ordinal), source=None),
+                session, turn_id=turn_id)
             if target_id:
                 await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
         # decision == "defer": nothing here; the introduction/command/toggle
