@@ -1433,12 +1433,17 @@ async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
     the chips can say "voice confirmed"; then the anchor top-up the noop
     path always did. Nothing else: no arming, no roster, no ElevenLabs
     call, no metering - a solo session stays solo, it just stops pretending
-    the app does not know who is speaking."""
-    await _attach_until_deadline(
-        chat_id, commit_ts,
+    the app does not know who is speaking.
+
+    The audio is remembered like every other labelled turn (#237): the
+    owner-by-voice guard in routers/room.py reads it, and tap-to-correct
+    needs it. In-memory ring only, gone on restart - the owner accepted
+    that retention for working corrections on solo chats."""
+    await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
         label_payload([verdict["name"]], score=verdict.get("score"),
                       owner=True),
-        session, turn_id=turn_id)
+        turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"],
                             pcm, sample_rate, cfg, verdict.get("score"))
 
