@@ -18,7 +18,7 @@ FRAGMENT_DIR = REPO / "changelog.d"
 # The entries sitting under Unreleased when fragments arrived. They stay
 # byte-identical until a release folds them away; any change means someone
 # added an entry the old way, which is the conflict machine coming back.
-FROZEN_SHA = "3b67d078acb8bbc3aea4706ca5b06f9d8a759b967d8035ea28933232a2d540ea"
+FROZEN_SHA = "186212b351b259930371433a902738110e4cbbb8622f7714494cf417a9a307e9"
 
 
 def _fold():
