@@ -23,6 +23,14 @@ entry to a short paragraph; the issue holds the detail.
   advances properly once the service reports change stamps, so each pass
   asks only for what changed.
 
+- A crash loop can no longer destroy your restore points (#275). Every
+  startup snapshots the database, retention keeps the newest 14 copies,
+  and the service manager restarts a crashing app every few seconds - so
+  about two minutes of crash loop used to evict every pre-crash snapshot
+  at exactly the moment one was needed. A snapshot byte-identical to the
+  newest one is now discarded, so restarts that change nothing keep the
+  history intact.
+
 - A chat that carried more than 20 files on one message can reach memory
   again (#271). The memory service caps attachments per message at 20
   and rejects the whole handoff past that, so one bulk file drop wedged
