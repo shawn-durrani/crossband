@@ -5,6 +5,9 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+New entries land as one file each in `changelog.d/`; a release folds
+them in here, newest first.
+
 - Facts mined from web-touched rounds now reach the review hold they were
   built for (#268). The round's web stamp was written to the message row,
   but the query behind the memory handoff never selected the column, so

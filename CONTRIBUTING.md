@@ -30,7 +30,11 @@ PR: squash-merging the first would orphan the second.
 
 - Tests accompany behaviour changes. Rules belong in a pure `.js` module
   with a `node --test` suite, not inside a component.
-- User-visible changes get a line in `CHANGELOG.md` under Unreleased.
+- User-visible changes get one new file under `changelog.d/`, not an
+  edit to `CHANGELOG.md`. Name it `<issue>-<slug>.md` and write the
+  finished entry: one `- ` paragraph in the changelog's voice, with
+  continuation lines indented two spaces. Entries fold into the
+  changelog at release, so two open PRs never touch the same line.
 - No real personal data in any diff: not in code, tests, fixtures, docs,
   screenshots or a demo database. That includes generated chat titles,
   which summarise whatever the chat actually discussed. Enable the leak
@@ -86,4 +90,5 @@ Before a tag, every box:
 - [ ] `bash scripts/secret-scan.sh --tree` green. The bare command scans
       staged lines only, so at release time it scans nothing and still
       reports clean; `--tree` is the one that looks.
-- [ ] CHANGELOG entry dated, fresh `## Unreleased` left above it
+- [ ] `python scripts/fold_changelog.py vX.Y.Z` run: `changelog.d/`
+      empty, the new section dated, Unreleased left empty above it
