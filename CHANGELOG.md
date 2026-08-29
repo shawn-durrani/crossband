@@ -13,6 +13,16 @@ entry to a short paragraph; the issue holds the detail.
   handoff, and an end-to-end test walks a stamped row all the way to the
   wire so the seam cannot reopen quietly.
 
+- Voice corrections can no longer be eaten by a bad sync pass (#273). A
+  move or delete of a learned clip is replayed into the memory service so
+  the correction cannot resurrect through a rebuild. When the service
+  answered the clip lookup with an error (a stale token's 401, a 500),
+  the replay read that as "already converged" and consumed the
+  correction permanently. An unreadable lookup now leaves the correction
+  pending and the next pass retries it. The person-sync watermark also
+  advances properly once the service reports change stamps, so each pass
+  asks only for what changed.
+
 - A chat that carried more than 20 files on one message can reach memory
   again (#271). The memory service caps attachments per message at 20
   and rejects the whole handoff past that, so one bulk file drop wedged

@@ -87,10 +87,18 @@ def sync_once(memory_url: str, force: bool = False) -> dict:
 
 
 def _find_anchor(client, base, slug, sha):
-    """Membro's anchor id for these bytes under this person, or None."""
+    """Membro's anchor id for these bytes under this person, or None when the
+    person's clip list genuinely lacks it. A person membro no longer holds
+    (404/410) also reads as None: there is nothing durable left to correct.
+    Any OTHER failure raises instead - the callers consume a None as
+    "already converged", and treating an unreadable list (a 401 from a
+    stale token, a 500) as converged permanently ate the pending
+    correction, which is exactly the silent drop _replay_corrections
+    promises never to make."""
     lst = client.get(f"{base}/v1/persons/{slug}/anchors")
-    if lst.status_code != 200:
+    if lst.status_code in (404, 410):
         return None
+    lst.raise_for_status()
     for a in lst.json()["anchors"]:
         if a["sha256"] == sha:
             return a["id"]
