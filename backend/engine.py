@@ -1198,7 +1198,8 @@ async def leave_chat_job(chat_id, cfg, memory):
             c.close()
             return []
         msgs = [dict(r) for r in c.execute(
-            "SELECT id, speaker, content, created_at, voice_labels "
+            "SELECT id, speaker, content, created_at, voice_labels, "
+            "web_sources "
             "FROM messages WHERE chat_id=? AND id>? ORDER BY id",
             (chat_id, upto[0]))]
         by_id = {m["id"]: m for m in msgs}
