@@ -11,14 +11,20 @@ The decisions below are settled.
 
 ```
 app.py          - FastAPI wiring, loopback guard, cross-site rejection
+routers/        - one file per HTTP surface; app.py mounts them
 db.py           - SQLite (WAL); one insert path; the notify bell
 engine.py       - a round: who speaks, in what order, with what context
+rounds.py       - the per-chat buffer a round writes and HTTP tails
 providers.py    - per-vendor projection, streaming, prompt-cache layout
 tools.py        - shared tools every seat can call
+memory_client.py - the optional Membro bridge; absent means memoryless
 egress.py       - the vetting proxy every model-influenced URL exits by
 url_ledger.py   - fetchable means already seen from a non-model source
 browse.py       - rendered viewing; browse_worker.py is the keyless child
 guest.py        - Claude Code as a summonable participant
+voiceid.py      - the voice matcher; anchors.py is its clip store,
+                  introductions.py the phrase and seating layer, and
+                  diarize.py crosstalk splitting and the label passes
 accounting.py   - cost with provenance; provenance.py defines the axes
 frontend/       - React UI; pure .js modules hold the rules and are tested
 ```
