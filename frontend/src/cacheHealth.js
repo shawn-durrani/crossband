@@ -81,9 +81,6 @@ export function headline(summary) {
   }
 }
 
-export function fmtTokens(n) {
-  const v = Number(n || 0)
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
-  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}k`
-  return String(v)
-}
+// The canonical one-decimal formatter moved to format.js (#236); the
+// re-export keeps this module's callers and tests stable.
+export { fmtTokens } from './format.js'

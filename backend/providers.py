@@ -122,7 +122,7 @@ def _system_role_unsupported(exc) -> bool:
 
 # The FULL set of valid `reasoning_effort` choices per provider -
 # the single source of truth for (a) routers/participants.py's create/update
-# validation, (b) frontend/src/components/ModelsPage.jsx's <select> options
+# validation, (b) frontend/src/reasoningEffort.js's options
 # (mirrored there; keep the two in sync), and (c) what _anthropic_thinking /
 # _anthropic_effort / _openai_effort below actually translate.
 #

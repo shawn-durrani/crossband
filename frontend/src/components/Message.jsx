@@ -7,6 +7,7 @@ import { canDiscard, discardWarnings } from '../voiceDiscard.js'
 import { renderWritten } from '../writtenChannel.js'
 import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
+import { fmtTokens } from '../format'
 import { chipData, chipSuffix, chipTitle, crosstalkNote, crosstalkSegments } from '../voiceChips'
 import { flagCopy, reassignOptions } from '../roomState'
 import { auditChips } from '../auditChips'
@@ -218,14 +219,13 @@ function UsageFooter({ usageJson, speaker }) {
   const entry = classifyUsage(usageJson, speaker)
   if (!entry) return null
   const label = costLabel(entry)
-  const fmt = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n)
   return (
     <div
       className="flex items-center justify-end gap-1.5 text-[11px] text-ink-faint mt-1 max-w-[68ch] opacity-0 group-hover:opacity-100 transition-opacity"
       title="input tokens (incl. cached) / output tokens"
     >
-      <ArrowUp size={10} />{fmt(entry.input)}
-      <ArrowDown size={10} />{fmt(entry.output)}
+      <ArrowUp size={10} />{fmtTokens(entry.input)}
+      <ArrowDown size={10} />{fmtTokens(entry.output)}
       {label && <span className={COST_TONE[label.tone]} title={label.title}>· {label.text}</span>}
     </div>
   )

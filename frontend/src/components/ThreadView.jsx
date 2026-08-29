@@ -22,6 +22,12 @@ export default function ThreadView({
   children,
 }) {
   const showJump = !atBottom && (newCount > 0 || streaming)
+  // The id of the last model reply, computed once: the per-row
+  // hasLaterReplies test used to scan the whole list inside the map, which
+  // was quadratic and defeated Message's memo. Ids are unique and
+  // monotonic, so id < lastReplyId is the same predicate.
+  const lastReplyId = messages.reduce(
+    (last, m) => (m.speaker !== 'user' && m.speaker !== 'system' ? m.id : last), 0)
   return (
     <div className="relative flex-1 min-h-0">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 sm:px-6 py-6">
@@ -83,8 +89,7 @@ export default function ThreadView({
               roomRoster={roomRoster}
               voicePeople={voicePeople}
               onDiscard={onDiscard}
-              hasLaterReplies={messages.some((m2) =>
-                m2.id > m.id && m2.speaker !== 'user' && m2.speaker !== 'system')}
+              hasLaterReplies={m.id < lastReplyId}
               onReassign={onReassign}
             />
           ))}
