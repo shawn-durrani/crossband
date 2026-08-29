@@ -56,7 +56,7 @@ it appears.
 
 1. [ARCHITECTURE.md](../ARCHITECTURE.md): the map. The projection trick, the
    round loop, provider adapters, the guest, cost provenance, the frontend's
-   pure-module rule. Ends with a reading order for the code itself.
+   pure-module rule. Opens with the shape block: which module owns what.
 2. [CONTRIBUTING.md](../CONTRIBUTING.md): setup, the keyless test suites, the
    rules that matter, and how work lands.
 3. [docs/TESTING.md](TESTING.md): what every suite guards, backend and
@@ -70,6 +70,9 @@ it appears.
 6. [eval_critic/README.md](../eval_critic/README.md): the offline eval
    harness for the memory-provenance critic. Fixtures, scoring, and how to
    run it against a live model.
+7. [eval_silence/README.md](../eval_silence/README.md): the eval harness
+   for the speak-or-pass rule in group chats. What it measures, the cases,
+   and how to score a model's judgement of when silence reads as absence.
 
 ## Safety, security, history
 
@@ -87,5 +90,6 @@ it appears.
 [CLAUDE.md](../CLAUDE.md) is your entry point and is loaded automatically; it
 links here. The process rules live in CONTRIBUTING.md; follow them from
 there rather than re-deriving. The one meta-rule about this index: **every
-document in `docs/` must be listed on this page**, and `tests/` enforces it, so
-adding a doc without indexing it turns CI red.
+document in `docs/`, and each eval harness README, must be listed on this
+page**, and `tests/` enforces it, so adding a doc without indexing it turns
+CI red.
