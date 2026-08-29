@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Facts mined from web-touched rounds now reach the review hold they were
+  built for (#268). The round's web stamp was written to the message row,
+  but the query behind the memory handoff never selected the column, so
+  the stamp never left the app and the memory service treated every
+  web-informed reply as ordinary transcript. The stamp now rides the
+  handoff, and an end-to-end test walks a stamped row all the way to the
+  wire so the seam cannot reopen quietly.
+
 - The rate card now prices Claude Opus 5 and Claude Mythos 5, and corrects
   Claude Sonnet 5 to the $2/$10 the pricing page made standard when the
   scheduled September rise was cancelled (#262). An Opus 5 seat previously
