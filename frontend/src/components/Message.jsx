@@ -283,20 +283,6 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
     )
   }
 
-  /* ---- Sat-out turn: a bare "…" is the passing convention (the system
-     prompt tells models to reply with only an ellipsis when they're sitting
-     out or have nothing new) - render it as a quiet marker, not a bubble. */
-  if (!isUser && !msg.streaming && (msg.content || '').trim() === '…') {
-    return (
-      <div className={`flex items-center gap-2 text-xs text-ink-dim ${gapClass}`}
-           title={`${info.name} passed this turn`}>
-        <i aria-hidden="true" className="inline-block w-1.5 h-1.5 rounded-full"
-           style={{ background: info.color, opacity: 0.5 }} />
-        <span>{info.name} sat this one out</span>
-      </div>
-    )
-  }
-
   /* ---- User turn: compact right-aligned bubble --------------------------- */
   if (isUser) {
     // Room-mode voice labels (#28), attached a second or two after the turn

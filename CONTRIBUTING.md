@@ -52,6 +52,22 @@ git config core.hooksPath .githooks
   synthetic by construction.
 - Scope boundaries in [ARCHITECTURE.md](ARCHITECTURE.md) are deliberate.
 
+## Retiring code
+
+Three retirements each stopped at the first green build and left
+residue, so removal has its own checklist. When a feature, helper or
+convention is retired:
+
+- [ ] Delete the code, its exports, and any constant that existed only
+      to serve it.
+- [ ] Delete or rewrite the tests that pinned it. A green test for a
+      dead rule reads as coverage of a live one.
+- [ ] Sweep the comments and docstrings that name it, both sides of the
+      frontend/backend boundary.
+- [ ] Check the UI for branches that render the retired convention.
+- [ ] Land the removal as its own PR. A removal that has to justify
+      itself inside a feature PR stops at the first green build.
+
 ## Writing documentation
 
 Budgets, not taste. `tests/test_doc_style.py` enforces the hard limits;

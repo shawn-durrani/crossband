@@ -222,7 +222,6 @@ def test_new_unpriced_model_fails_closed_in_accounting(con):
     assert e.has_cost is False
     s = accounting.summarize(events)
     assert accounting.SOURCE_NORMAL in s["not_tracked"]
-    assert s["billed"] == 0.0
 
 
 def test_daily_series_buckets_by_day(con):
@@ -246,16 +245,14 @@ def test_resident_turn_provenance_is_rate_card_estimate(con):
     _msg(con, "claude", _base_usage(0.05, model="claude-opus-4-8"), NOW)
     e = list(accounting.iter_cost_events(con))[0]
     assert e.provenance == "rate_card_estimate"
-    s = accounting.summarize([e])
-    assert s["billed"] == 0.0  # nothing provider-reported → nothing billed
-    assert s["provenance_totals"]["rate_card_estimate"] == pytest.approx(0.05)
+    assert e.cost == pytest.approx(0.05)
 
 
 def test_guest_api_key_turn_is_provider_reported_billed(con):
     _msg(con, "claude-code", _base_usage(2.0, auth="api_key"), NOW)
-    s = accounting.summarize(list(accounting.iter_cost_events(con)))
-    assert s["billed"] == pytest.approx(2.0)
-    assert s["provenance_totals"]["provider_reported"] == pytest.approx(2.0)
+    e = list(accounting.iter_cost_events(con))[0]
+    assert e.provenance == "provider_reported"
+    assert e.cost == pytest.approx(2.0)
 
 
 def test_recorded_provenance_is_immutable_to_rate_card_edits(con):
@@ -283,13 +280,13 @@ def test_self_hosted_zero_is_distinct_from_not_tracked(con):
                          provenance.SELF_HOSTED_ZERO_MARGINAL)), NOW)
     # a genuinely untracked resident turn: no cost at all
     _msg(con, "gpt", {"input": 5, "output": 5, "cost": None}, NOW)
-    s = accounting.summarize(list(accounting.iter_cost_events(con)))
-    assert "self_hosted_zero_marginal" in s["tracked_provenances"]
+    events = list(accounting.iter_cost_events(con))
+    s = accounting.summarize(events)
+    # The declared $0.00 is a tracked fact on its event (has_cost), never
+    # confused with the untracked gap the other turn leaves.
+    declared = next(e for e in events if e.model == "llama-3")
+    assert declared.has_cost is True and declared.cost == 0.0
     assert accounting.SOURCE_NORMAL in s["not_tracked"]
-    # the self-hosted $0.00 is a declared fact, not folded into billed spend
-    assert s["billed"] == 0.0
-    by_prov = {g["key"]: g for g in s["by_provenance"]}
-    assert by_prov["self_hosted_zero_marginal"]["not_tracked"] is False
 
 
 def test_summary_endpoint(tmp_path):

@@ -35,6 +35,10 @@ instead of racing it.
 
 Failure posture: a failed or slow pass leaves the message unlabelled and
 everything else untouched. No retry ever feeds back into the live path.
+
+The id-less label-attachment branch (the time-window candidate scan
+behind the turn-id lookup) is belt and braces for a commit frame
+arriving without an id for any reason, not a co-equal strategy.
 """
 
 import asyncio
@@ -574,20 +578,6 @@ def segments_align(segments, content) -> bool:
         return False
     joined = _norm_text(" ".join(s.get("text") or "" for s in segments))
     return bool(joined) and joined == _norm_text(content)
-
-
-def should_label(clusters, prev_clusters) -> bool:
-    """Label an utterance only when diarization actually says something:
-    more than one cluster inside it, or a different cluster mix than the
-    previous utterance. A lone speaker talking on (the overwhelmingly common
-    case) stays unlabelled - silence is the honest default when the second
-    pass found nothing new. Cross-utterance comparison is best-effort by
-    nature (clusters are per-request; see the module docstring)."""
-    if not clusters:
-        return False
-    if len(clusters) > 1:
-        return True
-    return prev_clusters is not None and clusters != prev_clusters
 
 
 def pick_target(rows, already_labelled) -> dict | None:

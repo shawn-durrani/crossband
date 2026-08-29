@@ -300,15 +300,3 @@ def _reap(job_id: int):
     """Drop a settled job from the live registry. The DB row (durable status)
     stays - a client that connects later still reads the final state."""
     _jobs.pop(job_id, None)
-
-
-async def drain_for_test(chat_id: int | None = None):
-    """Await all in-flight guest tasks (their hand-backs included). Test-only:
-    detached tasks otherwise outlive the request that spawned them."""
-    tasks = [j.task for j in list(_jobs.values())
-             if j.task and (chat_id is None or j.chat_id == chat_id)]
-    for t in tasks:
-        try:
-            await t
-        except Exception:
-            pass

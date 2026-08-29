@@ -50,17 +50,6 @@ PROVENANCE_STATES = (
     SUBSCRIPTION_EQUIVALENT, UNKNOWN,
 )
 
-# The only provenance that counts as verifiable, incremental billed cash.
-BILLED = frozenset({PROVIDER_REPORTED})
-
-# Provenances that carry a REAL (possibly exactly-zero) tracked cost. Distinct
-# from "not tracked": a self_hosted_zero_marginal $0.00 is a declared fact, an
-# untracked source is a gap. Consumers must render the two differently.
-TRACKED = frozenset({
-    PROVIDER_REPORTED, RATE_CARD_ESTIMATE, SELF_HOSTED_ZERO_MARGINAL,
-    SUBSCRIPTION_EQUIVALENT,
-})
-
 # Provenances whose dollar figure is an estimate rather than a billed amount.
 _ESTIMATED = frozenset({RATE_CARD_ESTIMATE, SUBSCRIPTION_EQUIVALENT})
 
@@ -76,14 +65,6 @@ PROVENANCE_LABELS = {
 TRIAL = "trial"
 ONBOARDED = "onboarded"
 LIFECYCLE_STATES = (TRIAL, ONBOARDED)
-
-
-def is_billed(source) -> bool:
-    return source in BILLED
-
-
-def is_tracked(source) -> bool:
-    return source in TRACKED
 
 
 def estimated_flag(source):

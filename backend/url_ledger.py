@@ -43,12 +43,11 @@ _TRAIL = ".,;:!?"
 _CLOSERS = {")": "(", "]": "[", "}": "{"}
 
 
-def source_speaker(speaker: str) -> bool:
-    """Non-model message sources: the owner, tooling lines, and external
-    machine feeds. Guests are humans, but their turns arrive via
-    transcription with uncertain attribution, so they do not mint either.
-    The SQL in check() mirrors this - keep the two in step."""
-    return speaker == "user" or speaker == "system" or speaker.startswith("ext:")
+# Non-model message sources: the owner, tooling lines, and external
+# machine feeds. Guests are humans, but their turns arrive via
+# transcription with uncertain attribution, so they do not mint either.
+# Both minting queries in check() share this one predicate.
+_SOURCE_SPEAKER_SQL = "(speaker='user' OR speaker='system' OR speaker LIKE 'ext:%')"
 
 
 def canonical(url: str) -> str | None:
@@ -119,7 +118,7 @@ def check(chat_id, url, extra_texts=(), con=None):
     try:
         rows = con.execute(
             "SELECT content FROM messages WHERE chat_id=? AND "
-            "(speaker='user' OR speaker='system' OR speaker LIKE 'ext:%')",
+            + _SOURCE_SPEAKER_SQL,
             (chat_id,))
         for (content,) in rows:
             if content and target in extract(content):
@@ -137,8 +136,9 @@ def check(chat_id, url, extra_texts=(), con=None):
         rows = con.execute(
             "SELECT a.stored_name, a.mime FROM attachments a "
             "JOIN messages m ON a.message_id = m.id "
-            "WHERE m.chat_id=? AND (m.speaker='user' OR m.speaker='system' "
-            "OR m.speaker LIKE 'ext:%')", (chat_id,)).fetchall()
+            "WHERE m.chat_id=? AND "
+            + _SOURCE_SPEAKER_SQL.replace("speaker", "m.speaker"),
+            (chat_id,)).fetchall()
     finally:
         if own:
             con.close()
