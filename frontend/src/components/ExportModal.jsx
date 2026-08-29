@@ -3,7 +3,7 @@ import { Download, Check } from 'lucide-react'
 import { headline } from '../spendView'
 import { chatCostFigures, chatCostNote, COST_TONE } from '../messageCost'
 
-const fmtTok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n)
+import { fmtTokens } from '../format'
 const fmtDay = (ts) => new Date(ts * 1000).toISOString().slice(0, 10)
 
 // The three provenance buckets, named. `/api/usage/chats` returns them apart
@@ -108,7 +108,7 @@ export default function ExportModal({ chats, onClose }) {
                 <div className="text-sm font-medium truncate flex items-center gap-1">{on && <Check size={13} className="text-link shrink-0" />}{c.title}</div>
                 <div className="text-[11px] text-ink-dim mt-1">{fmtDay(c.updated_at)}</div>
                 <div className="text-[11px] text-ink-faint">
-                  {u ? `${u.messages} msg · ${fmtTok(u.tokens)} tok` : '—'}
+                  {u ? `${u.messages} msg · ${fmtTokens(u.tokens)} tok` : '—'}
                 </div>
                 {u && <CostFigures row={u} className="block text-[11px] text-ink-faint" />}
               </button>
@@ -125,7 +125,7 @@ export default function ExportModal({ chats, onClose }) {
         <div className="flex items-center gap-3 pt-1 border-t border-edge">
           <span className="text-xs text-ink-dim flex flex-wrap items-baseline gap-x-1">
             <span>{selected.size} selected</span>
-            {selected.size > 0 && <span>· {fmtTok(totals.tokens)} tok</span>}
+            {selected.size > 0 && <span>· {fmtTokens(totals.tokens)} tok</span>}
             {selected.size > 0 && <CostFigures row={totals} lead="· " />}
           </span>
           <select

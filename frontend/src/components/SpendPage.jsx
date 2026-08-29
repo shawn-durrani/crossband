@@ -4,8 +4,9 @@ import { api } from '../api'
 import { headline, accuracy, direction, roughBreakdown, trendLines, linePath, SPANS } from '../spendView'
 // `headline` is already taken by spendView's own, so alias the cache one.
 import {
-  headline as headlineCache, cacheRows, verdictOf, formatRatio, fmtTokens,
+  headline as headlineCache, cacheRows, verdictOf, formatRatio,
 } from '../cacheHealth'
+import { fmtTokens, money } from '../format'
 
 // Honesty is the whole point of this view: metered spend, estimated
 // subscription-equivalent usage, and unknown/unverified cost are shown apart
@@ -30,8 +31,6 @@ const CAT = {
 const ORDER = ['metered', 'subscription_equiv', 'unknown']
 const BAR = { metered: 'bg-link', subscription_equiv: 'bg-amber-500', unknown: 'bg-edge3' }
 
-const money = (n) => (!n ? '$0.00' : `$${n.toFixed(n < 0.1 ? 4 : 2)}`)
-const tok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`)
 // The sum across all three cash kinds - used ONLY as an "is there any activity
 // at all here?" test (a subscription-only chat has recorded something, just
 // nothing metered). It is never rendered as a spend figure: the headline and
@@ -107,7 +106,7 @@ function BreakdownTable({ title, rows }) {
           return (
             <div key={g.key} className="flex items-baseline gap-2 text-xs border-b border-edge/50 pb-1">
               <span className="truncate flex-1 text-ink">{g.label}</span>
-              {g.tokens > 0 && <span className="text-ink-faint">{tok(g.tokens)} tok</span>}
+              {g.tokens > 0 && <span className="text-ink-faint">{fmtTokens(g.tokens)} tok</span>}
               {g.not_tracked && <span className="text-ink-faint italic">not tracked</span>}
               {g.metered > 0 && <span className="text-ink tabular-nums">{money(g.metered)}</span>}
               {g.subscription_equiv > 0 && <span className="text-amber-500 tabular-nums">{money(g.subscription_equiv)}~</span>}
@@ -131,7 +130,6 @@ function TrendLine({ series, previousSeries, spanLabel }) {
   const t = trendLines(series, previousSeries)
   if (!t) return <div className="text-xs text-ink-faint">No dated spend in this period.</div>
   const W = 640, H = 132
-  const money = (n) => `$${(n || 0).toFixed(2)}`
   const last = t.now[t.now.length - 1]
   const ahead = t.aheadBy
   return (
@@ -181,7 +179,6 @@ export default function SpendPage({ onClose, onOpenMenu }) {
 
   const b = data?.breakdown
   const notTracked = useMemo(() => b?.not_tracked || [], [b])
-  const money = (n) => `$${(n || 0).toFixed(2)}`
 
   const h = b ? headline(b.totals) : null
   const acc = b ? accuracy(b.totals) : null

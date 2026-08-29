@@ -23,11 +23,13 @@ const LEVELS = [
   { at: 0, level: 'comfortable', tone: '#10b981', cssTone: 'var(--t-accent)' },
 ]
 
-// Compact token count: 1.2k rather than 1200. Kept here because both the ring
-// and its tooltip need the same rounding.
-export function fmtTokens(n) {
-  return n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`
-}
+// Compact token count: 1.2k rather than 1200. The gauge rounds to whole
+// thousands and the totals keep one decimal - deliberately different: a
+// total is a measurement and the gauge is an indicator. Both live in
+// format.js; the local names keep this file's callers and tests stable.
+import { fmtTokensRound, fmtTokens as fmtCount } from './format.js'
+const fmtTokens = fmtTokensRound
+export { fmtTokens, fmtCount }
 
 // The gauge for one chat's context breakdown, or null when the server hasn't
 // reported one yet (an empty chat, or a chat still loading).
@@ -92,16 +94,6 @@ export function usageSummary(chatTotal, voice) {
         + (voice.stt_seconds > 0 ? ` / ${Math.round(voice.stt_seconds)}s` : '')
       : '',
   }
-}
-
-// One decimal for the running totals (12.4k / 3.1M), where the gauge rounds
-// to whole thousands. Deliberately different: a total is a measurement and the
-// gauge is an indicator. The M tier exists because a multi-million-token chat
-// used to render as a five-digit "k" figure, which is easy to misread by a
-// factor of a thousand.
-export function fmtCount(n) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
 }
 
 // The header's capability menu: the four per-chat modes as data, so the
