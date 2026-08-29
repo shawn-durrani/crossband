@@ -13,6 +13,16 @@ entry to a short paragraph; the issue holds the detail.
   handoff, and an end-to-end test walks a stamped row all the way to the
   wire so the seam cannot reopen quietly.
 
+- Voice corrections can no longer be eaten by a bad sync pass (#273). A
+  move or delete of a learned clip is replayed into the memory service so
+  the correction cannot resurrect through a rebuild. When the service
+  answered the clip lookup with an error (a stale token's 401, a 500),
+  the replay read that as "already converged" and consumed the
+  correction permanently. An unreadable lookup now leaves the correction
+  pending and the next pass retries it. The person-sync watermark also
+  advances properly once the service reports change stamps, so each pass
+  asks only for what changed.
+
 - A crash loop can no longer destroy your restore points (#275). Every
   startup snapshots the database, retention keeps the newest 14 copies,
   and the service manager restarts a crashing app every few seconds - so
