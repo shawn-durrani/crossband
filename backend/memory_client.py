@@ -33,6 +33,14 @@ CONTRACT_MAJOR = 1
 SOURCE_APP = "multi-model-chat"  # secret-scan: allow (historical wire value, see above)
 PROBE_TTL = 30.0  # seconds to cache the health probe
 MAX_ATTACH_BYTES = 25_000_000  # per-file sanity bound, matches the service's cap
+# The service also caps attachments per MESSAGE (schema max_length=20) and
+# rejects the whole ingest body with a 422 when one message exceeds it -
+# which would wedge the chat: the watermark never advances and every later
+# handoff retries the same rejected payload. The service tops up
+# attachments on a re-ingest of the same external_id (add_attachment is
+# content-addressed and idempotent), so an over-limit message is sent as
+# the entry plus continuation entries carrying the remaining files.
+MAX_ATTACH_PER_MESSAGE = 20  # mirrors the service's per-message schema cap
 
 
 def _iso(ts: float) -> str:
@@ -379,8 +387,13 @@ class MemoryClient:
                     entry["web_sources"] = list(ws)[:20]
                     self._warn_if_stamp_unsupported()
             if atts:
-                entry["attachments"] = atts
+                entry["attachments"] = atts[:MAX_ATTACH_PER_MESSAGE]
             out.append(entry)
+            for i in range(MAX_ATTACH_PER_MESSAGE, len(atts),
+                           MAX_ATTACH_PER_MESSAGE):
+                cont = dict(entry)
+                cont["attachments"] = atts[i:i + MAX_ATTACH_PER_MESSAGE]
+                out.append(cont)
         payload = {"source_app": SOURCE_APP, "conversation_id": conversation_id,
                    "messages": out}
         r = await self._client.post(self.api + "/ingest", json=payload)

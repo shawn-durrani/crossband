@@ -162,6 +162,46 @@ def test_ingest_carries_attachments_and_placeholder():
     run(c.aclose())
 
 
+def test_over_limit_attachments_split_into_continuation_entries():
+    """The service caps attachments per message at 20 and 422s the whole
+    body past it, which would wedge the chat: the watermark never advances
+    and every later handoff retries the same rejected payload. An
+    over-limit message is sent as chunks under the same external_id - the
+    service's re-ingest top-up (idempotent, content-addressed) attaches
+    the rest, and no composed body can exceed the schema."""
+    from backend.memory_client import MAX_ATTACH_PER_MESSAGE
+
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.0"})
+    sent = {}
+
+    async def fake_post(url, json=None):
+        sent["body"] = json
+        return httpx.Response(200, json={"ingested": 1, "skipped": 0,
+                                         "attached": 45},
+                              request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    atts = [{"filename": f"f{i}.txt", "mime": "text/plain", "data_b64": "aGk="}
+            for i in range(45)]
+    run(c.ingest("7", [
+        {"id": 1, "speaker": "user", "content": "bulk drop",
+         "created_at": 1751600000.0, "attachments": atts},
+        {"id": 2, "speaker": "user", "content": "plain",
+         "created_at": 1751600001.0},
+    ]))
+    msgs = sent["body"]["messages"]
+    bulk = [m for m in msgs if m["external_id"] == "1"]
+    assert [len(m["attachments"]) for m in bulk] == [20, 20, 5]
+    assert all(len(m.get("attachments", [])) <= MAX_ATTACH_PER_MESSAGE
+               for m in msgs)
+    carried = [a["filename"] for m in bulk for a in m["attachments"]]
+    assert carried == [f"f{i}.txt" for i in range(45)]  # none dropped
+    assert all(m["content"] == "bulk drop" for m in bulk)
+    assert [m["external_id"] for m in msgs] == ["1", "1", "1", "2"]
+    run(c.aclose())
+
+
 # ---------- /search: current contract is POST /v1/search, owner-token gated,
 # {"hits": [...]} on success (verified live against a running Membro) ----------
 
