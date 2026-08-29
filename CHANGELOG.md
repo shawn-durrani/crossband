@@ -13,6 +13,16 @@ entry to a short paragraph; the issue holds the detail.
   handoff, and an end-to-end test walks a stamped row all the way to the
   wire so the seam cannot reopen quietly.
 
+- Voice corrections can no longer be eaten by a bad sync pass (#273). A
+  move or delete of a learned clip is replayed into the memory service so
+  the correction cannot resurrect through a rebuild. When the service
+  answered the clip lookup with an error (a stale token's 401, a 500),
+  the replay read that as "already converged" and consumed the
+  correction permanently. An unreadable lookup now leaves the correction
+  pending and the next pass retries it. The person-sync watermark also
+  advances properly once the service reports change stamps, so each pass
+  asks only for what changed.
+
 - The rate card now prices Claude Opus 5 and Claude Mythos 5, and corrects
   Claude Sonnet 5 to the $2/$10 the pricing page made standard when the
   scheduled September rise was cancelled (#262). An Opus 5 seat previously
