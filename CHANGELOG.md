@@ -23,6 +23,14 @@ entry to a short paragraph; the issue holds the detail.
   advances properly once the service reports change stamps, so each pass
   asks only for what changed.
 
+- A crash loop can no longer destroy your restore points (#275). Every
+  startup snapshots the database, retention keeps the newest 14 copies,
+  and the service manager restarts a crashing app every few seconds - so
+  about two minutes of crash loop used to evict every pre-crash snapshot
+  at exactly the moment one was needed. A snapshot byte-identical to the
+  newest one is now discarded, so restarts that change nothing keep the
+  history intact.
+
 - The Spend page now counts the background model work behind room mode
   and voice (#232). Five of the eight cheap-model calls the app makes
   were spending real money and appearing nowhere: the ones that read a
