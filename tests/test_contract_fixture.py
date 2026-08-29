@@ -17,7 +17,7 @@ clone without a pytest run first.
 import json
 from pathlib import Path
 
-from backend import provenance
+from backend import provenance, providers
 from backend.config import _LOOPBACK_HOSTS
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backend_contract.json"
@@ -30,6 +30,14 @@ def current_contract():
         "seat_lifecycle": {
             "states": list(provenance.LIFECYCLE_STATES),
             "loopback_hosts": sorted(_LOOPBACK_HOSTS),
+        },
+        # The seat editor's effort dropdown and its greyed-out-model rule
+        # (frontend/src/reasoningEffort.js) mirror these (#292).
+        "reasoning_effort": {
+            "choices": {p: list(v)
+                        for p, v in sorted(providers.REASONING_CHOICES.items())},
+            "anthropic_no_effort_models":
+                list(providers._ANTHROPIC_NO_EFFORT_MODEL),
         },
     }
 
