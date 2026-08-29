@@ -2171,21 +2171,48 @@ _OPENAI_NONCHAT_RE = re.compile(
 )
 
 
+def _capability_data(caps):
+    """SDK capability payload -> plain JSON data. None means the provider
+    did not say - never an empty "no capabilities"."""
+    if caps is None:
+        return None
+    if hasattr(caps, "model_dump"):
+        return caps.model_dump()
+    if isinstance(caps, (list, tuple)):
+        return [_capability_data(c) for c in caps]
+    if isinstance(caps, (str, int, float, bool, dict)):
+        return caps
+    return str(caps)
+
+
 def list_models(provider, api_key_env=None, base_url=None):
-    """Fetch available model IDs live from the provider's API. Sync - called
-    from a threadpool endpoint, never from the round loop."""
+    """Fetch available models live from the provider's API. Sync - called
+    from a threadpool endpoint, never from the round loop.
+
+    Every record carries the same five keys. Anthropic model objects come
+    with max_input_tokens (context window), max_tokens (output cap) and
+    capabilities, and those ride along so a caller can check whether a chat
+    fits a model before choosing it (#263). OpenAI's /v1/models carries no
+    equivalent, so there the three fields are None: explicitly unknown,
+    never a guessed default."""
     fake = {"provider": provider, "api_key_env": api_key_env, "base_url": base_url,
             "name": api_key_env or provider}
     if provider == "anthropic":
         import anthropic
         client = anthropic.Anthropic(api_key=_key_for(fake))
-        return [{"id": m.id, "label": getattr(m, "display_name", None) or m.id}
-                for m in client.models.list()]
+        return [{
+            "id": m.id,
+            "label": getattr(m, "display_name", None) or m.id,
+            "max_input_tokens": getattr(m, "max_input_tokens", None),
+            "max_tokens": getattr(m, "max_tokens", None),
+            "capabilities": _capability_data(getattr(m, "capabilities", None)),
+        } for m in client.models.list()]
     if provider == "openai":
         from openai import OpenAI
         client = OpenAI(api_key=_key_for(fake), base_url=base_url or None)
         ids = sorted(m.id for m in client.models.list())
         if not base_url:
             ids = [i for i in ids if _OPENAI_CHAT_RE.match(i) and not _OPENAI_NONCHAT_RE.search(i)]
-        return [{"id": i, "label": i} for i in ids]
+        return [{"id": i, "label": i, "max_input_tokens": None,
+                 "max_tokens": None, "capabilities": None} for i in ids]
     raise ValueError(f"Unknown provider: {provider}")
