@@ -96,6 +96,13 @@ _ANTHROPIC_PRICING_URL = "https://www.anthropic.com/pricing"
 _OPENAI_PRICING_URL = "https://openai.com/api/pricing"
 _PRICING_AS_OF = "2026-01-01"
 
+# Anthropic rows re-verified against the platform docs pricing page, every
+# figure checked on the stamped date. Stamped separately from _PRICING_AS_OF
+# for the same reason the OpenAI block below is: restamping figures nobody
+# checked is how a rate card starts lying.
+_ANTHROPIC_DOCS_PRICING_URL = "https://platform.claude.com/docs/en/about-claude/pricing"
+_ANTHROPIC_VERIFIED_AS_OF = "2026-08-28"
+
 # Transcribed from OpenAI's developer pricing table rather than the marketing
 # page, because that is where the per-tier cache columns actually live. Stamped
 # with its own date: the older entries above were NOT re-verified at the same
@@ -104,13 +111,29 @@ _OPENAI_DEV_PRICING_URL = "https://developers.openai.com/api/docs/pricing"
 _OPENAI_VERIFIED_AS_OF = "2026-07-31"
 
 DEFAULT_PRICING = {
-    "claude-fable-5": _rate_card(10.0, 50.0, _PRICING_AS_OF, _ANTHROPIC_PRICING_URL),
-    "claude-opus-4-8": _rate_card(5.0, 25.0, _PRICING_AS_OF, _ANTHROPIC_PRICING_URL),
-    "claude-opus-4-7": _rate_card(5.0, 25.0, _PRICING_AS_OF, _ANTHROPIC_PRICING_URL),
-    "claude-opus-4-6": _rate_card(5.0, 25.0, _PRICING_AS_OF, _ANTHROPIC_PRICING_URL),
-    "claude-sonnet-5": _rate_card(3.0, 15.0, _PRICING_AS_OF, _ANTHROPIC_PRICING_URL),
-    "claude-sonnet-4-6": _rate_card(3.0, 15.0, _PRICING_AS_OF, _ANTHROPIC_PRICING_URL),
-    "claude-haiku-4-5": _rate_card(1.0, 5.0, _PRICING_AS_OF, _ANTHROPIC_PRICING_URL),
+    "claude-fable-5": _rate_card(10.0, 50.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                 _ANTHROPIC_DOCS_PRICING_URL),
+    # Mythos 5 is limited-availability (Fable 5 pricing, approved orgs only);
+    # priced so a seat on it can never silently record unknown cost.
+    "claude-mythos-5": _rate_card(10.0, 50.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                  _ANTHROPIC_DOCS_PRICING_URL),
+    "claude-opus-5": _rate_card(5.0, 25.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                _ANTHROPIC_DOCS_PRICING_URL),
+    "claude-opus-4-8": _rate_card(5.0, 25.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                  _ANTHROPIC_DOCS_PRICING_URL),
+    "claude-opus-4-7": _rate_card(5.0, 25.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                  _ANTHROPIC_DOCS_PRICING_URL),
+    "claude-opus-4-6": _rate_card(5.0, 25.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                  _ANTHROPIC_DOCS_PRICING_URL),
+    # $2/$10 launched as introductory with a rise to $3/$15 scheduled for
+    # 2026-09-01; the pricing page now says the rise will not occur and $2/$10
+    # is the standard rate. Not a typo - do not "fix" this back to 3/15.
+    "claude-sonnet-5": _rate_card(2.0, 10.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                  _ANTHROPIC_DOCS_PRICING_URL),
+    "claude-sonnet-4-6": _rate_card(3.0, 15.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                    _ANTHROPIC_DOCS_PRICING_URL),
+    "claude-haiku-4-5": _rate_card(1.0, 5.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                   _ANTHROPIC_DOCS_PRICING_URL),
     # Standard tier, SHORT context ($2.00 / $0.20 cached / $2.50 write / $12.00).
     # OpenAI also publishes a LONG-context tier at 2x every column
     # ($4.00 / $0.40 / $5.00 / $18.00) and does not state the token threshold
