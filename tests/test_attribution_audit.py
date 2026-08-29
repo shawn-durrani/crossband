@@ -293,3 +293,50 @@ def test_without_names_only_the_second_person_shape_runs(caplog):
     reply = "Claude said the deploy exploded spectacularly last night."
     hits = _run(caplog, reply, transcript)
     assert hits == []
+
+
+# ---------- the budget-exhausted exit is audited too (#240) ----------
+
+def test_budget_exhausted_reply_is_audited(monkeypatch):
+    """A reply that hits max_tool_rounds used to yield text and usage with
+    no audit call, while the citation check on the same reply still ran. A
+    long research reply is the shape most likely to misattribute, and it was
+    the one shape the audit could not see. Drives the chat-completions leg
+    to exhaustion with the fallback harness's fakes."""
+    import asyncio
+
+    from tests.test_openai_compat_fallback import (BASE_URL, FakeClient,
+                                                   P, _finish_chunk,
+                                                   _text_chunk,
+                                                   _tool_call_chunk)
+
+    cfg = {"max_tool_rounds": 2, "max_response_tokens": 64,
+           "attribution_audit": True, "user_name": "Owner"}
+    transcript = [make_msg(1, "user", "how's the weather looking?")]
+    monkeypatch.setattr(providers, "_chat_completions_only", {BASE_URL})
+    monkeypatch.setattr(providers, "build_openai_input", lambda *a, **k: [])
+    # Every round ends in a tool call, so the loop exhausts its budget. The
+    # misattribution arrives as ordinary streamed text along the way.
+    round_ = [
+        _text_chunk("You told me to keep replies concise. "),
+        _tool_call_chunk(0, "c1", "no_such_tool", "{}"),
+        _finish_chunk("tool_calls"),
+    ]
+    client = FakeClient([list(round_) for _ in range(cfg["max_tool_rounds"])])
+    monkeypatch.setattr(providers, "_openai_client", lambda _p: client)
+
+    async def collect():
+        out = []
+        async for ev in providers._stream_openai(
+                dict(P), "STABLE", "", transcript, {}, cfg, [], None):
+            out.append(ev)
+        return out
+
+    events = asyncio.run(collect())
+    audits = [v for k, v in events if k == "audit"]
+    assert audits, [k for k, _ in events]
+    assert any(f["kind"] == "user_attribution" or f.get("who")
+               for f in audits[0]), audits
+    # The budget notice itself must not be what got flagged.
+    text = "".join(v for k, v in events if k == "text")
+    assert "research budget" in text

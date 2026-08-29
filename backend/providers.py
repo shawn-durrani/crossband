@@ -1825,6 +1825,13 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             raise
         messages.append({"role": "user", "content": results})
     yield ("text", "\n\n*(research budget for this reply reached - answering with what I have)*")
+    # The budget-exhausted reply is audited like a natural completion: a
+    # long research reply is the shape most likely to misattribute, and it
+    # was the one shape the audit could not see (#240).
+    flags = _check_attribution("".join(reply_text_parts), transcript,
+                               p, cfg, names)
+    if flags:
+        yield ("audit", flags)
     yield ("usage", usage)
 
 
@@ -2000,6 +2007,13 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
                 t.cancel()
             raise
     yield ("text", "\n\n*(research budget for this reply reached - answering with what I have)*")
+    # The budget-exhausted reply is audited like a natural completion: a
+    # long research reply is the shape most likely to misattribute, and it
+    # was the one shape the audit could not see (#240).
+    flags = _check_attribution("".join(reply_text_parts), transcript,
+                               p, cfg, names)
+    if flags:
+        yield ("audit", flags)
     yield ("usage", usage)
 
 
@@ -2156,6 +2170,13 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
                 t.cancel()
             raise
     yield ("text", "\n\n*(research budget for this reply reached - answering with what I have)*")
+    # The budget-exhausted reply is audited like a natural completion: a
+    # long research reply is the shape most likely to misattribute, and it
+    # was the one shape the audit could not see (#240).
+    flags = _check_attribution("".join(reply_text_parts), transcript,
+                               p, cfg, names)
+    if flags:
+        yield ("audit", flags)
     yield ("usage", usage)
 
 
