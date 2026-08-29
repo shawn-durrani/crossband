@@ -264,12 +264,21 @@ def test_owner_voice_labels_but_never_arms(app, relay, batch_calls, matcher):
     assert parsed["uncertain"] == []
     assert parsed["owner"] is True   # the chips' voice-confirmed marker
     assert batch_calls["calls"] == 0
+    # #237: the owner path was the one pass that discarded its audio, so
+    # the owner-by-voice guard and tap-to-correct went silent on solo
+    # chats. The remembered ring must now hold this turn.
+    assert anchors.peek_audio(msg["id"]) is not None
 
 
 def test_remembered_voice_arms_names_and_rosters(app, relay, batch_calls,
-                                                 matcher):
+                                                 matcher, monkeypatch):
     pid = _remember("Sam")
     matcher["verdicts"] = [_verdict_match("Sam", pid)]
+    # #237: the turn that ARMS the room now gets the same mismatch
+    # cross-check the fast path gets on equivalent evidence.
+    checks = []
+    monkeypatch.setattr("backend.mismatch.schedule_check",
+                        lambda *a, **k: checks.append(a))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -287,6 +296,7 @@ def test_remembered_voice_arms_names_and_rosters(app, relay, batch_calls,
     assert json.loads(labels)["labels"] == ["Sam"]
     assert json.loads(labels)["uncertain"] == []
     assert batch_calls["calls"] == 0
+    assert len(checks) == 1 and checks[0][2] == "Sam", checks
 
 
 def test_clear_stranger_arms_and_asks(app, relay, batch_calls, matcher):

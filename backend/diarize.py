@@ -1466,12 +1466,20 @@ async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     log.info("diarize pass (ambient voiceid): chat=%s ms=%.0f armed=1",
              chat_id, (time.perf_counter() - t0) * 1000)
     await _in_voice_thread(_arm_known, chat_id, {"local": name}, cfg)
-    await _deliver_label(
+    target_id = await _deliver_label(
         chat_id, pcm, sample_rate, commit_ts, session,
         label_payload([name], score=verdict.get("score")),
         turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
                             sample_rate, cfg, verdict.get("score"))
+    # The turn that ARMS the room is the highest-stakes label there is, and
+    # it was the one confident local match that never got the cross-check
+    # the fast path gets on equivalent evidence (#237). Same gate, same
+    # cost: one cheap-model call, shown on the Spend page like the rest.
+    seconds = len(pcm) / 2 / (sample_rate or 16000)
+    if target_id and seconds >= FAST_MISMATCH_MIN_SECONDS:
+        from . import mismatch
+        mismatch.schedule_check(chat_id, target_id, name, cfg)
 
 
 # ---------- the ambient local check (#28) ----------
