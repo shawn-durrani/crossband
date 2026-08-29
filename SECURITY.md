@@ -25,9 +25,8 @@ The gate is **enrolment-activated**: until an owner password is set,
 the loopback API keeps its historical open posture (the startup banner
 says so on every start), while a trusted non-loopback host is held to
 the lock screen regardless. Once enrolled, every `/api` route outside
-the login surface requires a session, loopback included. Stated
-plainly: an install whose owner never enrols keeps the old
-anything-on-loopback model.
+the login surface requires a session, loopback included. An install
+whose owner never enrols keeps the old anything-on-loopback model.
 
 One deliberate exception (#62): machine-side tooling has no cookie
 jar, so a configured `ingest_token` (env: `CROSSBAND_INGEST_TOKEN`)
@@ -109,7 +108,7 @@ full model and its limits.
   snapshots and logs all live there.
 - Redact before pasting logs into an issue.
 
-## Voice identity (room mode, #28)
+## Voice identity (room mode)
 
 - The stored voice **anchor clips** (`data/voice_anchors/`, dir `0o700`,
   files `0o600`) are the sensitive store: they are short recordings of the

@@ -44,7 +44,7 @@ responses tail. Closing the tab does not cancel a reply, and reconnecting
 replays from the client's watermark. Stopping is an explicit abort, and
 only a real abort earns the "cut off" marker on a message.
 
-## The prompt cache splits on independence, not on volatility
+## The prompt cache splits on independence
 
 Content rides before the cache breakpoint if it changes only when the
 transcript changes, and after it if it can change on its own. The test is
@@ -53,7 +53,7 @@ transcript?" Getting this wrong re-writes the whole cached prefix every
 turn, which costs more than it saves and is invisible in a dollar total:
 the ratio of cache reads to writes is the signal.
 
-## App context is a channel, not a louder claim
+## App context is an unforgeable channel
 
 Context the app assembles is delivered as a mid-conversation `system`
 entry where the provider supports one. Where it does not, it carries a

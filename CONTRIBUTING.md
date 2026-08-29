@@ -71,8 +71,8 @@ convention is retired:
 ## Writing documentation
 
 Budgets, not taste. `tests/test_doc_style.py` enforces the hard limits;
-the rest is review. The house reference is this repo's README: a
-15.5-word average sentence with 4% of sentences over 35 words.
+the rest is review. The house reference is this repo's README, measured
+with the same prose extraction the tests use.
 
 - One claim per sentence. Average under 18 words, and keep sentences
   over 35 words under 10% of a document.
