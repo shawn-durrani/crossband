@@ -1,7 +1,7 @@
 # Voice identification: known limitations and tuning
 
 Who this page is for: anyone running Crossband's room mode in their own
-house. It states plainly where voice identification was grown, where it is
+house. It says where voice identification was grown, where it is
 likely to fall short for you, and which knobs to turn when it does. It was
 calibrated in one household; yours is different, and this page is the
 honest map of that gap.
@@ -98,7 +98,7 @@ name - including spelt-by-ear variants, with the same tolerance the
 owner's name gets - is dropped before seating, and the seat writer
 refuses the exact names outright as a final guard.
 
-## English bias, stated plainly
+## English bias
 
 Two separate things lean English:
 
@@ -149,21 +149,12 @@ Two things to know before swapping:
 
 ## The tuning knobs
 
-All of these live in [CONFIG.md](CONFIG.md) and can be set in
-`config.local.json` or as `CROSSBAND_*` environment variables. Defaults
+The full list, each knob with its default and what it controls, is the
+Voice table in [CONFIG.md](CONFIG.md); every one can be set in
+`config.local.json` or as a `CROSSBAND_*` environment variable. Defaults
 were calibrated on the model's published benchmarks plus a single
 household. Similar-sounding voices in your house (siblings, a parent and
 an adult child) are exactly the case where the defaults may need moving.
-
-| knob | default | what it controls |
-|---|---|---|
-| `voice_id_threshold` | `0.5` | How similar a voice must be to a stored one before it can be named at all. Raise it and fewer, more certain names appear; lower it and more turns get named, less certainly. |
-| `voice_id_margin` | `0.12` | How clearly the best match must beat the second-best before it is trusted. This is the knob that protects similar-sounding households; the hygiene guard widens it automatically for any two stored voices it finds sitting close together. |
-| `voice_id_pending_extra` | `0.08` | How much higher the naming bar sits while anyone in the room is unlearnt. Protects a new guest from having their turns claimed by a similar-sounding regular, and from never getting a first clip. `0` turns it off. |
-| `voice_id_banking_extra` | `0.1` | How much higher than the naming bar a match must score before its audio is stored as an anchor clip. A borderline match keeps its label but feeds nothing, so one wrong name cannot compound into a polluted bank. `0` turns it off. |
-| `voice_id_sufficient_seconds` | `6.0` | How much clear speech must be stored before a person's voice is trusted for identification at all. Below the bar their turns stay uncertain. |
-| `voice_id_min_short_clips` | `2` | The second half of that bar: how many short (one-to-two-second) clips the stored voice must include, so quick interjections ("yes", "hang on") can be recognised, not just full sentences. |
-| `room_roster_max` | `6` | How many people the room can hold at once. |
 
 When tuning, change one knob at a time and check the voice dock first.
 Its top row leads with the room indicator ("room on · N", "listening" or
@@ -195,7 +186,7 @@ is built to fail towards silence there rather than towards mix-ups:
   corrected audio to the right person as ground truth, which is the
   fastest way to pull two confusable voices apart.
 
-## The owner's ear (#83)
+## The owner's ear
 
 The pairwise hygiene audit catches MIXED banks; it cannot catch a bank that
 is wholly someone else's voice under the wrong name (the #65 phantoms were
@@ -228,7 +219,7 @@ keep it working, with a note in Remembered voices. The already-seated
 exception above applies to this pause too. Clips stored before scores
 were recorded carry none, and such a bank keeps working.
 
-## The durable home (membro#33)
+## The durable home
 
 Learned voices no longer live only in this app's data directory. When
 membro is configured (MEMORY_AUTH_TOKEN in the env), a background pass -

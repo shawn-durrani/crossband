@@ -73,7 +73,7 @@ it appears.
 
 ## Safety, security, history
 
-- [SECURITY.md](../SECURITY.md): the trust boundary, stated plainly.
+- [SECURITY.md](../SECURITY.md): the trust boundary.
   Loopback-bound; who can reach the port is the outer boundary, with an
   enrolment-activated browser gate (passkey-first, owner-password
   fallback) standing inside it. Reporting instructions included.
