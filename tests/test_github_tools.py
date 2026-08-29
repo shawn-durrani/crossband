@@ -19,7 +19,7 @@ CFG = {"github_repos": {"sideband": "alex/sideband", "membro": "alex/membro"},
 @pytest.fixture(autouse=True)
 def fresh_token_cache(monkeypatch):
     monkeypatch.setattr(tools_mod, "_gh_token_cache",
-                        {"value": None, "checked": False})
+                        {"value": None})
 
 
 # ---------- the live repo maps (#24, #86) ----------
@@ -524,3 +524,26 @@ def test_write_tools_carry_the_privacy_rule():
     # (the tailnet-host class of leak, not just names/companies).
     for name in ("file_github_issue", "comment_github_issue"):
         assert "ts.net" in defs[name] and "infrastructure identifier" in defs[name], name
+
+
+def test_failed_cli_probe_is_retried_not_latched(monkeypatch):
+    """#243: `gh auth login` after a failed probe must be seen without a
+    restart - only a found token is cached."""
+    import subprocess
+    calls = {"n": 0}
+
+    def fake_run(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise FileNotFoundError("gh")
+
+        class Done:
+            stdout = "cli-tok\n"
+        return Done()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    assert tools_mod.github_token() is None       # logged out: probe fails
+    assert tools_mod.github_token() == "cli-tok"  # logged in: retried, found
+    assert tools_mod.github_token() == "cli-tok"  # success is cached
+    assert calls["n"] == 2

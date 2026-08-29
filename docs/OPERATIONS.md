@@ -62,6 +62,9 @@ launchctl bootout gui/$(id -u)/dev.crossband.server
 ops/install-supervisor.sh
 ```
 
+The log rotates at each boot once it passes 10MB; the previous
+generation is kept beside it as `data/service.log.1`.
+
 ## How this interacts with deploys
 
 Because launchd is the single owner of the process, a deploy must restart the

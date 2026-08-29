@@ -3,6 +3,17 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Rotate the supervisor log before this boot appends to it. launchd owns
+# data/service.log (StandardOut/ErrorPath) and never rotates; it opens the
+# file O_APPEND, so copy-then-truncate keeps the open descriptor valid,
+# where a rename would strand it on the archived file.
+LOG=data/service.log
+MAX_LOG_BYTES=$((10 * 1024 * 1024))
+if [ -f "$LOG" ] && [ "$(wc -c < "$LOG" | tr -d ' ')" -gt "$MAX_LOG_BYTES" ]; then
+  cp -p "$LOG" "$LOG.1" && : > "$LOG"
+  echo "· rotated $LOG to $LOG.1"
+fi
+
 # The port must match what the backend will actually bind, and for a
 # supervised install the only place that is set is .env - so read it (values
 # only; .env is not sourced wholesale here to keep set -u semantics simple)

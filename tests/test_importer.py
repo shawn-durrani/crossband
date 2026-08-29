@@ -140,3 +140,18 @@ def test_chatgpt_format_and_memory_absent(app):
 def test_garbage_upload_reports_cleanly(app):
     events = _run(b"not an export", "whatever.json", FakeMemory())
     assert events[-1]["type"] == "error"
+
+
+def test_import_uuid_lookups_ride_partial_indexes(app):
+    """#243: re-import idempotency looks up projects, chats and messages by
+    import_uuid, which was unindexed - a full scan per conversation, measured
+    76x slower at five thousand chats. Partial, so rows that never came from
+    an export cost nothing."""
+    con = db.connect()
+    rows = {r["name"]: r["sql"] for r in con.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='index' "
+        "AND name LIKE 'idx_%_import_uuid'")}
+    con.close()
+    assert set(rows) == {"idx_projects_import_uuid", "idx_chats_import_uuid",
+                         "idx_messages_import_uuid"}, rows
+    assert all("WHERE import_uuid IS NOT NULL" in sql for sql in rows.values())
