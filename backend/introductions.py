@@ -32,7 +32,7 @@ import logging
 import re
 import unicodedata
 
-from . import anchors, db, depth, diarize, llm_util
+from . import anchors, db, depth, diarize, llm_util, room_state
 
 log = logging.getLogger("crossband.introductions")
 
@@ -1077,15 +1077,14 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
         aliases = verdict.get("aliases")
         aliases = aliases if isinstance(aliases, dict) else {}
         if intros:
-            # An introduction is an explicit owner re-enable: clear any
-            # sacred ambient-off so remembered voices resume being noticed.
-            db.set_chat_ambient_off(con, chat_id, False)
-            diarize.set_ambient_off(chat_id, False)
-            if not chat["room_mode"]:
-                db.set_chat_room_mode(con, chat_id, True)
-                diarize.set_room_enabled(chat_id, True)
-                flipped = True
-                log.info("room mode ON via introduction: chat=%s", chat_id)
+            # An introduction is an explicit owner re-enable: room_state
+            # clears any sacred ambient-off so remembered voices resume
+            # being noticed, even when the room is already armed. The owner
+            # is NOT seated here - the stash-gated seed below decides that
+            # (#28, fourteenth field test).
+            flipped = room_state.arm(chat_id, cfg, source="introduction",
+                                     clear_ambient=True, seat_owner="never",
+                                     con=con)
             present = db.get_room_roster(con, chat_id, present_only=True)
             present_names = {p["name"].lower() for p in present}
             if not named:
@@ -1106,7 +1105,7 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                     log.info("relationship-only introduction with no match: "
                              "chat=%s ask raised", chat_id)
             new = [n for n in named if n.lower() not in present_names]
-            cap = int(cfg.get("room_roster_max") or 6)
+            cap = room_state.roster_cap(cfg)
             allowed = cap_allows(len(present), len(new), cap)
             if allowed < len(new):
                 log.info("roster cap reached: chat=%s cap=%d dropped=%d",
@@ -1205,9 +1204,9 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                     _raise_merge_question(con, chat_id, name, variant)
                     log.info("introduction close to a remembered name: "
                              "chat=%s merge question raised", chat_id)
-                db.add_room_person(con, chat_id, roster_name, person_id=pid,
-                                   seated_by_message_id=message_id,
-                                   seated_via="introduction")
+                room_state.seat(chat_id, roster_name, cfg, via="introduction",
+                                person_id=pid, message_id=message_id,
+                                enforce_cap=True, link_existing=True, con=con)
             added = min(allowed, len(new))
             log.info("roster grew: chat=%s added=%d", chat_id, added)
             if not seed_owner:
@@ -1434,15 +1433,11 @@ def _seed_owner_anchor(chat_id, cfg, message_id=None):
     con = db.connect()
     try:
         # The owner rides the roster too - the "In the room" chip should show
-        # everyone the diarizer is being asked to tell apart.
-        present = {p["name"].lower()
-                   for p in db.get_room_roster(con, chat_id, present_only=True)}
-        if owner.lower() not in present:
-            db.add_room_person(con, chat_id, owner, person_id=pid,
-                               seated_by_message_id=message_id,
-                               seated_via="owner")
-        else:
-            db.link_room_person(con, chat_id, owner, pid)
+        # everyone the diarizer is being asked to tell apart. Uncapped: the
+        # owner's seat is never what the cap guards.
+        room_state.seat(chat_id, owner, cfg, via="owner", person_id=pid,
+                        message_id=message_id, enforce_cap=False,
+                        link_existing=True, con=con)
     finally:
         con.close()
 
@@ -1475,76 +1470,30 @@ def apply_command(chat_id, direction, cfg):
         if not chat:
             return "no_change"
         if direction == COMMAND_ARM:
-            # An arm command is an explicit re-enable: clear any sacred
-            # ambient-off, even if room mode is already on.
-            db.set_chat_ambient_off(con, chat_id, False)
-            diarize.set_ambient_off(chat_id, False)
-            if chat["room_mode"]:
-                return "no_change"
-            db.set_chat_room_mode(con, chat_id, True)
-            diarize.set_room_enabled(chat_id, True)
-            log.info("room mode ON via command: chat=%s", chat_id)
-            _roster_owner(con, chat_id, cfg)
-            outcome = "armed_by_command"
+            # An arm command is an explicit re-enable: room_state clears any
+            # sacred ambient-off even if room mode is already on, and seats
+            # the owner only on a genuine flip (a command names nobody, so
+            # the owner is the only person honestly known present).
+            flipped = room_state.arm(chat_id, cfg, source="command",
+                                     clear_ambient=True, seat_owner="on_arm",
+                                     con=con)
+            outcome = "armed_by_command" if flipped else "no_change"
         elif direction == COMMAND_DISARM:
-            # "Solo mode" is the SACRED disarm: it always sets ambient-off so
-            # automatic arming stops until an explicit re-enable, even when
-            # room mode was already off (nothing had armed yet, but the owner
-            # is stating a preference for privacy).
-            db.set_chat_ambient_off(con, chat_id, True)
-            diarize.set_ambient_off(chat_id, True)
-            if not chat["room_mode"]:
-                log.info("ambient off via command (room already off): chat=%s",
-                         chat_id)
-                return "disarmed_by_command"
-            db.set_chat_room_mode(con, chat_id, False)
-            diarize.set_room_enabled(chat_id, False)
-            departed = 0
-            for row in db.get_room_roster(con, chat_id, present_only=True):
-                if db.mark_room_person_left(con, chat_id, row["name"]):
-                    departed += 1
-            db.resolve_room_flags(con, chat_id, kind="unknown_voice")
-            log.info("room mode OFF via command: chat=%s departed=%d",
-                     chat_id, departed)
+            # "Solo mode" is the SACRED disarm: ambient-off is set even when
+            # room mode was already off (the owner is stating a preference
+            # for privacy), everyone present is marked left (the cap frees)
+            # and the open asks are moot once solo.
+            room_state.disarm(chat_id, source="command",
+                              set_ambient_off=True, clear_roster=True,
+                              resolve_asks=True, con=con)
             outcome = "disarmed_by_command"
         else:
             return "no_change"
     finally:
         con.close()
     if outcome == "armed_by_command":
+        # The stash-gated owner anchor seed stays here: it needs the scan
+        # layer's stash, and a fresh connection after this one closed.
         _seed_owner_anchor(chat_id, cfg)
-    # The wake-up bell for the roster chip and the client's room-mode adopt
-    # (the phase-2 plumbing). The roster writes above already rang it; this
-    # covers the flips that touched no roster row, so a connected client
-    # always refetches the snapshot and sees the new mode.
-    from . import events
-    events.notify_room_update()
     return outcome
 
-
-def _roster_owner(con, chat_id, cfg):
-    """Put the owner on the roster for a command arm - linked to their
-    remembered anchors when they exist, anchor-pending otherwise. A command
-    names nobody, so the owner is the only person honestly known present;
-    anyone else joins by introduction, by voice match, or by answering the
-    ask."""
-    owner = cfg.get("user_name", "User")
-    person = anchors.store().find_by_name(owner)
-    pid = person["person_id"] if person else ""
-    present = {p["name"].lower()
-               for p in db.get_room_roster(con, chat_id, present_only=True)}
-    if owner.lower() not in present:
-        db.add_room_person(con, chat_id, owner, person_id=pid,
-                           seated_via="owner")
-    elif pid:
-        db.link_room_person(con, chat_id, owner, pid)
-
-
-def roster_owner_only(chat_id, cfg):
-    """Connection-owning wrapper over _roster_owner, for callers on a worker
-    thread that hold no connection (diarize's ambient-unknown arm)."""
-    con = db.connect()
-    try:
-        _roster_owner(con, chat_id, cfg)
-    finally:
-        con.close()

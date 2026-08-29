@@ -119,9 +119,10 @@ _TASKS: set = set()
 #
 # The durable truth is chats.room_mode; this dict is the LIVE mirror the STT
 # relay consults at each commit boundary - a plain dict lookup, no I/O, so the
-# audio path never touches the database. Writers: the relay's own init (seeded
-# from the chat row, off the audio path), the introduction scan, and the chat
-# PATCH override. A missing entry means "off", which is also the durable
+# audio path never touches the database. Every writer goes through
+# backend/room_state.py (arm, disarm, and the relay's session-open
+# seed_mirrors); the accessors below exist for room_state and for tests.
+# A missing entry means "off", which is also the durable
 # default - so a process restart is consistent by construction.
 _ROOM_ENABLED: dict = {}
 
@@ -1282,24 +1283,20 @@ def _roster_remembered(chat_id, name, person_id, cfg):
     roster writer - past the cap the turn is still NAMED (the identity is
     true regardless), the roster simply does not grow. Idempotent: two
     passes racing re-run the same writes harmlessly."""
+    from . import room_state  # lazy: room_state imports this module
     con = db.connect()
     try:
-        present = db.get_room_roster(con, chat_id, present_only=True)
-        if any((p["name"] or "").casefold() == (name or "").casefold()
-               for p in present):
-            return
-        cap = int((cfg or {}).get("room_roster_max") or 6)
-        if len(present) >= cap:
-            log.info("roster cap reached; matched voice not rostered: "
-                     "chat=%s cap=%d", chat_id, cap)
-            return
         # #84: the turn's message does not exist yet at seat time (the label
         # parks under turn_id and attaches later), so the trigger is the
-        # path, message-less.
-        db.add_room_person(con, chat_id, name, person_id=person_id or "",
-                           seated_via="voice-match")
-        db.resolve_room_flags(con, chat_id, kind="unknown_voice")
-        log.info("remembered voice rostered by local match: chat=%s", chat_id)
+        # path, message-less. Dedupe, cap and the ask resolution all live
+        # in seat(); resolve_ask=True because the local match answers the
+        # open "who is speaking?" exactly as a naming introduction does.
+        row = room_state.seat(chat_id, name, cfg, via="voice-match",
+                              person_id=person_id or "", enforce_cap=True,
+                              resolve_ask=True, con=con)
+        if row:
+            log.info("remembered voice rostered by local match: chat=%s",
+                     chat_id)
     finally:
         con.close()
 
@@ -1554,22 +1551,18 @@ def _ambient_plan(chat_id, sample_rate, cfg):
 
 
 def _arm_ambient_unknown(chat_id, cfg):
-    """Arm room mode for a clear stranger the matcher could not name (worker
-    thread): the durable flip plus the live mirror, and the owner joins the
-    roster so the armed pass runs anchored (the next voice raises the
-    ask-fallback rather than a bare ordinal). Idempotent."""
-    con = db.connect()
-    try:
-        if con.execute("SELECT room_mode FROM chats WHERE id=?",
-                       (chat_id,)).fetchone()["room_mode"]:
-            return
-        db.set_chat_room_mode(con, chat_id, True)
-        set_room_enabled(chat_id, True)
-        log.info("room mode ON via ambient (unknown voice): chat=%s", chat_id)
-    finally:
-        con.close()
-    from . import introductions
-    introductions.roster_owner_only(chat_id, cfg)
+    """Arm room mode for a clear stranger the matcher could not name
+    (worker thread). clear_ambient=False: an automatic arm only ever
+    fires while the sacred flag is unset, and must never gain the power
+    to clear it. seat_owner="on_arm": the owner joins the roster so the
+    armed pass runs anchored (the next voice raises the ask-fallback
+    rather than a bare ordinal); a room some other path armed first has
+    already seated them. Idempotent. The ask itself is raised by the
+    caller once the label attaches (_raise_unknown_voice needs the
+    message id, which does not exist yet here)."""
+    from . import room_state  # lazy: room_state imports this module
+    room_state.arm(chat_id, cfg, source="ambient (unknown voice)",
+                   clear_ambient=False, seat_owner="on_arm")
 
 
 # ---------- speculative identity at silence-start (#28 PR-B) ----------
@@ -1648,31 +1641,30 @@ def remembered_candidates(people=None, rostered_ids=frozenset()):
 
 
 def _arm_known(chat_id, matched, cfg):
-    """The ambient arm itself (worker thread): the durable flip plus the
-    live mirror - the same phase-2 control plumbing an introduction uses -
-    and one linked roster row per matched remembered person. Idempotent:
-    two passes racing re-run the same writes harmlessly. (Formerly
-    _arm_from_sniff; the EL sniff retired in #28 PR-B.)"""
+    """The ambient arm itself (worker thread): room_state's durable flip
+    plus the live mirror - the same phase-2 control plumbing an
+    introduction uses - and one linked roster row per matched remembered
+    person. clear_ambient=False: an automatic arm must never clear the
+    sacred flag (it only ever fires while the flag is unset).
+    seat_owner="never": a remembered guest match proves a household by
+    itself; the anchored-pass rationale only needs the owner seated on
+    the UNKNOWN path. Idempotent: two passes racing re-run the same
+    writes harmlessly. (Formerly _arm_from_sniff; the EL sniff retired
+    in #28 PR-B.)"""
+    from . import room_state  # lazy: room_state imports this module
     con = db.connect()
     try:
-        db.set_chat_room_mode(con, chat_id, True)
-        set_room_enabled(chat_id, True)
-        log.info("room mode ON via ambient (known voice): chat=%s matched=%d",
+        room_state.arm(chat_id, cfg, source="ambient (known voice)",
+                       clear_ambient=False, seat_owner="never", con=con)
+        log.info("ambient arm matched: chat=%s matched=%d",
                  chat_id, len(matched))
-        present = {p["name"].lower()
-                   for p in db.get_room_roster(con, chat_id,
-                                               present_only=True)}
-        cap = int(cfg.get("room_roster_max") or 6)
         from . import anchors
         store = anchors.store()
         for name in dict.fromkeys(matched.values()):
-            if name.lower() in present or len(present) >= cap:
-                continue
             person = store.find_by_name(name)
             pid = person["person_id"] if person else ""
-            db.add_room_person(con, chat_id, name, person_id=pid,
-                               seated_via="voice-match")
-            present.add(name.lower())
+            room_state.seat(chat_id, name, cfg, via="voice-match",
+                            person_id=pid, enforce_cap=True, con=con)
     finally:
         con.close()
 
