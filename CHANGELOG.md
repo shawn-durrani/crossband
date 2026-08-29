@@ -31,6 +31,14 @@ entry to a short paragraph; the issue holds the detail.
   newest one is now discarded, so restarts that change nothing keep the
   history intact.
 
+- A chat that carried more than 20 files on one message can reach memory
+  again (#271). The memory service caps attachments per message at 20
+  and rejects the whole handoff past that, so one bulk file drop wedged
+  its chat: the handoff retried the same rejected payload on every
+  leave, and nothing after that message was ever ingested. Over-limit
+  messages now ride the wire in chunks the service accepts, and every
+  file still lands.
+
 - The Spend page now counts the background model work behind room mode
   and voice (#232). Five of the eight cheap-model calls the app makes
   were spending real money and appearing nowhere: the ones that read a
