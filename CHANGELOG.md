@@ -23,6 +23,14 @@ entry to a short paragraph; the issue holds the detail.
   advances properly once the service reports change stamps, so each pass
   asks only for what changed.
 
+- A crash loop can no longer destroy your restore points (#275). Every
+  startup snapshots the database, retention keeps the newest 14 copies,
+  and the service manager restarts a crashing app every few seconds - so
+  about two minutes of crash loop used to evict every pre-crash snapshot
+  at exactly the moment one was needed. A snapshot byte-identical to the
+  newest one is now discarded, so restarts that change nothing keep the
+  history intact.
+
 - The rate card now prices Claude Opus 5 and Claude Mythos 5, and corrects
   Claude Sonnet 5 to the $2/$10 the pricing page made standard when the
   scheduled September rise was cancelled (#262). An Opus 5 seat previously
