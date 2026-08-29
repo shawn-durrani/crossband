@@ -21,19 +21,13 @@ way to invent one than a text editor was. The UI may make pricing easy; it may
 not make guessing easy.
 """
 
-import contextlib
-import json
-import os
-import shutil
-import tempfile
-
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import provenance as prov
 from .. import ratecard
 from ..config import (DEFAULT_PRICING, LOCAL_CONFIG_PATH, _read_json,
-                      load_settings, price_for)
+                      load_settings, price_for, write_local_key)
 
 router = APIRouter(prefix="/api/pricing", tags=["pricing"])
 
@@ -89,39 +83,6 @@ def _overrides() -> dict:
     block = local.get("pricing")
     return dict(block) if isinstance(block, dict) else {}
 
-
-def _write_overrides(block: dict) -> None:
-    """Replace config.local.json's `pricing` block, preserving every other key.
-
-    Atomic (temp file + os.replace) because this file is read on every
-    load_settings() call - a torn write would not brick startup (_read_json
-    swallows a malformed file) but WOULD silently drop every local setting the
-    operator has, which is worse than a crash. A single `.bak` of the previous
-    contents is kept alongside: atomicity guarantees the file
-    is never half-written, it does not guarantee the NEW contents are what the
-    operator wanted, and this is their personal config.
-    """
-    local = _read_json(LOCAL_CONFIG_PATH)
-    if block:
-        local["pricing"] = block
-    else:
-        local.pop("pricing", None)
-    LOCAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(LOCAL_CONFIG_PATH.parent),
-                               prefix=".config.local.", suffix=".json")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(local, f, indent=2, sort_keys=True)
-            f.write("\n")
-        if LOCAL_CONFIG_PATH.exists():
-            with contextlib.suppress(OSError):
-                shutil.copy2(LOCAL_CONFIG_PATH,
-                             LOCAL_CONFIG_PATH.with_suffix(".json.bak"))
-        os.replace(tmp, LOCAL_CONFIG_PATH)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
 
 
 def _card_row(model: str, effective: dict, overrides: dict) -> dict:
@@ -217,7 +178,7 @@ def upsert_rate_card(model: str, body: RateCardIn, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
     block = _overrides()
     block[model_id] = card
-    _write_overrides(block)
+    write_local_key("pricing", block)
     return _card_row(model_id, _refresh_settings(request).pricing, _overrides())
 
 
@@ -231,6 +192,6 @@ def delete_rate_card(model: str, request: Request):
         raise HTTPException(status_code=404,
                             detail=f"no local rate card for {model!r}")
     block.pop(model)
-    _write_overrides(block)
+    write_local_key("pricing", block)
     effective = _refresh_settings(request).pricing
     return _card_row(model, effective, _overrides())
