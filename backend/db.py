@@ -12,6 +12,7 @@ an older database opens and fills in rather than being rewritten. init()
 refuses a database stamped newer than this build.
 """
 
+import hashlib
 import os
 import shutil
 import sqlite3
@@ -424,23 +425,67 @@ def connect():
     return con
 
 
+def _file_sha256(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _voices_changed_since(baseline_mtime: float) -> bool:
+    """Did the voice-anchor store change after `baseline_mtime`? Every store
+    mutation rewrites the index and add/remove touches the directory, so
+    these two mtimes cover the store without walking every clip."""
+    voices = DATA_DIR / "voice_anchors"
+    for p in (voices, voices / "index.json"):
+        try:
+            if p.exists() and p.stat().st_mtime > baseline_mtime:
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def backup_database():
     """Consistent snapshot via SQLite's online backup API (safe while the app
     is running and mid-write). Keeps the newest BACKUP_KEEP copies, and mirrors
     completed snapshots to an optional secondary directory (never the live DB -
-    sync daemons watching a live WAL database cause lock hangs)."""
+    sync daemons watching a live WAL database cause lock hangs).
+
+    Content-deduped: a copy byte-identical to the newest snapshot, with the
+    voice store also unchanged, is discarded and the newest snapshot stands.
+    The guard exists for the crash loop: retention keeps the newest
+    BACKUP_KEEP copies by COUNT, launchd restarts a crashing service every
+    ~10 seconds, and every startup snapshots pre-init - so unguarded,
+    BACKUP_KEEP restarts (about two minutes) evicted the entire pre-crash
+    history at exactly the moment it was needed. An identical copy protects
+    nothing the standing snapshot does not already protect."""
     if not os.path.exists(DB_PATH):
         return None
     os.makedirs(BACKUP_DIR, exist_ok=True)
     dest = BACKUP_DIR / f"chat-{time.strftime('%Y%m%d-%H%M%S')}.db"
+    tmp = BACKUP_DIR / f".{dest.name}.part"
     src = sqlite3.connect(DB_PATH)
-    dst = sqlite3.connect(dest)
+    dst = sqlite3.connect(tmp)
     try:
         with dst:
             src.backup(dst)
     finally:
         src.close()
         dst.close()
+    prev = sorted(BACKUP_DIR.glob("chat-*.db"))
+    if prev:
+        newest = prev[-1]
+        try:
+            identical = (not _voices_changed_since(newest.stat().st_mtime)
+                         and _file_sha256(tmp) == _file_sha256(newest))
+        except OSError:
+            identical = False
+        if identical:
+            os.remove(tmp)
+            return str(newest)
+    os.replace(tmp, dest)
     backups = sorted(f for f in os.listdir(BACKUP_DIR) if f.endswith(".db"))
     for old in backups[:-BACKUP_KEEP]:
         try:
