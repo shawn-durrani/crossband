@@ -76,3 +76,17 @@ def test_installer_takes_over_cleanly_and_validates():
     assert re.search(r"grep -q '\{\{'", src), \
         "must fail if a placeholder was left unsubstituted"
     assert "plutil -lint" in src, "must validate the generated plist"
+
+
+def test_service_log_rotates_at_boot():
+    """launchd appends every spawn's stdout and stderr to data/service.log
+    and never rotates it, so start.sh must, at boot (#243). The rotation has
+    to be copy-then-truncate (a rename strands launchd's already-open
+    descriptor on the archived file), size-gated so small logs are left
+    alone, and it must keep one prior generation rather than discarding the
+    tail."""
+    src = (REPO / "start.sh").read_text()
+    assert "MAX_LOG_BYTES" in src, "rotation must be size-gated"
+    assert 'cp -p "$LOG" "$LOG.1"' in src, "must archive one prior generation"
+    assert ': > "$LOG"' in src, "must truncate in place, keeping launchd's fd"
+    assert 'mv "$LOG"' not in src, "rename-rotation strands the open descriptor"

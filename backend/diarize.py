@@ -119,9 +119,10 @@ _TASKS: set = set()
 #
 # The durable truth is chats.room_mode; this dict is the LIVE mirror the STT
 # relay consults at each commit boundary - a plain dict lookup, no I/O, so the
-# audio path never touches the database. Writers: the relay's own init (seeded
-# from the chat row, off the audio path), the introduction scan, and the chat
-# PATCH override. A missing entry means "off", which is also the durable
+# audio path never touches the database. Every writer goes through
+# backend/room_state.py (arm, disarm, and the relay's session-open
+# seed_mirrors); the accessors below exist for room_state and for tests.
+# A missing entry means "off", which is also the durable
 # default - so a process restart is consistent by construction.
 _ROOM_ENABLED: dict = {}
 
@@ -1108,6 +1109,44 @@ def _room_plan(chat_id, sample_rate):
                                            if row["person_id"]}))
 
 
+def label_payload(labels, *, clusters=("local",), uncertain=(), source="local",
+                  score=None, owner=False, learning=False):
+    """One label write's payload, the shape every consumer of labels_json
+    reads. Six passes hand-built this dict and two of them drifted
+    (workbench review, #237); build it in exactly one place. Consumers
+    ignore unknown keys, so optional markers are simply absent rather than
+    null. Pure, so tests can pin the shape without a room."""
+    payload = {"clusters": list(clusters), "labels": list(labels),
+               "uncertain": list(uncertain)}
+    if source:
+        payload["source"] = source
+    if score is not None:
+        payload["score"] = round(score or 0, 3)
+    if owner:
+        payload["owner"] = True
+    if learning:
+        payload["learning"] = True
+    return payload
+
+
+async def _deliver_label(chat_id, pcm, sample_rate, commit_ts, session,
+                         payload, *, turn_id=None, clusters_remembered=1):
+    """Attach one label payload, then remember the turn's audio for
+    tap-to-correct. The attach comes FIRST (#28, night test 4): the label
+    write is what the seats are waiting on, so no bookkeeping may queue in
+    front of it; remember_audio is an in-memory ring, not a file write.
+    Returns the target message id, or None when no row claimed the label -
+    and None means the post-label bookkeeping that keys off the row (the
+    ask-fallback, the mismatch cross-check) must not run."""
+    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
+                                             session, turn_id=turn_id)
+    if target_id:
+        from . import anchors
+        anchors.remember_audio(target_id, pcm, sample_rate,
+                               clusters_remembered)
+    return target_id
+
+
 async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                            result, segments, pending, prefix_seconds,
                            duration_ms, turn_id=None):
@@ -1127,8 +1166,8 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
              len(resolved["matched"]), len(resolved["ask"]), 1 if ct else 0)
     target_id = None
     if resolved["labels"]:
-        payload = {"clusters": clusters, "labels": resolved["labels"],
-                   "uncertain": resolved["uncertain"]}
+        payload = label_payload(resolved["labels"], clusters=clusters,
+                                uncertain=resolved["uncertain"], source=None)
         if ct:
             # Crosstalk (#28 phase 4): the marker, plus the best-effort split
             # when the word map alternates cleanly. Segment labels reuse the
@@ -1140,11 +1179,9 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                   uncertain_labels=set(resolved["uncertain"]))
             if segs:
                 payload["segments"] = segs
-        # The attach comes FIRST (#28, night test 4): the label write is the
-        # thing the seats are waiting on, so the anchor bookkeeping below -
-        # file writes on a worker thread - may not queue in front of it.
-        target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                                 session, turn_id=turn_id)
+        target_id = await _deliver_label(chat_id, pcm, sample_rate, commit_ts,
+                                         session, payload, turn_id=turn_id,
+                                         clusters_remembered=len(clusters))
     if len(clusters) == 1:
         # A clean single-speaker utterance is anchor food: it refreshes a
         # matched person's clips, and it is the ONLY thing that can build a
@@ -1160,9 +1197,6 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # the ask-fallback. The turn keeps its uncertain ordinal meanwhile.
         await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
     if target_id:
-        from . import anchors
-        # Tap-to-correct's audio source: remembered in memory, bounded.
-        anchors.remember_audio(target_id, pcm, sample_rate, len(clusters))
         primary = _primary_named_label(resolved)
         if primary and len(utter_words) >= MISMATCH_MIN_WORDS:
             from . import mismatch
@@ -1245,16 +1279,15 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # keys. No crosstalk marker - a confident single match is one voice.
     # #33: the matcher's real score rides the label - the ingest identity
     # field turns it into the confidence membro's binding policy reads.
-    payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
-               "source": "local", "score": round(verdict.get("score") or 0, 3)}
-    if name.casefold() == (cfg.get("user_name") or "User").casefold():
-        # #28 PR-C (the owner's identity is shown, not hidden): a confident
-        # OWNER match is marked so the chips can say "voice confirmed". The
-        # projection decides by name, so old payloads without this key still
-        # render the new head; consumers ignore unknown keys as ever.
-        payload["owner"] = True
-    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
+    # #28 PR-C (the owner's identity is shown, not hidden): a confident
+    # OWNER match is marked so the chips can say "voice confirmed". The
+    # projection decides by name, so old payloads without this key still
+    # render the new head; consumers ignore unknown keys as ever.
+    owner = name.casefold() == (cfg.get("user_name") or "User").casefold()
+    target_id = await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
+        label_payload([name], score=verdict.get("score"), owner=owner),
+        turn_id=turn_id)
     # Anchor food: a clean single-speaker utterance refreshes the matched
     # person's clips. The batch room path does the same for a matched single
     # cluster; on the fast path this is the ONLY thing that keeps the person's
@@ -1263,8 +1296,6 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                             sample_rate, cfg, verdict.get("score"))
     if not target_id:
         return
-    from . import anchors
-    anchors.remember_audio(target_id, pcm, sample_rate, 1)
     seconds = len(pcm) / 2 / (sample_rate or 16000)
     if seconds >= FAST_MISMATCH_MIN_SECONDS:
         from . import mismatch
@@ -1282,24 +1313,20 @@ def _roster_remembered(chat_id, name, person_id, cfg):
     roster writer - past the cap the turn is still NAMED (the identity is
     true regardless), the roster simply does not grow. Idempotent: two
     passes racing re-run the same writes harmlessly."""
+    from . import room_state  # lazy: room_state imports this module
     con = db.connect()
     try:
-        present = db.get_room_roster(con, chat_id, present_only=True)
-        if any((p["name"] or "").casefold() == (name or "").casefold()
-               for p in present):
-            return
-        cap = int((cfg or {}).get("room_roster_max") or 6)
-        if len(present) >= cap:
-            log.info("roster cap reached; matched voice not rostered: "
-                     "chat=%s cap=%d", chat_id, cap)
-            return
         # #84: the turn's message does not exist yet at seat time (the label
         # parks under turn_id and attaches later), so the trigger is the
-        # path, message-less.
-        db.add_room_person(con, chat_id, name, person_id=person_id or "",
-                           seated_via="voice-match")
-        db.resolve_room_flags(con, chat_id, kind="unknown_voice")
-        log.info("remembered voice rostered by local match: chat=%s", chat_id)
+        # path, message-less. Dedupe, cap and the ask resolution all live
+        # in seat(); resolve_ask=True because the local match answers the
+        # open "who is speaking?" exactly as a naming introduction does.
+        row = room_state.seat(chat_id, name, cfg, via="voice-match",
+                              person_id=person_id or "", enforce_cap=True,
+                              resolve_ask=True, con=con)
+        if row:
+            log.info("remembered voice rostered by local match: chat=%s",
+                     chat_id)
     finally:
         con.close()
 
@@ -1365,15 +1392,13 @@ async def _cold_start_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     seats are waiting on), then the banking on a worker thread. Tap-to-
     correct's audio is remembered, so a wrong elimination is one tap from
     being fixed."""
-    payload = {"clusters": ["local"], "labels": [name], "uncertain": [name],
-               "learning": True, "source": COLD_START_SOURCE}
-    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
+    await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
+        label_payload([name], uncertain=[name], source=COLD_START_SOURCE,
+                      learning=True),
+        turn_id=turn_id)
     await _in_voice_thread(_bank_cold_start, chat_id, name, pcm, sample_rate,
                             cfg)
-    if target_id:
-        from . import anchors
-        anchors.remember_audio(target_id, pcm, sample_rate, 1)
 
 
 def _bank_cold_start(chat_id, name, pcm, sample_rate, cfg):
@@ -1405,12 +1430,17 @@ async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
     the chips can say "voice confirmed"; then the anchor top-up the noop
     path always did. Nothing else: no arming, no roster, no ElevenLabs
     call, no metering - a solo session stays solo, it just stops pretending
-    the app does not know who is speaking."""
-    payload = {"clusters": ["local"], "labels": [verdict["name"]],
-               "uncertain": [], "source": "local", "owner": True,
-               "score": round(verdict.get("score") or 0, 3)}
-    await _attach_until_deadline(chat_id, commit_ts, payload, session,
-                                 turn_id=turn_id)
+    the app does not know who is speaking.
+
+    The audio is remembered like every other labelled turn (#237): the
+    owner-by-voice guard in routers/room.py reads it, and tap-to-correct
+    needs it. In-memory ring only, gone on restart - the owner accepted
+    that retention for working corrections on solo chats."""
+    await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
+        label_payload([verdict["name"]], score=verdict.get("score"),
+                      owner=True),
+        turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"],
                             pcm, sample_rate, cfg, verdict.get("score"))
 
@@ -1433,15 +1463,20 @@ async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     log.info("diarize pass (ambient voiceid): chat=%s ms=%.0f armed=1",
              chat_id, (time.perf_counter() - t0) * 1000)
     await _in_voice_thread(_arm_known, chat_id, {"local": name}, cfg)
-    payload = {"clusters": ["local"], "labels": [name], "uncertain": [],
-               "source": "local", "score": round(verdict.get("score") or 0, 3)}
-    target_id = await _attach_until_deadline(chat_id, commit_ts, payload,
-                                             session, turn_id=turn_id)
+    target_id = await _deliver_label(
+        chat_id, pcm, sample_rate, commit_ts, session,
+        label_payload([name], score=verdict.get("score")),
+        turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
                             sample_rate, cfg, verdict.get("score"))
-    if target_id:
-        from . import anchors
-        anchors.remember_audio(target_id, pcm, sample_rate, 1)
+    # The turn that ARMS the room is the highest-stakes label there is, and
+    # it was the one confident local match that never got the cross-check
+    # the fast path gets on equivalent evidence (#237). Same gate, same
+    # cost: one cheap-model call, shown on the Spend page like the rest.
+    seconds = len(pcm) / 2 / (sample_rate or 16000)
+    if target_id and seconds >= FAST_MISMATCH_MIN_SECONDS:
+        from . import mismatch
+        mismatch.schedule_check(chat_id, target_id, name, cfg)
 
 
 # ---------- the ambient local check (#28) ----------
@@ -1515,11 +1550,11 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if decision == "arm_unknown":
             await _in_voice_thread(_arm_ambient_unknown, chat_id, cfg)
             ordinal = session.assign(["ambient_unknown"])
-            payload = {"clusters": ["ambient_unknown"], "labels": ordinal,
-                       "uncertain": list(ordinal)}
-            target_id = await _attach_until_deadline(chat_id, commit_ts,
-                                                     payload, session,
-                                                     turn_id=turn_id)
+            target_id = await _attach_until_deadline(
+                chat_id, commit_ts,
+                label_payload(ordinal, clusters=["ambient_unknown"],
+                              uncertain=list(ordinal), source=None),
+                session, turn_id=turn_id)
             if target_id:
                 await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
         # decision == "defer": nothing here; the introduction/command/toggle
@@ -1554,22 +1589,18 @@ def _ambient_plan(chat_id, sample_rate, cfg):
 
 
 def _arm_ambient_unknown(chat_id, cfg):
-    """Arm room mode for a clear stranger the matcher could not name (worker
-    thread): the durable flip plus the live mirror, and the owner joins the
-    roster so the armed pass runs anchored (the next voice raises the
-    ask-fallback rather than a bare ordinal). Idempotent."""
-    con = db.connect()
-    try:
-        if con.execute("SELECT room_mode FROM chats WHERE id=?",
-                       (chat_id,)).fetchone()["room_mode"]:
-            return
-        db.set_chat_room_mode(con, chat_id, True)
-        set_room_enabled(chat_id, True)
-        log.info("room mode ON via ambient (unknown voice): chat=%s", chat_id)
-    finally:
-        con.close()
-    from . import introductions
-    introductions.roster_owner_only(chat_id, cfg)
+    """Arm room mode for a clear stranger the matcher could not name
+    (worker thread). clear_ambient=False: an automatic arm only ever
+    fires while the sacred flag is unset, and must never gain the power
+    to clear it. seat_owner="on_arm": the owner joins the roster so the
+    armed pass runs anchored (the next voice raises the ask-fallback
+    rather than a bare ordinal); a room some other path armed first has
+    already seated them. Idempotent. The ask itself is raised by the
+    caller once the label attaches (_raise_unknown_voice needs the
+    message id, which does not exist yet here)."""
+    from . import room_state  # lazy: room_state imports this module
+    room_state.arm(chat_id, cfg, source="ambient (unknown voice)",
+                   clear_ambient=False, seat_owner="on_arm")
 
 
 # ---------- speculative identity at silence-start (#28 PR-B) ----------
@@ -1648,31 +1679,30 @@ def remembered_candidates(people=None, rostered_ids=frozenset()):
 
 
 def _arm_known(chat_id, matched, cfg):
-    """The ambient arm itself (worker thread): the durable flip plus the
-    live mirror - the same phase-2 control plumbing an introduction uses -
-    and one linked roster row per matched remembered person. Idempotent:
-    two passes racing re-run the same writes harmlessly. (Formerly
-    _arm_from_sniff; the EL sniff retired in #28 PR-B.)"""
+    """The ambient arm itself (worker thread): room_state's durable flip
+    plus the live mirror - the same phase-2 control plumbing an
+    introduction uses - and one linked roster row per matched remembered
+    person. clear_ambient=False: an automatic arm must never clear the
+    sacred flag (it only ever fires while the flag is unset).
+    seat_owner="never": a remembered guest match proves a household by
+    itself; the anchored-pass rationale only needs the owner seated on
+    the UNKNOWN path. Idempotent: two passes racing re-run the same
+    writes harmlessly. (Formerly _arm_from_sniff; the EL sniff retired
+    in #28 PR-B.)"""
+    from . import room_state  # lazy: room_state imports this module
     con = db.connect()
     try:
-        db.set_chat_room_mode(con, chat_id, True)
-        set_room_enabled(chat_id, True)
-        log.info("room mode ON via ambient (known voice): chat=%s matched=%d",
+        room_state.arm(chat_id, cfg, source="ambient (known voice)",
+                       clear_ambient=False, seat_owner="never", con=con)
+        log.info("ambient arm matched: chat=%s matched=%d",
                  chat_id, len(matched))
-        present = {p["name"].lower()
-                   for p in db.get_room_roster(con, chat_id,
-                                               present_only=True)}
-        cap = int(cfg.get("room_roster_max") or 6)
         from . import anchors
         store = anchors.store()
         for name in dict.fromkeys(matched.values()):
-            if name.lower() in present or len(present) >= cap:
-                continue
             person = store.find_by_name(name)
             pid = person["person_id"] if person else ""
-            db.add_room_person(con, chat_id, name, person_id=pid,
-                               seated_via="voice-match")
-            present.add(name.lower())
+            room_state.seat(chat_id, name, cfg, via="voice-match",
+                            person_id=pid, enforce_cap=True, con=con)
     finally:
         con.close()
 

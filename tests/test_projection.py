@@ -654,3 +654,150 @@ def test_system_only_fields_are_real_and_reach_the_system_channel(cfg):
     combined = stable + volatile
     for sentinel in _SYSTEM_ONLY_SENTINELS:
         assert sentinel in combined, f"{sentinel} never reached the system prompt at all"
+
+
+# ---------- attachment projection (#242) ----------
+#
+# The placeholder test above stubs anthropic_blocks to []; nothing pinned
+# the real blocks. These pin the per-kind shapes byte for byte on both
+# provider sides, and that the blocks ride the labelled user turn after its
+# text block. Cache behaviour is pinned in test_attachments_cost.py and is
+# deliberately not repeated here.
+
+import base64  # noqa: E402
+
+import pytest  # noqa: E402
+
+from backend import attachments as att_mod  # noqa: E402
+
+
+@pytest.fixture
+def attach_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(att_mod.db, "ATTACH_DIR", tmp_path)
+    att_mod.clear_cache()
+    yield tmp_path
+    att_mod.clear_cache()
+
+
+def _stored(attach_dir, filename, mime, body):
+    stored = f"stored_{filename}"
+    (attach_dir / stored).write_bytes(body)
+    return {"filename": filename, "mime": mime, "stored_name": stored,
+            "size": len(body)}
+
+
+def test_image_projects_as_one_base64_block_on_each_side(attach_dir):
+    """An image is exactly one block per side: base64 of the stored bytes,
+    the row's mime carried through verbatim."""
+    body = b"\x89PNG fake bytes"
+    att = _stored(attach_dir, "photo.png", "image/png", body)
+    b64 = base64.standard_b64encode(body).decode()
+    assert att_mod.anthropic_blocks(att) == [
+        {"type": "image",
+         "source": {"type": "base64", "media_type": "image/png", "data": b64}}]
+    assert att_mod.openai_parts(att) == [
+        {"type": "input_image", "image_url": f"data:image/png;base64,{b64}"}]
+
+
+def test_pdf_media_type_is_forced_and_the_title_is_the_filename(attach_dir):
+    """The wire media type is application/pdf whatever the row's mime
+    drifted to, and the reader-facing title is the original filename."""
+    body = b"%PDF-1.4 fake"
+    att = _stored(attach_dir, "report.pdf", "application/octet-stream", body)
+    b64 = base64.standard_b64encode(body).decode()
+    assert att_mod.anthropic_blocks(att) == [
+        {"type": "document",
+         "source": {"type": "base64", "media_type": "application/pdf",
+                    "data": b64},
+         "title": "report.pdf"}]
+    assert att_mod.openai_parts(att) == [
+        {"type": "input_file", "filename": "report.pdf",
+         "file_data": f"data:application/pdf;base64,{b64}"}]
+
+
+def test_text_attachment_frames_identically_for_both_providers(attach_dir):
+    """Both providers read the same framed text, so neither drifts alone."""
+    att = _stored(attach_dir, "notes.txt", "text/plain", b"hello\nworld")
+    expected = ("--- Attached file: notes.txt ---\nhello\nworld\n"
+                "--- End of notes.txt ---")
+    assert att_mod.anthropic_blocks(att) == [{"type": "text",
+                                              "text": expected}]
+    assert att_mod.openai_parts(att) == [{"type": "input_text",
+                                          "text": expected}]
+
+
+def test_oversize_text_truncates_at_the_cap_with_an_honest_marker(
+        attach_dir, monkeypatch):
+    """Past the cap the text is cut and says so; nothing past the cap
+    reaches the provider."""
+    monkeypatch.setattr(att_mod, "MAX_TEXT_CHARS", 20)
+    att = _stored(attach_dir, "big.txt", "text/plain", b"x" * 50)
+    text = att_mod.anthropic_blocks(att)[0]["text"]
+    assert "x" * 20 + "\n... [file truncated]" in text
+    assert "x" * 21 not in text
+
+
+def test_undecodable_bytes_degrade_to_replacement_never_a_crash(attach_dir):
+    """A text file that is not valid UTF-8 still projects, with replacement
+    characters standing in for the bytes that would not decode."""
+    att = _stored(attach_dir, "odd.txt", "text/plain", b"ok \xff\xfe bytes")
+    text = att_mod.anthropic_blocks(att)[0]["text"]
+    assert "�" in text and "ok" in text
+
+
+def test_unsupported_kind_projects_as_nothing_on_both_sides(
+        attach_dir, names, cfg):
+    """An unsupported attachment contributes no blocks, and the turn that
+    carries it still projects as the labelled text alone - the real-code
+    twin of the placeholder test's stub."""
+    att = _stored(attach_dir, "blob.bin", "application/octet-stream",
+                  b"\x00\x01")
+    assert att_mod.anthropic_blocks(att) == [] == att_mod.openai_parts(att)
+    transcript = [make_msg(1, "user", "look", attachments=[att])]
+    msgs = build_anthropic_messages("claude", transcript, names, cfg)
+    content = msgs[0]["content"]
+    assert len(content) == 1 and LABEL_RE.match(content[0]["text"])
+
+
+def test_attachment_blocks_follow_the_labelled_text_in_the_turn(
+        attach_dir, names, cfg):
+    """Blocks ride the same labelled user turn as the words, after the text
+    block, in attachment order, on both provider sides."""
+    body = b"\x89PNG fake"
+    att = _stored(attach_dir, "photo.png", "image/png", body)
+    b64 = base64.standard_b64encode(body).decode()
+    transcript = [make_msg(1, "user", "see this", attachments=[att])]
+    msgs = build_anthropic_messages("claude", transcript, names, cfg)
+    content = msgs[0]["content"]
+    assert LABEL_RE.match(content[0]["text"])
+    assert content[1]["type"] == "image"
+    assert content[1]["source"]["data"] == b64
+    items = build_openai_input("gpt", transcript, names, cfg)
+    parts = items[0]["content"]
+    assert LABEL_RE.match(parts[0]["text"])
+    assert parts[1] == {"type": "input_image",
+                        "image_url": f"data:image/png;base64,{b64}"}
+
+
+def test_own_turn_attachments_never_project(attach_dir, names, cfg,
+                                            monkeypatch):
+    """A participant's own turn is a plain assistant string; its attachment
+    rows are never even read."""
+    def explode(att):
+        raise AssertionError("own-turn attachment was projected")
+    monkeypatch.setattr(att_mod, "anthropic_blocks", explode)
+    monkeypatch.setattr(att_mod, "openai_parts", explode)
+    att = {"filename": "a.png", "mime": "image/png", "stored_name": "x",
+           "size": 1}
+    transcript = [make_msg(1, "user", "hi"),
+                  make_msg(2, "claude", "mine", attachments=[att])]
+    msgs = build_anthropic_messages("claude", transcript, names, cfg)
+    assert msgs[1] == {"role": "assistant", "content": "mine"}
+    build_openai_input("claude", transcript, names, cfg)
+
+
+def test_text_description_names_file_mime_and_size():
+    """The non-multimodal stand-in that chat_memory folds into summaries."""
+    att = {"filename": "a.pdf", "mime": "application/pdf", "size": 10}
+    assert att_mod.text_description(att) == \
+        "[attachment: a.pdf (application/pdf, 10 bytes)]"

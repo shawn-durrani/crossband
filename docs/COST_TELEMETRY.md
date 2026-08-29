@@ -258,6 +258,10 @@ tells you nothing.
    ```sh
    grep 'claude_chat_cache' data/service.log > sample-before.log
    ```
+
+   A restart during the sample moves earlier lines to
+   `data/service.log.1`; include it in the grep if the sample
+   spans one.
    This file is safe to attach to an issue or share as-is: it contains only
    hashes, byte counts and token counts (§2), never prompt or chat text.
 

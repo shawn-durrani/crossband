@@ -106,6 +106,10 @@ CREATE TABLE IF NOT EXISTS projects(
   created_at REAL NOT NULL,
   import_uuid TEXT                              -- provider-export idempotency
 );
+-- Importer idempotency lookup (SELECT id ... WHERE import_uuid=?); partial,
+-- so rows that never came from an export cost nothing.
+CREATE INDEX IF NOT EXISTS idx_projects_import_uuid
+  ON projects(import_uuid) WHERE import_uuid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS chats(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
@@ -131,6 +135,8 @@ CREATE TABLE IF NOT EXISTS chats(
   updated_at REAL NOT NULL,
   import_uuid TEXT                              -- provider-export idempotency
 );
+CREATE INDEX IF NOT EXISTS idx_chats_import_uuid
+  ON chats(import_uuid) WHERE import_uuid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -165,6 +171,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_voice_turn
   ON messages(voice_turn_id) WHERE voice_turn_id != '';
 CREATE INDEX IF NOT EXISTS idx_messages_labels_updated
   ON messages(labels_updated_at);
+CREATE INDEX IF NOT EXISTS idx_messages_import_uuid
+  ON messages(import_uuid) WHERE import_uuid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS attachments(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
@@ -726,6 +734,14 @@ def init(settings=None):
                        "AND name='participants'").fetchone():
             con.execute("ALTER TABLE participants ADD COLUMN keep_alive "
                         "TEXT NOT NULL DEFAULT ''")
+    # The import_uuid indexes in SCHEMA need the column on any table that
+    # already exists. A stamped-but-minimal db (migration fixtures, or an
+    # interrupted migration) can carry these tables without it - guard on
+    # the live table, exactly as the v18 step does.
+    for table in ("projects", "chats", "messages"):
+        cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        if cols and "import_uuid" not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN import_uuid TEXT")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -1089,7 +1105,11 @@ def set_chat_room_mode(con, chat_id, on):
     """Flip the durable per-chat room-mode flag. Callers must ALSO update
     diarize's in-process registry (diarize.set_room_enabled) so a live STT
     session sees the flip at its next commit boundary without a DB read on
-    the audio path."""
+    the audio path.
+
+    Production code goes through backend/room_state.py; kept for tests,
+    which place state directly.
+    """
     con.execute("UPDATE chats SET room_mode=? WHERE id=?",
                 (1 if on else 0, chat_id))
     con.commit()
@@ -1100,9 +1120,36 @@ def set_chat_ambient_off(con, chat_id, off):
     says "solo mode", so automatic arming is suppressed until an explicit
     re-enable clears it. Callers must ALSO update diarize's live mirror
     (diarize.set_ambient_off) so a running STT session honours it without a
-    DB read on the audio path."""
+    DB read on the audio path.
+
+    Production code goes through backend/room_state.py; kept for tests,
+    which place state directly.
+    """
     con.execute("UPDATE chats SET ambient_off=? WHERE id=?",
                 (1 if off else 0, chat_id))
+    con.commit()
+
+
+def set_chat_room_state(con, chat_id, *, room_mode=None, ambient_off=None):
+    """The one durable writer for a chat's room-state flags (#239).
+    Writes the given flags in ONE statement and ONE commit, so a flip
+    that touches both can never be split by a crash between two commits
+    (the old two-setter ceremony could leave ambient-off set with the
+    room still armed). No bell here: backend/room_state.py owns the
+    ceremony (mirror, roster, notify), and
+    room_state.py is the only caller - tests/test_room_state_guard.py
+    enforces both."""
+    sets, args = [], []
+    if room_mode is not None:
+        sets.append("room_mode=?")
+        args.append(1 if room_mode else 0)
+    if ambient_off is not None:
+        sets.append("ambient_off=?")
+        args.append(1 if ambient_off else 0)
+    if not sets:
+        return
+    con.execute("UPDATE chats SET " + ", ".join(sets) + " WHERE id=?",
+                (*args, chat_id))
     con.commit()
 
 

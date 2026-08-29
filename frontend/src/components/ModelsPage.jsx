@@ -9,51 +9,12 @@ import { keepAliveSupport, validKeepAliveValue, normalizeKeepAlive } from '../ke
 import { voiceIdPatch } from '../seatSave'
 import RateCardsPanel from './RateCardsPanel'
 import BenchmarkPanel from './BenchmarkPanel'
+import { reasoningOptions, effortSupport, normalizeReasoningEffort } from '../reasoningEffort'
 
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
   system_prompt: '', color: '#a78bfa', enabled: true, reasoning_effort: '',
   thinking_control: '', keep_alive: '',
-}
-
-// Does this model support a reasoning-effort setting? Mirrors the per-provider
-// gating in backend/providers.py (REASONING_CHOICES / _anthropic_unsupported_model)
-// so the UI can grey it out when it won't apply (the runtime also drops it
-// gracefully as a backstop). The policy is authoritative: Default sends no
-// override at all, a fixed level sends only that level, and Adaptive
-// (Anthropic-only) is the SOLE way to get provider-decided variable-duration
-// thinking. Voice mode never silently downgrades any of this.
-function effortSupport(provider, model) {
-  const m = (model || '').toLowerCase()
-  if (provider === 'anthropic') {
-    if (/haiku|claude-3|sonnet-4-5|sonnet-4\.5|sonnet-4-0/.test(m))
-      return { ok: false, note: `Not supported on this Claude model (Haiku / Sonnet 4.5) - it would be ignored.` }
-    return { ok: true, note: `Default sends no override. Low/Medium/High/Max set output_config.effort ("Max" needs Opus 4.6+, otherwise uses High) - a bounded, non-deliberating request. Adaptive lets Claude decide how long to think per reply, which can add several seconds - including in voice - before the first word.` }
-  }
-  if (/^gpt-5|^o1|^o3|^o4/.test(m))
-    return { ok: true, note: `OpenAI: Default sends no override; Low/Medium/High set reasoning.effort ("Max" maps to High). Applies in tool-free chats; automatically skipped when 🌐 research tools are on (provider limitation). No Adaptive option - that's an Anthropic-only concept.` }
-  return { ok: false, note: `Only OpenAI reasoning models (gpt-5.x, o-series) support reasoning effort - it would be ignored otherwise.` }
-}
-
-// The <select> options for this provider - Default + the fixed levels always;
-// Adaptive appended ONLY for Anthropic (backend/providers.py's
-// ANTHROPIC_REASONING_CHOICES vs OPENAI_REASONING_CHOICES - a future
-// OpenAI-compatible provider added the same way, provider="openai" plus a
-// custom base_url, gets the same OpenAI set here automatically since it's
-// keyed on `provider`, not on model or base_url).
-function reasoningOptions(provider) {
-  const fixed = [
-    { value: '', label: 'Default (no effort/thinking override - provider’s plain default)' },
-    { value: 'low', label: 'Low' },
-    { value: 'medium', label: 'Medium' },
-    { value: 'high', label: 'High' },
-    { value: 'max', label: 'Max' },
-  ]
-  if (provider === 'anthropic') {
-    fixed.push({ value: 'adaptive',
-                label: 'Adaptive (Claude decides thinking duration - can add seconds, incl. in voice)' })
-  }
-  return fixed
 }
 
 // Glanceable "is this what's actually running?" readout for one seat.
@@ -209,7 +170,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
       // style itself, because a newcomer clicking "Ollama" shouldn't need to
       // know to switch a dropdown first.
       provider: 'openai',
-      reasoning_effort: e.reasoning_effort === 'adaptive' ? '' : e.reasoning_effort,
+      reasoning_effort: normalizeReasoningEffort('openai', e.reasoning_effort),
       base_url: p.base_url,
       api_key_env: p.api_key_env,
     }))
@@ -235,7 +196,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
         ...voiceIdPatch({ isNew: !editing.id, voiceId: editing.voice_id,
                           seedVoiceId: editing._seedVoiceId }),
         voice_gain: editing.voice_gain ?? 1,
-        reasoning_effort: editing.reasoning_effort ?? '',
+        reasoning_effort: normalizeReasoningEffort(editing.provider, editing.reasoning_effort),
         // Cleared when it no longer applies (see normalizeThinkingControl), so
         // the saved row can never claim a control the request never sends.
         thinking_control: normalizeThinkingControl(
@@ -477,8 +438,7 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                     // "adaptive" is Anthropic-only, so switching to OpenAI with
                     // it selected would otherwise fail validation silently at
                     // save time; reset to Default instead so the UI stays honest.
-                    const reasoning_effort = editing.reasoning_effort === 'adaptive' && provider !== 'anthropic'
-                      ? '' : editing.reasoning_effort
+                    const reasoning_effort = normalizeReasoningEffort(provider, editing.reasoning_effort)
                     setEditing({ ...editing, provider, reasoning_effort })
                   }}>
                   <option value="anthropic">Anthropic</option>

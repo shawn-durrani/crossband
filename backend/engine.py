@@ -518,6 +518,45 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         raise
 
 
+def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
+                 addressed, user_text, voice_mode, echo_guard, user_name):
+    """Judge one completed reply against the pass and echo guards (#241).
+
+    Pure: the decision only. The caller owns the SSE yields, the live
+    mutations and the loop control, so the generator frame the abort path
+    depends on stays intact. Returns (action, note, echo_ref):
+
+    - action: "accept", "suppress_pass" (an allowed pass, or a seat that
+      insisted after refusal - it has nothing), "retry_pass" (the #98
+      guard: first responder to a direct question, or an addressed seat),
+      "log_echo" (voice: the reply is already spoken, a retry would say
+      everything twice), "suppress_echo" (a restatement on its one retry,
+      or on a forced answer after a refused pass), or "retry_echo".
+    - note: the guard note the retry states, empty otherwise. A pass on an
+      echo retry (#210) is always accepted: the retry note promised it,
+      and the alternative on offer was a restatement.
+    - echo_ref: "own" or "round" for the echo actions' log lines, else "".
+
+    Tool rounds are exempt from the echo guard (fresh results get engaged
+    with legitimately), and so is a round whose trigger asks for
+    repetition (restating is then the job)."""
+    if passes.is_pass(content) and not tools:
+        if pass_note or echo_note or passes.may_pass(idx, addressed,
+                                                     user_text):
+            return "suppress_pass", "", ""
+        return "retry_pass", passes.GUARD_NOTE.format(user=user_name), ""
+    if echo_guard and not tools and not echo.requested_repeat(user_text):
+        restated = echo.find_restated(content, echo_refs)
+        if restated:
+            ref = "own" if restated == echo.OWN_LABEL else "round"
+            if voice_mode:
+                return "log_echo", "", ref
+            if echo_note or pass_note:
+                return "suppress_echo", "", ref
+            return "retry_echo", echo.RETRY_NOTE.format(what=restated), ref
+    return "accept", "", ""
+
+
 async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                            persist_live, memory, mcp=None,
                            handback=None, is_handback=False, turn_id=None):
@@ -848,66 +887,55 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 skip_speaker = True
             if skip_speaker:
                 break
-            if passes.is_pass(live["content"]) and not live["tools"]:
+            # The pass and echo guards (#98, #210), judged as one pure
+            # decision in _judge_reply; the yields, the live mutations and
+            # the loop control stay in this frame, which the abort path
+            # depends on. One in-process text scan after streaming ends -
+            # nothing on the reply's wait path.
+            action, note, echo_ref = _judge_reply(
+                live["content"], live["tools"], pass_note=pass_note,
+                echo_note=echo_note, echo_refs=echo_refs, idx=idx,
+                addressed=participant["slug"] in addressed,
+                user_text=user_text, voice_mode=voice_mode,
+                echo_guard=round_cfg.get("echo_guard", True),
+                user_name=cfg["user_name"])
+            if action in ("suppress_pass", "retry_pass"):
                 # #98: the seat chose the honourable silence. The client
                 # drops the streamed bubble on this event; voice held TTS
                 # while the text could still be a bare pass, so nothing was
                 # spoken either.
                 yield sse({"type": "passed", "speaker": participant["slug"]})
-                if pass_note or echo_note or passes.may_pass(
-                        idx, participant["slug"] in addressed, user_text):
-                    # allowed - or the seat insisted after one refusal, and
-                    # a seat that insists has nothing: suppress the turn
-                    # entirely (nothing persisted, later seats still run).
-                    # A pass on an echo retry (#210) is always accepted: the
-                    # retry note promised it, and the alternative on offer
-                    # was a restatement.
+                if action == "suppress_pass":
                     live["participant"] = None
                     live["content"] = ""
                     live["usage"] = None
                     skip_speaker = True
                     break
                 # refused: re-run this seat ONCE with the guard stated
-                pass_note = passes.GUARD_NOTE.format(user=cfg["user_name"])
+                pass_note = note
                 continue
-            # #210: the echo guard. One in-process text scan after streaming
-            # ends - nothing on the reply's wait path. Tool rounds are exempt
-            # (fresh results get engaged with legitimately), a round whose
-            # trigger asks for repetition is exempt (restating is then the
-            # job), and voice only logs: by completion the reply has already
-            # been spoken, so a retry would say everything twice.
-            if (round_cfg.get("echo_guard", True) and not live["tools"]
-                    and not echo.requested_repeat(user_text)):
-                restated = echo.find_restated(live["content"], echo_refs)
-                if restated and voice_mode:
-                    log.warning("echo_guard result=hit action=logged "
-                                "speaker=%s ref=%s", participant["slug"],
-                                "own" if restated == echo.OWN_LABEL else "round")
-                elif restated and (echo_note or pass_note):
-                    # A restatement on its one retry - or on a forced answer
-                    # after a refused pass - is suppressed like an insisted
-                    # pass: nothing persisted, later seats still run.
-                    log.warning("echo_guard result=hit action=suppressed "
-                                "speaker=%s ref=%s", participant["slug"],
-                                "own" if restated == echo.OWN_LABEL else "round")
-                    yield sse({"type": "passed", "speaker": participant["slug"]})
-                    live["participant"] = None
-                    live["content"] = ""
-                    live["usage"] = None
-                    skip_speaker = True
-                    break
-                elif restated:
-                    # Same client shape as a refused pass: the streamed
-                    # bubble drops on "passed", the retry opens fresh.
-                    log.warning("echo_guard result=hit action=retry "
-                                "speaker=%s ref=%s", participant["slug"],
-                                "own" if restated == echo.OWN_LABEL else "round")
-                    yield sse({"type": "passed", "speaker": participant["slug"]})
-                    echo_note = echo.RETRY_NOTE.format(what=restated)
-                    continue
+            if action == "log_echo":
+                # Voice: by completion the reply has already been spoken.
+                log.warning("echo_guard result=hit action=logged "
+                            "speaker=%s ref=%s", participant["slug"], echo_ref)
+            elif action == "suppress_echo":
+                log.warning("echo_guard result=hit action=suppressed "
+                            "speaker=%s ref=%s", participant["slug"], echo_ref)
+                yield sse({"type": "passed", "speaker": participant["slug"]})
+                live["participant"] = None
+                live["content"] = ""
+                live["usage"] = None
+                skip_speaker = True
+                break
+            elif action == "retry_echo":
+                # Same client shape as a refused pass: the streamed
+                # bubble drops on "passed", the retry opens fresh.
+                log.warning("echo_guard result=hit action=retry "
+                            "speaker=%s ref=%s", participant["slug"], echo_ref)
+                yield sse({"type": "passed", "speaker": participant["slug"]})
+                echo_note = note
+                continue
             break
-        round_cfg["pass_refused"] = ""
-        round_cfg["echo_refused"] = ""
         if skip_speaker:
             continue
         # #213: a citation-shaped claim in a reply that fetched nothing gets
@@ -930,11 +958,23 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             yield sse({"type": "speaker_end", "speaker": participant["slug"], "message": msg})
             spoken.append(participant["name"])
 
-    # Guest job: if anyone summoned Claude Code this round, kick it off as
-    # a DETACHED background job instead of speaking inline. The round finishes
-    # now; the guest keeps working independently and hands its result back later
-    # through a narrator (guestjobs + make_handback). A guest summoned inside a
-    # hand-back round runs but does not itself narrate (bounds the follow-ups).
+    async for chunk in _finish_round(chat_id, cfg, next_first, handback,
+                                     is_handback):
+        yield chunk
+
+
+async def _finish_round(chat_id, cfg, next_first, handback, is_handback):
+    """The round's tail (#241): the guest launch, the rotation write, the
+    reflect kick-off and the terminal event. An async generator consumed
+    from _run_round_inner's own frame (async for ... yield), so the abort
+    path's GeneratorExit still reaches every yield the round makes.
+
+    Guest job: if anyone summoned Claude Code this round, kick it off as a
+    DETACHED background job instead of speaking inline. The round finishes
+    now; the guest keeps working independently and hands its result back
+    later through a narrator (guestjobs + make_handback). A guest summoned
+    inside a hand-back round runs but does not itself narrate (bounds the
+    follow-ups)."""
     summons = guest.take(chat_id)
     if summons:
         started = _launch_guest_job(chat_id, summons, cfg, handback,

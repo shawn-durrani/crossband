@@ -89,6 +89,10 @@ def test_conversation_performance_diagnostic_is_offered_and_dispatches():
     assert "conversation_performance" in schema["properties"]["name"]["enum"]
     # the two allowlists must not drift - asserted in the module, re-asserted here
     assert set(diagnostics._DIAGNOSTIC_DISPATCH) == set(diagnostics.DIAGNOSTIC_NAMES)
+    # The prose allowlist must name every diagnostic the enum ships (#240):
+    # the description said "exactly one of" and then named four of five.
+    for name in diagnostics.DIAGNOSTIC_NAMES:
+        assert f'"{name}"' in diagnostics.DIAGNOSTIC_DESCRIPTION, name
 
 
 def test_conversation_performance_reports_upload_and_names_the_cause(tmp_path, monkeypatch):

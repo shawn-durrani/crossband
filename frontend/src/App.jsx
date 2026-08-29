@@ -80,6 +80,22 @@ export default function App() {
   const [showImport, setShowImport] = useState(false)
   const [showExport, setShowExport] = useState(false)
   const [showCost, setShowCost] = useState(false)
+
+  // Every full-page surface that replaces the chat pane, as [open, close]
+  // pairs. Adding a page means adding ONE row here - pageOpen (the voice
+  // strip/call switch) and leavePages both derive from it, so a new page
+  // cannot be missed by one of them (the old bug: selectChat cleared one
+  // flag of three and clicking a sidebar chat left Spend on screen).
+  // modelsIntent is intent metadata for the Models page, not a page flag:
+  // it never opens a page on its own, so it stays out of pageOpen and gets
+  // its own clear in leavePages.
+  const pageFlags = [
+    [showIntegrations, setShowIntegrations],
+    [showCost, setShowCost],
+    [showParticipants, setShowParticipants],
+    [showVoices, setShowVoices],
+  ]
+  const pageOpen = pageFlags.some(([open]) => open)
   const [showSetup, setShowSetup] = useState(false)
   const setupAutoOpened = useRef(false)
   const [banner, setBanner] = useState(null)
@@ -552,16 +568,12 @@ export default function App() {
   }
 
 
-  // Leave every full-page surface (Models / Connections / Spend) - the chat
-  // pane renders only when ALL page flags are down. Every route back to a chat
-  // goes through here, so adding a page means adding ONE line (selectChat
-  // cleared one flag of three, and clicking a sidebar chat while Spend was open
-  // highlighted the row but never left the page).
+  // Leave every full-page surface (Models / Connections / Spend / Voices):
+  // the chat pane renders only when ALL page flags are down. Every route
+  // back to a chat goes through here; the flags live in pageFlags above, so
+  // this stays complete by construction.
   function leavePages() {
-    setShowIntegrations(false)
-    setShowCost(false)
-    setShowParticipants(false)
-    setShowVoices(false)
+    for (const [, setOpen] of pageFlags) setOpen(false)
     setModelsIntent(null)
   }
 
@@ -1072,7 +1084,7 @@ export default function App() {
           voice KEEPS RUNNING and the call surfaces give way to the compact
           strip - visible at every width, because the desktop dock unmounts
           with the chat view. */}
-      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost || showVoices }) === 'strip' && (
+      {voiceSurface({ voiceState, pageOpen }) === 'strip' && (
         <VoiceStrip
           voiceState={voiceState}
           muted={voiceMuted}
@@ -1083,7 +1095,7 @@ export default function App() {
       )}
       {/* Mobile-only full-screen voice "call" overlay (sm:hidden inside the
           component). Desktop keeps the in-thread .voice-dock above, untouched. */}
-      {voiceSurface({ voiceState, pageOpen: showParticipants || showIntegrations || showCost || showVoices }) === 'call' && (
+      {voiceSurface({ voiceState, pageOpen }) === 'call' && (
         <MobileVoiceCall
           banner={banner}
           onDismissBanner={() => setBanner(null)}
