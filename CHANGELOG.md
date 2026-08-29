@@ -42,6 +42,13 @@ them in here, newest first.
   messages now ride the wire in chunks the service accepts, and every
   file still lands.
 
+- The rate card now prices Claude Opus 5 and Claude Mythos 5, and corrects
+  Claude Sonnet 5 to the $2/$10 the pricing page made standard when the
+  scheduled September rise was cancelled (#262). An Opus 5 seat previously
+  recorded every turn with unknown cost, and a Sonnet 5 seat's spend
+  estimates read 50% high. Every Anthropic row was re-verified against the
+  published page on 2026-08-28 and is stamped with that date.
+
 - The Spend page now counts the background model work behind room mode
   and voice (#232). Five of the eight cheap-model calls the app makes
   were spending real money and appearing nowhere: the ones that read a

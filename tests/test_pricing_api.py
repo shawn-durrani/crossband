@@ -39,7 +39,7 @@ def test_local_pricing_layers_over_defaults_instead_of_replacing(tmp_path):
     # every built-in card survives
     for m in ("claude-sonnet-5", "gpt-5.6-terra", "claude-opus-4-8"):
         assert price_for(m, s.pricing) is not None, m
-    assert s.pricing["claude-sonnet-5"]["input"] == 3.0
+    assert s.pricing["claude-sonnet-5"]["input"] == 2.0
 
 
 def test_local_pricing_can_override_a_builtin_card_whole(tmp_path):
@@ -89,7 +89,7 @@ def test_list_reports_origin_and_names_the_unpriced(api):
     body = client.get("/api/pricing").json()
     by_model = {c["model"]: c for c in body["cards"]}
     assert by_model["claude-sonnet-5"]["origin"] == "builtin"
-    assert by_model["claude-sonnet-5"]["card"]["input"] == 3.0
+    assert by_model["claude-sonnet-5"]["card"]["input"] == 2.0
     # a genuinely unknown model is reported as unpriced, never as a silent $0
     assert all(c["priced"] for c in body["cards"] if c["origin"] != "unpriced")
 
@@ -124,7 +124,7 @@ def test_deleting_an_override_falls_back_to_the_builtin_card(api):
     assert client.get("/api/pricing").json()
     d = client.delete("/api/pricing/claude-sonnet-5").json()
     assert d["origin"] == "builtin"
-    assert d["card"]["input"] == 3.0
+    assert d["card"]["input"] == 2.0
 
 
 def test_a_rate_without_a_source_is_refused(api):
