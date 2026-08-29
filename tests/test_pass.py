@@ -142,3 +142,69 @@ def test_the_pure_rules(app):
     # a name deep in the sentence is a mention, not a summons
     assert explicitly_addressed("earlier claude said something",
                                 roster) == set()
+
+
+# ---------- the extracted judgement table (#241) ----------
+
+def test_judge_reply_pass_actions():
+    """The pure decision behind the pass guard, extracted so the four
+    interacting flags are discoverable without reading the whole loop. A
+    first responder to a direct question retries with the guard stated; a
+    prior note of either kind means the seat already had its retry, so an
+    insisted pass suppresses."""
+    from backend.engine import _judge_reply
+    common = dict(echo_note="", echo_refs={}, voice_mode=False,
+                  echo_guard=True, user_name="Alex")
+    action, note, _ = _judge_reply("[pass]", [], pass_note="", idx=0,
+                                   addressed=False,
+                                   user_text="what's the weather?", **common)
+    assert action == "retry_pass" and "Alex" in note
+    action, _, _ = _judge_reply("[pass]", [], pass_note="", idx=1,
+                                addressed=False,
+                                user_text="what's the weather?", **common)
+    assert action == "suppress_pass"
+    action, _, _ = _judge_reply("[pass]", [], pass_note="already refused",
+                                idx=0, addressed=False,
+                                user_text="what's the weather?", **common)
+    assert action == "suppress_pass"
+
+
+def test_judge_reply_echo_actions():
+    """The echo half: voice logs only (the reply is already spoken), a
+    fresh restatement retries once, a restatement on its retry suppresses,
+    and a tool round is exempt."""
+    from backend import echo
+    from backend.engine import _judge_reply
+    prior = ("The plan is settled: we sand the bench top first, then fit "
+             "the vice on the left, drill the dog holes on a 96mm grid, "
+             "and finish the whole thing with two coats of hard wax oil "
+             "before bolting the frame to the wall so nothing racks when "
+             "you plane against the stop on the far end of the top.")
+    refs = echo.references_for(
+        [{"id": 1, "speaker": "claude", "content": prior}],
+        "claude", {"claude"}, {"claude": "Claude"})
+    common = dict(pass_note="", echo_refs=refs, idx=1, addressed=False,
+                  user_text="anything else?", echo_guard=True,
+                  user_name="Alex")
+    restating = prior
+    action, note, ref = _judge_reply(restating, [], echo_note="",
+                                     voice_mode=False, **common)
+    assert action == "retry_echo" and note and ref == "own"
+    action, _, ref = _judge_reply(restating, [], echo_note="had its retry",
+                                  voice_mode=False, **common)
+    assert action == "suppress_echo" and ref == "own"
+    action, _, _ = _judge_reply(restating, [], echo_note="",
+                                voice_mode=True, **common)
+    assert action == "log_echo"
+    action, _, _ = _judge_reply(restating, [{"tool": "web_search"}],
+                                echo_note="", voice_mode=False, **common)
+    assert action == "accept"
+
+
+def test_judge_reply_accepts_an_ordinary_reply():
+    from backend.engine import _judge_reply
+    action, note, ref = _judge_reply(
+        "Here's a fresh thought.", [], pass_note="", echo_note="",
+        echo_refs={}, idx=0, addressed=False, user_text="hi",
+        voice_mode=False, echo_guard=True, user_name="Alex")
+    assert (action, note, ref) == ("accept", "", "")
