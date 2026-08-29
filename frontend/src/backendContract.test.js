@@ -9,6 +9,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { lifecycleBadge, isLocalEndpoint } from './lifecycle.js'
+import { reasoningOptions, effortSupport,
+         normalizeReasoningEffort } from './reasoningEffort.js'
 
 const fixture = JSON.parse(readFileSync(
   new URL('../../tests/fixtures/backend_contract.json', import.meta.url),
@@ -39,4 +41,31 @@ test('every backend loopback host reads as local here', () => {
     assert.equal(isLocalEndpoint({ base_url: `http://${literal}:8080` }), true,
       `backend loopback host '${host}' is not local to isLocalEndpoint`)
   }
+})
+
+// Reasoning effort (#292): reasoningEffort.js mirrors REASONING_CHOICES
+// and _ANTHROPIC_NO_EFFORT_MODEL from backend/providers.py.
+
+test('the effort dropdown offers exactly the backend vocabulary, per provider', () => {
+  for (const [provider, choices] of Object.entries(fixture.reasoning_effort.choices)) {
+    const offered = reasoningOptions(provider).map((o) => o.value)
+    assert.deepEqual(offered, choices,
+      `reasoningOptions('${provider}') drifted from backend REASONING_CHOICES`)
+  }
+})
+
+test('every backend no-effort Claude model marker is greyed out here', () => {
+  for (const marker of fixture.reasoning_effort.anthropic_no_effort_models) {
+    assert.equal(effortSupport('anthropic', `claude-${marker}-latest`).ok, false,
+      `backend gates effort off for '${marker}' models but effortSupport allows it`)
+  }
+})
+
+test('normalize keeps the backend vocabulary and resets anything outside it', () => {
+  for (const [provider, choices] of Object.entries(fixture.reasoning_effort.choices)) {
+    for (const value of choices) {
+      assert.equal(normalizeReasoningEffort(provider, value), value)
+    }
+  }
+  assert.equal(normalizeReasoningEffort('openai', 'adaptive'), '')
 })
