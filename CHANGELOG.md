@@ -5,6 +5,14 @@ entry to a short paragraph; the issue holds the detail.
 
 ## Unreleased
 
+- Facts mined from web-touched rounds now reach the review hold they were
+  built for (#268). The round's web stamp was written to the message row,
+  but the query behind the memory handoff never selected the column, so
+  the stamp never left the app and the memory service treated every
+  web-informed reply as ordinary transcript. The stamp now rides the
+  handoff, and an end-to-end test walks a stamped row all the way to the
+  wire so the seam cannot reopen quietly.
+
 - A crash loop can no longer destroy your restore points (#275). Every
   startup snapshots the database, retention keeps the newest 14 copies,
   and the service manager restarts a crashing app every few seconds - so
