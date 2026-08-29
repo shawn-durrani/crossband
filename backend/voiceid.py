@@ -73,7 +73,6 @@ MODEL_FILENAME = "nemo_en_titanet_small.onnx"
 MODEL_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
              "speaker-recongition-models/nemo_en_titanet_small.onnx")
 MODEL_SHA256 = "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e"
-MODEL_BYTES = 40257283  # the release asset's exact size; a cheap early reject
 MODELS_DIR_NAME = "voice_models"
 NUM_THREADS = 2  # embedding threads; off the live path, so tuned for a shared box
 

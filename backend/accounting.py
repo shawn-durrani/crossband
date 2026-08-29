@@ -123,7 +123,6 @@ _AUTH_CATEGORY = {"api_key": CAT_METERED, "subscription": CAT_SUBSCRIPTION}
 # cash category so a dashboard can group by provenance and treat only
 # provider_reported as billed, never folding rate-card estimates or
 # subscription-equivalents into billed spend. Vocabulary lives in provenance.py.
-PROVENANCES = prov.PROVENANCE_STATES
 
 # How a guest turn's recorded auth maps to a provenance when the row predates
 # per-turn provenance capture: api-key = provider-reported billed cost;
@@ -395,7 +394,6 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
               and (until is None or e.ts < until)]
 
     totals = _blank_totals()
-    prov_totals = {p: 0.0 for p in PROVENANCES}
     tokens = 0
     cache_read = cache_written = 0
     cache_write_cost = 0.0
@@ -406,7 +404,6 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
     # brand-new participant, guest or integration flows into the split with no
     # code change here - nothing is hardcoded to a fixed roster.
     by_party = {}
-    by_provenance = {}
     # by_producer is the like-with-like landing axis: chat vs
     # agents/guests vs voice vs utility, so a coding agent's spend is a bar of
     # its own and never inflates a chat participant's. by_producer_model keeps
@@ -416,16 +413,10 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
     by_producer = {}
     by_producer_model = {}
     not_tracked = set()
-    # Provenances that appeared with a REAL (possibly $0) tracked cost - so a
-    # self_hosted_zero_marginal $0.00 is reported as a declared fact, never
-    # confused with an untracked gap.
-    tracked_provenances = set()
 
     for e in events:
         if e.has_cost:
             totals[e.category] += e.cost
-            prov_totals[e.provenance] = prov_totals.get(e.provenance, 0.0) + e.cost
-            tracked_provenances.add(e.provenance)
         else:
             not_tracked.add(e.source)
         tokens += e.tokens
@@ -443,19 +434,12 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         # "claude-sonnet-5 · Agents" reads distinctly from the chat row.
         _group_add(by_producer_model, (producer, e.model),
                    f"{e.model} · {PRODUCER_LABELS.get(producer, producer)}", e)
-        _group_add(by_provenance, e.provenance,
-                   prov.PROVENANCE_LABELS.get(e.provenance, e.provenance), e)
         if e.chat_id is not None:
             _group_add(by_chat, e.chat_id,
                        chat_titles.get(e.chat_id, f"Chat {e.chat_id}"), e)
 
     return {
         "totals": totals,
-        # The honest provenance axis: dollars grouped by how they're known. `billed`
-        # is the ONLY figure a consumer may call verified spend; estimates and
-        # subscription-equivalents are broken out, never summed into it.
-        "provenance_totals": prov_totals,
-        "billed": prov_totals.get(prov.PROVIDER_REPORTED, 0.0),
         "tokens": tokens,
         "events": len(events),
         # The window's prompt-cache health. `write_cost` is the metered
@@ -487,12 +471,8 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         # grouped differently - so there is no double count.
         "by_producer": _grouped_list(by_producer),
         "by_producer_model": _grouped_list(by_producer_model),
-        "by_provenance": _grouped_list(by_provenance),
         "by_chat": _grouped_list(by_chat),
         "not_tracked": sorted(not_tracked),
-        # Provenances present with a tracked cost (self_hosted included) - the
-        # signal a UI uses to render $0.00-but-declared apart from "no data".
-        "tracked_provenances": sorted(tracked_provenances),
     }
 
 

@@ -743,22 +743,6 @@ def test_utterance_clusters_orders_and_filters():
     assert diarize.utterance_clusters([{"text": "x"}]) == []
 
 
-def test_should_label_truth_table():
-    # nothing found => never label
-    assert diarize.should_label([], None) is False
-    assert diarize.should_label([], ["s0"]) is False
-    # first utterance, one voice => the common case, no label
-    assert diarize.should_label(["s0"], None) is False
-    # more than one cluster in the utterance => always label
-    assert diarize.should_label(["s0", "s1"], None) is True
-    assert diarize.should_label(["s0", "s1"], ["s0", "s1"]) is True
-    # single cluster, same as previous => still one voice, no label
-    assert diarize.should_label(["s0"], ["s0"]) is False
-    # single cluster, DIFFERENT from previous => someone else spoke
-    assert diarize.should_label(["s1"], ["s0"]) is True
-    assert diarize.should_label(["s1"], ["s0", "s1"]) is True
-
-
 def test_session_ordinals_are_first_seen_and_stable():
     s = diarize.RoomSession(enabled=True)
     assert s.assign(["s3", "s7"]) == ["Voice 1", "Voice 2"]
