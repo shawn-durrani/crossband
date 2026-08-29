@@ -106,6 +106,10 @@ CREATE TABLE IF NOT EXISTS projects(
   created_at REAL NOT NULL,
   import_uuid TEXT                              -- provider-export idempotency
 );
+-- Importer idempotency lookup (SELECT id ... WHERE import_uuid=?); partial,
+-- so rows that never came from an export cost nothing.
+CREATE INDEX IF NOT EXISTS idx_projects_import_uuid
+  ON projects(import_uuid) WHERE import_uuid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS chats(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
@@ -131,6 +135,8 @@ CREATE TABLE IF NOT EXISTS chats(
   updated_at REAL NOT NULL,
   import_uuid TEXT                              -- provider-export idempotency
 );
+CREATE INDEX IF NOT EXISTS idx_chats_import_uuid
+  ON chats(import_uuid) WHERE import_uuid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -165,6 +171,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_voice_turn
   ON messages(voice_turn_id) WHERE voice_turn_id != '';
 CREATE INDEX IF NOT EXISTS idx_messages_labels_updated
   ON messages(labels_updated_at);
+CREATE INDEX IF NOT EXISTS idx_messages_import_uuid
+  ON messages(import_uuid) WHERE import_uuid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS attachments(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
@@ -726,6 +734,14 @@ def init(settings=None):
                        "AND name='participants'").fetchone():
             con.execute("ALTER TABLE participants ADD COLUMN keep_alive "
                         "TEXT NOT NULL DEFAULT ''")
+    # The import_uuid indexes in SCHEMA need the column on any table that
+    # already exists. A stamped-but-minimal db (migration fixtures, or an
+    # interrupted migration) can carry these tables without it - guard on
+    # the live table, exactly as the v18 step does.
+    for table in ("projects", "chats", "messages"):
+        cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        if cols and "import_uuid" not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN import_uuid TEXT")
     con.executescript(SCHEMA)
     con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 

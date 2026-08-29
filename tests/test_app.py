@@ -67,6 +67,8 @@ def test_chat_crud_and_leave_hook(app):
         assert r.json()["ok"] is True
 
         assert client.delete(f"/api/chats/{chat['id']}").json() == {"ok": True}
+        # distill on a deleted chat 404s like its siblings, never 200 ok:false
+        assert client.post(f"/api/chats/{chat['id']}/distill").status_code == 404
 
 
 def test_settings_roundtrip(app):

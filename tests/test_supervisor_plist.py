@@ -206,3 +206,17 @@ def test_docs_index_and_config_reference_stay_complete():
         "CLAUDE.md must link the docs index, or no AI session ever sees it")
     # The example template ships and stays synthetic (secret-scan also covers it).
     assert (REPO / "config.local.json.example").exists()
+
+
+def test_service_log_rotates_at_boot():
+    """launchd appends every spawn's stdout and stderr to data/service.log
+    and never rotates it, so start.sh must, at boot (#243). The rotation has
+    to be copy-then-truncate (a rename strands launchd's already-open
+    descriptor on the archived file), size-gated so small logs are left
+    alone, and it must keep one prior generation rather than discarding the
+    tail."""
+    src = (REPO / "start.sh").read_text()
+    assert "MAX_LOG_BYTES" in src, "rotation must be size-gated"
+    assert 'cp -p "$LOG" "$LOG.1"' in src, "must archive one prior generation"
+    assert ': > "$LOG"' in src, "must truncate in place, keeping launchd's fd"
+    assert 'mv "$LOG"' not in src, "rename-rotation strands the open descriptor"

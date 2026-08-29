@@ -338,8 +338,12 @@ def code_tool_definitions(cfg):
 
 # Auth resolution, cheapest first: GITHUB_TOKEN env, else the machine's
 # authenticated gh CLI (`gh auth token`) - the common local case needs zero
-# new keys. Cached for the process lifetime.
-_gh_token_cache = {"value": None, "checked": False}
+# new keys. A FOUND token is cached for the process lifetime; a miss is
+# retried on the next call, because `gh auth login` in another terminal
+# changes the answer and a failed probe is a local config read, no network.
+# Latching the miss kept the Connections page saying "run gh auth login"
+# after the owner already had, until a restart.
+_gh_token_cache = {"value": None}
 
 
 def refresh_repo_maps(cfg):
@@ -375,8 +379,7 @@ def github_token():
     tok = os.environ.get("GITHUB_TOKEN")
     if tok:
         return tok
-    if not _gh_token_cache["checked"]:
-        _gh_token_cache["checked"] = True
+    if _gh_token_cache["value"] is None:
         try:
             import subprocess
             out = subprocess.run(["gh", "auth", "token"], capture_output=True,

@@ -137,12 +137,16 @@ async def get_chat(chat_id: int, request: Request):
 
 
 @router.get("/api/chats/{chat_id}/messages")
-async def get_chat_messages_after(chat_id: int, after: int = 0):
+def get_chat_messages_after(chat_id: int, after: int = 0):
     """Incremental catch-up for ONE chat: returns only rows with
     id > `after`, same attachments/tool_events shape as GET /api/chats/{id}'s
     `messages` - what the frontend fetches when the global events stream
     (GET /api/events/stream) reports a new message for the chat currently
-    open, instead of refetching the whole transcript on every live notice."""
+    open, instead of refetching the whole transcript on every live notice.
+
+    def, not async def: this is blocking SQLite with nothing to await, so
+    it belongs in FastAPI's threadpool, off the event loop the voice
+    relays share - and it runs on every new_message event."""
     con = db.connect()
     if not con.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone():
         con.close()
@@ -153,11 +157,14 @@ async def get_chat_messages_after(chat_id: int, after: int = 0):
 
 
 @router.get("/api/chats/{chat_id}/guest_jobs")
-async def get_chat_guest_jobs(chat_id: int):
+def get_chat_guest_jobs(chat_id: int):
     """Snapshot of this chat's Claude Code guest jobs - the status the
     chip seeds from on open (running / completed / failed / cancelled + which
     completion path). Live changes then arrive over GET /api/events/stream, the
-    same channel messages use. Newest first; durable across reconnects."""
+    same channel messages use. Newest first; durable across reconnects.
+
+    def, not async def: blocking SQLite runs in the threadpool (see
+    get_chat_messages_after)."""
     con = db.connect()
     if not con.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone():
         con.close()
@@ -318,7 +325,7 @@ def rearm_command_deadmen(app):
 
 
 @router.post("/api/chats/{chat_id}/messages/{message_id}/discard")
-async def discard_turn(chat_id: int, message_id: int):
+def discard_turn(chat_id: int, message_id: int):
     """Owner-discard of a captured voice turn (#106): live capture can
     transcribe audio that was never meant for the chat, and the owner must
     be able to remove it. Deletes the message row (attachments cascade), so
@@ -331,6 +338,9 @@ async def discard_turn(chat_id: int, message_id: int):
     is append-only and is NOT touched here - membro-side deletion is its
     own owner-only surface). What models already read in past rounds
     cannot be unsent; the UI says so before confirming.
+
+    def, not async def: blocking SQLite runs in the threadpool, and the
+    rounds.active() check here is a plain dict read, safe off the loop.
 
     User turns only, and never mid-round (the round is reading the
     transcript it started with). Content-free audit line only."""
@@ -645,7 +655,7 @@ async def distill(chat_id: int, request: Request):
     exists = con.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone()
     con.close()
     if not exists:
-        return {"ok": False, "reason": "no such chat"}
+        raise HTTPException(404)
     engine.spawn(engine.leave_chat_job(
         chat_id, request.app.state.settings.as_cfg(), request.app.state.memory))
     return {"ok": True, "queued": True}
