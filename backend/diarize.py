@@ -1285,7 +1285,7 @@ async def _fast_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     owner = name.casefold() == (cfg.get("user_name") or "User").casefold()
     target_id = await _deliver_label(
         chat_id, pcm, sample_rate, commit_ts, session,
-        label_payload([name], score=verdict.get("score"), owner=owner),
+        label_payload([name], score=verdict.get("score") or 0, owner=owner),
         turn_id=turn_id)
     # Anchor food: a clean single-speaker utterance refreshes the matched
     # person's clips. The batch room path does the same for a matched single
@@ -1441,7 +1441,7 @@ async def _owner_label_pass(chat_id, pcm, sample_rate, commit_ts, session,
     that retention for working corrections on solo chats."""
     await _deliver_label(
         chat_id, pcm, sample_rate, commit_ts, session,
-        label_payload([verdict["name"]], score=verdict.get("score"),
+        label_payload([verdict["name"]], score=verdict.get("score") or 0,
                       owner=True),
         turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"],
@@ -1468,7 +1468,7 @@ async def _arm_known_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     await _in_voice_thread(_arm_known, chat_id, {"local": name}, cfg)
     target_id = await _deliver_label(
         chat_id, pcm, sample_rate, commit_ts, session,
-        label_payload([name], score=verdict.get("score")),
+        label_payload([name], score=verdict.get("score") or 0),
         turn_id=turn_id)
     await _in_voice_thread(_accumulate_fast_anchor, verdict["person_id"], pcm,
                             sample_rate, cfg, verdict.get("score"))
@@ -1553,6 +1553,9 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if decision == "arm_unknown":
             await _in_voice_thread(_arm_ambient_unknown, chat_id, cfg)
             ordinal = session.assign(["ambient_unknown"])
+            # The one label write that stays attach-only (#237): this path
+            # never remembered audio, so routing it through _deliver_label
+            # would be a behaviour change, not consolidation.
             target_id = await _attach_until_deadline(
                 chat_id, commit_ts,
                 label_payload(ordinal, clusters=["ambient_unknown"],
