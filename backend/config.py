@@ -7,9 +7,12 @@ take JSON. The pre-rename MMC_ prefix still applies until v0.3, with a startup
 warning naming the exact rename.
 """
 
+import contextlib
 import json
 import os
 import re
+import shutil
+import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -688,32 +691,34 @@ def report_missing_keys(settings: Settings, log) -> None:
 
 def write_local_key(key: str, value) -> None:
     """Atomically set/remove one top-level key in config.local.json, preserving
-    every other key. Extracted from routers/pricing.py's _write_overrides so
-    every config-backed UI shares one write path: temp file + os.replace, with
-    a single .bak of the previous contents."""
-    import contextlib as _ctx
-    import json as _json
-    import os as _os
-    import shutil as _shutil
-    import tempfile as _tempfile
+    every other key. The ONLY writer of that file: every config-backed UI goes
+    through here, so the file has one format and one failure story.
+
+    Atomic (temp file + os.replace) because the file is read on every
+    load_settings() call. A torn write would not brick startup (_read_json
+    swallows a malformed file) but WOULD silently drop every local setting
+    the operator has, which is worse than a crash. A single .bak of the
+    previous contents is kept alongside: atomicity guarantees the file is
+    never half-written, not that the new contents are what the operator
+    wanted, and this is their personal config."""
     local = _read_json(LOCAL_CONFIG_PATH)
     if value:
         local[key] = value
     else:
         local.pop(key, None)
     LOCAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = _tempfile.mkstemp(dir=str(LOCAL_CONFIG_PATH.parent),
-                                prefix=".config.local.", suffix=".json")
+    fd, tmp = tempfile.mkstemp(dir=str(LOCAL_CONFIG_PATH.parent),
+                               prefix=".config.local.", suffix=".json")
     try:
-        with _os.fdopen(fd, "w") as f:
-            _json.dump(local, f, indent=2, sort_keys=True)
+        with os.fdopen(fd, "w") as f:
+            json.dump(local, f, indent=2, sort_keys=True)
             f.write("\n")
         if LOCAL_CONFIG_PATH.exists():
-            with _ctx.suppress(OSError):
-                _shutil.copy2(LOCAL_CONFIG_PATH,
-                              LOCAL_CONFIG_PATH.with_suffix(".json.bak"))
-        _os.replace(tmp, LOCAL_CONFIG_PATH)
+            with contextlib.suppress(OSError):
+                shutil.copy2(LOCAL_CONFIG_PATH,
+                             LOCAL_CONFIG_PATH.with_suffix(".json.bak"))
+        os.replace(tmp, LOCAL_CONFIG_PATH)
     except Exception:
-        with _ctx.suppress(OSError):
-            _os.unlink(tmp)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
         raise
