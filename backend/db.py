@@ -1105,7 +1105,11 @@ def set_chat_room_mode(con, chat_id, on):
     """Flip the durable per-chat room-mode flag. Callers must ALSO update
     diarize's in-process registry (diarize.set_room_enabled) so a live STT
     session sees the flip at its next commit boundary without a DB read on
-    the audio path."""
+    the audio path.
+
+    Production code goes through backend/room_state.py; kept for tests,
+    which place state directly.
+    """
     con.execute("UPDATE chats SET room_mode=? WHERE id=?",
                 (1 if on else 0, chat_id))
     con.commit()
@@ -1116,9 +1120,36 @@ def set_chat_ambient_off(con, chat_id, off):
     says "solo mode", so automatic arming is suppressed until an explicit
     re-enable clears it. Callers must ALSO update diarize's live mirror
     (diarize.set_ambient_off) so a running STT session honours it without a
-    DB read on the audio path."""
+    DB read on the audio path.
+
+    Production code goes through backend/room_state.py; kept for tests,
+    which place state directly.
+    """
     con.execute("UPDATE chats SET ambient_off=? WHERE id=?",
                 (1 if off else 0, chat_id))
+    con.commit()
+
+
+def set_chat_room_state(con, chat_id, *, room_mode=None, ambient_off=None):
+    """The one durable writer for a chat's room-state flags (#239).
+    Writes the given flags in ONE statement and ONE commit, so a flip
+    that touches both can never be split by a crash between two commits
+    (the old two-setter ceremony could leave ambient-off set with the
+    room still armed). No bell here: backend/room_state.py owns the
+    ceremony (mirror, roster, notify), and
+    room_state.py is the only caller - tests/test_room_state_guard.py
+    enforces both."""
+    sets, args = [], []
+    if room_mode is not None:
+        sets.append("room_mode=?")
+        args.append(1 if room_mode else 0)
+    if ambient_off is not None:
+        sets.append("ambient_off=?")
+        args.append(1 if ambient_off else 0)
+    if not sets:
+        return
+    con.execute("UPDATE chats SET " + ", ".join(sets) + " WHERE id=?",
+                (*args, chat_id))
     con.commit()
 
 

@@ -57,7 +57,8 @@ import logging
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi import WebSocketDisconnect
 
-from .. import db, diagnostics, diarize, engine, voice, voice_trace
+from .. import (db, diagnostics, diarize, engine, room_state, voice,
+                voice_trace)
 
 router = APIRouter(tags=["voice"])
 
@@ -526,8 +527,8 @@ async def stt_stream_relay(ws: WebSocket):
                 return on, names, disarmed, ambient
             enabled, roster_names, disarmed, ambient_ok = \
                 await asyncio.to_thread(_session_open_reads)
-            diarize.set_room_enabled(chat_id, enabled)
-            diarize.set_ambient_off(chat_id, disarmed)
+            room_state.seed_mirrors(chat_id, enabled=enabled,
+                                    ambient_disarmed=disarmed)
             keyterm_names += roster_names
             room.ambient_on = ambient_ok
         except Exception:

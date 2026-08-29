@@ -194,12 +194,6 @@ def update_chat(chat_id: int, body: ChatIn, request: Request):
         updates["memory_enabled"] = int(body.memory_enabled)
     if body.code_enabled is not None:
         updates["code_enabled"] = int(body.code_enabled)
-    if body.room_mode is not None:
-        updates["room_mode"] = int(body.room_mode)
-        if body.room_mode:
-            # An explicit manual enable clears any sacred ambient-off (#28):
-            # the owner turning room mode on is a re-enable.
-            updates["ambient_off"] = 0
     if body.archived is not None:
         updates["archived_at"] = db.now() if body.archived else None
     if updates:
@@ -215,21 +209,23 @@ def update_chat(chat_id: int, body: ChatIn, request: Request):
                         (chat_id, pid))
     con.commit()
     if body.room_mode is not None:
-        # Mirror AFTER the durable write committed: the STT relay reads this
-        # dict at commit boundaries (no I/O on the audio path), and the DB
-        # row above is what re-seeds it on restart or session open.
-        diarize.set_room_enabled(chat_id, bool(body.room_mode))
+        # The room flags ride the single write path (#239): durable commit
+        # first, then diarize's live mirror, then the owner seat and the
+        # bell - room_state owns that ordering. A manual enable is an
+        # explicit owner re-enable: it clears any sacred ambient-off and
+        # seats the owner every time (linked to their anchors when
+        # remembered) so the pass runs ANCHORED (#28, fifth field test). A
+        # manual disable is the degraded/accessibility path: it flips the
+        # mode and nothing else - "solo mode" is the sacred disarm.
+        from .. import room_state
+        cfg = request.app.state.settings.as_cfg()
         if body.room_mode:
-            diarize.set_ambient_off(chat_id, False)
-            # A manual arm behaves like the "group mode" command (#28, fifth
-            # field test): the owner joins the roster (linked to their anchors
-            # when remembered), so the pass runs ANCHORED and the fast local
-            # matcher path engages instead of the slow no-roster pass.
-            from .. import introductions
-            introductions.roster_owner_only(
-                chat_id, request.app.state.settings.as_cfg())
-        from .. import events
-        events.notify_room_update()
+            room_state.arm(chat_id, cfg, source="manual toggle",
+                           clear_ambient=True, seat_owner="always", con=con)
+        else:
+            room_state.disarm(chat_id, source="manual toggle",
+                              set_ambient_off=False, clear_roster=False,
+                              resolve_asks=False, con=con)
     chat = _chat_payload(con, chat_id, pricing=_pricing(request))
     con.close()
     return chat

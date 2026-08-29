@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from .. import anchors, db, introductions
+from .. import anchors, db, introductions, room_state
 
 router = APIRouter(tags=["room"])
 
@@ -52,7 +52,7 @@ def get_roster(chat_id: int, request: Request):
         # the voice labels are written with.
         row["display_name"] = (person or {}).get("preferred_name") or row["name"]
     return {"room_mode": bool(chat["room_mode"]),
-            "cap": int(request.app.state.settings.room_roster_max),
+            "cap": room_state.roster_cap(request.app.state.settings.as_cfg()),
             "sufficient_seconds": anchors.SUFFICIENT_SECONDS,
             "min_short_clips": anchors.MIN_SHORT_CLIPS,
             "roster": roster, "flags": flags}
@@ -491,10 +491,11 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
         # The corrected person is evidently in the room: put them on the
         # roster (or re-mark them present) and link their anchors. The seat
         # trigger (#84) is the corrected message, by the owner's hand.
-        db.add_room_person(con, chat_id, name, person_id=pid,
-                           seated_by_message_id=message_id,
-                           seated_via="owner")
-        db.link_room_person(con, chat_id, name, pid)
+        # enforce_cap=False is now a stated decision, not drift: the owner's
+        # explicit correction outranks the product cap (#239).
+        room_state.seat(chat_id, name, cfg, via="owner", person_id=pid,
+                        message_id=message_id, enforce_cap=False,
+                        link_existing=True, con=con)
     finally:
         con.close()
     if learned:
