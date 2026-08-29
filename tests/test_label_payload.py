@@ -37,8 +37,11 @@ def test_room_and_ambient_shapes_have_no_source():
                    "uncertain": ["Voice 1"]}
 
 
-def test_a_none_score_is_rounded_zero_never_null():
-    assert label_payload(["Blair"], score=None) == {
+def test_a_missing_matcher_score_is_zero_never_omitted():
+    """The three scored passes always wrote a score, `or 0` when the
+    matcher gave none. The call sites keep that byte; only the unscored
+    passes (room, cold start, ambient) omit the key."""
+    assert label_payload(["Blair"], score=0) == {
         "clusters": ["local"], "labels": ["Blair"], "uncertain": [],
-        "source": "local"}
-    assert label_payload(["Blair"], score=0)["score"] == 0
+        "source": "local", "score": 0}
+    assert "score" not in label_payload(["Blair"])
