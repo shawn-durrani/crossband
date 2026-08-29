@@ -212,6 +212,13 @@ def _seats_for(provider, participants, pricing):
             "base_url": p.get("base_url") or None,
             "lifecycle": lifecycle,
             "cost_provenance": cost_provenance,
+            # The label and the onboarding gate ship WITH the record, exactly
+            # as /api/models/status does (diagnostics.py) - the console
+            # renders them verbatim instead of keeping its own copy of
+            # provenance.PROVENANCE_LABELS (#234).
+            "cost_provenance_label": prov.PROVENANCE_LABELS.get(
+                cost_provenance["source"], cost_provenance["source"]),
+            "onboardable": cost_provenance["source"] != prov.UNKNOWN,
             # Only onboarded + known-provenance seats may be auto-picked by
             # future price-aware selection; a trial/unknown seat can still be
             # invoked MANUALLY (this flag never blocks execution).

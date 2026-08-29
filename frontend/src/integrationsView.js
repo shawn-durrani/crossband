@@ -3,13 +3,16 @@
 // The console is a steady-state, capability-specific surface built ON TOP of the
 // unified, read-only status API (GET /api/integrations). This module is the pure
 // translation layer between that raw status list and what the console renders:
-// grouped sections, one plain-English health readout per entry, provenance
-// labels, and the lifecycle/onboarding rules for LLM seats.
+// grouped sections and one plain-English health readout per entry. The
+// provenance label and the onboarding gate arrive on the wire from the
+// backend (provenance.PROVENANCE_LABELS via /api/integrations) and are
+// rendered verbatim; the badge and promote wording live in lifecycle.js.
 //
 // Kept React-free and side-effect-free so the meaning is unit-tested directly
 // (the same discipline as lifecycle.js / modelReadout.js). The component renders
 // whatever this returns; the SAFETY INVARIANTS (a trial seat is never routinely
 // selectable; secrets never appear) are decided here where they can be proven.
+import { lifecycleBadge, promoteState } from './lifecycle.js'
 
 // Sections come from the SERVER (backend/capabilities.KINDS) so a new kind needs
 // no change here; that hand-written list was the last hardcoded site, and the
@@ -131,27 +134,14 @@ export function offersCredentialFix(entry) {
   return h === 'unconfigured' || h === 'unhealthy'
 }
 
-// Human-readable label for a cost-provenance source (mirrors backend
-// provenance.PROVENANCE_LABELS so the console explains, in plain English, HOW a
-// seat's cost is known - the thing that gates onboarding).
-const PROVENANCE_LABELS = {
-  provider_reported: 'Provider-reported (billed)',
-  rate_card_estimate: 'Rate-card estimate',
-  self_hosted_zero_marginal: 'Self-hosted - no metered marginal cost',
-  subscription_equivalent: 'Subscription-equivalent (informational)',
-  unknown: 'Unknown - no provenance recorded',
-}
-
-export function provenanceLabel(source) {
-  return PROVENANCE_LABELS[source] || PROVENANCE_LABELS.unknown
-}
-
-// A seat with a KNOWN cost provenance may be onboarded; an `unknown` one may
-// not (the onboarding-lifecycle gate). This is the client-side mirror of that
-// rule, used only to enable/disable the promote control; the backend PATCH
+// The provenance label and the onboarding gate ARRIVE ON THE WIRE
+// (seat.cost_provenance_label and seat.onboardable, shipped by
+// /api/integrations from backend provenance.PROVENANCE_LABELS, #234). This
+// file renders them verbatim; it no longer keeps a copy of either rule.
+// The gate only enables/disables the promote control - the backend PATCH
 // remains the source of truth and re-checks on click.
 export function seatOnboardable(seat) {
-  return !!seat && seat.cost_provenance?.source !== 'unknown' && !!seat.cost_provenance?.source
+  return !!seat?.onboardable
 }
 
 // SAFETY INVARIANT: a trial seat is NEVER routinely/default selectable from
@@ -162,51 +152,31 @@ export function routinelySelectable(seat) {
   return !!seat && seat.lifecycle === 'onboarded' && seat.eligible_for_auto_selection === true
 }
 
-// The lifecycle badge for a seat (Trial vs Onboarded), matching the participants
-// UI. Trial is the loud, actionable state; onboarded is calm/normal.
-export function seatBadge(seat) {
-  if (seat?.lifecycle === 'onboarded') {
-    return {
-      lifecycle: 'onboarded',
-      label: 'Onboarded',
-      tone: 'onboarded',
-      title: 'A normal seat: it joins every round automatically.',
-    }
-  }
+// Adapter: express an /api/integrations seat in the /api/models/status
+// shape lifecycle.js consumes, so the badge and promote wording exist once
+// (#234 - the two copies had drifted in three places).
+function seatAsStatus(seat) {
   return {
-    lifecycle: 'trial',
-    label: 'Trial',
-    tone: 'trial',
-    title: 'Manual-invoke only: this seat will NOT join a normal round on its '
-      + 'own. Address it by @mention or by name. Promote it to Onboarded once '
-      + 'its cost is known.',
+    lifecycle: seat.lifecycle,
+    onboardable: !!seat.onboardable,
+    cost_provenance_label: seat.cost_provenance_label,
   }
 }
 
-// Should the "Promote to Onboarded" control show for this seat, and can it be
-// used right now? Only trial seats can be promoted. The button is enabled when
-// the seat has a known cost provenance; otherwise it shows disabled WITH the
-// reason, so a blocked promotion is explained rather than a silent no-op. This
-// is the console's equivalent of lifecycle.promoteState, adapted to the richer
-// seat shape returned by /api/integrations.
+// The lifecycle badge for a seat (Trial vs Onboarded), the same wording the
+// participants UI shows. A seat row always shows a badge, so 'trial' is the
+// conservative fallback - unlike the participants page, where
+// nothing-loaded-yet means no badge at all.
+export function seatBadge(seat) {
+  return lifecycleBadge(seat ? seatAsStatus(seat) : undefined, 'trial')
+}
+
+// Promote control state for a seat. The null-seat guard stays here:
+// promoteState treats a missing status as "readout not loaded" and shows
+// the button, which is wrong for a console row that simply has no seat.
 export function seatPromoteState(seat) {
-  if (!seat || seat.lifecycle === 'onboarded') return { show: false }
-  if (seatOnboardable(seat)) {
-    return {
-      show: true,
-      enabled: true,
-      label: 'Promote to Onboarded',
-      reason: `Cost is known (${provenanceLabel(seat.cost_provenance.source)}) - safe to onboard.`,
-    }
-  }
-  return {
-    show: true,
-    enabled: false,
-    label: 'Promote to Onboarded',
-    reason: 'No cost provenance yet - add a priced rate-card entry or an explicit '
-      + 'self-hosted declaration for this model first. Until then it stays a '
-      + 'manual trial (still reachable by @mention or by name).',
-  }
+  if (!seat) return { show: false }
+  return promoteState(seatAsStatus(seat))
 }
 
 // What an in-place onboarding prompt needs for one entry: which setup service

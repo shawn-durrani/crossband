@@ -131,6 +131,10 @@ def test_seats_carry_real_provenance_and_default_trial():
                         participants=parts)["anthropic"]
     seat = anthropic["seats"][0]
     assert seat["cost_provenance"]["source"] == "rate_card_estimate"
+    # #234: the label and the gate ship with the record, so the console
+    # renders them instead of keeping a copy of PROVENANCE_LABELS.
+    assert seat["cost_provenance_label"] == "Rate-card estimate"
+    assert seat["onboardable"] is True
     assert seat["cost_provenance"]["estimated"] is True
     assert seat["cost_provenance"]["as_of"]  # a dated source is recorded
     assert seat["lifecycle"] == "trial"
@@ -163,6 +167,8 @@ def test_onboarded_but_unpriced_seat_is_not_auto_eligible():
                    participants=parts)["openai"]["seats"][0]
     assert seat["cost_provenance"]["source"] == "unknown"
     assert seat["eligible_for_auto_selection"] is False
+    assert seat["onboardable"] is False
+    assert seat["cost_provenance_label"].startswith("Unknown")
 
 
 def test_keyless_local_seat_is_self_hosted_without_a_rate_card_entry():

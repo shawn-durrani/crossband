@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   SECTIONS,
-  groupIntegrations, healthPresentation, offersCredentialFix, provenanceLabel,
+  groupIntegrations, healthPresentation, offersCredentialFix,
   seatOnboardable, routinelySelectable, seatBadge, seatPromoteState, credentialPrompt, configHowTo } from './integrationsView.js'
 
 const entry = (over) => ({
@@ -16,7 +16,9 @@ const entry = (over) => ({
 })
 const seat = (over) => ({
   slug: 's', name: 'S', model: 'm', enabled: true, lifecycle: 'trial',
-  cost_provenance: { source: 'unknown' }, eligible_for_auto_selection: false, ...over,
+  cost_provenance: { source: 'unknown' },
+  cost_provenance_label: 'Unknown - no provenance recorded',
+  onboardable: false, eligible_for_auto_selection: false, ...over,
 })
 
 // ---------- grouping ----------
@@ -99,24 +101,15 @@ test('credential fix is offered for missing/unhealthy keyed capabilities only', 
   assert.equal(offersCredentialFix(entry({ kind: 'mcp', health: 'unhealthy' })), false)
 })
 
-// ---------- provenance labels ----------
-
-test('provenance labels are plain-English and default to unknown', () => {
-  assert.match(provenanceLabel('rate_card_estimate'), /Rate-card estimate/)
-  assert.match(provenanceLabel('self_hosted_zero_marginal'), /Self-hosted/)
-  assert.match(provenanceLabel('provider_reported'), /billed/i)
-  assert.match(provenanceLabel('nonsense'), /Unknown/)
-})
-
 // ---------- seat lifecycle + onboarding gate ----------
+// The gate and the label arrive on the wire (#234); this file surfaces the
+// backend's verdict rather than re-deriving it.
 
-test('a seat with unknown provenance is not onboardable', () => {
-  assert.equal(seatOnboardable(seat({ cost_provenance: { source: 'unknown' } })), false)
-  assert.equal(seatOnboardable(seat({ cost_provenance: {} })), false)
-})
-
-test('a seat with a known provenance is onboardable', () => {
-  assert.equal(seatOnboardable(seat({ cost_provenance: { source: 'rate_card_estimate' } })), true)
+test('the onboarding gate is the backend verdict, surfaced not re-derived', () => {
+  assert.equal(seatOnboardable(seat({ onboardable: false })), false)
+  assert.equal(seatOnboardable(seat()), false)
+  assert.equal(seatOnboardable(seat({ onboardable: true })), true)
+  assert.equal(seatOnboardable(null), false)
 })
 
 test('SAFETY: a trial seat is never routinely/default selectable', () => {
@@ -142,14 +135,14 @@ test('promote is hidden for an onboarded seat', () => {
 })
 
 test('trial + known cost → promote enabled with the provenance reason', () => {
-  const s = seatPromoteState(seat({ cost_provenance: { source: 'rate_card_estimate' } }))
+  const s = seatPromoteState(seat({ onboardable: true, cost_provenance_label: 'Rate-card estimate', cost_provenance: { source: 'rate_card_estimate' } }))
   assert.equal(s.show, true)
   assert.equal(s.enabled, true)
   assert.match(s.reason, /Rate-card estimate/)
 })
 
 test('trial + unknown cost → promote shown but disabled, explaining why', () => {
-  const s = seatPromoteState(seat({ cost_provenance: { source: 'unknown' } }))
+  const s = seatPromoteState(seat())
   assert.equal(s.show, true)
   assert.equal(s.enabled, false)
   assert.match(s.reason, /no cost provenance/i)

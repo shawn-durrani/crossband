@@ -66,7 +66,7 @@ export function promoteState(status, fallbackLifecycle) {
     label: 'Promote to Onboarded',
     reason: 'No cost provenance yet - add a priced rate-card entry or an '
       + 'explicit self-hosted declaration for this model first. Until then it '
-      + 'stays a manual trial.',
+      + 'stays a manual trial (still reachable by @mention or by name).',
   }
 }
 

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api'
 import {
-  groupIntegrations, healthPresentation, credentialPrompt, provenanceLabel,
+  groupIntegrations, healthPresentation, credentialPrompt,
   seatBadge, seatPromoteState, configHowTo
 } from '../integrationsView'
 
@@ -83,7 +83,7 @@ function Seat({ seat, onPromote, onEdit, promoting }) {
         {seat.base_url ? ` · ${seat.base_url}` : ''}
       </div>
       <div className="text-xs text-ink-faint">
-        Cost: {provenanceLabel(seat.cost_provenance?.source)}
+        Cost: {seat.cost_provenance_label || seat.cost_provenance?.source}
       </div>
       {badge.tone === 'trial' && (
         <div className="text-xs text-amber-600/90 dark:text-amber-500 leading-relaxed">
