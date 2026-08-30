@@ -33,17 +33,12 @@ def app(tmp_path):
     return create_app(settings)
 
 
-@pytest.fixture(autouse=True)
-def _clean_stores():
-    diarize._PENDING_LABELS.clear()
-    diarize._LABEL_EVENTS.clear()
-    diarize._LAST_DECISION.clear()
-    diarize._DECISION_HISTORY.clear()
-    yield
-    diarize._PENDING_LABELS.clear()
-    diarize._LABEL_EVENTS.clear()
-    diarize._LAST_DECISION.clear()
-    diarize._DECISION_HISTORY.clear()
+# No module-local store clearing: conftest's _reset_room_state is the
+# single list (#238) and now carries the #304 evidence globals and the
+# capture registry, so every test in the suite starts clean of them. The
+# deploy gate caught the alternative: this file's dump test asserting the
+# registry empty while an earlier websocket test's shutdown race had left
+# a stale entry on the Mac's event-loop timing.
 
 
 # ── label-flow breadcrumbs ──────────────────────────────────────────────────

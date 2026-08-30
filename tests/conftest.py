@@ -56,6 +56,7 @@ def _room_state_clean():
 
 def _reset_room_state():
     from backend import anchors, diarize, introductions, mismatch
+    from backend.routers import voice as voice_router
 
     for mod, name in (
         (diarize, "_TASKS"),
@@ -64,6 +65,13 @@ def _reset_room_state():
         (diarize, "_PENDING_LABELS"),
         (diarize, "_AMBIENT_OFF"),
         (diarize, "_LAST_DECISION"),
+        (diarize, "_LABEL_EVENTS"),
+        (diarize, "_DECISION_HISTORY"),
+        # The capture registry (#134): a websocket handler that loses the
+        # TestClient shutdown race leaves its entry behind, and the reader
+        # in the NEXT file fails on another machine's event-loop timing -
+        # the deploy gate caught exactly that (#307's dump test).
+        (voice_router, "_captures"),
         (introductions, "_TASKS"),
         (mismatch, "_TASKS"),
     ):

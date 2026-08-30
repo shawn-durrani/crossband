@@ -424,8 +424,12 @@ CAPTURE_KILLED_CODE = 4001
 
 
 def capture_sessions() -> list:
+    # Snapshot before iterating: the readers (/api/voice/captures and the
+    # #304 debug dump) are sync endpoints on a threadpool thread while the
+    # event loop inserts and pops entries, and iterating the live dict can
+    # raise "dictionary changed size during iteration" mid-request.
     return [{k: v[k] for k in ("sid", "chat_id", "started_at", "client")}
-            for v in _captures.values()]
+            for v in list(_captures.values())]
 
 
 def _pop_capture(sid: str, reason: str) -> None:
