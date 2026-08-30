@@ -215,8 +215,9 @@ def update_chat(chat_id: int, body: ChatIn, request: Request):
         # explicit owner re-enable: it clears any sacred ambient-off and
         # seats the owner every time (linked to their anchors when
         # remembered) so the pass runs ANCHORED (#28, fifth field test). A
-        # manual disable is the degraded/accessibility path: it flips the
-        # mode and nothing else - "solo mode" is the sacred disarm.
+        # manual disable's off means off (#294): the same full disarm
+        # spoken "solo mode" does, so a switched-off room cannot re-arm
+        # itself from the next voice it hears.
         from .. import room_state
         cfg = request.app.state.settings.as_cfg()
         if body.room_mode:
@@ -224,8 +225,8 @@ def update_chat(chat_id: int, body: ChatIn, request: Request):
                            clear_ambient=True, seat_owner="always", con=con)
         else:
             room_state.disarm(chat_id, source="manual toggle",
-                              set_ambient_off=False, clear_roster=False,
-                              resolve_asks=False, con=con)
+                              set_ambient_off=True, clear_roster=True,
+                              resolve_asks=True, con=con)
     chat = _chat_payload(con, chat_id, pricing=_pricing(request))
     con.close()
     return chat

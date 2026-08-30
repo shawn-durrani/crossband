@@ -199,12 +199,11 @@ def test_disarm_is_sacred_even_when_room_already_off(app, make_chat):
     assert diarize.ambient_off(chat_id) is True
 
 
-def test_disarm_toggle_shape_changes_the_mode_and_nothing_else(
-        app, make_chat):
-    """The manual toggle-off, pinned bug-for-bug (#239): ambient stays
-    armable, the roster stays present, the ask stays open. Whether it
-    SHOULD is Shawn's open question; when he rules, this test changes
-    with the one-argument call site."""
+def test_disarm_toggle_off_means_off(app, make_chat):
+    """The manual toggle-off does the full solo-mode disarm (#294, ruled
+    on #239): ambient goes quiet, everyone present is marked left, the
+    open ask closes. A switched-off room cannot re-arm itself from the
+    next voice it hears."""
     chat_id = make_chat()
     room_state.arm(chat_id, CFG, source="manual toggle",
                    clear_ambient=True, seat_owner="always")
@@ -216,12 +215,12 @@ def test_disarm_toggle_shape_changes_the_mode_and_nothing_else(
     finally:
         con.close()
     assert room_state.disarm(chat_id, source="manual toggle",
-                             set_ambient_off=False, clear_roster=False,
-                             resolve_asks=False) is True
-    assert _chat_flags(chat_id) == (False, False)
+                             set_ambient_off=True, clear_roster=True,
+                             resolve_asks=True) is True
+    assert _chat_flags(chat_id) == (False, True)
     assert diarize.room_enabled(chat_id) is False
-    assert {p["name"] for p in _present(chat_id)} == {"Alex", "Rina"}
-    assert len(_open_flags(chat_id)) == 1
+    assert _present(chat_id) == []
+    assert _open_flags(chat_id) == []
 
 
 # ── seat ────────────────────────────────────────────────────────────────
