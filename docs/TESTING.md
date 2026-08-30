@@ -124,7 +124,10 @@ the owner confirms it.
 **The health surface is content-free.** `GET /api/voice/health` returns
 states, counts and milliseconds, never a name and never transcript text. The
 per-chat last-decision record is bounded and written only from inside the
-never-awaited passes, so the zero-latency law holds by construction.
+never-awaited passes, so the zero-latency law holds by construction. The
+newer evidence surfaces hold the same floor: the per-chat decision history,
+the parked-label outcomes and the one-tap diagnostics dump carry turn ids,
+outcome words, timings and capped error text, never speech.
 
 ## Guests, cost, boundaries
 

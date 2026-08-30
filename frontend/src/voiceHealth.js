@@ -7,7 +7,10 @@
 // - health: GET /api/voice/health - {matcher, people_total,
 //   people_sufficient, chat: {room_mode, ambient_off, roster_count} | null,
 //   last_decision: {path, ms, age_s} | null}. Content-free by backend
-//   design: states, counts and milliseconds, never names.
+//   design: states, counts and milliseconds, never names. With a chat id
+//   the snapshot also carries identity_history and label_flow (#304
+//   evidence capture); the strip does not render them - they exist for
+//   the one-tap diagnostics dump.
 // - people: GET /api/voice/people's list - where the names come from,
 //   because the caller could already see them there.
 

@@ -30,6 +30,7 @@ import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
 import { adoptRoomMode, askFlag, flagCopy, mergeFlag, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
 import { healthStrip } from './voiceHealth'
+import { dump as voiceDebugDump, recordError as voiceDebugError } from './voiceDebug'
 import { mergeMessagesById } from './eventStream'
 import GuestStatusChip from './components/GuestStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
@@ -99,6 +100,12 @@ export default function App() {
   const [showSetup, setShowSetup] = useState(false)
   const setupAutoOpened = useRef(false)
   const [banner, setBanner] = useState(null)
+  // #304: every banner also lands in the voice diagnostics ring - the
+  // banner is where red voice errors surface, and stall reports could not
+  // quote them. App copy and error text only; never transcript.
+  useEffect(() => {
+    if (banner) voiceDebugError('banner', banner)
+  }, [banner])
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
   const [voiceState, setVoiceState] = useState('off')
   // Live partial transcript of what the user is SAYING right now -
@@ -954,6 +961,12 @@ export default function App() {
                 onStop={stopVoice}
                 muted={voiceMuted}
                 onToggleMute={toggleMute}
+                onSaveDiagnostics={async () => {
+                  const r = await voiceDebugDump(activeChatIdRef.current)
+                  setBanner(r && r.ok
+                    ? `Voice diagnostics saved (${r.entries} events, no speech content) - mention "${r.file}" in the bug report.`
+                    : 'Could not save voice diagnostics - the server did not answer.')
+                }}
               />
             </ThreadView>
             {/* Global context indicator: thin bar atop the composer. Same

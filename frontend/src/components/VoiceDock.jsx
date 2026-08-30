@@ -66,7 +66,7 @@ export default function VoiceDock({
   rosterText, rosterHint, onRoomModeOff, health,
   onPttModeChange, onSilenceSecsChange, onVoiceRateChange, onDockOpenChange,
   onRoomModeChange, onFinalizeNow, onInterrupt, onStop,
-  muted = false, onToggleMute,
+  muted = false, onToggleMute, onSaveDiagnostics,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   if (voiceState === 'off') return null
@@ -323,6 +323,19 @@ export default function VoiceDock({
                   </span>
                 ))}
               </div>
+            )}
+            {/* #304: the one-tap stall report. The app keeps a short log of
+                what the voice session DID (states, timings, any red error) -
+                never what anyone SAID - and this saves it on the server for
+                the bug report. */}
+            {onSaveDiagnostics && (
+              <button
+                className="rounded-full px-2.5 py-1 border border-edge2 text-ink-dim hover:text-ink text-xs self-start"
+                title="If voice gets stuck, tap this. It saves a short technical log of what the app was doing - timings, states, and any error messages. It never includes anything that was said."
+                onClick={onSaveDiagnostics}
+              >
+                save voice diagnostics
+              </button>
             )}
           </div>
         )}

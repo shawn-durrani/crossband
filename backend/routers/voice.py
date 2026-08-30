@@ -223,6 +223,86 @@ def voice_stall(payload: dict = Body(...)):
     return {"ok": True}
 
 
+# #304 evidence capture: the one-tap dump. The client keeps a bounded ring
+# of its [voice]/[round] control-flow events and any red error text+stack
+# (frontend/src/voiceDebug.js); on the owner's explicit tap the ring lands
+# here and is written to ONE json file under data/voice_debug/, together
+# with the server's own correlated state at that moment - live capture
+# sessions, the chat's identity decision history, the parked-label
+# outcomes, and the recent latency summary. That file is the issue's whole
+# evidence list in one artefact, correlatable by capture sid and turn id
+# against the sid/turn lines already in data/service.log.
+#
+# Privacy floor, same as the trace and the stall beacon: entries are
+# timestamps, short tags and bounded strings; the ring's sources never see
+# transcript text (each source states that at its own definition), and the
+# caps below hold whatever a client sends. Owner-initiated only - nothing
+# dumps automatically.
+DEBUG_DUMP_MAX_ENTRIES = 500
+DEBUG_DUMP_TAG_CHARS = 64
+DEBUG_DUMP_DATA_CHARS = 2000
+DEBUG_DUMP_KEEP_FILES = 20
+
+
+def sanitize_debug_entries(entries) -> list:
+    """The client ring, held to the caps: newest DEBUG_DUMP_MAX_ENTRIES
+    entries; each a numeric timestamp, a bounded tag and a bounded string
+    (or nothing). Anything else is dropped, never logged."""
+    out = []
+    for e in (entries if isinstance(entries, list) else [])[-DEBUG_DUMP_MAX_ENTRIES:]:
+        if not isinstance(e, dict):
+            continue
+        t, tag, data = e.get("t"), e.get("tag"), e.get("data")
+        if not isinstance(t, (int, float)) or isinstance(t, bool) \
+                or not isinstance(tag, str) or not tag:
+            continue
+        out.append({"t": round(float(t), 1),
+                    "tag": tag[:DEBUG_DUMP_TAG_CHARS],
+                    "data": data[:DEBUG_DUMP_DATA_CHARS]
+                    if isinstance(data, str) else None})
+    return out
+
+
+@router.post("/api/voice/debug-dump")
+def voice_debug_dump(payload: dict = Body(...)):
+    entries = sanitize_debug_entries(payload.get("entries"))
+    chat_id = payload.get("chat_id")
+    chat_id = chat_id if isinstance(chat_id, int) else None
+    try:
+        summary = diagnostics.voice_latency_summary(2.0)
+    except Exception:
+        summary = None  # the dump must not fail on a diagnostics read
+    bundle = {
+        "dumped_at": db.now(),
+        "chat_id": chat_id,
+        "client_entries": entries,
+        "captures": capture_sessions(),
+        "identity": {
+            "last_decision": diarize.last_decision(chat_id)
+            if chat_id is not None else None,
+            "history": diarize.decision_history(chat_id)
+            if chat_id is not None else [],
+            "label_flow": diarize.label_flow(),
+        },
+        "trace_summary": summary,
+    }
+    folder = db.DATA_DIR / "voice_debug"
+    folder.mkdir(parents=True, exist_ok=True)
+    name = "voice_debug_%s_%s.json" % (
+        time.strftime("%Y%m%d_%H%M%S"), uuid.uuid4().hex[:6])
+    (folder / name).write_text(json.dumps(bundle, indent=1))
+    # Newest DEBUG_DUMP_KEEP_FILES dumps stay; older ones go. Sorted names
+    # sort by time because the timestamp leads the name.
+    for old in sorted(folder.glob("voice_debug_*.json"))[:-DEBUG_DUMP_KEEP_FILES]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    log.warning("voice debug dump: chat=%s entries=%d file=%s",
+                chat_id, len(entries), name)
+    return {"ok": True, "file": name, "entries": len(entries)}
+
+
 @router.get("/api/voice/trace/summary")
 def voice_trace_summary(window_hours: float = 24.0):
     """Development diagnostics: stage-level p50/p95 latency over the last

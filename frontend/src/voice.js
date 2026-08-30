@@ -12,6 +12,7 @@ import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
 import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
 import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
 import { VoiceTrace } from './voiceTrace.js'
+import { record as debugRecord } from './voiceDebug.js'
 
 // Hands-free voice session: open mic with VAD auto-send (no push-to-talk),
 // streamed TTS playback per participant voice, and barge-in - speak over the
@@ -241,6 +242,9 @@ export default class VoiceController {
     const t = (typeof performance !== 'undefined' && performance.now
       ? performance.now() : Date.now()).toFixed(1)
     console.debug(`[voice] ${t}ms ${tag}`, data || '')
+    // #304: the same line also lands in the bounded ring, so a stall can be
+    // reported without a tethered console (voiceDebug.js, one-tap dump).
+    debugRecord(tag, data)
   }
 
   // Provider/model/voice labels for a speaker, for per-model trace segmentation.
@@ -504,6 +508,7 @@ export default class VoiceController {
     this.sttRealtime = false
     this.sttFallbackCause = cause
     console.warn('[voice] realtime STT fell back to batch:', cause)
+    debugRecord('stt:batchFallback', { cause: String(cause).slice(0, 200) })
     this._closeSttStream()
     if (this.active && this.state === 'transcribing') {
       this._state(this.roundActive ? 'working' : 'listening')
@@ -950,6 +955,7 @@ export default class VoiceController {
         // question: salvage from the parallel batch recorder, and rebuild
         // the mic graph so the NEXT turn streams again.
         console.warn(`voice: 0 frames sent for a ${Math.round(speechMs)}ms utterance - salvaging via batch recorder, rebuilding capture`)
+        debugRecord('stt:zeroFramesSalvage', { speechMs: Math.round(speechMs) })
         this._rebuildSttProcessor()
         this._state('transcribing')
         await this._salvageUtterance(speechMs)
@@ -1103,6 +1109,16 @@ export default class VoiceController {
     // Round liveness: EVERY event feeds the wedge guard's idle clock -
     // work_status/tool_activity included, so a live tool round never trips it.
     this._lastRoundEventAt = Date.now()
+    // #304: keep the event's arrival in the ring (deltas excepted - they
+    // come in the hundreds and would flush the ring; first_token is traced
+    // and speaker_end bounds them). This is what answers whether
+    // work_status/tool_activity heartbeats kept the idle guard from
+    // clearing a dead round. Type and gate state only, never content.
+    if (ev.type !== 'delta') {
+      debugRecord('round:event', { evType: ev.type,
+                                   roundActive: this.roundActive,
+                                   playing: this.playing })
+    }
     // A round generating with nothing audible is 'working', not 'listening':
     // the screen must not invite speech the gated mic would then discard.
     if (this.roundActive && this.playing === 0 && this.state === 'listening') {
