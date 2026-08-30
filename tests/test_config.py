@@ -48,14 +48,28 @@ def test_env_overrides_everything(tmp_path):
     assert s.require_keys is True
 
 
-def test_deprecated_mmc_prefix_still_applies(tmp_path):
-    """v0.2 compat: an untouched pre-rename .env (MMC_*) must keep working
-    for one release. v0.3 removes this - when that release deletes the
-    fallback, this test flips to asserting the old prefix is IGNORED."""
+def test_retired_mmc_prefix_is_ignored(tmp_path):
+    """v0.3 (#301): the old prefix is no longer read - exactly the flip
+    this test's v0.2 docstring promised. Loudness lives at startup:
+    mmc_migration_state's orphans refuse the boot."""
     env = {"MMC_USER_NAME": "OldEnv", "MMC_PORT": "4444"}
     s = load_settings(root=tmp_path, environ=env)
-    assert s.user_name == "OldEnv"
-    assert s.port == 4444
+    assert s.user_name != "OldEnv"
+    assert s.port == 8902
+
+
+def test_mmc_migration_state_splits_orphans_from_stale():
+    """Orphans (old name only) must stop startup; stale pairs (both set)
+    only warn. An empty new name is an orphan, not a migration - the
+    blank-placeholder .env must refuse rather than silently default."""
+    from backend.config import mmc_migration_state
+    env = {"MMC_PORT": "4444",                      # orphan
+           "MMC_USER_NAME": "x", "CROSSBAND_USER_NAME": "y",   # stale
+           "MMC_DATA_DIR": "/old", "CROSSBAND_DATA_DIR": ""}   # orphan (blank)
+    orphans, stale = mmc_migration_state(environ=env)
+    assert ("MMC_PORT", "CROSSBAND_PORT") in orphans
+    assert ("MMC_DATA_DIR", "CROSSBAND_DATA_DIR") in orphans
+    assert stale == [("MMC_USER_NAME", "CROSSBAND_USER_NAME")]
 
 
 def test_new_prefix_wins_when_both_are_set(tmp_path):
