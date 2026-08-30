@@ -295,14 +295,10 @@ class MemoryClient:
         like zero results."""
         if not await self.probe():
             return []
-        headers = {}
-        token = os.environ.get("MEMORY_AUTH_TOKEN")
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         try:
             r = await self._client.post(self.api + "/search",
                                         json={"query": query, "limit": limit},
-                                        headers=headers)
+                                        headers=self._auth_headers())
             r.raise_for_status()
             data = r.json()
         except Exception as e:
@@ -425,12 +421,33 @@ class MemoryClient:
         })
         r.raise_for_status()
 
+    @staticmethod
+    def _auth_headers() -> dict:
+        """The owner bearer for membro's gated exact-row routes (/search and
+        the job-status poll): present when MEMORY_AUTH_TOKEN is set, empty
+        otherwise."""
+        token = os.environ.get("MEMORY_AUTH_TOKEN")
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
     async def _wait_job(self, job_id: str, timeout: float = 900.0):
         """Poll a Membro job to completion (bulk import runs jobs serially so
-        one slow conversation can't fan out into hundreds of threads)."""
+        one slow conversation can't fan out into hundreds of threads).
+
+        The poll carries the owner bearer (#298): a gated membro refuses a
+        bare poll, and the old bare-except loop turned each refusal into a
+        silent fifteen-minute stall per chat. A refusal now returns
+        immediately at ERROR. Transport errors keep the quiet retry, because
+        a service mid-restart has refused nothing."""
         for _ in range(int(timeout / 0.5)):
             try:
-                r = await self._client.get(self.api + f"/jobs/{job_id}")
+                r = await self._client.get(self.api + f"/jobs/{job_id}",
+                                           headers=self._auth_headers())
+                if r.status_code in (401, 403):
+                    log.error(
+                        "membro refused the job-status poll (HTTP %s): "
+                        "MEMORY_AUTH_TOKEN missing or wrong in crossband's "
+                        ".env - job %s NOT confirmed", r.status_code, job_id)
+                    return None
                 if r.status_code == 200 and r.json().get("status") != "running":
                     return r.json()
             except Exception:
