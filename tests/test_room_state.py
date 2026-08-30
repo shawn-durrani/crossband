@@ -235,6 +235,20 @@ def test_seat_enforces_the_cap_from_one_place(app, make_chat):
     assert [p["name"] for p in _present(chat_id)] == ["Ana"]
 
 
+def test_a_cap_of_zero_seats_no_guest_but_the_owner_still_seats(
+        app, make_chat):
+    """#295: an explicit 0 means what it says for guests, while the
+    owner's hand (enforce_cap=False, the tap-correction shape) still
+    seats, per #239's second ruling."""
+    chat_id = make_chat()
+    cfg0 = dict(CFG, room_roster_max=0)
+    assert room_state.seat(chat_id, "Ana", cfg0, via="introduction",
+                           enforce_cap=True) is None
+    assert room_state.seat(chat_id, "Ben", cfg0, via="owner",
+                           enforce_cap=False) is not None
+    assert [p["name"] for p in _present(chat_id)] == ["Ben"]
+
+
 def test_seat_dedupes_and_links_instead_of_reseating(app, make_chat):
     chat_id = make_chat()
     row = room_state.seat(chat_id, "Ana", CFG, via="introduction",
@@ -300,13 +314,14 @@ def test_seat_refuses_a_participant_name(app, make_chat):
 
 # ── the cap helper and the seed ─────────────────────────────────────────
 
-def test_roster_cap_one_key_one_default_one_falsy_rule(app):
-    """Missing, None and 0 all mean the Settings default (6 today,
-    preserved bug-for-bug - whether 0 should mean "no guests" is Shawn's
-    open question); a configured value wins."""
+def test_roster_cap_one_key_one_default_and_zero_means_it(app):
+    """Missing and None mean the Settings default (6 today); a
+    configured value wins, and an explicit 0 means no guest can be
+    seated (#295, ruled on #239). The owner's own hand still outranks
+    the cap, so a cap of 0 never blocks a tap-correction."""
     assert room_state.roster_cap({}) == 6
     assert room_state.roster_cap(None) == 6
-    assert room_state.roster_cap({"room_roster_max": 0}) == 6
+    assert room_state.roster_cap({"room_roster_max": 0}) == 0
     assert room_state.roster_cap({"room_roster_max": 3}) == 3
 
 
