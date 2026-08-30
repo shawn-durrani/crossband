@@ -8,6 +8,149 @@ entry to a short paragraph; the issue holds the detail.
 New entries land as one file each in `changelog.d/`; a release folds
 them in here, newest first.
 
+## v0.3.0 (2026-08-30)
+
+- The pre-v0.2 `MMC_` environment prefix is no longer read (#301), as
+  every startup warning since v0.2 promised. An old-name variable whose
+  new name is missing now stops the app at startup with the exact
+  rename printed, so nothing changes silently; a stale line beside its
+  migrated twin just asks to be deleted.
+
+- Handing a chat to memory no longer stalls silently when membro gates
+  its job routes (#298). The status poll now carries the same owner
+  token the search call sends, and a refusal fails loudly at once
+  instead of spinning for fifteen quiet minutes per chat.
+
+- A room-size limit of 0 now means what it says (#295): no guest can be
+  seated. It used to be silently treated as the default of 6. Your own
+  tap-to-correct still seats a person regardless, because the owner's
+  hand outranks the cap.
+
+- The room switch's off now means off (#294). Switching room mode off
+  in the voice drawer does everything spoken "solo mode" does: ambient
+  listening goes quiet, everyone present is marked as left, and any open
+  who-is-this question closes. A room you switch off can no longer
+  re-arm itself from the next voice it hears.
+
+- The reasoning-effort choices the seat editor offers, and the Claude
+  models it greys out, are now checked against the backend's own rules
+  by the cross-language contract test (#292). If the two sides drift,
+  CI goes red instead of the editor quietly offering stale choices.
+
+- The docs now follow their own style rules: the stale hardcoded prose
+  figures left CONTRIBUTING.md, honesty-announcing phrases and issue
+  numbers left the headings they sat in, VOICE_ID.md's duplicated tuning
+  table now lives only in CONFIG.md, and two of ARCHITECTURE.md's four
+  "X, not Y" headings were reworded.
+
+- ARCHITECTURE.md's shape block now maps the whole backend: the routers,
+  the round buffer, the Membro bridge and the four voice-identity modules
+  each have a line. The docs index lists the eval harness READMEs, CI
+  enforces that, and the documentation guards moved from the plist suite
+  into tests/test_doc_style.py where a reader would look for them.
+
+- A removal-only pass cleared the residue of three past retirements
+  (#244). Dead helpers, four unread spend-summary fields, and the
+  bare-ellipsis pass marker whose convention was replaced now go; a
+  historic ellipsis reply renders as an ordinary small bubble. The
+  contributor guide gains a retirement checklist so the next removal
+  does not stop at the first green build.
+
+- Rules that live in both Python and JavaScript are now guarded (#234).
+  The Connections console renders the cost-provenance label and the
+  onboarding gate the backend ships, instead of keeping its own copies;
+  its seat badge and promote wording collapse into the one lifecycle
+  module, resolving three quiet drifts in the visible text. A committed
+  contract fixture lets the frontend suite assert backend constants, so
+  a backend rename now fails a test instead of leaving the two sides
+  politely disagreeing.
+
+- The pass and echo guards inside a round are now one pure decision
+  (#241). Four interacting flags across a retry loop were discoverable
+  only by reading all of it; the judgement table is extracted and pinned
+  by tests, the round's tail moved to its own function, and two dead
+  writes that a rebuilt dict discarded are gone. The rest of the round
+  recipe deliberately stays one documented function.
+
+- Room and roster state now has one write path (#239). Six sites armed,
+  disarmed or seated with hand-rolled ceremonies, in the subsystem
+  whose drift minted the phantom people. backend/room_state.py owns the
+  ceremony: durable commit first and in one statement, then the live
+  mirror, then the roster steps, then the wake-up bell, which now also
+  rings on the early-return flips that used to ring nothing. The roster
+  cap derives from one place, so the number the page shows cannot fork
+  from the number the seats enforce. A build guard fails any new direct
+  writer outside the module.
+
+- Token counts and dollar amounts now format one way everywhere (#236).
+  Six token formatters and four money rules had drifted apart, so a
+  multi-million-token figure could still render as a five-digit "k"
+  number in four places, easy to misread by a factor of a thousand.
+  Message usage arrows, the export picker, the Spend page and the
+  header gauge all gain the M tier, and sub-ten-cent amounts show
+  graded decimals instead of flattening to $0.00 or $0.05. The
+  reasoning-effort rules moved to a tested module, and a stale effort
+  value now resets to Default at save instead of failing the whole
+  save. Message rendering also stops rescanning the transcript per row.
+
+- Three shipping paths gained their first tests (#242). The attachment
+  projection is pinned per kind on both provider sides, including the
+  truncation cap and the framing both providers must share. The
+  continue endpoint's round choreography is driven end to end,
+  including the shared one-round lock with send. The frontend's fetch
+  wrapper has a suite pinning that failures reject, a 401 raises the
+  lock screen exactly once, and path segments stay encoded.
+
+- Voice label payloads are now built in one place, the label passes
+  share one delivery path, and the two drifted passes are repaired
+  (#237). A solo turn confidently matched to
+  you keeps its audio in memory briefly, so tap-to-correct and the
+  is-it-really-you check work in solo chats. The turn that arms room
+  mode now gets the same second-guess a fast-path label gets; that is
+  one extra cheap-model call, visible on the Spend page.
+
+- A reply that runs out of tool budget is now attribution-audited like
+  any completed reply (#240). A long research reply is the shape most
+  likely to misattribute, and it was the one shape the audit could not
+  see. The diagnostics tool description also now names all five
+  diagnostics; it said "exactly one of" and then listed four.
+
+- Three chat routes (incremental messages, the guest-job snapshot, and
+  voice-turn discard) no longer run their database reads on the event
+  loop (#243). They run in the request threadpool, so a slow disk read
+  cannot stutter live voice, and the incremental route runs on every
+  new message.
+
+- The service log now rotates at boot once it passes 10MB (#243). It
+  grew without bound under the supervisor. One prior generation is kept
+  beside it as service.log.1.
+
+- Re-importing a provider export no longer scans every chat row per
+  conversation (#243). The import idempotency lookups now ride partial
+  indexes, measured 76 times faster at five thousand conversations.
+  Rows that never came from an export cost nothing.
+
+- A failed GitHub token probe is no longer cached until restart (#243).
+  Only a found token is cached, so after `gh auth login` the next page
+  load sees it, and the Connections page stops telling a logged-in
+  owner to log in.
+
+- Asking a deleted chat to distil now answers 404 like every other
+  chat route (#243). It answered 200 with an ok flag the frontend never
+  read, so the failure dissolved instead of surfacing.
+
+- config.local.json now has exactly one writer (#235). The pricing API
+  kept a private copy of the atomic write that config.py already owns,
+  and the shared function's comment claimed a consolidation that had
+  not happened. The copy is deleted, both pricing saves go through the
+  one path, and the docstring now tells the truth.
+
+- Two open PRs no longer conflict on the changelog (#277). Each change
+  now ships its entry as one file under `changelog.d/`, and a release
+  folds them into `CHANGELOG.md` newest first, above the entries already
+  sitting under Unreleased. A test fails any PR that edits Unreleased
+  directly and names the new home.
+
 - Facts mined from web-touched rounds now reach the review hold they were
   built for (#268). The round's web stamp was written to the message row,
   but the query behind the memory handoff never selected the column, so
