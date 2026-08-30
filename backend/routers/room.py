@@ -130,6 +130,14 @@ def voice_health(request: Request, chat_id: int | None = None):
                        "ambient_off": bool(row["ambient_off"]),
                        "roster_count": roster_count}
         out["last_decision"] = diarize.last_decision(chat_id)
+        # #304 evidence capture: the affected turn's decision must survive
+        # the stall it is evidence of. `identity_history` is the chat's
+        # recent decisions (path, ms, reason, turn id, age); `label_flow`
+        # is the recent park/claim/expiry outcomes for parked labels. Both
+        # stay content-free - turn ids are the client's opaque correlation
+        # ids, and no name or text appears.
+        out["identity_history"] = diarize.decision_history(chat_id)
+        out["label_flow"] = diarize.label_flow()
     return out
 
 

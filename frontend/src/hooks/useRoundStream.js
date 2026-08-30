@@ -5,6 +5,7 @@ import { mergeGuestJob } from '../guestJobs'
 import { eventBelongsToActiveChat } from '../streamGuard'
 import { voiceReplaySpeakerEligible } from '../eventStream'
 import { createBatch, addFragment, cancelBatch, flipBatch, combineFragments } from '../textQueue'
+import { record as debugRecord, recordError } from '../voiceDebug'
 
 // Diagnostics-only, content-free: timestamped console logging for the
 // turn-handoff investigation (issue: voice turn-handoff stuck in listening
@@ -12,11 +13,14 @@ import { createBatch, addFragment, cancelBatch, flipBatch, combineFragments } fr
 // that call VoiceController.onRoundDone() - runStream and voiceAttachRound -
 // since Bug A's leading hypothesis is a path through one of these that
 // leaves `roundActive` set without a matching onRoundDone() call. Never
-// logs message/transcript content, only ids and control flow.
+// logs message/transcript content, only ids and control flow. Each line
+// also lands in the bounded ring (#304, voiceDebug.js) so a stall can be
+// reported without a tethered console.
 function rlog(tag, data) {
   const t = (typeof performance !== 'undefined' && performance.now
     ? performance.now() : Date.now()).toFixed(1)
   console.debug(`[round] ${t}ms ${tag}`, data || '')
+  debugRecord(`round:${tag}`, data)
 }
 
 // The round loop's client side: everything between "the user hit Send" and
@@ -162,6 +166,10 @@ export function useRoundStream({
     } else if (ev.type === 'error') {
       const id = liveIds.current[ev.speaker]
       delete liveIds.current[ev.speaker]
+      // #304: the red error the transcript shows was never captured, so a
+      // stall report could only say "there were red errors". Error text is
+      // app/provider text, not speech - the ring keeps it.
+      recordError('round', ev.message)
       setMessages((m) =>
         m.map((msg) =>
           msg.id === id ? { ...msg, streaming: false, error: ev.message } : msg,

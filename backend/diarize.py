@@ -160,6 +160,37 @@ _PENDING_LABELS: dict = {}
 _PENDING_MAX = 32
 PENDING_LABEL_TTL_S = 30.0
 
+# Label-flow outcomes (#304 evidence capture). The turn-handoff issue's open
+# question: does a stalled /send leave a valid parked label unclaimed until
+# its TTL expires? Until now expiry was silent - a swept entry just vanished,
+# so the question was unanswerable after the fact. Every park/claim/expiry
+# now leaves a bounded, content-free breadcrumb: a turn id (the client's own
+# correlation id), an outcome word, and milliseconds waited. Never a name,
+# never the payload. GET /api/voice/health surfaces the list.
+_LABEL_EVENTS: list = []
+_LABEL_EVENTS_MAX = 32
+LABEL_PARKED = "parked"
+LABEL_CLAIMED = "claimed"
+LABEL_EXPIRED_UNCLAIMED = "expired_unclaimed"
+LABEL_EXPIRED_AT_CLAIM = "expired_at_claim"
+LABEL_EVICTED = "evicted"
+
+
+def _label_event(turn_id, event, wait_ms):
+    _LABEL_EVENTS.append({"turn_id": str(turn_id)[:64], "event": event,
+                          "wait_ms": round(float(wait_ms), 1),
+                          "at": time.monotonic()})
+    del _LABEL_EVENTS[:-_LABEL_EVENTS_MAX]
+
+
+def label_flow() -> list:
+    """The recent park/claim/expiry outcomes, newest first, each with its
+    age in seconds. Content-free: turn ids, outcome words and milliseconds."""
+    now = time.monotonic()
+    return [{"turn_id": e["turn_id"], "event": e["event"],
+             "wait_ms": e["wait_ms"], "age_s": round(now - e["at"], 1)}
+            for e in reversed(_LABEL_EVENTS)]
+
 
 def park_label(turn_id, payload):
     """Park a finished label for a turn whose row may not exist yet."""
@@ -169,9 +200,13 @@ def park_label(turn_id, payload):
     for k, (_, at) in list(_PENDING_LABELS.items()):
         if now - at > PENDING_LABEL_TTL_S:
             _PENDING_LABELS.pop(k, None)
+            _label_event(k, LABEL_EXPIRED_UNCLAIMED, (now - at) * 1000)
     _PENDING_LABELS[turn_id] = (dict(payload), now)
+    _label_event(turn_id, LABEL_PARKED, 0.0)
     while len(_PENDING_LABELS) > _PENDING_MAX:
-        _PENDING_LABELS.pop(next(iter(_PENDING_LABELS)))
+        k = next(iter(_PENDING_LABELS))
+        _, at = _PENDING_LABELS.pop(k)
+        _label_event(k, LABEL_EVICTED, (now - at) * 1000)
 
 
 def claim_label(turn_id):
@@ -182,7 +217,12 @@ def claim_label(turn_id):
     if not entry:
         return None
     payload, at = entry
-    return payload if (time.monotonic() - at) <= PENDING_LABEL_TTL_S else None
+    wait_s = time.monotonic() - at
+    if wait_s > PENDING_LABEL_TTL_S:
+        _label_event(turn_id, LABEL_EXPIRED_AT_CLAIM, wait_s * 1000)
+        return None
+    _label_event(turn_id, LABEL_CLAIMED, wait_s * 1000)
+    return payload
 
 
 MISMATCH_MIN_WORDS = 4  # don't cross-check a grunt
@@ -412,7 +452,18 @@ DEFER_REASONS = {"too_short", "below_threshold", "ambiguous", "multi",
                  "error"}
 
 
-def record_decision(chat_id, path, ms, reason=""):
+# Decision history (#304 evidence capture): the single freshest record
+# above answers "what just happened", but a stalled turn's decision is
+# overwritten by the next turn before anyone can look. A short per-chat
+# ring keeps the last few decisions with the turn id each one was for, so
+# the affected turn's path and reason survive the stall it is evidence of.
+# Same content-free floor as everything here: path, ms, an allowlisted
+# reason, the client's opaque turn id.
+_DECISION_HISTORY: dict = {}
+_DECISION_HISTORY_MAX = 12
+
+
+def record_decision(chat_id, path, ms, reason="", turn_id=None):
     """Remember one chat's freshest identification decision. Bounded like
     the stash: at most _DECISION_MAX_CHATS chats, one record each."""
     if chat_id is None or path not in (DECISION_LOCAL, DECISION_CLOUD,
@@ -424,6 +475,22 @@ def record_decision(chat_id, path, ms, reason=""):
                                "reason": reason, "at": time.monotonic()}
     while len(_LAST_DECISION) > _DECISION_MAX_CHATS:
         _LAST_DECISION.pop(next(iter(_LAST_DECISION)))
+    hist = _DECISION_HISTORY.setdefault(chat_id, [])
+    hist.append({"path": path, "ms": round(float(ms), 1), "reason": reason,
+                 "turn_id": str(turn_id or "")[:64], "at": time.monotonic()})
+    del hist[:-_DECISION_HISTORY_MAX]
+    while len(_DECISION_HISTORY) > _DECISION_MAX_CHATS:
+        _DECISION_HISTORY.pop(next(iter(_DECISION_HISTORY)))
+
+
+def decision_history(chat_id) -> list:
+    """The chat's recent identification decisions, newest first, each with
+    its age in seconds and the turn id it decided (\"\" for an older client
+    or a path with no id in hand)."""
+    now = time.monotonic()
+    return [{"path": d["path"], "ms": d["ms"], "reason": d["reason"],
+             "turn_id": d["turn_id"], "age_s": round(now - d["at"], 1)}
+            for d in reversed(_DECISION_HISTORY.get(chat_id) or [])]
 
 
 def last_decision(chat_id):
@@ -845,7 +912,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                                        pending_present=bool(pending))
     if voiceid.matched(verdict):
         record_decision(chat_id, DECISION_LOCAL,
-                        (time.perf_counter() - t0) * 1000)
+                        (time.perf_counter() - t0) * 1000, turn_id=turn_id)
         log.info("diarize pass (voiceid): chat=%s ms=%.0f score=%.3f",
                  chat_id, (time.perf_counter() - t0) * 1000,
                  verdict["score"])
@@ -875,7 +942,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             # the seats a name marked as still being learned. Still NO
             # ElevenLabs call: elimination is free.
             ms = (time.perf_counter() - t0) * 1000
-            record_decision(chat_id, DECISION_LOCAL, ms)
+            record_decision(chat_id, DECISION_LOCAL, ms, turn_id=turn_id)
             # Content-free, like every log on this path: no name, no words.
             log.info("diarize pass (cold-start): chat=%s ms=%.0f reason=%s",
                      chat_id, ms, (verdict or {}).get("reason", "error"))
@@ -895,7 +962,8 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # task and turns "identity pending" from a dead end into something
         # actionable ("too quiet to judge" vs "not sure who").
         record_decision(chat_id, DECISION_UNRESOLVED,
-                        (time.perf_counter() - t0) * 1000, reason)
+                        (time.perf_counter() - t0) * 1000, reason,
+                        turn_id=turn_id)
         log.info("diarize pass (voiceid defer): chat=%s reason=%s", chat_id,
                  reason)
         return
@@ -915,7 +983,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     duration_ms = (time.perf_counter() - t0) * 1000
     # The health strip's live pulse (#28): this decision came from the cloud
     # crosstalk pass. One dict write, content-free, inside the background task.
-    record_decision(chat_id, DECISION_CLOUD, duration_ms)
+    record_decision(chat_id, DECISION_CLOUD, duration_ms, turn_id=turn_id)
     # Labelling runs FIRST, metering after (#28, night test 4): from the
     # moment the batch reply is parsed, every millisecond spent before the
     # label write is identity latency the seats can observe, so nothing may
@@ -1518,7 +1586,8 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             # voice named, or a clear stranger detected): the health strip's
             # pulse. A defer records nothing.
             record_decision(chat_id, DECISION_LOCAL,
-                            (time.perf_counter() - t0) * 1000)
+                            (time.perf_counter() - t0) * 1000,
+                            turn_id=turn_id)
         log.info("ambient check: chat=%s ms=%.0f decision=%s", chat_id,
                  (time.perf_counter() - t0) * 1000, decision)
         if decision == "noop_owner":
