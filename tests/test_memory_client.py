@@ -305,3 +305,45 @@ def test_search_absent_service_still_degrades_to_empty(monkeypatch):
     c = make_client()  # unroutable port: probe() fails, search() never posts
     assert run(c.search("anything")) == []
     run(c.aclose())
+
+
+# ---------- the job-status poll carries the owner bearer (#298) ----------
+
+def test_wait_job_sends_bearer_and_returns_the_finished_job(monkeypatch):
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "s3cr3t-owner-token")
+    c = make_client()
+    sent = {}
+
+    async def fake_get(url, headers=None):
+        sent["url"], sent["headers"] = url, headers
+        return httpx.Response(200, json={"status": "done", "facts": 3},
+                              request=httpx.Request("GET", url))
+
+    c._client.get = fake_get
+    out = run(c._wait_job("j-1", timeout=5))
+    assert sent["url"].endswith("/jobs/j-1")
+    assert sent["headers"]["Authorization"] == "Bearer s3cr3t-owner-token"
+    assert out == {"status": "done", "facts": 3}
+    run(c.aclose())
+
+
+def test_wait_job_refusal_returns_immediately_and_loudly(monkeypatch, caplog):
+    """A 401 used to be swallowed by the bare except and the loop spun for
+    the full timeout - fifteen silent minutes per imported chat. It now
+    returns at once with an ERROR naming the token."""
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "wrong-token")
+    c = make_client()
+    calls = []
+
+    async def fake_get(url, headers=None):
+        calls.append(url)
+        return httpx.Response(401, json={"detail": "bad token"},
+                              request=httpx.Request("GET", url))
+
+    c._client.get = fake_get
+    with caplog.at_level("ERROR"):
+        out = run(c._wait_job("j-2", timeout=5))
+    assert out is None
+    assert len(calls) == 1
+    assert any("MEMORY_AUTH_TOKEN" in r.message for r in caplog.records)
+    run(c.aclose())
