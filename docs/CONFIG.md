@@ -104,7 +104,7 @@ deploy records it.
 | `tts_speed` | `1.0` | Speaking speed, 0.7–1.2. (Playback speed also has a live slider in the voice dock.) |
 | `stt_model` | `scribe_v2` | Transcription model; realtime variant is used automatically when available. |
 | `voice_pricing` | built-in | ElevenLabs rate card used to price TTS/STT usage. |
-| `room_roster_max` | `6` | Room mode: how many people the roster may hold at once (the cap frees as people leave). A product choice, not a technical limit. |
+| `room_roster_max` | `6` | Room mode: how many people the roster may hold at once (the cap frees as people leave). A product choice, not a technical limit. An explicit 0 seats no guests; the owner's tap-correction still seats. |
 | `voice_id_enabled` | `true` | Room mode's offline local speaker matcher, and the only identity path. Off, or with `sherpa-onnx` or the model file absent, turns are not named and the room never arms automatically. See below. [VOICE_ID.md](VOICE_ID.md). |
 | `voice_id_threshold` | `0.5` | Cosine similarity a voice must reach to be named. Calibrated for the bundled model (same-speaker ≈0.63–0.73 vs a stranger ≈0.12–0.31, so 0.5 sits in the gap). Raise it to name fewer, more certain matches; lower it to name more, less certainly. |
 | `voice_id_margin` | `0.12` | How clearly the best match must beat the runner-up before it is claimed. The similar-voice-household knob: the hygiene guard also widens it automatically for any two stored voices it finds sitting close together. |

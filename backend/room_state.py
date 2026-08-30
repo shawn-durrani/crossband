@@ -78,13 +78,16 @@ _SEAT_OWNER = ("never", "on_arm", "always")
 
 def roster_cap(cfg) -> int:
     """The room roster cap: one key (room_roster_max), one default
-    (Settings' own), one falsy rule - missing, None and 0 all mean the
-    default, because the cap counts PRESENT people and is never zero or
-    unlimited. Every writer-side comparison and the snapshot cap the UI
-    shows derive the number here; the guard test holds the key literal
-    to config.py, db.py's schema comment and this module."""
-    return int((cfg or {}).get("room_roster_max")
-               or Settings.model_fields["room_roster_max"].default)
+    (Settings' own). Missing or None mean the default; an explicit 0
+    means no guest can be seated (#295) - the owner's own hand still
+    outranks the cap, per #239's second ruling. Every writer-side
+    comparison and the snapshot cap the UI shows derive the number here;
+    the guard test holds the key literal to config.py, db.py's schema
+    comment and this module."""
+    v = (cfg or {}).get("room_roster_max")
+    if v is None:
+        v = Settings.model_fields["room_roster_max"].default
+    return int(v)
 
 
 def seed_mirrors(chat_id, *, enabled, ambient_disarmed):
