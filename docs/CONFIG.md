@@ -130,15 +130,20 @@ spoken commands and the switch in the voice settings still arm it by hand.
 | key | default | what it does |
 |---|---|---|
 | `memory_url` | `http://127.0.0.1:8901` | Where to probe for [Membro](https://github.com/shawn-durrani/membro). Present → memory features light up; absent → fully functional memoryless. Re-probed every 30s, so start order doesn't matter. |
-| `MEMORY_AUTH_TOKEN` (env, not a config key) | unset | Membro's owner token, sent as a bearer on its `/search`. One token, put once in Crossband's `.env`. Without it `search_history` reports a failure rather than reading as "no history". See below. |
+| `MEMORY_AUTH_TOKEN` (env, not a config key) | unset | Membro's owner token, sent as a bearer on its `/search` and on the job-status polls behind imports. One token, put once in Crossband's `.env`. Without it `search_history` reports a failure rather than reading as "no history". See below. |
 
 ### The memory token
 
 Membro's `/recall` and `/summary` answer an unauthenticated loopback caller.
 Its `/search`, the verbatim transcript search behind the `search_history`
-tool, is owner-gated even on loopback. `code_mcp`'s `membro-admin` entry
+tool, is owner-gated even on loopback, and so are its job-status polls.
+The same rule covers membro's MCP server: `search_history` there works
+only when the token was passed at registration (membro#81). The example
+guest mount passes no token on purpose, so a summoned guest keeps
+recall, summary and save and loses verbatim search; hand a guest the
+token only as a deliberate choice. `code_mcp`'s `membro-admin` entry
 resolves the same variable via `${MEMORY_AUTH_TOKEN}`, so one token in
-Crossband's `.env` serves both. See
+Crossband's `.env` serves every path. See
 [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md).
 
 ## Coding guest + GitHub (the `code` toggle)
