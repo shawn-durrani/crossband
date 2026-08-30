@@ -26,7 +26,7 @@ from . import rounds
 from . import tools as tools_mod
 from . import voice_trace
 from . import voice
-from .config import (ROOT, Settings, deprecated_env_vars, key_status,
+from .config import (ROOT, Settings, mmc_migration_state, key_status,
                      load_settings, report_missing_keys)
 from .memory_client import MemoryClient
 from .routers import attachments as attachments_router
@@ -164,12 +164,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     load_dotenv(ROOT / ".env")
     settings = settings or load_settings()
     _configure_log_level(settings.log_level)
-    # v0.2 rename: old-prefix env vars still apply, but each one warns with
-    # the exact rename so the operator fixes .env before v0.3 removes the
-    # fallback. One line per variable, after log config so they are visible.
-    for old_name, new_name in deprecated_env_vars():
-        log.warning("%s is deprecated - rename it to %s; MMC_ support ends "
-                    "in v0.3", old_name, new_name)
+    # v0.3 (#301): MMC_ variables are no longer read. An orphaned old
+    # name would silently change behaviour (MMC_DATA_DIR alone would boot
+    # an empty database - reads as total data loss), so startup refuses
+    # BEFORE db.configure, naming every rename. Both-prefixes-set only
+    # warns: the new value already wins, delete the stale line.
+    orphans, stale = mmc_migration_state()
+    for old_name, new_name in stale:
+        log.warning("%s is stale (the %s value wins) - delete the MMC_ "
+                    "line from .env", old_name, new_name)
+    if orphans:
+        for old_name, new_name in orphans:
+            log.error("%s is no longer read (v0.3) - rename it to %s",
+                      old_name, new_name)
+        raise SystemExit("MMC_-prefixed variables are no longer read as of "
+                         "v0.3 - rename the lines above in .env, then start "
+                         "again.")
     db.configure(settings.resolved_data_dir(), backup_keep=settings.backup_keep,
                  mirror_dir=settings.backup_mirror_dir,
                  mirror_keep=settings.backup_mirror_keep)

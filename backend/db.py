@@ -65,14 +65,11 @@ SCHEMA_VERSION = 25
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
-# machinery, so it needs its own new-name-then-old-name chain: miss the old
-# name here and a custom-data-dir install boots against a fresh empty
-# database, which presents as total data loss. MMC_DATA_DIR support ends in
-# v0.3 with the rest of the deprecated prefix; config.deprecated_env_vars
-# reports it in the startup warning because DATA_DIR is a Settings field name,
-# even though this module reads the variable directly.
-DATA_DIR = Path(os.environ.get("CROSSBAND_DATA_DIR")
-                or os.environ.get("MMC_DATA_DIR") or (ROOT / "data"))
+# machinery. One name since v0.3 (#301): an install still setting only
+# MMC_DATA_DIR is refused at startup by create_app BEFORE db.configure,
+# because reading the default here instead would boot a fresh empty
+# database, which presents as total data loss.
+DATA_DIR = Path(os.environ.get("CROSSBAND_DATA_DIR") or (ROOT / "data"))
 DB_PATH = DATA_DIR / "chat.db"
 ATTACH_DIR = DATA_DIR / "attachments"
 BACKUP_DIR = DATA_DIR / "backups"

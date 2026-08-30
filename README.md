@@ -74,8 +74,9 @@ documented in [docs/CONFIG.md](docs/CONFIG.md), and a test asserts that
 every one of them appears there, so none can go missing. The descriptions
 are hand-written.
 
-Pre-v0.2 installs used the `MMC_` prefix; those variables still apply
-until v0.3, and every use logs the exact rename at startup. See below.
+Pre-v0.2 installs used the `MMC_` prefix, which v0.3 stopped reading:
+an old-name variable whose new name is missing stops startup with the
+exact rename printed, so nothing changes silently. See below.
 
 ## Remote access
 
@@ -114,8 +115,8 @@ identifiers that still said so: environment variables moved from `MMC_`
 to `CROSSBAND_`, the launchd label from `dev.sideband.server` to
 `dev.crossband.server`, and the guest diagnostics MCP from
 `sideband-diag` to `crossband-diag`. To migrate an existing install:
-rename the `MMC_` lines in your `.env` (the app warns at startup with
-the exact renames until you do; old names stop working in v0.3), and
+rename the `MMC_` lines in your `.env` (since v0.3 the app refuses to
+start until you do, printing the exact renames), and
 rerun `bash ops/install-supervisor.sh` if you use the supervisor - it
 retires the old launchd label itself.
 

@@ -3,8 +3,8 @@
 Personal settings (your name, preferred models) belong in config.local.json so
 they never end up in the public repo. Environment overrides use the CROSSBAND_
 prefix (e.g. CROSSBAND_PORT=9000, CROSSBAND_USER_NAME=Alex); dict-valued fields
-take JSON. The pre-rename MMC_ prefix still applies until v0.3, with a startup
-warning naming the exact rename.
+take JSON. The pre-rename MMC_ prefix is no longer read (v0.3, #301); an
+orphaned old-name variable stops startup with the exact rename.
 """
 
 import contextlib
@@ -453,16 +453,11 @@ def _env_overrides(environ) -> dict:
     fields = Settings.model_fields
     for name, field in fields.items():
         ann = field.annotation
-        # v0.2 fallback: try the new name, then the old MMC_ name (removed in
-        # v0.3; each use is called out at startup by deprecated_env_vars).
-        # Candidate semantics deliberately match db.py's `or` chain and the
-        # scripts' ${:-} chains: a new-name line that is present but EMPTY or
-        # unparseable falls through to a usable old value instead of silently
-        # discarding both - the half-migrated .env with a blank
-        # CROSSBAND_DATA_DIR= placeholder would otherwise boot an empty
-        # database while the old value sits right there.
-        for raw in (environ.get(ENV_PREFIX + name.upper()),
-                    environ.get(DEPRECATED_ENV_PREFIX + name.upper())):
+        # One name per field since v0.3 (#301): the MMC_ fallback is
+        # retired, and an orphaned old-name variable stops startup loudly
+        # (mmc_migration_state) instead of being read here. Empty or
+        # unparseable stays ignored rather than crashing.
+        for raw in (environ.get(ENV_PREFIX + name.upper()),):
             if raw is None or raw == "":
                 continue
             try:
@@ -484,10 +479,9 @@ def _env_overrides(environ) -> dict:
 
 def deprecated_env_vars(environ=None) -> list[tuple[str, str]]:
     """Every MMC_-prefixed variable in the environment that maps to a Settings
-    field, as (old_name, new_name) pairs. Startup logs one warning per entry;
-    v0.3 turns the fallback off, so the warning names the exact rename and the
-    deadline. A variable set under BOTH prefixes is still listed: the new name
-    won, and the operator should delete the stale line rather than trust it."""
+    field, as (old_name, new_name) pairs. Since v0.3 nothing READS these
+    (#301); the listing exists so startup can refuse an orphaned old name
+    rather than silently changing behaviour."""
     environ = environ if environ is not None else os.environ
     pairs = []
     for name in Settings.model_fields:
@@ -495,6 +489,19 @@ def deprecated_env_vars(environ=None) -> list[tuple[str, str]]:
         if old in environ:
             pairs.append((old, ENV_PREFIX + name.upper()))
     return pairs
+
+
+def mmc_migration_state(environ=None) -> tuple[list, list]:
+    """(orphans, stale) among the MMC_ variables still in the environment.
+    An orphan's new name is absent or empty: reading it stopped in v0.3, so
+    startup must refuse with the exact rename - MMC_DATA_DIR alone would
+    otherwise boot a fresh empty database, which reads as total data loss.
+    A stale pair has both names set: the new one wins, delete the old."""
+    environ = environ if environ is not None else os.environ
+    orphans, stale = [], []
+    for old, new in deprecated_env_vars(environ):
+        (stale if environ.get(new) else orphans).append((old, new))
+    return orphans, stale
 
 
 def load_settings(root: Path | None = None, environ=None) -> Settings:
