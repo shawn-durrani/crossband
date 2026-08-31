@@ -76,6 +76,12 @@ PREFIX_CACHE_MAX = 8       # built-prefix snapshots kept per store (#28)
 # set aside are KEPT ON DISK but excluded from matching. Bounded per person;
 # past the cap the oldest set-aside clip is deleted for real.
 QUARANTINE_MAX = 8
+# Refusal visibility (#312): a clip the acceptance gate turns away is
+# recorded on the person - a bounded list of recent refusal times and the
+# last reason - so a still-learning bank that never grows can say why on
+# screen instead of needing a shell on the box.
+REFUSAL_KEEP = 50          # refusal timestamps kept per person
+REFUSAL_WINDOW_S = 7 * 86400  # the "recently refused" window the UI reads
 
 
 def configure_sufficiency(sufficient_seconds=None, min_short_clips=None):
@@ -400,6 +406,7 @@ class AnchorStore:
                 close.setdefault(pair[0], []).append(pair[1])
                 close.setdefault(pair[1], []).append(pair[0])
         out = []
+        now_ts = time.time()
         for pid, p in sorted(data["people"].items(),
                              key=lambda kv: kv[1].get("created_at", 0)):
             all_clips = p.get("clips", [])
@@ -449,6 +456,16 @@ class AnchorStore:
                     1 for c in all_clips
                     if c.get("quarantined")
                     and c.get("quarantine_reason") == "not_speech"),
+                # #312: how many clips the gate refused in the last week,
+                # and why the last one was refused - the difference between
+                # "nobody has spoken near it" and "it hears them and says
+                # no", which used to be indistinguishable on screen.
+                "refused_last_week": sum(
+                    1 for ts in (p.get("clip_refusals") or {})
+                    .get("recent", [])
+                    if now_ts - ts <= REFUSAL_WINDOW_S),
+                "refusal_reason": (p.get("clip_refusals") or {})
+                .get("last_reason", ""),
                 "close_to": list(close.get(pid, [])),
                 "sufficient": is_sufficient(all_clips),
                 # #83: has a human ever stood behind this bank, does it
@@ -726,6 +743,7 @@ class AnchorStore:
                         sample_rate)
         q = clip_quality(pcm, sample_rate)
         if not accepts_clip(q):
+            self._record_refusal(person_id, source, q)
             return False
         with self._lock:
             data = self._load()
@@ -773,6 +791,32 @@ class AnchorStore:
                 if c["file"] not in kept_files:
                     self._delete_file(c["file"])
         return True
+
+    def _record_refusal(self, person_id, source, q):
+        """A refused clip is not silent (#312). The failing measure lands
+        in the log, and the refusal lands on the person, so the panel can
+        say "still learning, and here is why nothing is arriving". Nothing
+        is stored but times, a reason and counts - never audio."""
+        reason = ("too short" if q["seconds"] < MIN_CLIP_SECONDS
+                  else "too quiet" if q["rms"] < MIN_CLIP_RMS
+                  else "not speech")
+        log.info("anchor clip refused: person=%s source=%s reason=%s "
+                 "seconds=%.2f rms=%d voiced=%.2f",
+                 person_id, source, reason, q["seconds"], q["rms"],
+                 q.get("voiced", 0.0))
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id)
+            if person is None:
+                return
+            rec = person.setdefault(
+                "clip_refusals", {"recent": [], "last_reason": "",
+                                  "total": 0})
+            rec["recent"] = ((rec.get("recent") or [])[-(REFUSAL_KEEP - 1):]
+                             + [time.time()])
+            rec["last_reason"] = reason
+            rec["total"] = int(rec.get("total") or 0) + 1
+            self._save(data)
 
     def clips_of(self, person_id: str) -> list | None:
         """One person's clip METADATA for the audition panel (#68): file

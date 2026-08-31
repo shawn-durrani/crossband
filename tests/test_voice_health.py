@@ -197,6 +197,10 @@ def test_health_endpoint_shape_and_counts(app):
                                 "fetching", "ready")
         assert h["people_total"] == 2
         assert h["people_sufficient"] == 1
+        # #312: refusal visibility rides the learning map, content-free
+        for row in h["learning"].values():
+            assert row["refused_last_week"] == 0
+            assert row["refusal_reason"] == ""
         assert h["chat"] is None
         assert h["last_decision"] is None
         # #154: the live model is named - file, hash prefix, pin state

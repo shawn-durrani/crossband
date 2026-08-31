@@ -101,6 +101,10 @@ def voice_health(request: Request, chat_id: int | None = None):
             "at_capacity": bool(p.get("at_capacity")),
             "last_learned_age_s": (round(now_ts - last, 1)
                                    if last else None),
+            # #312: refusals are part of learning health - a bank that
+            # never grows while being heard daily now says so here too.
+            "refused_last_week": p.get("refused_last_week", 0),
+            "refusal_reason": p.get("refusal_reason", ""),
         }
 
     out = {
