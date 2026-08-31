@@ -225,7 +225,8 @@ def _run(base: str, token: str) -> dict:
                 except (wave.Error, ValueError):
                     continue
                 if store.add_clip(pid, pcm, rate,
-                                  source=a.get("source") or "accumulated"):
+                                  source=a.get("source") or "accumulated",
+                                  membro_sha=a.get("sha256")):
                     out["pulled_clips"] += 1
 
         # PUSH people first (so replay targets exist), then REPLAY the
@@ -267,7 +268,14 @@ def _run(base: str, token: str) -> dict:
             if lst.status_code != 200:
                 continue
             have = {a["sha256"] for a in lst.json()["anchors"]}
+            stamps = store.membro_stamps(pid)
             for c in (store.clips_of(pid) or []):
+                if c["file"] in stamps:
+                    # Pulled from membro (#310): the canonical copy already
+                    # sits there under the stamped sha, and the local bytes
+                    # are trimmed, so re-hashing would mint a variant
+                    # anchor on every pass.
+                    continue
                 path = store.clip_path(pid, c["file"])
                 if path is None:
                     continue

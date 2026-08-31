@@ -53,6 +53,32 @@ def test_clip_quality_measures_duration_and_level():
     assert silent["rms"] == 0 and silent["score"] == 0
 
 
+def test_add_clip_trims_dead_air_before_storing(store):
+    """#310: the endpoint pause and pre-roll leave the clip at banking, so
+    stored seconds mean speech and the sufficiency bar stops counting
+    silence."""
+    pid = store.ensure_person("Alex")
+    padded = (b"\x00\x00" * 8000 + loud_pcm(2.0) + b"\x00\x00" * 32000)
+    assert store.add_clip(pid, padded, 16000, source="accumulated")
+    clip = store.clips_of(pid)[0]
+    assert 2.0 <= clip["seconds"] <= 2.5      # speech plus margins, not 4.5
+    person = next(p for p in store.people() if p["person_id"] == pid)
+    assert person["seconds"] <= 2.5
+
+
+def test_pulled_clip_corrections_speak_membro_sha(store):
+    """#310: a clip pulled from membro is trimmed locally, so the owner's
+    delete must reach membro by the stamped content address, never by
+    re-hashing the local file."""
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated",
+                          membro_sha="a" * 64)
+    fname = store.clips_of(pid)[0]["file"]
+    assert store.membro_stamps(pid) == {fname: "a" * 64}
+    assert store.delete_clip(pid, fname)
+    assert [c["sha"] for c in store.pending_corrections()] == ["a" * 64]
+
+
 def test_quality_gate_rejects_short_and_quiet():
     assert anchors.accepts_clip(anchors.clip_quality(loud_pcm(1.0), 16000))
     assert not anchors.accepts_clip(anchors.clip_quality(loud_pcm(0.5), 16000))

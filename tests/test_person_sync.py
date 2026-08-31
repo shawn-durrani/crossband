@@ -193,6 +193,37 @@ def test_a_person_membro_holds_is_rebuilt_locally(app, membro):
     assert store.get_sync_watermark() == 50.0
 
 
+def test_a_pulled_clip_is_never_pushed_back_as_a_variant(app, membro):
+    """#310: the local copy of a pulled clip is trimmed, so it stops
+    hashing to membro's content address. The push diff must not mint a
+    variant anchor on every pass, and an owner delete must still reach
+    the durable copy - both ride the membro_sha stamp."""
+    padded = (b"\x00\x00" * 8000 + _pcm(2.0) + b"\x00\x00" * 32000)
+    wav = pcm16_wav(padded, 16000)
+    sha = hashlib.sha256(wav).hexdigest()
+    membro.persons["p-remote1"] = {
+        "slug": "p-remote1", "display_name": "Robin",
+        "name_owner_set": False, "forgotten_at": None,
+        "updated_at": 50.0, "aliases": [], "clip_count": 1}
+    membro.anchors["p-remote1"] = [{"id": 1, "sha256": sha,
+                                    "source": "accumulated", "data": wav}]
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["pulled_people"] == 1 and out["pulled_clips"] == 1
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["pushed_clips"] == 0
+    assert [a["sha256"] for a in membro.anchors["p-remote1"]] == [sha]
+
+    store = anchors.store()
+    robin = store.find_by_name("Robin")
+    fname = store.clips_of(robin["person_id"])[0]["file"]
+    assert store.membro_stamps(robin["person_id"]) == {fname: sha}
+    assert store.delete_clip(robin["person_id"], fname)
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1
+    assert membro.anchors["p-remote1"] == []
+
+
 def test_a_forgotten_person_is_forgotten_here_too(app, membro):
     store = anchors.store()
     pid = store.ensure_person("Sam")
