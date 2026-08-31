@@ -704,18 +704,26 @@ class AnchorStore:
         return survivor_id
 
     def add_clip(self, person_id: str, pcm: bytes, sample_rate: int,
-                 source: str, score=None) -> bool:
-        """Offer one utterance's audio as an anchor clip. Applies the quality
-        gate, the trim cap and the keep-best-N refresh; evicted clips have
-        their files deleted. Returns True if the clip was accepted.
+                 source: str, score=None, membro_sha=None) -> bool:
+        """Offer one utterance's audio as an anchor clip. Trims the dead
+        air off both ends (#310), applies the quality gate, the 10s cap
+        and the keep-best-N refresh; evicted clips have their files
+        deleted. Returns True if the clip was accepted.
         `source`: 'introduction' | 'accumulated' | 'harvested-short' |
         'correction' | 'cold-start' - recorded so the store stays
         explainable. 'cold-start' (#28) is the by-elimination clip banked
         for the only person in an armed room whose bank cannot identify
         them yet. `score` (#221) is the MATCH score this clip banked at,
         recorded at write time like every provenance stamp: it is what a
-        bank that outlives its human backing is later judged by."""
-        pcm = trim_clip(pcm or b"", sample_rate)
+        bank that outlives its human backing is later judged by.
+        `membro_sha` (#310): for a clip pulled from membro, the durable
+        home's content address for it. The local bytes are trimmed here,
+        so they stop hashing to that address - corrections and the push
+        diff must speak to membro by this stamp, never by re-hashing the
+        local file."""
+        from . import voiceid
+        pcm = trim_clip(voiceid.trim_dead_air(pcm or b"", sample_rate),
+                        sample_rate)
         q = clip_quality(pcm, sample_rate)
         if not accepts_clip(q):
             return False
@@ -731,6 +739,8 @@ class AnchorStore:
                      "rms": q["rms"], "score": q["score"],
                      "sample_rate": sample_rate, "source": source,
                      "added_at": time.time()}
+            if membro_sha:
+                entry["membro_sha"] = str(membro_sha)
             if score is not None:
                 try:
                     entry["match_score"] = round(float(score), 4)
@@ -792,6 +802,18 @@ class AnchorStore:
         } for c in sorted(person.get("clips", []),
                           key=lambda c: c.get("added_at", 0), reverse=True)]
 
+    def membro_stamps(self, person_id: str) -> dict:
+        """{clip filename: membro sha} for clips pulled from membro (#310):
+        the durable home's content address, which the trimmed local bytes
+        no longer hash to. The sync pushes and corrects by these; the
+        clip panel never sees them (clips_of stays the pinned surface)."""
+        with self._lock:
+            data = self._load()
+        person = data["people"].get(person_id)
+        return {c["file"]: c["membro_sha"]
+                for c in (person or {}).get("clips", [])
+                if c.get("membro_sha")}
+
     def clip_path(self, person_id: str, fname: str) -> Path | None:
         """Resolve a clip file token to its on-disk path, ONLY when the index
         says that clip belongs to that person - the client's file token is
@@ -834,8 +856,10 @@ class AnchorStore:
             clip["moved_from"] = person_id
             clip["moved_at"] = time.time()
             dst.setdefault("clips", []).append(clip)
-            # #33 slice 3: the correction must reach the durable home too
-            sha = self._clip_sha(fname)
+            # #33 slice 3: the correction must reach the durable home too.
+            # A pulled clip's local bytes are trimmed (#310), so its stamp,
+            # not a re-hash, is what membro knows it by.
+            sha = clip.get("membro_sha") or self._clip_sha(fname)
             if sha:
                 self._record_correction(data, {
                     "kind": "move", "from": person_id,
@@ -856,13 +880,14 @@ class AnchorStore:
             if person is None:
                 return False
             clips = person.get("clips", [])
-            keep = [c for c in clips if c.get("file") != fname]
-            if len(keep) == len(clips):
+            entry = next((c for c in clips if c.get("file") == fname), None)
+            if entry is None:
                 return False
-            person["clips"] = keep
+            person["clips"] = [c for c in clips if c.get("file") != fname]
             # #33 slice 3: record before the bytes go, so the durable
-            # home's copy is deleted too instead of resurrecting later
-            sha = self._clip_sha(fname)
+            # home's copy is deleted too instead of resurrecting later.
+            # The stamp, when present, is the address membro knows (#310).
+            sha = entry.get("membro_sha") or self._clip_sha(fname)
             if sha:
                 self._record_correction(data, {
                     "kind": "delete", "from": person_id, "sha": sha})
@@ -991,7 +1016,7 @@ class AnchorStore:
             person = data["people"].get(person_id)
             if person is None:
                 return 0
-            keep, gone = [], []
+            keep, gone, shas = [], [], {}
             for c in person.get("clips", []):
                 contested = False
                 if c.get("source") in ("accumulated", "harvested-short"):
@@ -1002,13 +1027,16 @@ class AnchorStore:
                         log.warning("anchor clip unreadable: %s", c["file"])
                 if contested:
                     gone.append(c["file"])
+                    if c.get("membro_sha"):
+                        shas[c["file"]] = c["membro_sha"]
                 else:
                     keep.append(c)
             if not gone:
                 return 0
             person["clips"] = keep
             for fname in gone:
-                sha = self._clip_sha(fname)
+                sha = (shas.get(fname)
+                       or self._clip_sha(fname))
                 if sha:
                     self._record_correction(data, {
                         "kind": "delete", "from": person_id, "sha": sha})

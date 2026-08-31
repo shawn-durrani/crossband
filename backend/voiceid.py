@@ -169,6 +169,8 @@ SPEECH_MIN_VOICED_FRACTION = 0.5
 SPEECH_AUDIBLE_FLOOR_RATIO = 0.2    # audible = a fifth of the loudest frame
 SPEECH_MIN_AUDIBLE_FRACTION = 0.15  # sampled frames that must be audible
 SPEECH_MIN_AUDIBLE_FRAMES = 3       # and never fewer than this many
+SPEECH_TRIM_MARGIN_SECONDS = 0.2    # kept around the voiced span by the trim
+SPEECH_TRIM_SCAN_SECONDS = 6.4      # how deep a trim walk looks for speech
 
 # A verdict's status. "match" means name this turn locally; "defer" means the
 # turn stays unresolved - honestly uncertain - EXCEPT the "multi" reason,
@@ -427,6 +429,41 @@ def _goertzel_power(frame, k, n):
     return s_prev * s_prev + s_prev2 * s_prev2 - coeff * s_prev * s_prev2
 
 
+def _load_samples(pcm, usable):
+    """(np-or-None, samples) for the frame loops: numpy when present, the
+    same contract as _pcm_to_float; plain int16 array otherwise."""
+    try:
+        import numpy as np
+        return np, np.frombuffer(pcm[:usable * 2], dtype="<i2").astype("f8")
+    except Exception:
+        samples = array.array("h")
+        samples.frombytes(pcm[:usable * 2])
+        return None, samples
+
+
+def _frame_rms(samples, s0, n, np):
+    frame = samples[s0:s0 + n]
+    if np is not None:
+        return math.sqrt(float((frame * frame).mean()))
+    return math.sqrt(sum(x * x for x in frame) / n)
+
+
+def _frame_band_voiced(samples, s0, n, np, low_bins, high_bins):
+    """The per-frame speech-shape test the gate and the trim share:
+    speech-band energy beats the high band by SPEECH_BAND_RATIO."""
+    frame = samples[s0:s0 + n]
+    if np is not None:
+        spec = np.abs(np.fft.rfft(frame)) ** 2
+        low = float(spec[low_bins].mean())
+        high = float(spec[high_bins].mean())
+    else:
+        low = sum(_goertzel_power(frame, k, n)
+                  for k in low_bins) / len(low_bins)
+        high = sum(_goertzel_power(frame, k, n)
+                   for k in high_bins) / len(high_bins)
+    return low > high * SPEECH_BAND_RATIO
+
+
 def voiced_fraction(pcm, sample_rate) -> float:
     """What fraction of this PCM-16 utterance's AUDIBLE frames are voiced?
     A frame is audible when its RMS clears both the absolute floor and a
@@ -441,54 +478,78 @@ def voiced_fraction(pcm, sample_rate) -> float:
     usable = (len(pcm) - (len(pcm) % 2)) // 2
     if n <= 0 or usable < n:
         return 0.0
-    try:
-        import numpy as np
-        samples = np.frombuffer(pcm[:usable * 2], dtype="<i2").astype("f8")
-    except Exception:
-        np = None
-        samples = array.array("h")
-        samples.frombytes(pcm[:usable * 2])
+    np, samples = _load_samples(pcm, usable)
     starts = list(range(0, usable - n + 1, hop))
     if len(starts) > SPEECH_GATE_MAX_FRAMES:
         step = len(starts) / SPEECH_GATE_MAX_FRAMES
         starts = [starts[int(i * step)] for i in range(SPEECH_GATE_MAX_FRAMES)]
-    levels = []
-    for s0 in starts:
-        frame = samples[s0:s0 + n]
-        if np is not None:
-            rms = math.sqrt(float((frame * frame).mean()))
-        else:
-            rms = math.sqrt(sum(x * x for x in frame) / n)
-        levels.append((s0, rms))
+    levels = [_frame_rms(samples, s0, n, np) for s0 in starts]
     floor = max(SPEECH_FRAME_MIN_RMS,
-                max(rms for _, rms in levels) * SPEECH_AUDIBLE_FLOOR_RATIO)
-    audible = [s0 for s0, rms in levels if rms >= floor]
+                max(levels) * SPEECH_AUDIBLE_FLOOR_RATIO)
+    audible = [s0 for s0, rms in zip(starts, levels) if rms >= floor]
     if len(audible) < max(SPEECH_MIN_AUDIBLE_FRAMES,
                           math.ceil(len(starts) * SPEECH_MIN_AUDIBLE_FRACTION)):
         return 0.0
     low_bins, high_bins = _band_bins(n, sr)
     if not high_bins:
         return 1.0  # the rate cannot see the noise band: loudness only
-    voiced = 0
-    for s0 in audible:
-        frame = samples[s0:s0 + n]
-        if np is not None:
-            spec = np.abs(np.fft.rfft(frame)) ** 2
-            low = float(spec[low_bins].mean())
-            high = float(spec[high_bins].mean())
-        else:
-            low = sum(_goertzel_power(frame, k, n)
-                      for k in low_bins) / len(low_bins)
-            high = sum(_goertzel_power(frame, k, n)
-                       for k in high_bins) / len(high_bins)
-        if low > high * SPEECH_BAND_RATIO:
-            voiced += 1
+    voiced = sum(1 for s0 in audible
+                 if _frame_band_voiced(samples, s0, n, np,
+                                       low_bins, high_bins))
     return voiced / len(audible)
 
 
 def is_speech(pcm, sample_rate) -> bool:
     """The gate itself: a majority of audible frames voiced."""
     return voiced_fraction(pcm, sample_rate) >= SPEECH_MIN_VOICED_FRACTION
+
+
+def trim_dead_air(pcm, sample_rate) -> bytes:
+    """Cut the dead air off both ends of one utterance (#310), keeping
+    SPEECH_TRIM_MARGIN_SECONDS around the voiced span. Every capture ends
+    with the endpoint pause and starts with pre-roll; storing that dead
+    air dilutes the voice embedding and credits the sufficiency bar with
+    silence. An end frame is dead when it fails the gate's own voiced
+    test - below the audible floor, or not speech-shaped - so a fan-noise
+    tail trims like a silent one. Gaps INSIDE the span stay: only the
+    ends are cut, so the stored audio is never spliced. The walk in from
+    each end is bounded by SPEECH_TRIM_SCAN_SECONDS; past it that end is
+    kept as it is. With no voiced frame found at all the pcm comes back
+    unchanged - refusing junk is the quality gate's job, not the trim's."""
+    sr = sample_rate or 16000
+    n = int(SPEECH_FRAME_SECONDS * sr)
+    hop = max(1, int(SPEECH_FRAME_HOP_SECONDS * sr))
+    usable = (len(pcm) - (len(pcm) % 2)) // 2
+    if n <= 0 or usable < n:
+        return pcm
+    np, samples = _load_samples(pcm, usable)
+    starts = list(range(0, usable - n + 1, hop))
+    levels = [_frame_rms(samples, s0, n, np) for s0 in starts]
+    floor = max(SPEECH_FRAME_MIN_RMS,
+                max(levels) * SPEECH_AUDIBLE_FLOOR_RATIO)
+    low_bins, high_bins = _band_bins(n, sr)
+
+    def voiced_at(i):
+        if levels[i] < floor:
+            return False
+        if not high_bins:
+            return True
+        return _frame_band_voiced(samples, starts[i], n, np,
+                                  low_bins, high_bins)
+
+    scan = min(len(starts), max(1, int(SPEECH_TRIM_SCAN_SECONDS * sr / hop)))
+    first = next((i for i in range(scan) if voiced_at(i)), None)
+    last = next((i for i in range(len(starts) - 1,
+                                  len(starts) - 1 - scan, -1)
+                 if voiced_at(i)), None)
+    if first is None and last is None:
+        return pcm
+    margin = int(SPEECH_TRIM_MARGIN_SECONDS * sr)
+    lo = 0 if first is None else max(0, starts[first] - margin)
+    hi = usable if last is None else min(usable, starts[last] + n + margin)
+    if lo >= hi or (lo == 0 and hi == usable):
+        return pcm
+    return pcm[lo * 2:hi * 2]
 
 
 # ================= config helpers =========================================

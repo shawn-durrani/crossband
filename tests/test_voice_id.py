@@ -671,6 +671,59 @@ def test_excluding_silence_does_not_launder_noise():
     assert voiceid.voiced_fraction(faint, 16000) == 0.0
 
 
+def test_trim_dead_air_cuts_the_ends_and_keeps_the_margin():
+    """#310: pre-roll and the endpoint pause leave the clip; the voiced
+    span and a small margin stay."""
+    lead, talk, tail = 0.5, 1.5, 2.0
+    clip = (b"\x00\x00" * int(lead * 16000) + _tone(0, talk)
+            + b"\x00\x00" * int(tail * 16000))
+    out = voiceid.trim_dead_air(clip, 16000)
+    kept = len(out) / 2 / 16000
+    margin = voiceid.SPEECH_TRIM_MARGIN_SECONDS
+    assert talk <= kept <= talk + 2 * margin + 0.1
+    assert voiceid.voiced_fraction(out, 16000) >= 0.9
+
+
+def test_trim_dead_air_keeps_gaps_inside_the_span():
+    """Only the ends are cut - a two-burst remark keeps the word gap
+    between its bursts, so stored audio is never spliced."""
+    out = voiceid.trim_dead_air(_captured(0, 0.9, 2.0), 16000)
+    kept = len(out) / 2 / 16000
+    assert 0.85 <= kept <= 1.1   # both bursts, the gap, the margins
+
+
+def test_trim_dead_air_reads_a_noisy_tail_as_dead():
+    """#310: the endpoint pause in a fan-filled room is loud but not
+    speech-shaped; it trims like a silent one."""
+    import random
+    rng = random.Random(4)
+    fan = b"".join(struct.pack("<h", rng.randint(-1400, 1400))
+                   for _ in range(2 * 16000))
+    clip = _tone(0, 1.5) + fan
+    out = voiceid.trim_dead_air(clip, 16000)
+    kept = len(out) / 2 / 16000
+    assert kept <= 1.5 + 2 * voiceid.SPEECH_TRIM_MARGIN_SECONDS + 0.1
+    assert voiceid.is_speech(out, 16000) is True
+
+
+def test_trim_dead_air_leaves_edge_shapes_alone():
+    tone = _tone(0, 1.5)
+    assert voiceid.trim_dead_air(tone, 16000) == tone       # gapless
+    quiet = b"\x01\x00" * 48000
+    assert voiceid.trim_dead_air(quiet, 16000) == quiet     # nothing voiced
+    noise = _noise(2.0)
+    assert voiceid.trim_dead_air(noise, 16000) == noise     # junk is the gate's job
+    assert voiceid.trim_dead_air(b"", 16000) == b""         # too short to frame
+
+
+def test_trim_dead_air_stdlib_fallback_agrees(monkeypatch):
+    import sys
+    clip = _captured(0, 0.9, 2.0)
+    with_np = voiceid.trim_dead_air(clip, 16000)
+    monkeypatch.setitem(sys.modules, "numpy", None)   # import now fails
+    assert voiceid.trim_dead_air(clip, 16000) == with_np
+
+
 def test_voiced_fraction_stdlib_fallback_agrees(monkeypatch):
     """numpy is optional (the _pcm_to_float contract): the Goertzel fallback
     must reach the same verdicts."""
