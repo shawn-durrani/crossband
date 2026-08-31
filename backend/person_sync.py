@@ -23,7 +23,12 @@ path (startup, and after rounds - never during a turn):
 4. PUSH clips: per mapped person, membro's stored sha256 list is
    diffed against the local clip files and missing ones are uploaded.
    Content-addressing makes re-runs no-ops, so the first pass after
-   deploy IS the backfill of the installed base.
+   deploy IS the backfill of the installed base. The same diff runs in
+   REVERSE (#311): anchors membro holds that this install does not are
+   downloaded and offered back through the ordinary acceptance path,
+   but only while the person's bank wants more - a local bank thinned
+   by rotation, eviction or a since-fixed gate refills from the
+   archive that exists precisely for this.
 5. The pass records the newest change stamp it saw, so the next pull
    is a delta.
 
@@ -48,8 +53,22 @@ from .introductions import _participant_names, participant_alias
 log = logging.getLogger("crossband.person_sync")
 
 DEBOUNCE_S = 120           # post-round passes at most this often
+RESTORE_MAX_PER_PASS = 4   # anchor downloads per person per pass (#311)
+_RESTORE_OFFERED_MAX = 4096
 _state = {"last": 0.0, "warned": False}
 _lock = threading.Lock()
+# (person_id, sha) pairs already offered back to the bank this process
+# (#311). Acceptance is the keep policy's call; remembering the offer -
+# accepted or not - is what stops a refused anchor being re-downloaded
+# every two minutes. In-process on purpose: a restart retries, which is
+# also how a bank thinned since the refusal gets another look.
+_restore_offered: dict = {}
+
+
+def _remember_offered(pid, sha):
+    _restore_offered[(pid, sha)] = True
+    while len(_restore_offered) > _RESTORE_OFFERED_MAX:
+        _restore_offered.pop(next(iter(_restore_offered)))
 
 
 def _token() -> str:
@@ -176,7 +195,7 @@ def _run(base: str, token: str) -> dict:
     client = httpx.Client(timeout=20,
                           headers={"Authorization": f"Bearer {token}"})
     out = {"pulled_people": 0, "pulled_clips": 0, "forgotten": 0,
-           "pushed_people": 0, "pushed_clips": 0}
+           "pushed_people": 0, "pushed_clips": 0, "restored_clips": 0}
     try:
         since = store.get_sync_watermark()
         r = client.get(f"{base}/v1/persons", params={"since": since})
@@ -267,8 +286,10 @@ def _run(base: str, token: str) -> dict:
             lst = client.get(f"{base}/v1/persons/{slug}/anchors")
             if lst.status_code != 200:
                 continue
-            have = {a["sha256"] for a in lst.json()["anchors"]}
+            remote = lst.json()["anchors"]
+            have = {a["sha256"] for a in remote}
             stamps = store.membro_stamps(pid)
+            local = set(stamps.values())
             for c in (store.clips_of(pid) or []):
                 if c["file"] in stamps:
                     # Pulled from membro (#310): the canonical copy already
@@ -280,7 +301,9 @@ def _run(base: str, token: str) -> dict:
                 if path is None:
                     continue
                 data = path.read_bytes()
-                if hashlib.sha256(data).hexdigest() in have:
+                sha = hashlib.sha256(data).hexdigest()
+                local.add(sha)
+                if sha in have:
                     continue
                 up = client.post(
                     f"{base}/v1/persons/{slug}/anchors", json={
@@ -292,6 +315,38 @@ def _run(base: str, token: str) -> dict:
                         "client": "multi-model-chat"})
                 if up.status_code == 200:
                     out["pushed_clips"] += 1
+            # RESTORE (#311): the reverse diff. Only while the bank wants
+            # more - a sufficient bank at capacity is already best-of, and
+            # keep-best-N would just churn on what the archive holds.
+            # Every restored clip runs the ordinary acceptance path (the
+            # speech gate and the trim included) and lands stamped with
+            # membro's own address, so it is never pushed back as a
+            # variant and corrections still reach the durable copy.
+            if p["sufficient"] and p["at_capacity"]:
+                continue
+            fetched = 0
+            for a in remote:
+                if fetched >= RESTORE_MAX_PER_PASS:
+                    break
+                sha = a.get("sha256")
+                if (not sha or sha in local
+                        or (pid, sha) in _restore_offered):
+                    continue
+                f = client.get(
+                    f"{base}/v1/persons/{slug}/anchors/{a['id']}/file")
+                if f.status_code != 200:
+                    continue          # transient: next pass retries
+                fetched += 1
+                try:
+                    pcm, rate = _wav_to_pcm(f.content)
+                except (wave.Error, ValueError):
+                    _remember_offered(pid, sha)
+                    continue
+                _remember_offered(pid, sha)
+                if store.add_clip(pid, pcm, rate,
+                                  source=a.get("source") or "accumulated",
+                                  membro_sha=sha):
+                    out["restored_clips"] += 1
 
         store.set_sync_watermark(newest)
         _state["warned"] = False
