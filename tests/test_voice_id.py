@@ -266,6 +266,32 @@ def test_audit_sets_noise_clips_aside_with_their_own_reason(store, monkeypatch):
     assert fname not in enr[store["alex"]]["fingerprint"]
 
 
+def test_audit_reinstates_speech_wrongly_set_aside(store, monkeypatch):
+    """#309: real speech was set aside as "not a voice" because its dead
+    air voted against it. The audit's output IS the quarantine state, so
+    the corrected check brings a surviving clip back with no hand-holding
+    - the installed base self-cleans on its next audit."""
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "_embed", _fake_embed)
+    s = store["store"]
+    clip = _captured(_ALEX_VAL, 2.4, 2.0)
+    fname = s._write_clip(clip, 16000, store["alex"])
+    with s._lock:
+        data = s._load()
+        data["people"][store["alex"]]["clips"].append(
+            {"file": fname, "seconds": round(len(clip) / 2 / 16000, 2),
+             "rms": 2000, "score": 3.0, "sample_rate": 16000,
+             "source": "accumulated", "added_at": time.time()})
+        s._save(data)
+    s.set_hygiene({store["alex"]: {fname: "not_speech"}}, [])
+    row = next(c for c in s.clips_of(store["alex"]) if c["file"] == fname)
+    assert row["quarantined"] is True
+    assert voiceid.audit_banks(_cfg()) is True
+    row = next(c for c in s.clips_of(store["alex"]) if c["file"] == fname)
+    assert row["quarantined"] is False
+    assert row["quarantine_reason"] == ""
+
+
 def test_set_hygiene_accepts_both_reason_shapes(store):
     s = store["store"]
     first = s.clips_of(store["alex"])[0]["file"]
@@ -607,17 +633,58 @@ def test_voiced_fraction_separates_speech_from_noise():
     assert voiceid.is_speech(_noise(1.5), 16000) is False
 
 
+def _captured(value, talk_seconds, tail_seconds, sr=16000):
+    """Speech the way capture actually banks it (#309): bursts of voice
+    separated by word gaps, then the endpoint pause the client waits out
+    before committing. Under an all-frames denominator this shape - the
+    ordinary shape of every stored clip - read as "not a voice"."""
+    gap = b"\x00\x00" * int(0.18 * sr)
+    out, made = [], 0.0
+    while made < talk_seconds:
+        out.append(_tone(value, 0.3, sr))
+        out.append(gap)
+        made += 0.48
+    out.append(b"\x00\x00" * int(tail_seconds * sr))
+    return b"".join(out)
+
+
+def test_dead_air_does_not_vote_against_speech():
+    """#309: a short remark plus the 2s endpoint pause must read as speech.
+    The old whole-clip majority made this shape unpassable - at most 0.9s
+    of a 3.4s clip could ever be voiced."""
+    remark = _captured(0, 0.9, 2.0)
+    assert voiceid.voiced_fraction(remark, 16000) >= 0.9
+    assert voiceid.is_speech(remark, 16000) is True
+    # the acceptance gate banks it, so a still-learning person can grow
+    assert anchors.accepts_clip(anchors.clip_quality(remark, 16000))
+
+
+def test_excluding_silence_does_not_launder_noise():
+    """#309 regression guard on #217/#218: the audible frames of static
+    are still noise-shaped, and a lone click leaves too few audible
+    frames to judge at all."""
+    assert voiceid.voiced_fraction(_noise(3.0) + b"\x00\x00" * 32000,
+                                   16000) <= 0.1
+    click = b"\x00\x00" * 24000 + _noise(0.06) + b"\x00\x00" * 24000
+    assert voiceid.voiced_fraction(click, 16000) == 0.0
+    faint = b"\x14\x00" * 48000   # room tone alone: nothing to judge
+    assert voiceid.voiced_fraction(faint, 16000) == 0.0
+
+
 def test_voiced_fraction_stdlib_fallback_agrees(monkeypatch):
     """numpy is optional (the _pcm_to_float contract): the Goertzel fallback
     must reach the same verdicts."""
     import sys
     speech, noise = _tone(0, 1.0), _noise(1.0)
+    banked = _captured(0, 0.9, 2.0)   # the #309 shape: speech plus dead air
     with_np = (voiceid.voiced_fraction(speech, 16000),
-               voiceid.voiced_fraction(noise, 16000))
+               voiceid.voiced_fraction(noise, 16000),
+               voiceid.voiced_fraction(banked, 16000))
     monkeypatch.setitem(sys.modules, "numpy", None)   # import now fails
     without = (voiceid.voiced_fraction(speech, 16000),
-               voiceid.voiced_fraction(noise, 16000))
-    assert without[0] >= 0.9 and without[1] <= 0.1
+               voiceid.voiced_fraction(noise, 16000),
+               voiceid.voiced_fraction(banked, 16000))
+    assert without[0] >= 0.9 and without[1] <= 0.1 and without[2] >= 0.9
     assert with_np == pytest.approx(without, abs=0.1)
 
 

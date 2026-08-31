@@ -146,16 +146,29 @@ CLIP_EMB_CACHE_MAX = 256  # per-clip audit embeddings (clip files never change)
 # (frontend/src/voice.js _frameVoiced): a frame is voiced when it is loud
 # enough AND its energy concentrates in the speech band (80-1200Hz) rather
 # than the broadband/high signature of static, hiss and clicks; an utterance
-# is speech when a majority of its sampled frames are voiced.
+# is speech when a majority of its AUDIBLE frames are voiced (#309 - see
+# the note above the knobs below).
 SPEECH_LOW_HZ = (80.0, 1200.0)
 SPEECH_HIGH_HZ = (3500.0, 10000.0)
 SPEECH_FRAME_SECONDS = 0.032
 SPEECH_FRAME_HOP_SECONDS = 0.016
 SPEECH_GATE_MAX_FRAMES = 32   # frames sampled across the utterance: bounds the
                               # numpy-free fallback's cost on long audio
-SPEECH_FRAME_MIN_RMS = 100.0  # int16 scale; a near-silent frame is not voiced
+SPEECH_FRAME_MIN_RMS = 100.0  # int16 scale; the absolute audibility floor
 SPEECH_BAND_RATIO = 2.0       # low-band mean power must beat high-band by this
 SPEECH_MIN_VOICED_FRACTION = 0.5
+# The fraction judges AUDIBLE frames only (#309). Every banked clip carries
+# dead air by construction - the capture pre-roll, ordinary word gaps, and
+# the endpoint pause the client waits out before committing - and under an
+# all-frames denominator that silence voted against the clip: a short
+# remark could never pass, and real speech sat set aside as "not a voice".
+# Silence is evidence of nothing, so it is excluded. Static and hiss still
+# fail, because their frames are loud, judged, and noise-shaped. The
+# audible floor rides the clip's own loudest frame, so in a room with a
+# fan the gaps between words still read as gaps, not as frames to judge.
+SPEECH_AUDIBLE_FLOOR_RATIO = 0.2    # audible = a fifth of the loudest frame
+SPEECH_MIN_AUDIBLE_FRACTION = 0.15  # sampled frames that must be audible
+SPEECH_MIN_AUDIBLE_FRAMES = 3       # and never fewer than this many
 
 # A verdict's status. "match" means name this turn locally; "defer" means the
 # turn stays unresolved - honestly uncertain - EXCEPT the "multi" reason,
@@ -415,10 +428,13 @@ def _goertzel_power(frame, k, n):
 
 
 def voiced_fraction(pcm, sample_rate) -> float:
-    """What fraction of this PCM-16 utterance's frames are voiced? A frame
-    is voiced when its RMS clears the floor AND its speech-band energy beats
-    the high band by SPEECH_BAND_RATIO. Frames are sampled evenly, at most
-    SPEECH_GATE_MAX_FRAMES of them. 0.0 for audio too short to frame."""
+    """What fraction of this PCM-16 utterance's AUDIBLE frames are voiced?
+    A frame is audible when its RMS clears both the absolute floor and a
+    fifth of the clip's loudest frame; an audible frame is voiced when its
+    speech-band energy beats the high band by SPEECH_BAND_RATIO. Frames are
+    sampled evenly, at most SPEECH_GATE_MAX_FRAMES of them. 0.0 for audio
+    too short to frame, or with too few audible frames to judge (silence,
+    or a lone click)."""
     sr = sample_rate or 16000
     n = int(SPEECH_FRAME_SECONDS * sr)
     hop = max(1, int(SPEECH_FRAME_HOP_SECONDS * sr))
@@ -436,19 +452,26 @@ def voiced_fraction(pcm, sample_rate) -> float:
     if len(starts) > SPEECH_GATE_MAX_FRAMES:
         step = len(starts) / SPEECH_GATE_MAX_FRAMES
         starts = [starts[int(i * step)] for i in range(SPEECH_GATE_MAX_FRAMES)]
-    low_bins, high_bins = _band_bins(n, sr)
-    voiced = 0
+    levels = []
     for s0 in starts:
         frame = samples[s0:s0 + n]
         if np is not None:
             rms = math.sqrt(float((frame * frame).mean()))
         else:
             rms = math.sqrt(sum(x * x for x in frame) / n)
-        if rms < SPEECH_FRAME_MIN_RMS:
-            continue
-        if not high_bins:
-            voiced += 1  # the rate cannot see the noise band: loudness only
-            continue
+        levels.append((s0, rms))
+    floor = max(SPEECH_FRAME_MIN_RMS,
+                max(rms for _, rms in levels) * SPEECH_AUDIBLE_FLOOR_RATIO)
+    audible = [s0 for s0, rms in levels if rms >= floor]
+    if len(audible) < max(SPEECH_MIN_AUDIBLE_FRAMES,
+                          math.ceil(len(starts) * SPEECH_MIN_AUDIBLE_FRACTION)):
+        return 0.0
+    low_bins, high_bins = _band_bins(n, sr)
+    if not high_bins:
+        return 1.0  # the rate cannot see the noise band: loudness only
+    voiced = 0
+    for s0 in audible:
+        frame = samples[s0:s0 + n]
         if np is not None:
             spec = np.abs(np.fft.rfft(frame)) ** 2
             low = float(spec[low_bins].mean())
@@ -460,11 +483,11 @@ def voiced_fraction(pcm, sample_rate) -> float:
                        for k in high_bins) / len(high_bins)
         if low > high * SPEECH_BAND_RATIO:
             voiced += 1
-    return voiced / len(starts)
+    return voiced / len(audible)
 
 
 def is_speech(pcm, sample_rate) -> bool:
-    """The gate itself: a majority of frames voiced."""
+    """The gate itself: a majority of audible frames voiced."""
     return voiced_fraction(pcm, sample_rate) >= SPEECH_MIN_VOICED_FRACTION
 
 
