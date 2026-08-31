@@ -34,6 +34,7 @@ from tests.conftest import speech_pcm
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_AUTH_TOKEN", "test-token")
     person_sync._state.update({"last": 0.0, "warned": False})
+    person_sync._restore_offered.clear()
     return create_app(Settings(data_dir=str(tmp_path / "data"),
                                memory_url="http://127.0.0.1:1"))
 
@@ -222,6 +223,86 @@ def test_a_pulled_clip_is_never_pushed_back_as_a_variant(app, membro):
     out = person_sync.sync_once(membro.url, force=True)
     assert out["replayed"] == 1
     assert membro.anchors["p-remote1"] == []
+
+
+def _file_gets(membro):
+    return [r for r in membro.requests
+            if r[0] == "GET" and r[1].endswith("/file")]
+
+
+def test_a_thinned_bank_is_restored_from_membro(app, membro):
+    """#311: anchors the durable home holds and this install lost come
+    back through the ordinary acceptance path, stamped with membro's own
+    address - so a second pass re-uploads nothing and re-downloads
+    nothing."""
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, _pcm(2.0), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)   # map + push the one clip
+
+    # history rotation left behind: two anchors only membro still holds
+    for secs in (2.2, 2.4):
+        wav = pcm16_wav(_pcm(secs), 16000)
+        rows = membro.anchors[pid]
+        rows.append({"id": len(rows) + 1,
+                     "sha256": hashlib.sha256(wav).hexdigest(),
+                     "source": "accumulated", "data": wav})
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["restored_clips"] == 2
+    assert len(store.clips_of(pid)) == 3
+    assert len(store.membro_stamps(pid)) == 2
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["restored_clips"] == 0 and again["pushed_clips"] == 0
+    assert len(membro.anchors[pid]) == 3            # no variant anchors
+
+
+def test_restore_leaves_a_full_sufficient_bank_alone(app, membro):
+    """#311: a bank at capacity and past the sufficiency bar is already
+    best-of; the archive is not downloaded at it."""
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    for secs in (2.1, 2.2, 2.3, 2.4, 2.5, 1.1, 1.2, 1.3):
+        assert store.add_clip(pid, _pcm(secs), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+
+    wav = pcm16_wav(_pcm(3.5), 16000)
+    membro.anchors[pid].append({"id": 99,
+                                "sha256": hashlib.sha256(wav).hexdigest(),
+                                "source": "accumulated", "data": wav})
+    before = len(_file_gets(membro))
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["restored_clips"] == 0
+    assert len(_file_gets(membro)) == before        # not even downloaded
+
+
+def test_a_refused_anchor_is_not_downloaded_again(app, membro):
+    """#311: acceptance is the keep policy's call, but a refused anchor
+    must not be re-fetched every pass - the offer is remembered."""
+    import random
+    import struct as _struct
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, _pcm(2.0), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+
+    rng = random.Random(9)
+    noise = b"".join(_struct.pack("<h", rng.randint(-12000, 12000))
+                     for _ in range(2 * 16000))
+    wav = pcm16_wav(noise, 16000)
+    membro.anchors[pid].append({"id": 7,
+                                "sha256": hashlib.sha256(wav).hexdigest(),
+                                "source": "accumulated", "data": wav})
+
+    out = person_sync.sync_once(membro.url, force=True)
+    fetched = len(_file_gets(membro))
+    assert out["restored_clips"] == 0               # the gate refused it
+    assert fetched >= 1
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["restored_clips"] == 0
+    assert len(_file_gets(membro)) == fetched       # remembered, not refetched
 
 
 def test_a_forgotten_person_is_forgotten_here_too(app, membro):
