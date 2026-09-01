@@ -79,6 +79,42 @@ def test_pulled_clip_corrections_speak_membro_sha(store):
     assert [c["sha"] for c in store.pending_corrections()] == ["a" * 64]
 
 
+def test_a_refused_clip_is_recorded_and_visible(store):
+    """#312: a refusal is not silent - the person carries how many clips
+    were refused recently and why the last one was, so "still learning at
+    zero seconds" can explain itself instead of looking like silence."""
+    pid = store.ensure_person("Alex")
+    assert not store.add_clip(pid, quiet_pcm(3.0), 16000, source="accumulated")
+    assert not store.add_clip(pid, noise_pcm(3.0), 16000, source="accumulated")
+    assert not store.add_clip(pid, loud_pcm(0.5), 16000, source="accumulated")
+    person = next(p for p in store.people() if p["person_id"] == pid)
+    assert person["refused_last_week"] == 3
+    assert person["refusal_reason"] == "too short"
+    # an accepted clip is not a refusal
+    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
+    person = next(p for p in store.people() if p["person_id"] == pid)
+    assert person["refused_last_week"] == 3
+
+
+def test_refusals_age_out_of_the_week_window(store):
+    pid = store.ensure_person("Alex")
+    assert not store.add_clip(pid, quiet_pcm(3.0), 16000, source="accumulated")
+    with store._lock:
+        data = store._load()
+        rec = data["people"][pid]["clip_refusals"]
+        rec["recent"] = [t - anchors.REFUSAL_WINDOW_S - 60
+                         for t in rec["recent"]]
+        store._save(data)
+    person = next(p for p in store.people() if p["person_id"] == pid)
+    assert person["refused_last_week"] == 0
+    assert person["refusal_reason"] == "too quiet"   # the last reason stays
+
+
+def test_a_refusal_for_an_unknown_person_is_just_a_no(store):
+    assert not store.add_clip("nobody-abc123", quiet_pcm(3.0), 16000,
+                              source="accumulated")
+
+
 def test_quality_gate_rejects_short_and_quiet():
     assert anchors.accepts_clip(anchors.clip_quality(loud_pcm(1.0), 16000))
     assert not anchors.accepts_clip(anchors.clip_quality(loud_pcm(0.5), 16000))
