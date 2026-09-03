@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-pydantic>=2.13.4
+pydantic>=2.13.5
 anthropic
 openai>=3.3.1
 httpx
