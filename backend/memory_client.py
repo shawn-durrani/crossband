@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import time
+from typing import NamedTuple
 
 import httpx
 
@@ -184,6 +185,17 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
     return f"guest:{wire}" if wire else GUEST_UNKNOWN
 
 
+class HeldWatermark(NamedTuple):
+    """What the service holds for one conversation (contract 1.4).
+    state: "held" (highest is the top external_id it holds, or None when
+    the conversation exists with no messages), "absent" (the service holds
+    no such conversation), or "unavailable" (older contract, transport or
+    shape failure: nothing can be concluded)."""
+    state: str
+    highest: str | None
+    messages: int
+
+
 class MemorySearchError(Exception):
     """The service was reachable (probe() said so) but /search itself did
     not behave: an error status, a transport failure, or a response that
@@ -202,6 +214,9 @@ class MemoryClient:
         self._probe_ts = 0.0
         self._available = False
         self._contract_version: str | None = None
+        # Contract 1.4: the origin a phone's browser can reach the service
+        # at, as the service itself reports it. Empty on an older service.
+        self.browser_origin = ""
         self._stamp_warned = False  # one line, once, when the service predates 1.3
         self._warned_mismatch = False
         # Leave-hook write jobs: chat_id -> {"state": running|ok|failed, "error", "ts"}
@@ -221,6 +236,7 @@ class MemoryClient:
             data = r.json()
             version = str(data.get("contract_version") or "")
             self._contract_version = version
+            self.browser_origin = str(data.get("browser_origin") or "")
             major = int(version.split(".")[0]) if version else -1
             if major != CONTRACT_MAJOR:
                 if not self._warned_mismatch:
@@ -236,10 +252,19 @@ class MemoryClient:
             self._available = False
         return self._available
 
+    def contract_minor(self) -> int:
+        """The minor half of the last probed contract version, 0 when the
+        service has not been probed or reported something unparseable."""
+        try:
+            return int((self._contract_version or "").split(".")[1])
+        except (IndexError, ValueError):
+            return 0
+
     def status(self) -> dict:
         """Last-known availability for /api/state (probe separately)."""
         return {"available": self._available, "url": self.base_url,
-                "contract_version": self._contract_version}
+                "contract_version": self._contract_version,
+                "browser_origin": self.browser_origin}
 
     def write_status(self) -> dict:
         failed = [{"chat_id": cid, "error": j["error"], "ts": j["ts"]}
@@ -314,6 +339,35 @@ class MemoryClient:
                         sorted(data.keys()) if isinstance(data, dict) else type(data).__name__)
             raise MemorySearchError("memory /search returned an unexpected response shape")
         return hits
+
+    async def held_watermark(self, conversation_id: str) -> HeldWatermark:
+        """GET /conversations/{source_app}/{id}/watermark (contract 1.4):
+        the highest message external_id the service holds for one chat.
+        Open on loopback like /health, so no bearer rides along. A service
+        older than 1.4 has no such route, so the call is not made and the
+        answer is "unavailable"; so is any transport failure or a response
+        without the promised shape. A 404 from a 1.4 service means the
+        service holds no such conversation at all. Logging is content-free:
+        chat id and status only."""
+        if self.contract_minor() < 4:
+            return HeldWatermark("unavailable", None, 0)
+        url = (f"{self.api}/conversations/{SOURCE_APP}/"
+               f"{conversation_id}/watermark")
+        try:
+            r = await self._client.get(url)
+            if r.status_code == 404:
+                return HeldWatermark("absent", None, 0)
+            r.raise_for_status()
+            data = r.json()
+            highest = data["highest_external_id"]
+            messages = int(data.get("messages") or 0)
+        except Exception as e:
+            log.warning("memory watermark read for chat %s failed: %s: %s",
+                        conversation_id, type(e).__name__, e)
+            return HeldWatermark("unavailable", None, 0)
+        if highest is not None and not isinstance(highest, str):
+            highest = str(highest)
+        return HeldWatermark("held", highest, messages)
 
     # ---------- writes ----------
 
@@ -484,13 +538,20 @@ class MemoryClient:
 
     # ---------- leave hook ----------
 
-    async def handoff_chat(self, chat_id: int, get_new_messages, advance_watermark):
+    async def handoff_chat(self, chat_id: int, get_new_messages, advance_watermark,
+                           get_watermark=None):
         """Fire-and-forget leave hook: ingest messages past the watermark, advance
         it, then trigger the service-side reflection pass. Failures are recorded
         in self.writes (surfaced in /api/state and to the models next round).
 
         get_new_messages() -> list of message dicts newer than ingested_upto
         advance_watermark(last_id) -> persists chats.ingested_upto
+        get_watermark() -> the current chats.ingested_upto (optional)
+
+        With get_watermark and a 1.4 service, the local watermark is first
+        checked against what the service actually holds and wound back when
+        the service is behind (a membro restored from backup). A failed
+        check never blocks the handoff.
         """
         self.writes[chat_id] = {"state": "running", "error": None, "ts": time.time()}
         try:
@@ -498,6 +559,9 @@ class MemoryClient:
                 # service absent: not an error - silently off
                 self.writes.pop(chat_id, None)
                 return
+            if get_watermark is not None and self.contract_minor() >= 4:
+                await self._reconcile_watermark(chat_id, get_watermark,
+                                                advance_watermark)
             msgs = await asyncio.to_thread(get_new_messages)
             if msgs:
                 await self.ingest(str(chat_id), msgs)
@@ -508,6 +572,40 @@ class MemoryClient:
             log.warning("memory handoff for chat %s failed: %s", chat_id, e)
             self.writes[chat_id] = {"state": "failed", "error": str(e)[:300],
                                     "ts": time.time()}
+
+    async def _reconcile_watermark(self, chat_id, get_watermark,
+                                   advance_watermark):
+        """The restore reconcile (workbench#68). chats.ingested_upto says
+        what this app has handed over; the service says what it still
+        holds. After a membro restore from backup the local mark can sit
+        ahead of the archive, and every message in the gap would never be
+        offered again. So: no such conversation there and a local mark
+        above zero -> wind back to 0; a held top id that is a plain integer
+        below the local mark -> wind back to it. A top id that is not all
+        digits cannot be compared, so the reconcile is skipped. Every
+        failure is logged and ignored: the handoff runs as it always has."""
+        try:
+            current = int(await asyncio.to_thread(get_watermark) or 0)
+            held = await self.held_watermark(str(chat_id))
+            target = None
+            if held.state == "absent" and current > 0:
+                target = 0
+            elif held.state == "held" and current > 0:
+                if held.highest is None:
+                    target = 0
+                elif held.highest.isdigit() and int(held.highest) < current:
+                    target = int(held.highest)
+            if target is None:
+                return
+            log.warning(
+                "memory holds less of chat %s than its watermark says: "
+                "winding ingested_upto back from %d to %d so the gap is "
+                "handed over again (workbench#68 restore reconcile)",
+                chat_id, current, target)
+            await asyncio.to_thread(advance_watermark, target)
+        except Exception as e:
+            log.warning("memory watermark reconcile for chat %s skipped: "
+                        "%s: %s", chat_id, type(e).__name__, e)
 
     async def aclose(self):
         await self._client.aclose()

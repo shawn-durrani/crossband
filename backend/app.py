@@ -398,7 +398,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "chats": chats,
             "participants": participants,
             "settings": {"shared_instructions": shared_instructions},
-            "memory": {"available": available, "url": settings.memory_url},
+            "memory": {"available": available, "url": settings.memory_url,
+                       # Contract 1.4: where a phone's browser reaches
+                       # membro, as membro reports it; "" on an older one.
+                       "browser_origin": memory.browser_origin or ""},
             "memory_writes": memory.write_status(),
             "latest_message_id": latest_message_id,
             # Chats with a round still generating. Detached rounds

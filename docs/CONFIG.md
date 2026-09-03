@@ -146,6 +146,29 @@ resolves the same variable via `${MEMORY_AUTH_TOKEN}`, so one token in
 Crossband's `.env` serves every path. See
 [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md).
 
+### The memory contract
+
+Crossband reads membro's `contract_version` from `/v1/health` and needs
+major 1. A different major is treated as no memory at all. Minor
+versions are additive, and each newer field is used only when membro
+sends it, so an older membro keeps the behaviour of the version before.
+
+- 1.2: `speaker_identity` beside a guest turn on ingest.
+- 1.3: `web_sources` on ingest and on saved facts, so web-derived facts
+  are held for review.
+- 1.4: `web_sources` comes back on `search_history` hits, and a hit
+  that carries any gets the untrusted marker a live fetch gets.
+  `browser_origin` on `/v1/health` is where a phone's browser reaches
+  membro, and the voice-discard eraser link uses it. Before each
+  handoff, crossband reads membro's per-chat watermark and winds its
+  own `ingested_upto` back when membro holds less, which is what a
+  restore from backup leaves behind. A saved fact's `event_date` is the
+  owner's local calendar day, and membro anchors it to local midnight.
+
+On a 1.3 membro the marker never appears, the eraser link falls back to
+the browser's own host on port 8901, and the watermark route is never
+called.
+
 ## Coding guest + GitHub (the `code` toggle)
 
 The short user-facing description is
