@@ -3,9 +3,17 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule: { interval: weekly }
+    # A major bump is a reviewed change, never a rebase side effect (#319).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
   - package-ecosystem: npm
     directory: /frontend
     schedule: { interval: weekly }
+    # A major bump is a reviewed change, never a rebase side effect (#319).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
