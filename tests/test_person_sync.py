@@ -11,6 +11,10 @@ slice-1 routes), the contract under test:
 - a person forgotten HERE is forgotten in membro too (workbench#56): the
   forget rides the correction ledger, and the pull step never rebuilds
   them in the pass that is about to send it;
+- a forget settles the corrections still pending on that person (#335):
+  a merge they won forgets the loser too, a clip moved into them is
+  deleted at its source, and the pull applies membro's forget marks
+  before it rebuilds anyone, so a settled merge's loser cannot come back;
 - a participant-named entry (#65 guard artefact) is never pushed;
 - no token, or membro unreachable, is a clean logged no-op - crossband
   behaves exactly as it did before membro existed.
@@ -421,6 +425,108 @@ def test_forgetting_a_person_membro_never_knew_records_nothing(app):
     assert store.forget(pid)
     assert store.pending_corrections() == []
     assert store.people() == []
+
+
+def test_forgetting_a_merge_winner_cannot_bring_the_loser_back(app, membro):
+    """#335, the worst case: a merge whose winner is then forgotten. The
+    merge row named the winner by a local id that no longer resolved, so
+    it stayed pending forever, and the loser, still a living person in
+    membro, was rebuilt here under the other name, audio and all. The
+    owner forgot a human and the human came back. Two passes on purpose,
+    as for the plain forget."""
+    store = anchors.store()
+    sam = store.ensure_person("Sam")          # older: merge_people keeps it
+    sammy = store.ensure_person("Sammy")
+    assert store.add_clip(sam, _pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(sammy, _pcm(2.5), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+    assert len(membro.anchors[sam]) == 1 and len(membro.anchors[sammy]) == 1
+
+    assert store.merge_people(sam, sammy) == sam
+    assert store.forget(sam)
+    assert [(c["kind"], c["slug"]) for c in store.pending_corrections()] == [
+        ("forget", sammy), ("forget", sam)]
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 2 and store.pending_corrections() == []
+    assert out["pulled_people"] == 0                # nobody rebuilt on the way
+    for slug in (sam, sammy):
+        assert membro.persons[slug]["forgotten_at"]
+        assert membro.anchors[slug] == []           # audio gone there too
+    assert store.people() == []
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["pulled_people"] == 0 and again["restored_clips"] == 0
+    assert store.people() == []                     # and the loser stays gone
+
+
+def test_a_forget_membro_made_settles_a_pending_merge_before_any_rebuild(
+        app, membro):
+    """The membro-first half, older than the local forget: membro forgets
+    the winner of a merge that has not landed yet. Mirroring that forget
+    here settles the merge into a forget of the loser, and the pull must
+    see that row before it rebuilds anyone. A guard computed before the
+    mirror pulled the loser back, audio and all, for one pass."""
+    store = anchors.store()
+    sam = store.ensure_person("Sam")
+    sammy = store.ensure_person("Sammy")
+    assert store.add_clip(sam, _pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(sammy, _pcm(2.5), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+    assert store.merge_people(sam, sammy) == sam
+    assert [c["kind"] for c in store.pending_corrections()] == ["merge"]
+
+    membro.persons[sam]["forgotten_at"] = 200.0     # forgotten there first
+    membro.persons[sam]["updated_at"] = 200.0
+    membro.anchors[sam] = []
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["forgotten"] == 1                    # the mirror
+    assert out["pulled_people"] == 0                # the loser never rebuilt
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert membro.persons[sammy]["forgotten_at"]
+    assert membro.anchors[sammy] == []
+    assert store.people() == []
+    forgets = [r[1] for r in membro.requests
+               if r[0] == "POST" and r[1].endswith("/forget")]
+    assert forgets == [f"/v1/persons/{sammy}/forget"]   # nothing back for Sam
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["pulled_people"] == 0 and store.people() == []
+
+
+def test_forgetting_a_person_deletes_the_clip_moved_into_them_in_membro(
+        app, membro):
+    """A clip the owner moved into a person who is then forgotten is that
+    person's audio. The pending move becomes a delete at its source, so
+    membro's copy goes too instead of staying under the person it was
+    moved from, where a restore would hand it straight back."""
+    store = anchors.store()
+    blair = store.ensure_person("Blair")
+    casey = store.ensure_person("Casey")
+    assert store.add_clip(blair, _pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(blair, _pcm(2.5), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+    assert len(membro.anchors[blair]) == 2
+
+    moved = store.clips_of(blair)[0]["file"]
+    moved_sha = hashlib.sha256(
+        (store.root / moved).read_bytes()).hexdigest()
+    assert store.move_clip(blair, moved, casey)
+    assert store.forget(casey)
+    assert [c["kind"] for c in store.pending_corrections()] == [
+        "delete", "forget"]
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 2 and store.pending_corrections() == []
+    assert moved_sha not in {x["sha256"] for x in membro.anchors[blair]}
+    assert len(membro.anchors[blair]) == 1          # the other clip untouched
+    assert membro.persons[casey]["forgotten_at"]
+    assert membro.anchors.get(casey, []) == []
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["pulled_people"] == 0 and again["restored_clips"] == 0
+    assert [p["person_id"] for p in store.people()] == [blair]
+    assert moved_sha not in {x["sha256"] for x in membro.anchors[blair]}
 
 
 def test_a_participant_named_entry_is_never_pushed(app, membro):
