@@ -23,12 +23,14 @@ class FakeMemory:
         self.searched = []
 
     async def save_fact(self, content, origin_agent, event_date=None,
-                        confidence="medium", web_sources=None):
+                        confidence="medium", web_sources=None,
+                        guest_speakers=None):
         if self.fail:
             return None
         self.saved.append({"content": content, "origin_agent": origin_agent,
                            "event_date": event_date, "confidence": confidence,
-                           "web_sources": web_sources})
+                           "web_sources": web_sources,
+                           "guest_speakers": guest_speakers})
         return {"id": 1, "quarantined": self.quarantined}
 
     async def recall(self, query, limit=10, include_superseded=False):
@@ -81,6 +83,26 @@ def test_save_memory_drops_junk_event_date(cfg):
                                  "event_date": "sometime last week"},
                  cfg, origin_agent="claude", memory=mem))
     assert mem.saved[0]["event_date"] is None
+
+
+def test_save_memory_carries_the_rounds_guest_stamp(cfg):
+    """Contract 1.5: the guests present in the round ride the direct save,
+    the way the web stamp does, so membro can hold it for review."""
+    mem = FakeMemory(quarantined=True)
+    cfg = dict(cfg, _round_guest_speakers=["guest:Sam", "guest:unknown"])
+    out = run(run_tool("save_memory", {"content": "Sam is allergic to nuts"},
+                       cfg, origin_agent="claude", memory=mem))
+    assert mem.saved[0]["guest_speakers"] == ["guest:Sam", "guest:unknown"]
+    assert "held for the user's review" in out
+
+
+def test_save_memory_sends_no_guest_stamp_when_nobody_is_present(cfg):
+    mem = FakeMemory()
+    for absent in ({}, {"_round_guest_speakers": []}):
+        mem.saved.clear()
+        run(run_tool("save_memory", {"content": "A fact from the owner alone"},
+                     dict(cfg, **absent), origin_agent="claude", memory=mem))
+        assert mem.saved[0]["guest_speakers"] == []
 
 
 def test_clean_event_date():

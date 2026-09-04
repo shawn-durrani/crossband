@@ -185,6 +185,78 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
     return f"guest:{wire}" if wire else GUEST_UNKNOWN
 
 
+# The most guest classes one saved fact carries (contract 1.5). A roster is
+# capped well below this; the bound is for the wire, not the room.
+MAX_GUEST_SPEAKERS = 12
+
+# How many of the round's latest turns are read for a doubted or uncertain
+# voice when the "guests present" set is built. The roster answers WHO is
+# present; this answers whether an unresolved voice spoke recently.
+GUEST_CONTEXT_TURNS = 20
+
+
+def identity_name_map(people) -> dict:
+    """label (casefolded) -> the anchor-store identity name, for every way a
+    voice label may have been written: the identity name itself, the
+    preferred display spelling, and every merged-away name. The wire
+    carries the identity name (see ingest_speaker), so any surface that
+    resolves a label for the wire builds its map here."""
+    identity = {}
+    for p in people:
+        identity[p["name"].casefold()] = p["name"]
+        if p.get("preferred_name"):
+            identity[p["preferred_name"].casefold()] = p["name"]
+        for merged in p.get("merged_names") or []:
+            identity[merged.casefold()] = p["name"]
+    return identity
+
+
+def round_guest_speakers(*, room_mode, roster_names, recent_messages,
+                         open_flags, owner_name="", identity_names=None
+                         ) -> list[str]:
+    """The guests present in a round, as the speaker classes a model's
+    direct save carries (contract 1.5 `guest_speakers`).
+
+    Outside room mode the set is empty: only room mode lets anyone but the
+    owner speak into the chat. In room mode it is the union of
+
+    - every present roster name that is not the owner, as
+      `guest:<identity name>`, resolved through the same map ingest uses;
+    - `guest:unknown` when the room holds an open unknown-voice ask (armed
+      with a voice nobody has named yet), or when any user turn among the
+      latest GUEST_CONTEXT_TURNS resolves to guest:unknown through
+      ingest_speaker (doubted, uncertain, ordinal or crosstalk).
+
+    The owner's own turns never stamp. Sorted, one entry per person (the
+    first spelling seen wins), so the wire is stable for a given room."""
+    if not room_mode:
+        return []
+    owner = (owner_name or "").casefold()
+    identity_names = identity_names or {}
+    out = {}
+    for name in roster_names or ():
+        identity = identity_names.get((name or "").casefold()) or name
+        if (name or "").casefold() == owner or \
+                (identity or "").casefold() == owner:
+            continue
+        wire = _wire_name(identity) or _wire_name(name)
+        if wire:
+            out.setdefault(wire.casefold(), f"guest:{wire}")
+    flags = list(open_flags or ())
+    unknown = any(f.get("kind") == "unknown_voice" for f in flags)
+    flagged = {f["message_id"] for f in flags if f.get("message_id")}
+    for m in list(recent_messages or ())[-GUEST_CONTEXT_TURNS:]:
+        if unknown:
+            break
+        if m.get("speaker") != "user":
+            continue
+        unknown = ingest_speaker(m, flagged, owner_name,
+                                 identity_names) == GUEST_UNKNOWN
+    if unknown:
+        out[GUEST_UNKNOWN] = GUEST_UNKNOWN
+    return sorted(out.values())
+
+
 class HeldWatermark(NamedTuple):
     """What the service holds for one conversation (contract 1.4).
     state: "held" (highest is the top external_id it holds, or None when
@@ -218,6 +290,7 @@ class MemoryClient:
         # at, as the service itself reports it. Empty on an older service.
         self.browser_origin = ""
         self._stamp_warned = False  # one line, once, when the service predates 1.3
+        self._guest_stamp_warned = False  # same, for guest_speakers (1.5)
         self._warned_mismatch = False
         # Leave-hook write jobs: chat_id -> {"state": running|ok|failed, "error", "ts"}
         # Surfaced in /api/state; a failure also warns the models next round.
@@ -374,14 +447,22 @@ class MemoryClient:
     async def save_fact(self, content: str, origin_agent: str,
                         event_date: str | None = None,
                         confidence: str = "medium",
-                        web_sources: list[str] | None = None) -> dict | None:
+                        web_sources: list[str] | None = None,
+                        guest_speakers: list[str] | None = None
+                        ) -> dict | None:
         """POST /facts. Returns the response dict, or None when the service is
         down / the write failed. Model-authored facts land quarantined when the
         service's trust gate says so - that's the service's call, not ours.
 
         web_sources (#138 slice 4, contract 1.3): the round's web stamp, so a
         save that happened after reading a page is held for review. Additive;
-        a pre-1.3 service ignores it, which is the pre-#138 baseline."""
+        a pre-1.3 service ignores it, which is the pre-#138 baseline.
+
+        guest_speakers (contract 1.5): the guests present in the round, as
+        the speaker classes ingest uses (see round_guest_speakers), so a
+        save made while a guest could have been the source is held for
+        review under membro's guest-present group. Sent only when
+        non-empty; a 1.4 service ignores it."""
         if not await self.probe():
             return None
         body = {
@@ -394,6 +475,9 @@ class MemoryClient:
         if web_sources:
             body["web_sources"] = list(web_sources)[:20]
             self._warn_if_stamp_unsupported()
+        if guest_speakers:
+            body["guest_speakers"] = list(guest_speakers)[:MAX_GUEST_SPEAKERS]
+            self._warn_if_guest_stamp_unsupported()
         try:
             r = await self._client.post(self.api + "/facts", json=body)
             r.raise_for_status()
@@ -466,6 +550,20 @@ class MemoryClient:
             log.warning(
                 "memory service contract %s predates web_sources - "
                 "web-derived facts will not be held for review",
+                self._contract_version)
+
+    def _warn_if_guest_stamp_unsupported(self):
+        """One line, once per process: a guest_speakers stamp sent to a
+        pre-1.5 service is ignored there, so a save made with guests present
+        goes straight to recall as it did before the stamp existed. The save
+        still goes; losing the hold silently is what earns the line."""
+        if self._guest_stamp_warned or not self._contract_version:
+            return
+        if self.contract_minor() < 5:
+            self._guest_stamp_warned = True
+            log.warning(
+                "memory service contract %s predates guest_speakers - "
+                "facts saved with guests present will not be held for review",
                 self._contract_version)
 
     async def distill(self, conversation_id: str) -> None:
