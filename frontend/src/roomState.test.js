@@ -163,9 +163,11 @@ test('person summary states sufficiency honestly', () => {
   assert.equal(personSummary(null, 6), null)
 })
 
-test('the forget explainer says deletion, plainly', () => {
+test('the forget explainer says deletion in both apps, plainly', () => {
   assert.match(FORGET_EXPLAINER, /deletes/)
-  assert.match(FORGET_EXPLAINER, /this computer/)
+  assert.match(FORGET_EXPLAINER, /here and in memory/)
+  assert.match(FORGET_EXPLAINER, /back to review/)
+  assert.doesNotMatch(FORGET_EXPLAINER, /this computer/)
 })
 
 // ── preferred display names (#28 phase 3) ───────────────────────────────────

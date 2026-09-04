@@ -14,12 +14,14 @@ path (startup, and after rounds - never during a turn):
    there (slug = the local person id, already unique and stable).
    Participant-boundary entries are never pushed - they are guard
    artefacts, not people (#65/#77).
-3. REPLAY corrections (slice 3): every local move, delete and merge
-   the owner made is a judgement the durable home must reflect, or the
-   correction resurrects through a rebuild. The store's correction
-   ledger is replayed against membro's move/delete/merge routes; what
-   lands (or has already converged) is removed, what cannot land yet
-   stays for the next pass.
+3. REPLAY corrections (slice 3): every local move, delete, merge and
+   forget the owner made is a judgement the durable home must reflect,
+   or the correction resurrects through a rebuild. The store's
+   correction ledger is replayed against membro's move/delete/merge/
+   forget routes; what lands (or has already converged) is removed,
+   what cannot land yet stays for the next pass. A forget replayed this
+   way is membro's own one-press forget: the audio goes there too and
+   that person's approved facts return to review.
 4. PUSH clips: per mapped person, membro's stored sha256 list is
    diffed against the local clip files and missing ones are uploaded.
    Content-addressing makes re-runs no-ops, so the first pass after
@@ -125,10 +127,11 @@ def _find_anchor(client, base, slug, sha):
 
 
 def _replay_corrections(client, base, store) -> int:
-    """Replay the owner's moves, deletes and merges against membro (#33
-    slice 3). Consumed when they land OR have already converged (the clip
-    or person is not there to correct); kept pending when the target does
-    not exist yet or membro cannot be reached - the next pass retries.
+    """Replay the owner's moves, deletes, merges and forgets against
+    membro (#33 slice 3). Consumed when they land OR have already
+    converged (the clip or person is not there to correct); kept pending
+    when the target does not exist yet or membro cannot be reached - the
+    next pass retries.
     Every branch is deliberate: dropping a correction silently is how a
     fixed mis-attribution resurrects through a rebuild."""
     done = []
@@ -182,6 +185,15 @@ def _replay_corrections(client, base, store) -> int:
                 elif r.status_code == 409:
                     log.warning("merge refused by membro: %s", r.text[:200])
                     done.append(corr["cid"])
+            elif kind == "forget":
+                # The owner's forget, sent on to the durable home: membro
+                # deletes its audio and holds that person's approved facts
+                # for review. 410 is membro saying it already forgot them,
+                # which is convergence; anything else (401, 500) keeps the
+                # correction pending, never eaten.
+                r = client.post(f"{base}/v1/persons/{corr['slug']}/forget")
+                if r.status_code in (200, 404, 410):
+                    done.append(corr["cid"])
             else:
                 done.append(corr.get("cid"))       # unknown kind: drop
         except httpx.HTTPError:
@@ -203,18 +215,26 @@ def _run(base: str, token: str) -> dict:
         remote = r.json()["persons"]
         slugs = store.membro_slugs()             # local person_id -> slug
         by_slug = {v: k for k, v in slugs.items()}
+        # A person the owner forgot HERE whose forget has not reached
+        # membro yet still reads as living there. Rebuilding them from
+        # membro's copy in the very pass that is about to forget them
+        # would pull the audio straight back; skip them until the replay
+        # below has landed the forget.
+        pending_forget = {c.get("slug") for c in store.pending_corrections()
+                          if c.get("kind") == "forget"}
 
         newest = since
         for person in remote:
             newest = max(newest, person.get("updated_at") or 0)
             slug = person["slug"]
             if person.get("forgotten_at"):
-                # step 3 of the one-press forget: delete our local copies
+                # step 3 of the one-press forget: delete our local copies.
+                # The forget came FROM membro, so nothing goes back.
                 pid = by_slug.get(slug)
-                if pid and store.forget(pid):
+                if pid and store.forget(pid, record=False):
                     out["forgotten"] += 1
                 continue
-            if slug in by_slug:
+            if slug in by_slug or slug in pending_forget:
                 continue
             # a living person we don't hold: rebuild them locally
             pid = store.ensure_person(person["display_name"])

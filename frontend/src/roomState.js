@@ -388,7 +388,8 @@ export const AMBIENT_EXPLAINER =
 // What forgetting means, stated before the click - deletion copy lives with
 // the logic so every surface says the same true thing.
 export const FORGET_EXPLAINER =
-  'Forget deletes this person\'s stored voice audio from this computer. '
+  'Forget deletes this person\'s stored voice audio here and in memory, '
+  + 'and anything memory learned from them goes back to review there. '
   + 'They can be re-learned only by being introduced and heard again.'
 
 // #83: a bank that crossed sufficiency with no human ever standing behind
