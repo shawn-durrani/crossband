@@ -8,6 +8,9 @@ slice-1 routes), the contract under test:
 - a person membro holds and we don't is rebuilt locally, clips included;
 - a person membro marks forgotten is forgotten here too - the one-press
   forget's step 3;
+- a person forgotten HERE is forgotten in membro too (workbench#56): the
+  forget rides the correction ledger, and the pull step never rebuilds
+  them in the pass that is about to send it;
 - a participant-named entry (#65 guard artefact) is never pushed;
 - no token, or membro unreachable, is a clean logged no-op - crossband
   behaves exactly as it did before membro existed.
@@ -47,6 +50,7 @@ class FakeMembro:
         self.anchors = {}      # slug -> [{id, sha256, source, data}]
         self.requests = []
         self.fail_anchor_lists = False   # 500 every anchors GET when set
+        self.fail_forget = False         # 500 every forget POST when set
 
         fake = self
 
@@ -139,6 +143,24 @@ class FakeMembro:
                     fake.anchors.setdefault(body["into"], []).extend(
                         fake.anchors.pop(parts[2], []))
                     self._json({"merged": parts[2], "into": body["into"]})
+                elif len(parts) == 4 and parts[3] == "forget":
+                    person = fake.persons.get(parts[2])
+                    if person is None:
+                        self._json({"error": "no such person"}, 404)
+                        return
+                    if person.get("forgotten_at"):
+                        self._json({"error": "already forgotten"}, 410)
+                        return
+                    if fake.fail_forget:
+                        self._json({"error": "boom"}, 500)
+                        return
+                    rows = fake.anchors.get(parts[2], [])
+                    n = len(rows)
+                    rows.clear()
+                    person["forgotten_at"] = 400.0
+                    person["updated_at"] = 400.0
+                    self._json({"forgotten": parts[2], "clips_deleted": n,
+                                "files_removed": n, "facts_held": 0})
                 else:
                     self._json({"error": "nope"}, 404)
 
@@ -317,6 +339,87 @@ def test_a_forgotten_person_is_forgotten_here_too(app, membro):
     out = person_sync.sync_once(membro.url, force=True)
     assert out["forgotten"] == 1
     assert store.find_by_name("Sam") is None          # audio and entry gone
+    assert store.people() == []
+
+
+def test_a_local_forget_reaches_membro_and_cannot_resurrect(app, membro):
+    """workbench#56: the owner's Forget here must be membro's forget too,
+    or the both-apps promise in the explainer is false. Two passes on
+    purpose: a pull that rebuilds the person from membro's living copy
+    in the same pass that sends the forget would pass a one-pass test
+    and still bring the audio back on the next one."""
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, _pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(pid, _pcm(2.5), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+    assert len(membro.anchors[pid]) == 2
+
+    assert store.forget(pid)
+    assert [c["kind"] for c in store.pending_corrections()] == ["forget"]
+    assert store.pending_corrections()[0]["slug"] == pid
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert out["pulled_people"] == 0                # not rebuilt on the way
+    assert membro.persons[pid]["forgotten_at"]
+    assert membro.anchors[pid] == []                # audio gone there too
+    assert store.people() == []
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["pulled_people"] == 0 and again["restored_clips"] == 0
+    assert store.people() == []                     # and it stays gone
+    forgets = [r for r in membro.requests
+               if r[0] == "POST" and r[1].endswith("/forget")]
+    assert len(forgets) == 1                        # sent once, not retried
+
+
+def test_a_forget_membro_already_made_is_convergence(app, membro):
+    """410 from membro means it already forgot them: consume, never retry."""
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, _pcm(), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+
+    assert store.forget(pid)
+    membro.persons[pid]["forgotten_at"] = 200.0    # forgotten there first
+    membro.persons[pid]["updated_at"] = 200.0
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert store.people() == []
+
+
+def test_a_failed_forget_stays_pending_and_never_resurrects(app, membro):
+    """A 500 (or a stale token's 401) is not convergence: the forget waits
+    for the next pass, and the pull guard holds while it waits."""
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, _pcm(), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    assert store.forget(pid)
+
+    membro.fail_forget = True
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 0
+    assert len(store.pending_corrections()) == 1    # kept, not eaten
+    assert store.people() == []                     # not rebuilt meanwhile
+    assert not membro.persons[pid]["forgotten_at"]
+
+    membro.fail_forget = False
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert membro.persons[pid]["forgotten_at"]
+    assert membro.anchors[pid] == []
+
+
+def test_forgetting_a_person_membro_never_knew_records_nothing(app):
+    """No membro slug means nothing durable to fix: the ledger stays empty
+    and the forget is exactly the local delete it always was."""
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, _pcm(), 16000, source="introduction")
+    assert store.forget(pid)
+    assert store.pending_corrections() == []
     assert store.people() == []
 
 

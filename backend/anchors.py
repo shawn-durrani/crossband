@@ -939,10 +939,18 @@ class AnchorStore:
             self._delete_file(fname)
         return True
 
-    def forget(self, person_id: str) -> bool:
+    def forget(self, person_id: str, record: bool = True) -> bool:
         """Delete a remembered person: every clip file AND the index entry.
         This is the privacy contract behind the roster UI's forget button -
-        after it returns, no audio of that person remains on disk."""
+        after it returns, no audio of that person remains on disk.
+
+        The durable home must forget them too, or the next sync pass
+        rebuilds the person from membro's copy. A person membro knows is
+        recorded in the correction ledger by slug (the local id is gone
+        with the entry), and person_sync replays it as membro's own
+        forget: audio deleted there, their approved facts back to review.
+        `record=False` is for the sync pass itself, when the forget
+        ORIGINATED in membro and there is nothing to send back."""
         with self._lock:
             data = self._load()
             person = data["people"].pop(person_id, None)
@@ -950,6 +958,10 @@ class AnchorStore:
                 return False
             data["close_pairs"] = [p for p in (data.get("close_pairs") or [])
                                    if person_id not in p[:2]]
+            slug = person.get("membro_slug")
+            if record and slug:
+                self._record_correction(data, {"kind": "forget",
+                                               "slug": slug})
             self._save(data)
             for c in person.get("clips", []):
                 self._delete_file(c["file"])
