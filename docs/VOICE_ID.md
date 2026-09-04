@@ -237,8 +237,11 @@ reflects your judgement, and a rebuild can never resurrect a recording
 you corrected away. Forget does not wait for that pass: it sends the
 forget the moment you press it, and a later pass retries one membro
 could not take. Membro deletes its copy of the audio and sends the
-facts it learned from that person back to review. A correction made
-while membro is down simply waits for the next pass.
+facts it learned from that person back to review. Forgetting someone
+also settles any waiting correction that named them: the other record
+in a merge they won is forgotten too, and a clip moved into them is
+deleted at its source. A correction made while membro is down simply
+waits for the next pass.
 
 ## Scale bounds
 
