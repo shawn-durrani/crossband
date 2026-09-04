@@ -453,7 +453,9 @@ def test_handoff_ships_attachment_bytes(app, monkeypatch):
     class FakeHandoffMemory:
         msgs = None
 
-        async def handoff_chat(self, cid, get_new, advance):
+        async def handoff_chat(self, cid, get_new, advance, get_watermark=None):
+            # contract 1.4: the engine hands over the watermark reader too
+            assert get_watermark() == 0
             FakeHandoffMemory.msgs = await asyncio.to_thread(get_new)
 
     mem = FakeHandoffMemory()

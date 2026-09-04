@@ -23,7 +23,8 @@ def test_state_boots_keyless_and_memoryless(app):
         r = client.get("/api/state")
         assert r.status_code == 200
         data = r.json()
-        assert data["memory"] == {"available": False, "url": "http://127.0.0.1:1"}
+        assert data["memory"] == {"available": False, "url": "http://127.0.0.1:1",
+                                  "browser_origin": ""}
         assert data["memory_writes"] == {"failed": [], "pending": []}
         slugs = {p["slug"] for p in data["participants"]}
         assert slugs == {"claude", "gpt"}  # seeded default roster

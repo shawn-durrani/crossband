@@ -26,12 +26,18 @@ export function discardWarnings({ hasLaterReplies }) {
 }
 
 // #111: turn the discard response's memory ref into membro's erase deep
-// link. Same host the browser is already on (so it works from the phone),
-// membro's fixed port, ref segments encoded. Null when there is nothing to
-// link (not ingested, or an older server without the ref).
-export function eraseLink(ref, hostname) {
+// link. `origin` is the browser-reachable origin membro itself reports
+// (contract 1.4 `browser_origin`), so the link works from a phone on the
+// tailnet. Without it (an older membro) fall back to the host the browser
+// is already on with membro's fixed port. Ref segments encoded. Null when
+// there is nothing to link (not ingested, or an older server without the
+// ref).
+export function eraseLink(ref, hostname, origin = '') {
   if (!ref || !ref.source_app || !ref.conversation || !ref.message) return null
-  if (!hostname) return null
   const seg = (s) => encodeURIComponent(String(s))
-  return `http://${hostname}:8901/#erase=${seg(ref.source_app)}/${seg(ref.conversation)}/${seg(ref.message)}`
+  const path = `#erase=${seg(ref.source_app)}/${seg(ref.conversation)}/${seg(ref.message)}`
+  const base = typeof origin === 'string' ? origin.replace(/\/+$/, '') : ''
+  if (base) return `${base}/${path}`
+  if (!hostname) return null
+  return `http://${hostname}:8901/${path}`
 }

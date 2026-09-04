@@ -12,7 +12,7 @@ import asyncio
 import httpx
 import pytest
 
-from backend.memory_client import MemoryClient, MemorySearchError
+from backend.memory_client import SOURCE_APP, MemoryClient, MemorySearchError
 
 
 def run(coro):
@@ -346,4 +346,170 @@ def test_wait_job_refusal_returns_immediately_and_loudly(monkeypatch, caplog):
     assert out is None
     assert len(calls) == 1
     assert any("MEMORY_AUTH_TOKEN" in r.message for r in caplog.records)
+    run(c.aclose())
+
+
+# ---- contract 1.4: browser_origin and the restore reconcile (#318) ----
+
+
+def _fake_routes(health, watermark=None, watermark_fails=False):
+    """A GET fake that answers /health with `health` and the watermark
+    route with `watermark` (a (status, body) pair), recording every URL
+    hit so a test can prove the route was or was not called."""
+    calls = []
+
+    async def fake_get(url, headers=None):
+        calls.append(url)
+        if url.endswith("/health"):
+            return httpx.Response(200, json=health,
+                                  request=httpx.Request("GET", url))
+        if url.endswith("/watermark"):
+            if watermark_fails:
+                raise httpx.ConnectError("boom")
+            status, body = watermark
+            return httpx.Response(status, json=body,
+                                  request=httpx.Request("GET", url))
+        raise AssertionError(f"unexpected GET {url}")
+
+    return fake_get, calls
+
+
+def _ok_post(url, json=None, headers=None):
+    return httpx.Response(200, json={"ingested": 0, "skipped": 0, "job_id": "j"},
+                          request=httpx.Request("POST", url))
+
+
+async def _fake_post(url, json=None, headers=None):
+    return _ok_post(url, json, headers)
+
+
+def _handoff(c, current, watermark=None, watermark_fails=False, health=None):
+    """Run one handoff with the watermark seam faked; returns (advanced,
+    order, calls): every advance_watermark argument, the order the seams
+    fired in, and every GET the client made."""
+    health = health or {"status": "ok", "contract_version": "1.4"}
+    fake_get, calls = _fake_routes(health, watermark, watermark_fails)
+    c._client.get = fake_get
+    c._client.post = _fake_post
+    advanced, order = [], []
+
+    def get_new():
+        order.append("get_new_messages")
+        return []
+
+    def advance(last):
+        order.append(f"advance:{last}")
+        advanced.append(last)
+
+    run(c.handoff_chat(9, get_new, advance, get_watermark=lambda: current))
+    run(c.aclose())
+    return advanced, order, calls
+
+
+def test_probe_stores_browser_origin():
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.4",
+                                  "browser_origin": "https://my-mac.my-tailnet.ts.net:8443"})
+    assert run(c.probe(force=True)) is True
+    assert c.browser_origin == "https://my-mac.my-tailnet.ts.net:8443"
+    assert c.status()["browser_origin"] == "https://my-mac.my-tailnet.ts.net:8443"
+    assert c.contract_minor() == 4
+    run(c.aclose())
+
+
+def test_older_service_reports_no_browser_origin():
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.3"})
+    assert run(c.probe(force=True)) is True
+    assert c.browser_origin == ""
+    assert c.status()["browser_origin"] == ""
+    assert c.contract_minor() == 3
+    run(c.aclose())
+
+
+def test_handoff_never_asks_a_1_3_service_for_its_watermark():
+    c = make_client()
+    advanced, order, calls = _handoff(
+        c, current=100, health={"status": "ok", "contract_version": "1.3"})
+    assert not any(u.endswith("/watermark") for u in calls)
+    assert advanced == []
+    assert order == ["get_new_messages"]
+    assert c.write_status()["failed"] == []
+
+
+def test_handoff_winds_back_to_what_the_service_holds(caplog):
+    """The workbench#68 shape: membro restored from a backup holds up to
+    message 40, crossband's watermark says 100. The reconcile rewinds to
+    40 BEFORE the new-message read, so the gap is handed over again."""
+    c = make_client()
+    with caplog.at_level("WARNING", logger="crossband.memory"):
+        advanced, order, calls = _handoff(
+            c, current=100,
+            watermark=(200, {"highest_external_id": "40", "messages": 12}))
+    assert any(u.endswith(f"/conversations/{SOURCE_APP}/9/watermark")
+               for u in calls)
+    assert advanced == [40]
+    assert order == ["advance:40", "get_new_messages"]
+    assert "workbench#68" in caplog.text and "100" in caplog.text
+    assert c.write_status()["failed"] == []
+
+
+def test_handoff_winds_back_to_zero_when_the_service_holds_nothing():
+    c = make_client()
+    advanced, order, _ = _handoff(
+        c, current=100,
+        watermark=(404, {"error": {"code": "404", "message": "no such conversation"}}))
+    assert advanced == [0]
+    assert order == ["advance:0", "get_new_messages"]
+
+
+def test_handoff_leaves_a_watermark_that_agrees_alone():
+    c = make_client()
+    advanced, order, _ = _handoff(
+        c, current=40,
+        watermark=(200, {"highest_external_id": "40", "messages": 12}))
+    assert advanced == []
+    assert order == ["get_new_messages"]
+    # ahead of us (the service saw a later import) is not a rewind either
+    c = make_client()
+    advanced, _, _ = _handoff(
+        c, current=40,
+        watermark=(200, {"highest_external_id": "55", "messages": 20}))
+    assert advanced == []
+
+
+def test_handoff_skips_the_reconcile_on_a_non_numeric_id():
+    c = make_client()
+    advanced, order, _ = _handoff(
+        c, current=100,
+        watermark=(200, {"highest_external_id": "msg-7", "messages": 3}))
+    assert advanced == []
+    assert order == ["get_new_messages"]
+
+
+def test_watermark_transport_failure_never_blocks_the_handoff(caplog):
+    c = make_client()
+    with caplog.at_level("WARNING", logger="crossband.memory"):
+        advanced, order, calls = _handoff(c, current=100, watermark_fails=True)
+    assert any(u.endswith("/watermark") for u in calls)
+    assert advanced == []
+    assert order == ["get_new_messages"]
+    assert c.write_status()["failed"] == []
+    assert "watermark" in caplog.text
+
+
+def test_held_watermark_states():
+    c = make_client()
+    fake_get, _ = _fake_routes(
+        {"status": "ok", "contract_version": "1.4"},
+        watermark=(200, {"highest_external_id": "12", "messages": 4}))
+    c._client.get = fake_get
+    assert run(c.probe(force=True)) is True
+    held = run(c.held_watermark("3"))
+    assert (held.state, held.highest, held.messages) == ("held", "12", 4)
+    fake_get, _ = _fake_routes(
+        {"status": "ok", "contract_version": "1.4"},
+        watermark=(200, {"unexpected": True}))
+    c._client.get = fake_get
+    assert run(c.held_watermark("3")).state == "unavailable"
     run(c.aclose())

@@ -453,7 +453,8 @@ export default function App() {
       if (r?.ingested) {
         // #111: hand the owner the next step, not a dead end - membro's
         // eraser deep link lands prefilled with a preview.
-        const url = eraseLink(r.memory_ref, window.location.hostname)
+        const url = eraseLink(r.memory_ref, window.location.hostname,
+                              state.memory?.browser_origin)
         setBanner(url
           ? (<span>Discarded from the chat. A copy had already reached memory -{' '}
               <a href={url} target="_blank" rel="noreferrer" className="underline">erase it there</a>

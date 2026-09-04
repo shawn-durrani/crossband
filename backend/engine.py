@@ -1315,4 +1315,14 @@ async def leave_chat_job(chat_id, cfg, memory):
         c.commit()
         c.close()
 
-    await memory.handoff_chat(chat_id, _get_new_messages, _advance)
+    def _get_watermark():
+        # Contract 1.4: what this app believes it has handed over, so the
+        # client can check it against what the service still holds.
+        c = db.connect()
+        row = c.execute("SELECT ingested_upto FROM chats WHERE id=?",
+                        (chat_id,)).fetchone()
+        c.close()
+        return int(row[0]) if row and row[0] is not None else 0
+
+    await memory.handoff_chat(chat_id, _get_new_messages, _advance,
+                              get_watermark=_get_watermark)
