@@ -233,10 +233,11 @@ Corrections travel too: moving a clip to the right person, deleting one,
 merging duplicate people, or forgetting someone here is recorded and
 replayed against membro on the next pass - so the durable record always
 reflects your judgement, and a rebuild can never resurrect a recording
-you corrected away. A forget sent this way is membro's own forget: its
-copy of the audio is deleted and the facts it learned from that person
-go back to review there. A correction made while membro is down simply
-waits for the next pass.
+you corrected away. Forget does not wait for that pass: it sends the
+forget the moment you press it, and a later pass retries one membro
+could not take. Membro deletes its copy of the audio and sends the
+facts it learned from that person back to review. A correction made
+while membro is down simply waits for the next pass.
 
 ## Scale bounds
 

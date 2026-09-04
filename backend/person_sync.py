@@ -2,8 +2,9 @@
 membro#33).
 
 Crossband stays the capture app and does all identification; membro is
-the durable home. One pass does four jobs, entirely off the live voice
-path (startup, and after rounds - never during a turn):
+the durable home. One pass does four jobs, always on a worker thread off
+the live voice path (startup, after rounds, and at once when the owner
+forgets someone - see `kick`):
 
 1. PULL: fetch person records changed since the last pass. A person
    marked forgotten whose bank we hold locally is forgotten here too
@@ -105,6 +106,26 @@ def sync_once(memory_url: str, force: bool = False) -> dict:
                 log.info("person sync skipped (membro unreachable): %s", e)
                 _state["warned"] = True
             return {"skipped": f"unreachable: {e}"}
+
+
+def kick(memory_url: str) -> threading.Thread:
+    """One forced pass on its own thread, started now; the thread is
+    returned so a caller can join it. This is Forget's path (#334): the
+    audio is gone here when the button returns, and membro's copy should
+    go at that moment too, not at the end of the next round. Forced past
+    the debounce; the lock in sync_once still queues it behind a pass in
+    flight. No token, or membro down, is the same logged no-op as ever,
+    and the ledger row keeps the forget for the next pass. Never raises:
+    the route has already answered the owner."""
+    def _go():
+        try:
+            sync_once(memory_url, force=True)
+        except Exception:
+            log.exception("kicked person sync failed")
+
+    t = threading.Thread(target=_go, name="person-sync-kick", daemon=True)
+    t.start()
+    return t
 
 
 def _find_anchor(client, base, slug, sha):
