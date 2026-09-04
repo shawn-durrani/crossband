@@ -222,11 +222,12 @@ were recorded carry none, and such a bank keeps working.
 ## The durable home
 
 Learned voices no longer live only in this app's data directory. When
-membro is configured (MEMORY_AUTH_TOKEN in the env), a background pass -
-at startup and after rounds, never during a turn - uploads accepted
-clips to membro's person records, pulls people this install doesn't
-hold, and obeys forget marks: forgetting a person in either app deletes
-the stored audio in both. Membro down means the pass logs once and does
+membro is configured (MEMORY_AUTH_TOKEN in the env), a background pass
+uploads accepted clips to membro's person records, pulls people this
+install doesn't hold, and obeys forget marks: forgetting a person in
+either app deletes the stored audio in both. The pass runs at startup,
+after rounds, and the moment you forget someone, always on a worker
+thread no turn waits for. Membro down means the pass logs once and does
 nothing; identification never waits on it.
 
 Corrections travel too: moving a clip to the right person, deleting one,
