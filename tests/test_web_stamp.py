@@ -162,6 +162,53 @@ def test_current_contract_stays_quiet(caplog):
     assert not [r for r in caplog.records if "predates" in r.message]
 
 
+# ---------- the guest stamp on the wire (contract 1.5) ----------
+
+def test_save_fact_sends_guest_speakers_only_when_present():
+    mc, fake = _client(contract="1.5")
+    asyncio.run(mc.save_fact("a claim heard in the room", "claude-x",
+                             guest_speakers=["guest:Sam", "guest:unknown"]))
+    asyncio.run(mc.save_fact("the owner alone", "claude-x",
+                             guest_speakers=[]))
+    asyncio.run(mc.save_fact("no stamp given", "claude-x"))
+    (_, stamped), (_, empty), (_, absent) = fake.bodies
+    assert stamped["guest_speakers"] == ["guest:Sam", "guest:unknown"]
+    assert "guest_speakers" not in empty
+    assert "guest_speakers" not in absent
+    # SOURCE_APP is untouched by the new field
+    assert stamped["source_app"] == memory_client.SOURCE_APP
+
+
+def test_save_fact_caps_guest_speakers_at_twelve():
+    mc, fake = _client(contract="1.5")
+    many = [f"guest:G{i}" for i in range(20)]
+    asyncio.run(mc.save_fact("a crowded room", "claude-x", guest_speakers=many))
+    (_, payload), = fake.bodies
+    assert payload["guest_speakers"] == many[:memory_client.MAX_GUEST_SPEAKERS]
+    assert memory_client.MAX_GUEST_SPEAKERS == 12
+
+
+def test_guest_stamp_on_a_1_4_service_warns_once_and_still_sends(caplog):
+    mc, fake = _client(contract="1.4")
+    with caplog.at_level("WARNING"):
+        asyncio.run(mc.save_fact("first", "claude-x",
+                                 guest_speakers=["guest:Sam"]))
+        asyncio.run(mc.save_fact("second", "claude-x",
+                                 guest_speakers=["guest:Sam"]))
+    hits = [r for r in caplog.records if "predates guest_speakers" in r.message]
+    assert len(hits) == 1
+    # The stamp still rides: ignoring it is the older service's call.
+    assert all(b[1].get("guest_speakers") for b in fake.bodies)
+
+
+def test_guest_stamp_on_a_1_5_service_stays_quiet(caplog):
+    mc, _ = _client(contract="1.5")
+    with caplog.at_level("WARNING"):
+        asyncio.run(mc.save_fact("fine", "claude-x",
+                                 guest_speakers=["guest:Sam"]))
+    assert not [r for r in caplog.records if "predates" in r.message]
+
+
 # ---------- the row-to-wire seam ----------
 
 class _FakeHandoffHttp:

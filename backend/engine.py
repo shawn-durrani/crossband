@@ -140,7 +140,7 @@ async def _adopted_result(task):
 
 
 def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0,
-                      slug=""):
+                      slug="", owner_name=""):
     """One speaker's DB reads, in one connection, on one worker thread: the
     cheap per-speaker row reads that deliberately stay per-speaker, plus the
     transcript delta. Returns None when the chat vanished mid-round. The
@@ -155,7 +155,11 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0,
     folded into the rows already held, and the second and later speakers in
     a round see the resolved name instead of replying to a stale projection.
     One extra indexed SELECT inside the per-seat read that already runs on
-    this worker thread - nothing new blocks the dispatch path."""
+    this worker thread - nothing new blocks the dispatch path.
+
+    `owner_name` (contract 1.5): the user_name setting, so the round's
+    "guests present" set (room_guest_speakers) can leave the owner's own
+    roster seat out."""
     con = db.connect()
     try:
         chat = con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
@@ -190,30 +194,48 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0,
         # arm/disarm or roster change is seen at the next seat's boundary.
         # One indexed SELECT, only when the mode is actually on.
         room_names = []
+        room_flags = []
         if chat["room_mode"]:
             room_names = [r["name"] for r in
                           db.get_room_roster(con, chat_id, present_only=True)]
+            # The open asks and doubts feed the round's "guests present"
+            # set (contract 1.5) below; one more indexed SELECT, room mode
+            # only.
+            room_flags = db.get_room_flags(con, chat_id, open_only=True)
         # Preferred display names (#28: naming is law): every projection
         # surface speaks a person's preferred name, so the roster line and
         # the turn heads resolve through this map (identity AND merged-away
         # names -> preferred). Read per seat like everything else here; a
         # broken store degrades to identity names, never to a broken round.
         preferred_names = {}
+        identity_names = {}
         try:
             from . import anchors
-            for p in anchors.store().people():
+            people = anchors.store().people()
+            for p in people:
                 preferred_names[p["name"].casefold()] = p["preferred_name"]
                 for merged in p.get("merged_names") or []:
                     preferred_names[merged.casefold()] = p["preferred_name"]
+            identity_names = memory_client_mod.identity_name_map(people)
         except Exception:
             log.debug("anchor store unreadable for the round's preferred "
                       "names", exc_info=True)
+        # The guests present in the round (contract 1.5): what a model's
+        # direct save_memory carries so membro can hold it for review. Built
+        # from the RAW roster names, before the display mapping, because the
+        # wire carries identity names. Read per seat like the roster, so a
+        # guest seated mid-round is stamped from the next seat on.
+        room_guest_speakers = memory_client_mod.round_guest_speakers(
+            room_mode=bool(chat["room_mode"]), roster_names=room_names,
+            recent_messages=messages, open_flags=room_flags,
+            owner_name=owner_name, identity_names=identity_names)
         room_names = [preferred_names.get(n.casefold(), n)
                       for n in room_names]
         return {"chat": chat, "project": project, "roster": roster,
                 "names": names, "messages": messages, "last_seen_id": last_seen_id,
                 "labels_cursor": labels_cursor, "room_names": room_names,
                 "preferred_names": preferred_names,
+                "room_guest_speakers": room_guest_speakers,
                 # #105: spoken per-chat depth per seat. Read per seat like
                 # everything else here, so a mid-round "think harder" applies
                 # from the next seat's boundary. once_effort (slice 2) is
@@ -587,7 +609,8 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # voice websockets and SSE streams.
         state = await asyncio.to_thread(_load_round_state, chat_id, messages,
                                         last_seen_id, labels_cursor,
-                                        participant["slug"])
+                                        participant["slug"],
+                                        cfg.get("user_name", "User"))
         if state is None:
             break
         chat = state["chat"]
@@ -655,6 +678,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # #138 slice 4: the SAME set object persist_live stamps onto each
         # assistant insert - run_tool adds the domains web tools touch.
         round_cfg["_round_web_domains"] = live["web_domains"]
+        # Contract 1.5: the guests present in the round, so save_memory can
+        # carry them and membro can hold the save. Never part of a prompt;
+        # tools.py reads it the way it reads the web stamp.
+        round_cfg["_round_guest_speakers"] = state["room_guest_speakers"]
         # Room mode gates the pending-identity head (#28, night test 4): only
         # a room-mode chat has a diarization pass racing the round, so only
         # there may an unlabelled young turn honestly claim "name still
@@ -1278,20 +1305,17 @@ async def leave_chat_job(chat_id, cfg, memory):
         slug_by_name = {}
         try:
             from . import anchors
-            for p in anchors.store().people():
-                # #56: the WIRE name is the identity name (the anchor-store
-                # key), the one string "names are law" keeps stable - never
-                # the preferred display name, which is cosmetic and freely
-                # correctable. The memory ledger keys a guest's provenance
-                # on the literal wire string forever, so a preferred-name
-                # edit must never fork one person's history into two guests
-                # there. Labels written under a preferred spelling or a
-                # merged-away name resolve here to the one survivor.
-                identity[p["name"].casefold()] = p["name"]
-                if p.get("preferred_name"):
-                    identity[p["preferred_name"].casefold()] = p["name"]
-                for merged in p.get("merged_names") or []:
-                    identity[merged.casefold()] = p["name"]
+            people = anchors.store().people()
+            # #56: the WIRE name is the identity name (the anchor-store
+            # key), the one string "names are law" keeps stable - never
+            # the preferred display name, which is cosmetic and freely
+            # correctable. The memory ledger keys a guest's provenance
+            # on the literal wire string forever, so a preferred-name
+            # edit must never fork one person's history into two guests
+            # there. Labels written under a preferred spelling or a
+            # merged-away name resolve to the one survivor.
+            identity = memory_client_mod.identity_name_map(people)
+            for p in people:
                 # #33 contract 1.2: the membro slug behind each name, so
                 # the wire can say WHICH person record, not just a string
                 if p.get("membro_slug"):

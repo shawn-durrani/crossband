@@ -164,10 +164,17 @@ sends it, so an older membro keeps the behaviour of the version before.
   own `ingested_upto` back when membro holds less, which is what a
   restore from backup leaves behind. A saved fact's `event_date` is the
   owner's local calendar day, and membro anchors it to local midnight.
+- 1.5: `guest_speakers` on a saved fact. In room mode a model's direct
+  `save_memory` carries the guests present in the round, as the same
+  `guest:<name>` and `guest:unknown` classes ingest uses, and membro
+  holds the save for review under its guest-present group. Outside room
+  mode, or with the owner alone, the field is not sent.
 
 On a 1.3 membro the marker never appears, the eraser link falls back to
 the browser's own host on port 8901, and the watermark route is never
-called.
+called. On a 1.4 membro the guest stamp is sent and ignored, so such a
+save goes straight to recall, and crossband logs one warning per
+process.
 
 ## Coding guest + GitHub (the `code` toggle)
 
