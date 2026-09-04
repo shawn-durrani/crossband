@@ -133,14 +133,18 @@ def _replay_corrections(client, base, store) -> int:
     when the target does not exist yet or membro cannot be reached - the
     next pass retries.
     Every branch is deliberate: dropping a correction silently is how a
-    fixed mis-attribution resurrects through a rebuild."""
+    fixed mis-attribution resurrects through a rebuild.
+    A move or delete out of a person since forgotten carries that
+    person's slug on the row (#335): the local id no longer resolves, and
+    the row sits ahead of the forget in ledger order, so it lands first
+    or converges on membro saying the person is gone."""
     done = []
     slugs = store.membro_slugs()
     for corr in store.pending_corrections():
         kind = corr.get("kind")
         try:
             if kind == "move":
-                from_slug = slugs.get(corr["from"])
+                from_slug = corr.get("from_slug") or slugs.get(corr["from"])
                 to_slug = slugs.get(corr["to"])
                 if from_slug is None:
                     done.append(corr["cid"])      # nothing durable to fix
@@ -161,7 +165,7 @@ def _replay_corrections(client, base, store) -> int:
                                 r.text[:200])
                     done.append(corr["cid"])
             elif kind == "delete":
-                from_slug = slugs.get(corr["from"])
+                from_slug = corr.get("from_slug") or slugs.get(corr["from"])
                 if from_slug is None:
                     done.append(corr["cid"])
                     continue
@@ -215,6 +219,21 @@ def _run(base: str, token: str) -> dict:
         remote = r.json()["persons"]
         slugs = store.membro_slugs()             # local person_id -> slug
         by_slug = {v: k for k, v in slugs.items()}
+
+        newest = since
+        # Forget marks first, before any rebuild. Step 3 of the one-press
+        # forget: delete our local copies. The forget came FROM membro, so
+        # nothing goes back - but mirroring it settles any pending row
+        # that named the person (#335), and a settled merge is now a
+        # forget of its loser, who still lives in membro. The rebuild
+        # below must see that row, or it pulls the loser back for a pass.
+        for person in remote:
+            newest = max(newest, person.get("updated_at") or 0)
+            if not person.get("forgotten_at"):
+                continue
+            pid = by_slug.get(person["slug"])
+            if pid and store.forget(pid, record=False):
+                out["forgotten"] += 1
         # A person the owner forgot HERE whose forget has not reached
         # membro yet still reads as living there. Rebuilding them from
         # membro's copy in the very pass that is about to forget them
@@ -222,19 +241,10 @@ def _run(base: str, token: str) -> dict:
         # below has landed the forget.
         pending_forget = {c.get("slug") for c in store.pending_corrections()
                           if c.get("kind") == "forget"}
-
-        newest = since
         for person in remote:
-            newest = max(newest, person.get("updated_at") or 0)
             slug = person["slug"]
-            if person.get("forgotten_at"):
-                # step 3 of the one-press forget: delete our local copies.
-                # The forget came FROM membro, so nothing goes back.
-                pid = by_slug.get(slug)
-                if pid and store.forget(pid, record=False):
-                    out["forgotten"] += 1
-                continue
-            if slug in by_slug or slug in pending_forget:
+            if (person.get("forgotten_at") or slug in by_slug
+                    or slug in pending_forget):
                 continue
             # a living person we don't hold: rebuild them locally
             pid = store.ensure_person(person["display_name"])

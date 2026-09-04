@@ -14,6 +14,7 @@ Pure rules (quality, keep policy, sufficiency) are tested directly;
 store behaviour through a tmp-path-rooted AnchorStore. No network anywhere.
 """
 
+import hashlib
 import os
 
 import pytest
@@ -77,6 +78,126 @@ def test_pulled_clip_corrections_speak_membro_sha(store):
     assert store.membro_stamps(pid) == {fname: "a" * 64}
     assert store.delete_clip(pid, fname)
     assert [c["sha"] for c in store.pending_corrections()] == ["a" * 64]
+
+
+def _sha_of(store, fname):
+    return hashlib.sha256((store.root / fname).read_bytes()).hexdigest()
+
+
+# ── forget settles the pending rows that named the person (#335) ───────────
+
+def test_forgetting_a_merge_winner_forgets_the_loser_too(store):
+    """The merge said the two are one human, so forgetting the winner is
+    forgetting the loser. The pending merge named the winner by a local
+    id that stops resolving the moment they are forgotten; left as it
+    was, the row waited forever and the loser, still living in membro,
+    was rebuilt here under the other name."""
+    sam = store.ensure_person("Sam")          # older: merge_people keeps it
+    sammy = store.ensure_person("Sammy")
+    assert store.add_clip(sam, loud_pcm(2.0), 16000, source="introduction")
+    assert store.set_membro_slug(sam, "sam-slug")
+    assert store.set_membro_slug(sammy, "sammy-slug")
+    assert store.merge_people(sam, sammy) == sam
+    merge = store.pending_corrections()
+    assert [c["kind"] for c in merge] == ["merge"]
+
+    assert store.forget(sam)
+    rows = store.pending_corrections()
+    assert [(c["kind"], c["slug"]) for c in rows] == [
+        ("forget", "sammy-slug"), ("forget", "sam-slug")]
+    # the same ledger row, settled in place: order, cid and stamp kept
+    assert rows[0]["cid"] == merge[0]["cid"]
+    assert rows[0]["at"] == merge[0]["at"]
+    assert "winner" not in rows[0] and "loser_slug" not in rows[0]
+
+
+def test_a_forget_membro_made_settles_a_pending_merge_too(store):
+    """record=False (the forget came FROM membro) sends nothing back for
+    this person, but the loser of a merge they won still lives in membro
+    as their own record, and that forget does have to go."""
+    sam = store.ensure_person("Sam")
+    sammy = store.ensure_person("Sammy")
+    assert store.set_membro_slug(sam, "sam-slug")
+    assert store.set_membro_slug(sammy, "sammy-slug")
+    assert store.merge_people(sam, sammy) == sam
+    assert store.forget(sam, record=False)
+    assert [(c["kind"], c["slug"]) for c in store.pending_corrections()] == [
+        ("forget", "sammy-slug")]
+
+
+def test_forgetting_a_person_deletes_clips_moved_into_them_at_the_source(store):
+    """Audio moved into a forgotten person is that person's audio. The
+    pending move's target no longer resolves, so it becomes a delete at
+    the source, where membro still holds the clip."""
+    alex = store.ensure_person("Alex")
+    blair = store.ensure_person("Blair")
+    assert store.add_clip(alex, loud_pcm(2.0), 16000, source="introduction")
+    assert store.set_membro_slug(alex, "alex-slug")
+    assert store.set_membro_slug(blair, "blair-slug")
+    fname = store.clips_of(alex)[0]["file"]
+    sha = _sha_of(store, fname)
+    assert store.move_clip(alex, fname, blair)
+    move = store.pending_corrections()[0]
+
+    assert store.forget(blair)
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["delete", "forget"]
+    assert rows[0]["from"] == alex and rows[0]["sha"] == sha
+    assert "to" not in rows[0] and rows[0]["cid"] == move["cid"]
+    assert rows[1]["slug"] == "blair-slug"
+
+
+def test_forgetting_a_person_keeps_their_slug_on_rows_out_of_them(store):
+    """A move or delete OUT of the forgotten person names a source that
+    no longer resolves locally. The row carries the person's membro slug
+    instead, and sits ahead of the forget in ledger order, so it lands
+    first or converges on membro saying the person is gone."""
+    alex = store.ensure_person("Alex")
+    blair = store.ensure_person("Blair")
+    assert store.add_clip(alex, loud_pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(alex, loud_pcm(2.5), 16000, source="accumulated")
+    assert store.set_membro_slug(alex, "alex-slug")
+    assert store.set_membro_slug(blair, "blair-slug")
+    moved, deleted = [c["file"] for c in store.clips_of(alex)]
+    assert store.move_clip(alex, moved, blair)
+    assert store.delete_clip(alex, deleted)
+    before = store.pending_corrections()
+
+    assert store.forget(alex)
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["move", "delete", "forget"]
+    assert all(c["from"] == alex and c["from_slug"] == "alex-slug"
+               for c in rows[:2])
+    assert rows[0]["to"] == blair
+    assert [c["cid"] for c in rows[:2]] == [c["cid"] for c in before]
+    assert rows[2]["slug"] == "alex-slug"
+
+
+def test_forgetting_a_person_membro_never_knew_drops_their_out_rows(store):
+    """No slug means nothing durable to fix for a move or delete OUT of
+    them, so those rows go (the replay would drop them the same way). A
+    move INTO them, or a merge they won, still names a record membro
+    holds, and is settled like any other."""
+    alex = store.ensure_person("Alex")        # oldest: the merge survivor
+    blair = store.ensure_person("Blair")
+    casey = store.ensure_person("Casey")
+    for pid in (alex, blair, casey):
+        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
+    assert store.set_membro_slug(casey, "casey-slug")
+    a1 = store.clips_of(alex)[0]["file"]
+    b1 = store.clips_of(blair)[0]["file"]
+    b1_sha = _sha_of(store, b1)
+    assert store.move_clip(alex, a1, blair)             # out of Alex
+    assert store.move_clip(blair, b1, alex)             # into Alex
+    assert store.merge_people(alex, casey) == alex      # Alex won, Casey lost
+    assert [c["kind"] for c in store.pending_corrections()] == [
+        "move", "move", "merge"]
+
+    assert store.forget(alex)
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["delete", "forget"]
+    assert rows[0]["from"] == blair and rows[0]["sha"] == b1_sha
+    assert rows[1]["slug"] == "casey-slug"              # and no row for Alex
 
 
 def test_a_refused_clip_is_recorded_and_visible(store):
