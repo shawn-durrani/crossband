@@ -235,8 +235,10 @@ replayed against membro on the next pass - so the durable record always
 reflects your judgement, and a rebuild can never resurrect a recording
 you corrected away. A forget sent this way is membro's own forget: its
 copy of the audio is deleted and the facts it learned from that person
-go back to review there. A correction made while membro is down simply
-waits for the next pass.
+go back to review there. Forgetting someone also settles any waiting
+correction that named them: the other record in a merge they won is
+forgotten too, and a clip moved into them is deleted at its source. A
+correction made while membro is down simply waits for the next pass.
 
 ## Scale bounds
 
