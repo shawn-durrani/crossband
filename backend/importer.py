@@ -223,10 +223,23 @@ def _export_memory_lines(memories):
 
 # ---------- shared import / incremental merge ----------
 
+# Imports in flight in this process, for the busy route (#343): a restart
+# mid-stream lands an export half way. Counted around the whole stream,
+# so a client that drops mid-import releases it through the generator's
+# own close, and a crash cannot leave it raised - the process is gone.
+_in_flight = 0
+
+
+def in_flight() -> int:
+    return _in_flight
+
+
 async def import_stream(data, filename, memory, mine=True):
     """Async generator of progress events, ending with the counts. Chats land
     in the local DB (idempotent by import_uuid, incremental merge for grown
     conversations), then Membro is seeded through the contract."""
+    global _in_flight
+    _in_flight += 1
     con = db.connect()
     try:
         async for ev in _import(con, data, filename, memory, mine):
@@ -234,6 +247,7 @@ async def import_stream(data, filename, memory, mine=True):
     except Exception as e:
         yield {"type": "error", "message": f"Could not parse export: {e}"}
     finally:
+        _in_flight -= 1
         con.close()
 
 

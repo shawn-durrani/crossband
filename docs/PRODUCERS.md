@@ -95,6 +95,11 @@ it rots (a nine-day silent outage, workbench#1-#4, taught every line here):
 - **Probe health against auth-exempt routes only.** `GET /api/auth/session`
   answers 200 without a session by design; a gated route 401s an
   unauthenticated probe and reads as "down" the moment the owner enrols.
+- **Ask before you restart.** `GET /api/busy` answers `{"busy": <bool>,
+  "reasons": [<fixed labels>]}` on loopback without a session. Busy means
+  a round, a voice capture, a guest visit, a person sync pass, a
+  benchmark, an import or a backup is in flight. Wait for false, then
+  restart; [OPERATIONS.md](OPERATIONS.md) has the detail.
 - **One instance.** Hold a liveness-checked lock so a re-run cannot race a
   running copy.
 - **Keep state beside the producer**, not in a folder anyone might tidy:
