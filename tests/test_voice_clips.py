@@ -131,26 +131,26 @@ def test_move_clip_refiles_without_touching_audio(app):
     the wrong person moves to the right one; audio untouched, quarantine
     cleared, both banks re-derive."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        kat = _grow("Sam", clips=4)          # 8s: sufficient
+        sam = _grow("Sam", clips=4)          # 8s: sufficient
         faye = c.post("/api/voice/people",
                       json={"name": "Alex"}).json()["person_id"]
-        clips = c.get(f"/api/voice/people/{kat}/clips").json()["clips"]
+        clips = c.get(f"/api/voice/people/{sam}/clips").json()["clips"]
         wrong = clips[0]["file"]
         # simulate the hygiene audit having set it aside under the wrong owner
         store = anchors.store()
         with store._lock:
             data = store._load()
-            for c_ in data["people"][kat]["clips"]:
+            for c_ in data["people"][sam]["clips"]:
                 if c_["file"] == wrong:
                     c_["quarantined"] = True
             store._save(data)
-        path = store.clip_path(kat, wrong)
+        path = store.clip_path(sam, wrong)
 
-        r = c.post(f"/api/voice/people/{kat}/clips/{wrong}/move",
+        r = c.post(f"/api/voice/people/{sam}/clips/{wrong}/move",
                    json={"to": faye})
         assert r.status_code == 200
         assert path.exists()                                  # audio untouched
-        src = c.get(f"/api/voice/people/{kat}/clips").json()["clips"]
+        src = c.get(f"/api/voice/people/{sam}/clips").json()["clips"]
         dst = c.get(f"/api/voice/people/{faye}/clips").json()["clips"]
         assert wrong not in [x["file"] for x in src]
         moved = next(x for x in dst if x["file"] == wrong)
@@ -159,10 +159,10 @@ def test_move_clip_refiles_without_touching_audio(app):
         # audio now serves through the NEW person, not the old one
         assert c.get(f"/api/voice/people/{faye}/clips/{wrong}/audio"
                      ).status_code == 200
-        assert c.get(f"/api/voice/people/{kat}/clips/{wrong}/audio"
+        assert c.get(f"/api/voice/people/{sam}/clips/{wrong}/audio"
                      ).status_code == 404
 
-        assert c.post(f"/api/voice/people/{kat}/clips/{wrong}/move",
+        assert c.post(f"/api/voice/people/{sam}/clips/{wrong}/move",
                       json={"to": faye}).status_code == 404   # already gone
         assert c.post(f"/api/voice/people/{faye}/clips/{wrong}/move",
                       json={"to": faye}).status_code == 400   # to itself
@@ -175,17 +175,17 @@ def test_alias_records_another_spelling_without_renaming(app):
     the display name is untouched, a spelling that belongs to someone else
     offers the conflict, and the participant boundary holds here too."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        pid = _grow("Catriona", clips=1)
-        r = c.post(f"/api/voice/people/{pid}/alias", json={"name": "Kat"})
+        pid = _grow("Rosalind", clips=1)
+        r = c.post(f"/api/voice/people/{pid}/alias", json={"name": "Roz"})
         assert r.status_code == 200
         me = [p for p in anchors.store().people() if p["person_id"] == pid][0]
-        assert "Kat" in me["merged_names"]
-        assert me["preferred_name"] == "Catriona"       # display untouched
+        assert "Roz" in me["merged_names"]
+        assert me["preferred_name"] == "Rosalind"       # display untouched
         # resolving by the new spelling finds the same person
-        assert anchors.store().find_by_name("kat")["person_id"] == pid
+        assert anchors.store().find_by_name("roz")["person_id"] == pid
 
         other = _grow("Dave", clips=1)
-        r = c.post(f"/api/voice/people/{other}/alias", json={"name": "Kat"})
+        r = c.post(f"/api/voice/people/{other}/alias", json={"name": "Roz"})
         assert r.status_code == 409                     # someone else's name
         assert r.json()["detail"]["conflict"]["person_id"] == pid
         assert c.post(f"/api/voice/people/{other}/alias",

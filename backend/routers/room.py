@@ -277,7 +277,7 @@ def create_person(request: Request, body: dict = Body(...)):
 def add_person_alias(person_id: str, body: dict = Body(...)):
     """Record another spelling for a person (#90): a transcriber's
     misspelling worth keeping, or a phonetic form beside the written one
-    ("Catriona", said "Cat"). It joins their identity names - find_by_name,
+    ("Rosalind", said "Ros"). It joins their identity names - find_by_name,
     re-introductions and the STT keyterms all resolve it - without touching
     the owner-set display name. A spelling that belongs to someone else is
     refused with the conflict, so folding two people stays the merge

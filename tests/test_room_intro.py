@@ -426,7 +426,7 @@ def test_owner_alias_is_dropped_but_the_real_guest_still_joins(app):
 def test_participant_alias_truth_table():
     participants = ["claude", "Claude", "gpt", "GPT"]
     yes = ["Claude", "claude", "Claud", "Clyde", "Cloud", "GPT", "gpt"]
-    no = ["Clark", "Alex", "Sam", "Dave", "Kat", ""]
+    no = ["Clark", "Alex", "Sam", "Dave", "Meg", ""]
     for name in yes:
         assert introductions.participant_alias(name, participants), name
     for name in no:
