@@ -59,18 +59,21 @@ it appears.
    pure-module rule. Opens with the shape block: which module owns what.
 2. [CONTRIBUTING.md](../CONTRIBUTING.md): setup, the keyless test suites, the
    rules that matter, and how work lands.
-3. [docs/TESTING.md](TESTING.md): what every suite guards, backend and
+3. [docs/WRITING.md](WRITING.md): how the docs should sound. Seven example
+   paragraphs that are the standard, the one-line test, and the rules CI
+   checks on every doc rewritten in that voice.
+4. [docs/TESTING.md](TESTING.md): what every suite guards, backend and
    frontend, and why both run keyless.
-4. [docs/COST_TELEMETRY.md](COST_TELEMETRY.md): operator-grade detail on the
+5. [docs/COST_TELEMETRY.md](COST_TELEMETRY.md): operator-grade detail on the
    Claude-chat cache telemetry line and utility-model spend attribution,
    including a before/after sampling workflow you can run yourself.
-5. [docs/LATENCY.md](LATENCY.md): what makes a reply fast or slow, covering the
+6. [docs/LATENCY.md](LATENCY.md): what makes a reply fast or slow, covering the
    plain-English story of the latency pass, the measured budgets before and
    after, what deliberately wasn't changed, and how to re-measure any of it.
-6. [eval_critic/README.md](../eval_critic/README.md): the offline eval
+7. [eval_critic/README.md](../eval_critic/README.md): the offline eval
    harness for the memory-provenance critic. Fixtures, scoring, and how to
    run it against a live model.
-7. [eval_silence/README.md](../eval_silence/README.md): the eval harness
+8. [eval_silence/README.md](../eval_silence/README.md): the eval harness
    for the speak-or-pass rule in group chats. What it measures, the cases,
    and how to score a model's judgement of when silence reads as absence.
 

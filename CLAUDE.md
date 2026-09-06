@@ -13,6 +13,9 @@ maintainer:
   maintainer merges yours.
 - Never commit directly to `main`, and never branch off another open PR.
 - Both suites run keyless. Never add a hard dependency on an API key.
+- Docs are written in the fleet's voice, [docs/WRITING.md](docs/WRITING.md).
+  A doc you rewrite joins `CONVERTED` in `tests/test_doc_style.py`, and
+  CONTRIBUTING.md says what that checks.
 
 ## Rules that override convenience
 
