@@ -292,6 +292,8 @@ class MemoryClient:
         self._stamp_warned = False  # one line, once, when the service predates 1.3
         self._guest_stamp_warned = False  # same, for guest_speakers (1.5)
         self._warned_mismatch = False
+        # One line, once, when /health itself answers 401/403 (workbench#61)
+        self._refusal_warned = False
         # Leave-hook write jobs: chat_id -> {"state": running|ok|failed, "error", "ts"}
         # Surfaced in /api/state; a failure also warns the models next round.
         self.writes: dict[int, dict] = {}
@@ -321,6 +323,23 @@ class MemoryClient:
                 self._available = False
             else:
                 self._available = data.get("status") == "ok"
+            self._refusal_warned = False
+        except httpx.HTTPStatusError as e:
+            self._available = False
+            code = e.response.status_code
+            if code in (401, 403) and not self._refusal_warned:
+                # A refusal is not absence (workbench#61). /v1/health is
+                # open on loopback by contract and the probe sends no
+                # bearer, so a 401 here is a gate in front of the service,
+                # not the service being away. Memory still reads as absent;
+                # the log now says which, once, at a level the default
+                # install keeps.
+                self._refusal_warned = True
+                log.warning(
+                    "membro refused the health probe at %s (HTTP %s) - "
+                    "/v1/health is open by contract, so a gate now sits in "
+                    "front of the service; treating memory as ABSENT until "
+                    "it answers", self.base_url, code)
         except Exception:
             self._available = False
         return self._available
@@ -402,7 +421,20 @@ class MemoryClient:
         except Exception as e:
             # Bounded and content-free: exception text from httpx/json is a
             # status/URL/parse summary, never the response body.
-            log.warning("memory /search failed: %s: %s", type(e).__name__, e)
+            if (isinstance(e, httpx.HTTPStatusError)
+                    and e.response.status_code in (401, 403)):
+                # A refusal, named as one (workbench#61): the likely cause
+                # is MEMORY_AUTH_TOKEN differing between the two .env files
+                # after a half-done rotation. The tool result the model
+                # sees is unchanged; only the operator's log line is.
+                log.warning(
+                    "membro refused /search (HTTP %s) - MEMORY_AUTH_TOKEN in "
+                    "crossband's .env no longer opens membro; copy membro's "
+                    "value across and restart crossband",
+                    e.response.status_code)
+            else:
+                log.warning("memory /search failed: %s: %s",
+                            type(e).__name__, e)
             raise MemorySearchError(
                 f"memory /search request failed: {type(e).__name__}") from e
         hits = data.get("hits") if isinstance(data, dict) else None

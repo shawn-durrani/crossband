@@ -145,6 +145,10 @@ token only as a deliberate choice. `code_mcp`'s `membro-admin` entry
 resolves the same variable via `${MEMORY_AUTH_TOKEN}`, so one token in
 Crossband's `.env` serves every path. See
 [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md).
+If `search_history` or the person sync goes quiet after a token
+rotation, look in `data/service.log` for a line containing
+`membro refused`: it names the call membro refused and says the token
+in Crossband's `.env` no longer matches membro's copy.
 
 ### The memory contract
 

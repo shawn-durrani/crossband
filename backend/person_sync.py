@@ -37,6 +37,10 @@ forgets someone - see `kick`):
 
 Membro down, or no MEMORY_AUTH_TOKEN, means the pass logs once and does
 nothing - crossband behaves exactly as it did before membro existed.
+Membro refusing the bearer (401/403) is a different thing and is named
+as one (workbench#61): a WARNING saying the token in crossband's .env no
+longer matches membro's, once until the outcome changes. The default
+install keeps WARNING and discards INFO, so neither outcome whispers.
 """
 
 import base64
@@ -58,6 +62,8 @@ log = logging.getLogger("crossband.person_sync")
 DEBOUNCE_S = 120           # post-round passes at most this often
 RESTORE_MAX_PER_PASS = 4   # anchor downloads per person per pass (#311)
 _RESTORE_OFFERED_MAX = 4096
+# "warned" holds the outcome last reported (False: nothing said yet, or a
+# pass has completed since), so each distinct outcome speaks once.
 _state = {"last": 0.0, "warned": False}
 _lock = threading.Lock()
 # (person_id, sha) pairs already offered back to the bank this process
@@ -78,6 +84,16 @@ def _token() -> str:
     return os.environ.get("MEMORY_AUTH_TOKEN", "")
 
 
+def _report_once(outcome: str, level: int, msg: str, *args) -> None:
+    """One log line per outcome, until it changes. A stale token that
+    stays stale says so once; membro going down after that says so once;
+    the same refusal after membro comes back says so again; a pass that
+    completes clears the slate (see the end of _run)."""
+    if _state["warned"] != outcome:
+        log.log(level, msg, *args)
+        _state["warned"] = outcome
+
+
 def _wav_to_pcm(data: bytes):
     """(pcm16 bytes, sample_rate) out of a WAV blob membro handed back."""
     with wave.open(io.BytesIO(data)) as w:
@@ -94,17 +110,30 @@ def sync_once(memory_url: str, force: bool = False) -> dict:
             return {"skipped": "debounced"}
         token = _token()
         if not token:
-            if not _state["warned"]:
-                log.info("person sync off: no MEMORY_AUTH_TOKEN in env")
-                _state["warned"] = True
+            _report_once("no token", logging.INFO,
+                         "person sync off: no MEMORY_AUTH_TOKEN in env")
             return {"skipped": "no token"}
         _state["last"] = time.time()
         try:
             return _run(memory_url.rstrip("/"), token)
         except httpx.HTTPError as e:
-            if not _state["warned"]:
-                log.info("person sync skipped (membro unreachable): %s", e)
-                _state["warned"] = True
+            code = (e.response.status_code
+                    if isinstance(e, httpx.HTTPStatusError) else None)
+            if code in (401, 403):
+                # A refusal is not absence (workbench#61): membro answered
+                # and said no to the bearer, which is what a half-done
+                # rotation (membro's .env updated, crossband's not) looks
+                # like from here. Said at WARNING, the level the default
+                # install keeps; the pass is skipped exactly as before.
+                _report_once(f"refused: {code}", logging.WARNING,
+                             "person sync skipped: membro refused the bearer "
+                             "(HTTP %s on %s) - MEMORY_AUTH_TOKEN in "
+                             "crossband's .env no longer matches membro's; "
+                             "copy membro's value across and restart "
+                             "crossband", code, e.request.url.path)
+                return {"skipped": f"refused: {code}"}
+            _report_once("unreachable", logging.WARNING,
+                         "person sync skipped (membro unreachable): %s", e)
             return {"skipped": f"unreachable: {e}"}
 
 
@@ -151,8 +180,9 @@ def _replay_corrections(client, base, store) -> int:
     """Replay the owner's moves, deletes, merges and forgets against
     membro (#33 slice 3). Consumed when they land OR have already
     converged (the clip or person is not there to correct); kept pending
-    when the target does not exist yet or membro cannot be reached - the
-    next pass retries.
+    when the target does not exist yet, membro cannot be reached, or
+    membro refuses the bearer - the next pass retries. A refusal is raised
+    once what landed is settled, so sync_once can name it (workbench#61).
     Every branch is deliberate: dropping a correction silently is how a
     fixed mis-attribution resurrects through a rebuild.
     A move or delete out of a person since forgotten carries that
@@ -160,6 +190,7 @@ def _replay_corrections(client, base, store) -> int:
     the row sits ahead of the forget in ledger order, so it lands first
     or converges on membro saying the person is gone."""
     done = []
+    refused = None
     slugs = store.membro_slugs()
     for corr in store.pending_corrections():
         kind = corr.get("kind")
@@ -221,9 +252,15 @@ def _replay_corrections(client, base, store) -> int:
                     done.append(corr["cid"])
             else:
                 done.append(corr.get("cid"))       # unknown kind: drop
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                refused = e            # named once what landed is settled
+            break                                  # membro said no mid-pass
         except httpx.HTTPError:
             break                                  # membro went away mid-pass
     store.remove_corrections([c for c in done if c])
+    if refused is not None:
+        raise refused
     return len(done)
 
 
