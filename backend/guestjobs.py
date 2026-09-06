@@ -84,6 +84,14 @@ def get(job_id: int) -> GuestJob | None:
     return _jobs.get(job_id)
 
 
+def running_count() -> int:
+    """How many guest visits are in flight in this process, for the busy
+    route (#343). The live registry, not the table: a row can say
+    "running" after a crash, and a probe that read it would hold every
+    deploy until someone repaired the row."""
+    return sum(1 for job in _jobs.values() if job.status == "running")
+
+
 def _classify(content: str) -> str:
     """Which completion path this reply takes: 'blocker' (the guest needs
     input, surface promptly) or 'result' (routine, wait for a pause). Heuristic

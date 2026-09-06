@@ -32,6 +32,7 @@ from .memory_client import MemoryClient
 from .routers import attachments as attachments_router
 from .routers import auth as auth_router
 from .routers import benchmark as benchmark_router
+from .routers import busy as busy_router
 from .routers import chats as chats_router
 from .routers import events as events_router
 from .routers import import_export as import_router
@@ -343,6 +344,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (path == "/api/ingest" or _NOTICE_PATH_RE.match(path)) \
                 and auth.machine_token_ok(request):
             return await call_next(request)
+        # The busy probe (#343): the deploy watcher asks this machine's own
+        # service whether a restart would cut something off. It has no
+        # cookie jar either, so loopback answers without a session, the
+        # posture the health probe already has; the answer is fixed labels
+        # only. A trusted host is still held to the gate below.
+        if path == busy_router.busy.PATH and host in auth.GATE_LOOPBACK_HOSTS:
+            return await call_next(request)
         # The browser gate (#25). Once a password is enrolled, every /api
         # route outside the login surface needs a session - loopback
         # included. Before enrolment, loopback keeps its historical open
@@ -423,6 +431,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     app.include_router(auth_router.router)
+    app.include_router(busy_router.router)
     app.include_router(participants_router.router)
     app.include_router(projects_router.router)
     app.include_router(chats_router.router)

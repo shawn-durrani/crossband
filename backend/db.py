@@ -452,7 +452,30 @@ def _voices_changed_since(baseline_mtime: float) -> bool:
     return False
 
 
+# Backups in flight, for the busy route (#343). The snapshot itself is
+# atomic (written as .part, renamed), but the mirror is a plain file copy
+# to its final name, so a kill mid-copy leaves a truncated file the
+# mirror's retention counts as a real snapshot. Startup's pre-init copy
+# and the periodic thread never overlap, so a plain counter is enough.
+_backups_running = 0
+
+
+def backup_running() -> bool:
+    return _backups_running > 0
+
+
 def backup_database():
+    """One snapshot cycle, flagged for the busy route while it runs; see
+    `_backup_database` for what a cycle does."""
+    global _backups_running
+    _backups_running += 1
+    try:
+        return _backup_database()
+    finally:
+        _backups_running -= 1
+
+
+def _backup_database():
     """Consistent snapshot via SQLite's online backup API (safe while the app
     is running and mid-write). Keeps the newest BACKUP_KEEP copies, and mirrors
     completed snapshots to an optional secondary directory (never the live DB -

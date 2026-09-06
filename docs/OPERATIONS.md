@@ -81,6 +81,16 @@ when the agent is loaded, and fall back to `./start.sh` when it isn't
 with two instances by accident: `start.sh` checks the port first and refuses
 to start a second copy, so the worst case is a deploy step that fails loudly.
 
+Before it restarts, a deploy can ask whether the service is busy. `GET
+/api/busy` on loopback answers `{"busy": true, "reasons": [...]}` with no
+session, the same posture as the health probe. Busy means a round still
+generating in any chat, a live voice capture, a guest visit running, a
+person sync pass, a benchmark, an import, or a backup mid-copy. The reasons
+are fixed labels, never chat content. Wait for `"busy": false`, then
+restart. The fleet's deploy watcher does exactly this. A service too broken
+to answer is restarted anyway, because a probe cannot protect what it
+cannot see.
+
 ## Stopping it, and why that used to hang
 
 A stop is now bounded: SIGTERM ends the live-events streams immediately, gives
