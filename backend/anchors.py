@@ -521,6 +521,45 @@ class AnchorStore:
         entry["at"] = time.time()
         data.setdefault("pending_corrections", []).append(entry)
 
+    @staticmethod
+    def _settle_corrections(rows: list, person_id: str, slug) -> list:
+        """The pending rows that name a person being forgotten, rewritten
+        so each can still land once their local id is gone (#335). A row
+        that names a local id nobody resolves any more would otherwise
+        stay pending forever, and a pending merge whose winner is
+        forgotten leaves the loser living in membro, to be rebuilt here
+        under the other name. Ledger order and each row's cid and at are
+        kept; the rewrites are the equivalences the owner already stated:
+
+        - a merge this person WON becomes a forget of the loser's slug:
+          the merge said the loser is this same human;
+        - a move INTO this person becomes a delete at its source: audio
+          moved into a forgotten person is that person's audio;
+        - a move or delete OUT of this person carries this person's slug,
+          so the replay can still name the source. It sits ahead of the
+          forget in ledger order, so it lands first or converges on membro
+          saying the person is gone. With no slug there is nothing durable
+          to fix, and the row goes."""
+        out = []
+        for corr in rows:
+            kind = corr.get("kind")
+            stamp = {k: corr[k] for k in ("cid", "at") if k in corr}
+            if kind == "merge" and corr.get("winner") == person_id:
+                out.append({"kind": "forget", "slug": corr["loser_slug"],
+                            **stamp})
+            elif kind == "move" and corr.get("to") == person_id:
+                row = {"kind": "delete", "from": corr["from"],
+                       "sha": corr["sha"], **stamp}
+                if corr.get("from_slug"):
+                    row["from_slug"] = corr["from_slug"]
+                out.append(row)
+            elif kind in ("move", "delete") and corr.get("from") == person_id:
+                if slug:
+                    out.append({**corr, "from_slug": slug})
+            else:
+                out.append(corr)
+        return out
+
     def _clip_sha(self, fname: str):
         try:
             return hashlib.sha256((self.root / fname).read_bytes()).hexdigest()
@@ -950,7 +989,11 @@ class AnchorStore:
         with the entry), and person_sync replays it as membro's own
         forget: audio deleted there, their approved facts back to review.
         `record=False` is for the sync pass itself, when the forget
-        ORIGINATED in membro and there is nothing to send back."""
+        ORIGINATED in membro and there is nothing to send back.
+
+        Either way, a pending correction that names this person is settled
+        first (#335): its local id is about to stop resolving, and the row
+        must still land, ahead of the forget in ledger order."""
         with self._lock:
             data = self._load()
             person = data["people"].pop(person_id, None)
@@ -959,6 +1002,8 @@ class AnchorStore:
             data["close_pairs"] = [p for p in (data.get("close_pairs") or [])
                                    if person_id not in p[:2]]
             slug = person.get("membro_slug")
+            data["pending_corrections"] = self._settle_corrections(
+                data.get("pending_corrections") or [], person_id, slug)
             if record and slug:
                 self._record_correction(data, {"kind": "forget",
                                                "slug": slug})
