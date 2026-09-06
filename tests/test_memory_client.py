@@ -31,6 +31,30 @@ def test_probe_false_when_unreachable():
     run(c.aclose())
 
 
+def test_probe_refusal_is_said_once_as_a_refusal(caplog):
+    """workbench#61: /v1/health is open by contract and the probe sends no
+    bearer, so a 401 there is a gate in front of the service, not the
+    service being away. Memory still reads as absent; the log says which,
+    once, at WARNING, and again only after the service has answered."""
+    c = make_client()
+    c._client.get = _fake_health({"detail": "owner token required"},
+                                 status_code=401)
+    with caplog.at_level("WARNING", logger="crossband.memory"):
+        assert run(c.probe(force=True)) is False
+        assert run(c.probe(force=True)) is False
+    assert c.status()["available"] is False
+    (line,) = [r for r in caplog.records if "membro refused" in r.message]
+    assert line.levelname == "WARNING" and "401" in line.message
+    # answers, then refuses again: the line speaks again
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.4"})
+    assert run(c.probe(force=True)) is True
+    c._client.get = _fake_health({"detail": "no"}, status_code=403)
+    with caplog.at_level("WARNING", logger="crossband.memory"):
+        assert run(c.probe(force=True)) is False
+    assert sum("membro refused" in r.message for r in caplog.records) == 2
+    run(c.aclose())
+
+
 def test_reads_degrade_to_empty():
     c = make_client()
 
@@ -304,6 +328,32 @@ def test_search_absent_service_still_degrades_to_empty(monkeypatch):
     monkeypatch.setenv("MEMORY_AUTH_TOKEN", "s3cr3t-owner-token")
     c = make_client()  # unroutable port: probe() fails, search() never posts
     assert run(c.search("anything")) == []
+    run(c.aclose())
+
+
+def test_search_refusal_is_named_and_the_token_never_printed(monkeypatch,
+                                                               caplog):
+    """workbench#61: the 401 already raises (above); the operator's log
+    line now says membro refused and names the likely cause, at WARNING,
+    the level the default install keeps. The value never appears."""
+    monkeypatch.setenv("MEMORY_AUTH_TOKEN", "wrong-token")
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.4"})
+
+    async def fake_post(url, json=None, headers=None):
+        return httpx.Response(401, json={"error": {"code": "401",
+                              "message": "owner token required"}},
+                              request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    with caplog.at_level("WARNING", logger="crossband.memory"):
+        with pytest.raises(MemorySearchError):
+            run(c.search("anything"))
+    (line,) = [r for r in caplog.records if "membro refused" in r.message]
+    assert line.levelname == "WARNING"
+    assert "MEMORY_AUTH_TOKEN" in line.message
+    assert "crossband's .env" in line.message
+    assert "wrong-token" not in caplog.text
     run(c.aclose())
 
 

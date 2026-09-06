@@ -17,12 +17,15 @@ slice-1 routes), the contract under test:
   before it rebuilds anyone, so a settled merge's loser cannot come back;
 - a participant-named entry (#65 guard artefact) is never pushed;
 - no token, or membro unreachable, is a clean logged no-op - crossband
-  behaves exactly as it did before membro existed.
+  behaves exactly as it did before membro existed;
+- membro refusing the bearer (401) is named as a refusal at WARNING, once
+  until the outcome changes, never as "unreachable" (workbench#61).
 """
 
 import base64
 import hashlib
 import json
+import logging
 import struct
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -55,6 +58,8 @@ class FakeMembro:
         self.requests = []
         self.fail_anchor_lists = False   # 500 every anchors GET when set
         self.fail_forget = False         # 500 every forget POST when set
+        self.refuse = False              # 401 every GET: a stale bearer
+        self.refuse_anchor_lists = False  # 401 on the clip lists only
 
         fake = self
 
@@ -87,11 +92,16 @@ class FakeMembro:
             def do_GET(self):
                 fake.requests.append(("GET", self.path))
                 parts = self.path.split("?")[0].strip("/").split("/")
-                if parts[:2] == ["v1", "persons"] and len(parts) == 2:
+                if fake.refuse:
+                    self._json({"error": "owner token required"}, 401)
+                elif parts[:2] == ["v1", "persons"] and len(parts) == 2:
                     self._json({"persons": list(fake.persons.values())})
                 elif len(parts) == 4 and parts[3] == "anchors":
                     if fake.fail_anchor_lists:
                         self._json({"error": "boom"}, 500)
+                        return
+                    if fake.refuse_anchor_lists:
+                        self._json({"error": "owner token required"}, 401)
                         return
                     rows = [{k: a[k] for k in ("id", "sha256", "source")}
                             for a in fake.anchors.get(parts[2], [])]
@@ -547,6 +557,79 @@ def test_no_token_or_dead_membro_is_a_clean_noop(app, membro, monkeypatch):
     monkeypatch.setenv("MEMORY_AUTH_TOKEN", "test-token")
     out = person_sync.sync_once("http://127.0.0.1:1", force=True)
     assert out["skipped"].startswith("unreachable")
+
+
+def test_a_refused_bearer_is_named_as_a_refusal_not_absence(app, membro,
+                                                            caplog):
+    """workbench#61: membro answering 401 is membro saying no to the token,
+    which is what a half-done rotation (membro's .env updated, crossband's
+    not) looks like from here. It used to be logged as "membro unreachable"
+    at INFO, a level the default install discards. Now the result says
+    refused and one WARNING names the likely cause, never the value."""
+    membro.refuse = True
+    with caplog.at_level(logging.INFO, logger="crossband.person_sync"):
+        out = person_sync.sync_once(membro.url, force=True)
+        again = person_sync.sync_once(membro.url, force=True)
+    assert out == {"skipped": "refused: 401"} and again == out
+    (line,) = [r for r in caplog.records if "membro refused" in r.message]
+    assert line.levelno == logging.WARNING
+    assert "MEMORY_AUTH_TOKEN" in line.message
+    assert "crossband's .env" in line.message
+    assert "unreachable" not in caplog.text
+    assert "test-token" not in caplog.text
+
+
+def test_membro_down_keeps_its_wording_at_warning_once(app, membro, caplog):
+    with caplog.at_level(logging.INFO, logger="crossband.person_sync"):
+        out = person_sync.sync_once("http://127.0.0.1:1", force=True)
+        person_sync.sync_once("http://127.0.0.1:1", force=True)
+    assert out["skipped"].startswith("unreachable")
+    (line,) = [r for r in caplog.records if "unreachable" in r.message]
+    assert line.levelno == logging.WARNING
+    assert "membro refused" not in caplog.text   # "Connection refused" is not
+
+
+def test_each_change_of_outcome_speaks_once(app, membro, caplog):
+    """Refused, then down, then refused again is three lines; the same
+    outcome twice running is one; a pass that completes clears the slate,
+    so the next refusal speaks again."""
+    membro.refuse = True
+    with caplog.at_level(logging.WARNING, logger="crossband.person_sync"):
+        person_sync.sync_once(membro.url, force=True)             # refused
+        person_sync.sync_once("http://127.0.0.1:1", force=True)   # down
+        person_sync.sync_once("http://127.0.0.1:1", force=True)   # still down
+        person_sync.sync_once(membro.url, force=True)             # refused
+        membro.refuse = False
+        person_sync.sync_once(membro.url, force=True)             # completes
+        membro.refuse = True
+        person_sync.sync_once(membro.url, force=True)             # speaks
+    said = ["membro refused" in r.message for r in caplog.records]
+    assert said == [True, False, True, True]
+
+
+def test_a_refused_clip_list_keeps_the_correction_pending_and_says_so(
+        app, membro, caplog):
+    """#274 made an unreadable clip list keep the owner's correction instead
+    of eating it; workbench#61 makes a refused one audible. The refused row
+    waits, the pass names the refused call, and the next pass with a good
+    token lands it."""
+    store = anchors.store()
+    a = store.ensure_person("Blair")
+    assert store.add_clip(a, _pcm(), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    gone = store.clips_of(a)[0]["file"]
+    assert store.delete_clip(a, gone)
+
+    membro.refuse_anchor_lists = True
+    with caplog.at_level(logging.WARNING, logger="crossband.person_sync"):
+        out = person_sync.sync_once(membro.url, force=True)
+    assert out == {"skipped": "refused: 401"}
+    assert "anchors" in caplog.text                 # names the refused call
+    assert len(store.pending_corrections()) == 1    # kept, not eaten
+
+    membro.refuse_anchor_lists = False
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
 
 
 def test_a_local_move_is_replayed_and_cannot_resurrect(app, membro):
