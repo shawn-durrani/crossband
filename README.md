@@ -1,9 +1,11 @@
 # Crossband
 
-Crossband is a group chat with several AI models at once. Claude and GPT
-sit in one shared transcript, see each other's messages, and can agree
-or disagree. Everything runs on your own computer: a FastAPI backend,
-one SQLite file, and a web page served to this computer only. The models
+Crossband is a group chat with several AI models at once. Any model can
+take a seat: Claude, GPT, a hosted open model through Groq or
+OpenRouter, or a local one through Ollama or LM Studio. They all sit in
+one shared transcript, see each other's messages, and can agree or
+disagree. Everything runs on your own computer: a FastAPI backend, one
+SQLite file, and a web page you open on that same computer. The models
 share a set of tools: web search, fetching a page, viewing a page the
 way a browser renders it, Reddit and YouTube, GitHub issues, and memory.
 Every tool result goes into the transcript, where you and every model
@@ -37,8 +39,9 @@ doesn't have to invent an angle. The first model to answer a direct
 question can't pass.
 
 Room mode is for when more than one person is talking to the models.
-When someone speaks, the app checks the voice on this computer against
-the voices it's learnt, in well under a second. If it knows the voice,
+When someone speaks, the app compares the voice with the voices it's
+learnt. That check happens on the computer the app runs on, in well
+under a second. If it knows the voice,
 it puts that person's name on the turn, so the models know who said
 what. If it doesn't, it asks who's joined. A turn from one person is
 transcribed once. Only a turn where two people talked over each other
@@ -101,7 +104,7 @@ See [Upgrading a pre-v0.2 install](#upgrading-a-pre-v02-install).
 
 ## Remote access
 
-Out of the box, the app answers on this computer only. To use it from
+Out of the box, the app answers only on the computer it runs on. To use it from
 your phone, put it on your tailnet, which is the private network
 Tailscale makes between your own devices. Add your computer's tailnet
 name to `CROSSBAND_TRUSTED_HOSTS`, restart the app, then run:

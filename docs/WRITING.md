@@ -35,8 +35,9 @@ and the last says what happens if you don't.
 A feature, for someone who's never seen it:
 
 > Room mode is for when more than one person is talking to the models.
-> When someone speaks, the app checks the voice on this computer
-> against the voices it's learnt, in well under a second. If it knows
+> When someone speaks, the app compares the voice with the voices it's
+> learnt. That check happens on the computer the app runs on, in well
+> under a second. If it knows
 > the voice, it puts that person's name on the turn, so the models
 > know who said what. If it doesn't, it asks who's joined. The small
 > model it uses for this is downloaded once and then works offline.
@@ -93,7 +94,7 @@ reader and the fix.
 A changelog entry:
 
 > Forgetting a voice now reaches memory too. Forget used to delete the
-> audio on this computer only, and membro kept its copy and could hand
+> audio only on the computer the app runs on, and membro kept its copy and could hand
 > it back on the next sync. Now the forget goes to membro on the next
 > sync pass, membro deletes its audio, and the facts it learned from
 > that person go back to review. A forget that membro can't take yet
