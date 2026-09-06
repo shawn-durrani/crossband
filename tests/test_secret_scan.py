@@ -15,6 +15,10 @@ Every invocation pins SECRET_SCAN_LOCAL to an explicit path. Without that, the
 personal-content class would read a real .secret-scan-local on a maintainer's
 machine and no file at all in CI, so the same test would check different things
 in the two places.
+
+This copy is the fleet's canonical scanner. membro and spendglass carry it
+byte for byte and hash their copies against it, so nothing app-specific may
+live in the script; the last group of tests pins that.
 """
 
 import os
@@ -372,3 +376,97 @@ def test_exclude_lists_cannot_drift(tmp_path):
     assert src.count("EXCLUDES=(") == 1
     assert 'e="${e#:(exclude)}"' in src, \
         "is_excluded must derive from EXCLUDES rather than repeat it"
+
+
+# ── the fleet canonical: nothing app-specific lives in the script ────────────
+#
+# membro and spendglass carry this file byte for byte and hash it against this
+# copy, so anything one repo needs that another does not must come from
+# outside the script: the tracked .secret-scan-exclude read at startup.
+
+def _built_in_excludes():
+    body = SCANNER.read_text().split("EXCLUDES=(", 1)[1].split("\n)", 1)[0]
+    return [ln.strip().strip("'") for ln in body.splitlines()
+            if ln.strip().startswith("':(exclude)")]
+
+
+def test_built_in_excludes_are_only_the_scanners_own_files():
+    """The array inside the script holds exactly what every copy ships with.
+    A repo-specific path here would make the copies diverge, or pre-exempt a
+    path in a repo that never asked for it."""
+    assert _built_in_excludes() == [
+        ":(exclude)scripts/secret-scan.sh",
+        ":(exclude).githooks/pre-commit",
+        ":(exclude)tests/test_secret_scan.py",
+        ":(exclude)tests/fixtures/identifiers/*",
+    ]
+
+
+def test_this_repos_own_exclusions_live_in_the_exclude_file():
+    """crossband's exclusions (the frontend lockfile, the never-ship set) sit
+    in .secret-scan-exclude, which is what lets the script be canonical."""
+    entries = [ln.split("#", 1)[0].strip()
+               for ln in (REPO / ".secret-scan-exclude").read_text().splitlines()]
+    assert "frontend/package-lock.json" in entries
+
+
+def _commit_all(repo, msg):
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=repo, check=True,
+                   capture_output=True)
+
+
+def test_repo_exclude_file_is_honoured_in_tree_and_staged_modes(tmp_path):
+    """A .secret-scan-exclude entry keeps a path out of both scan paths, and
+    only that path: a leak elsewhere in the same tree still fails."""
+    repo = _tree_repo(tmp_path, "nothing here")
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "lock.json").write_text(f'"key": "{FAKE_SECRET}"\n')
+    (repo / ".secret-scan-exclude").write_text(
+        "# lockfile noise, not a leak\n\nvendor/*  # an inline note\n")
+    _commit_all(repo, "vendor")
+    code, out = _scan(repo, "--tree")
+    assert code == 0, f"the excluded lockfile was still scanned:\n{out}"
+
+    # staged mode: the same pathspec keeps a fresh secret there out of the diff
+    (repo / "vendor" / "lock.json").write_text(f'"key": "{FAKE_SECRET}x"\n')
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    code, out = _scan(repo)
+    assert code == 0, out
+
+    # ...and the entry excuses nothing outside it
+    (repo / "config.py").write_text(f"KEY = '{FAKE_SECRET}'\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    assert _scan(repo)[0] == 1
+    _commit_all(repo, "leak")
+    code, out = _scan(repo, "--tree")
+    assert code == 1 and "config.py" in out
+
+
+def test_exclude_list_can_be_pointed_at_explicitly(tmp_path):
+    """SECRET_SCAN_EXCLUDE names the exclusion file, the way SECRET_SCAN_LOCAL
+    names the deny-list, so a test or an ad-hoc run can pin it."""
+    repo = _tree_repo(tmp_path, f"KEY = '{FAKE_SECRET}'")
+    assert _scan(repo, "--tree")[0] == 1
+    listing = tmp_path / "excl"
+    listing.write_text("config.py\n")
+    env = _env()
+    env["SECRET_SCAN_EXCLUDE"] = str(listing)
+    p = subprocess.run(["bash", str(SCANNER), "--tree"], cwd=repo,
+                       capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_fleet_key_shapes_are_caught_and_their_placeholders_pass(tmp_path):
+    """The pattern list serves every repo that carries this file, so a shape
+    one app owns (spendglass's rbk_live_ hex banking key) is asserted here,
+    where the pattern lives. The documented placeholder uses x's, which are
+    not hex, so a .env.example line passes."""
+    hot = tmp_path / "hot.txt"
+    hot.write_text("BANK_API_KEY=rbk_live_" + "ab12" * 16 + "\n")
+    code, out = run("--files", str(hot))
+    assert code == 1 and "CREDENTIAL" in out
+    ok = tmp_path / "ok.txt"
+    ok.write_text("BANK_API_KEY=rbk_live_" + "x" * 32 + "\n")
+    code, out = run("--files", str(ok))
+    assert code == 0, out

@@ -2,6 +2,15 @@
 # Leak scan: ONE implementation, run BOTH locally (pre-commit) and in CI (via
 # tests/test_secret_scan.py) so the two rule sets can never drift.
 #
+# FLEET CANONICAL. This file is the fleet's one scanner and crossband owns it:
+# crossband/scripts/secret-scan.sh is the copy that changes. membro and
+# spendglass carry byte-identical copies, and each of their suites has a drift
+# test that hashes the local copy against this one, so a copy that differs is
+# a red build. A pattern fix lands here first and is then copied across; never
+# patch a copy in place. Nothing app-specific lives in this file: a repo's own
+# exclusions come from an optional .secret-scan-exclude at its root (below), so
+# the script itself never needs to differ between repos.
+#
 # It guards THREE distinct classes of leak. The distinction is deliberate.
 #
 #   1. SECRETS: real API-key / credential SHAPES (a prefix followed by enough
@@ -49,12 +58,20 @@
 #   --tree         scan every tracked file's content  → CI, via pytest
 #   --files F...   scan the given files' content      → tests / ad-hoc
 #
+# Overrides, both optional and both file paths:
+#   SECRET_SCAN_LOCAL     the class-3 deny-list (default: <repo>/.secret-scan-local)
+#   SECRET_SCAN_EXCLUDE   the repo's exclusion list (default: <repo>/.secret-scan-exclude)
+#
 # Run manually:  bash scripts/secret-scan.sh --tree
 # Enable the local hook once:  git config core.hooksPath .githooks
 set -uo pipefail
 
 # ── 1. SECRET shapes: prefix + enough body to be a real credential ───────────
-SECRET_PATTERNS='sk-ant-[A-Za-z0-9_-]{24,}|sk-proj-[A-Za-z0-9_-]{24,}|sk-[A-Za-z0-9]{40,}|tvly-(dev-)?[A-Za-z0-9_-]{16,}|BSA[A-Za-z0-9_-]{20,}|sk_[a-f0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{12,}'
+# One list for the whole fleet, because this file is the same in every repo:
+# Anthropic, OpenAI, Tavily, Brave, sk_ hex keys, AWS, GitHub, Slack, and
+# the rbk_live_ / rbk_test_ banking-API keys spendglass holds (a hex body,
+# so a documented rbk_live_xxx... placeholder is not hex and passes).
+SECRET_PATTERNS='sk-ant-[A-Za-z0-9_-]{24,}|sk-proj-[A-Za-z0-9_-]{24,}|sk-[A-Za-z0-9]{40,}|tvly-(dev-)?[A-Za-z0-9_-]{16,}|BSA[A-Za-z0-9_-]{20,}|sk_[a-f0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]{12,}|rbk_(live|test)_[a-f0-9]{40,}'
 
 # ── 2. IDENTIFIER shapes: things that look like a real person/machine ────────
 # Candidate tokens are extracted first, then filtered against a per-class
@@ -69,9 +86,9 @@ EMAIL_TOKEN='[A-Za-z0-9][A-Za-z0-9._%+<>-]*@[A-Za-z0-9.<>-]+\.[A-Za-z]{2,}'
 # Documented synthetic placeholders. A candidate token is dropped only when the
 # placeholder covers the identifying part, which is why every entry below is
 # anchored: an unanchored "contains tailXXXX" test would let any real hostname
-# through as long as the tailnet part was masked. Keep these in sync with the
-# placeholder vocabulary in CONTRIBUTING.md, the roster in the PR template, and
-# tests/fixtures/identifiers/clean.txt.
+# through as long as the tailnet part was masked. Keep these in sync with each
+# repo's placeholder vocabulary (CONTRIBUTING.md, and a PR template's roster
+# where one exists) and with tests/fixtures/identifiers/clean.txt.
 #   hosts:  <mac>.<tailnet>.ts.net, my-mac.my-tailnet.ts.net,
 #           my-mac.tailXXXX.ts.net, tailXXXX.ts.net
 #   homes:  /Users/you, /home/you (and user/username/name/me/example/runner)
@@ -87,38 +104,39 @@ ALLOW_TS='^((<[a-z-]+>|my-[a-z0-9-]+)\.)*(<[a-z-]+>|my-[a-z0-9-]+|tail[x]{3,}|ex
 ALLOW_HOME='^/(Users|home)/(you|user|username|name|me|example|runner|<[a-z-]+>)([/._-]|$)'
 ALLOW_EMAIL='@example\.(com|org|net)$|@users\.noreply\.github\.com$|^git@github\.com$|^noreply@|^<?[a-z-]+>@'
 
-# ── 3. PERSONAL CONTENT deny-list: patterns only the person can name ─────────
-# Resolved from the repo root, overridable so the scanner's own tests can point
-# at an explicit file and behave the same on a machine that has a real
-# deny-list and in CI, which does not.
-LOCAL_LIST="${SECRET_SCAN_LOCAL:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)/.secret-scan-local}"
+# Both per-repo files resolve from the repo root, and both are overridable so
+# the scanner's own tests can point at an explicit file and behave the same on
+# a machine that has a real deny-list and in CI, which does not.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 
-# Files whose PURPOSE is to contain these patterns (this scanner, its hook, and
-# the test fixtures) plus dependency lockfiles (hashes and vendored author
-# emails are noise, not leaks from this project).
+# ── 3. PERSONAL CONTENT deny-list: patterns only the person can name ─────────
+LOCAL_LIST="${SECRET_SCAN_LOCAL:-$REPO_ROOT/.secret-scan-local}"
+
+# Files whose PURPOSE is to contain these patterns: this scanner, its hook, its
+# test, and its test fixtures. The built-in list holds ONLY what every copy of
+# the scanner ships with, so it can be the same in every repo.
 EXCLUDES=(
   ':(exclude)scripts/secret-scan.sh'
   ':(exclude).githooks/pre-commit'
   ':(exclude)tests/test_secret_scan.py'
   ':(exclude)tests/fixtures/identifiers/*'
-  ':(exclude)frontend/package-lock.json'
-  # The never-ship set: private working documents that this snapshot does NOT
-  # carry, so the scan enforces cleanliness of the SHIP SET rather than of
-  # private history. An entry only belongs here if the file is absent from the
-  # published tree; check `git ls-files` before adding one.
-  #
-  # CHANGELOG.md and CLAUDE.md were listed here under that same rationale and
-  # it was wrong: both are tracked and both ship, so the exclusion quietly
-  # exempted two published files from every matcher above. They are scanned
-  # now, and they pass. Removing any remaining entry here without also removing
-  # the file from the publication drop-list would be a mistake.
-  ':(exclude)DECISIONS.md'
-  ':(exclude)BACKLOG.md'
-  ':(exclude)CLAUDE.local.md'
-  ':(exclude)RELEASING.md'
-  ':(exclude)docs/COLLABORATOR_SAFETY.md'
-  ':(exclude)package-lock.json'
 )
+# Repo-specific exclusions (a dependency lockfile whose vendored author emails
+# are noise, a private working document the published tree does not carry)
+# come from an optional, tracked .secret-scan-exclude at the repo root: one git
+# pathspec per line, blank lines and # comments ignored. Every entry is a
+# silent pre-exemption for whatever lands at that path later, so an entry
+# belongs there only if the file ships nothing but noise or does not ship at
+# all; check `git ls-files` before adding one.
+EXCLUDE_FILE="${SECRET_SCAN_EXCLUDE:-$REPO_ROOT/.secret-scan-exclude}"
+if [ -f "$EXCLUDE_FILE" ]; then
+  while read -r entry || [ -n "$entry" ]; do
+    entry="${entry%%[[:space:]]#*}"
+    entry="${entry%"${entry##*[![:space:]]}"}"
+    case "$entry" in ''|'#'*) continue ;; esac
+    EXCLUDES+=(":(exclude)$entry")
+  done < "$EXCLUDE_FILE"
+fi
 # ONE list drives both mechanisms. The pathspec array above is what git
 # understands; this derives the bare-path matcher from the same entries, so
 # the two can never disagree. They did once: --tree kept scanning files the
@@ -229,7 +247,8 @@ fi
 if [ "$status" -ne 0 ]; then
   echo
   echo "  If a hit is genuinely NOT a leak, add the placeholder to the allowlist in"
-  echo "  scripts/secret-scan.sh, or (local commit only) use: git commit --no-verify"
+  echo "  the canonical scanner (crossband's scripts/secret-scan.sh) and sync the"
+  echo "  copies, or (local commit only) use: git commit --no-verify"
   exit 1
 fi
 
