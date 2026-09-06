@@ -677,6 +677,57 @@ def test_later_seats_see_identity_resolved_mid_round(app, monkeypatch):
     assert counts["full"] == 1
 
 
+def test_round_hands_every_seat_the_guests_present(app, monkeypatch):
+    """Contract 1.5: in a room-mode chat with a seated guest, every seat's
+    cfg carries the guest stamp save_memory reads, the owner's own seat
+    left out. A plain chat carries an empty stamp."""
+    from backend import room_state
+    settings = app.state.settings
+    cfg = settings.as_cfg()
+    captured = []
+    monkeypatch.setattr(engine.providers, "stream_reply", _capture_cfg(captured))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        room = c.post("/api/chats", json={}).json()
+        room_state.arm(room["id"], cfg, source="command", clear_ambient=True,
+                       seat_owner="on_arm")
+        assert room_state.seat(room["id"], "Sam", cfg, via="introduction",
+                               enforce_cap=False)
+        with c.stream("POST", f"/api/chats/{room['id']}/send",
+                      json={"text": "what did Sam just say?"}) as r:
+            "".join(r.iter_text())
+        plain = c.post("/api/chats", json={}).json()
+        with c.stream("POST", f"/api/chats/{plain['id']}/send",
+                      json={"text": "just me here"}) as r:
+            "".join(r.iter_text())
+    assert len(captured) == 4
+    room_cfgs, plain_cfgs = captured[:2], captured[2:]
+    for seat_cfg in room_cfgs:
+        assert seat_cfg["_round_guest_speakers"] == ["guest:Sam"]
+        assert seat_cfg["room_roster_names"] == [cfg["user_name"], "Sam"]
+    for seat_cfg in plain_cfgs:
+        assert seat_cfg["_round_guest_speakers"] == []
+
+
+def test_round_stamps_unknown_while_the_room_asks_who_joined(app, monkeypatch):
+    from backend import room_state
+    cfg = app.state.settings.as_cfg()
+    captured = []
+    monkeypatch.setattr(engine.providers, "stream_reply", _capture_cfg(captured))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        room = c.post("/api/chats", json={}).json()
+        room_state.arm(room["id"], cfg, source="ambient (unknown voice)",
+                       clear_ambient=False, seat_owner="on_arm")
+        con = db.connect()
+        db.insert_room_flag(con, room["id"], "unknown_voice")
+        con.close()
+        with c.stream("POST", f"/api/chats/{room['id']}/send",
+                      json={"text": "who is that?"}) as r:
+            "".join(r.iter_text())
+    assert captured and all(
+        seat_cfg["_round_guest_speakers"] == ["guest:unknown"]
+        for seat_cfg in captured)
+
+
 def test_guest_availability_checked_once_per_round(app, monkeypatch):
     """guest.available (a filesystem PATH scan) runs once per round,
     not once per speaker."""

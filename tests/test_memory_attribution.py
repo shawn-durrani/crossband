@@ -35,7 +35,8 @@ from backend import anchors, db, engine
 from backend.app import create_app
 from backend.config import Settings
 from backend.memory_client import (GUEST_UNKNOWN, SOURCE_APP, MemoryClient,
-                                   ingest_speaker)
+                                   identity_name_map, ingest_speaker,
+                                   round_guest_speakers)
 
 
 def _msg(mid, speaker, labels=None, uncertain=None, voice_labels=None):
@@ -142,6 +143,88 @@ def test_crosstalk_turn_always_ingests_as_guest_unknown():
         {"clusters": ["s0"], "labels": ["Lex"], "uncertain": [],
          "crosstalk": "yes"}))
     assert ingest_speaker(m, set(), "Shawn") == "guest:Lex"
+
+
+# ── "guests present in the round", the direct-save stamp (contract 1.5) ─────
+#
+# A model's save_memory bypassed the wall above: ingest carries a speaker per
+# message, the save tool carried nothing. The stamp is the set of guests who
+# could have been the source of what a model saves in this round.
+
+def _present(*, room_mode=True, roster=(), messages=(), flags=(),
+             owner="Owner", identity=None):
+    return round_guest_speakers(room_mode=room_mode, roster_names=list(roster),
+                                recent_messages=list(messages),
+                                open_flags=list(flags), owner_name=owner,
+                                identity_names=identity)
+
+
+def test_present_seated_guest_stamps_their_identity_name():
+    assert _present(roster=["Owner", "Lex"]) == ["guest:Lex"]
+    # the roster seat may carry the preferred spelling; the wire carries the
+    # identity name, through the same map ingest uses
+    assert _present(roster=["Owner", "Alex"],
+                    identity={"alex": "Lex", "lex": "Lex"}) == ["guest:Lex"]
+    # two guests, stable order, no duplicates
+    assert _present(roster=["Owner", "Mateo", "Lex", "lex"]) == \
+        ["guest:Lex", "guest:Mateo"]
+
+
+def test_present_armed_room_with_an_unnamed_voice_stamps_unknown():
+    assert _present(roster=["Owner"],
+                    flags=[{"kind": "unknown_voice", "message_id": None}]) == \
+        [GUEST_UNKNOWN]
+    # a doubted turn in the recent context, same answer
+    assert _present(roster=["Owner"], messages=[_msg(3, "user", ["Lex"], [])],
+                    flags=[{"kind": "mismatch", "message_id": 3}]) == \
+        [GUEST_UNKNOWN]
+    # an uncertain or ordinal label in the recent context, same answer
+    assert _present(roster=["Owner"],
+                    messages=[_msg(4, "user", ["Voice 2"])]) == [GUEST_UNKNOWN]
+    # a seated guest and an unknown voice together: both ride
+    assert _present(roster=["Owner", "Lex"],
+                    flags=[{"kind": "unknown_voice", "message_id": None}]) == \
+        ["guest:Lex", GUEST_UNKNOWN]
+
+
+def test_present_owner_alone_stamps_nothing():
+    assert _present(roster=["Owner"]) == []
+    assert _present(roster=["owner"]) == []
+    # the owner's seat under a remembered identity still reads as the owner
+    assert _present(roster=["Owner"], identity={"owner": "Owner"}) == []
+    # the owner's own turns, typed or confidently matched, never stamp
+    assert _present(roster=["Owner"],
+                    messages=[_msg(1, "user"),
+                              _msg(2, "user", ["Owner"], [])]) == []
+    # model turns are never read as a voice
+    assert _present(roster=["Owner"],
+                    messages=[_msg(5, "claude", ["Voice 2"])]) == []
+
+
+def test_present_is_empty_outside_room_mode():
+    """Only room mode lets anyone but the owner speak into the chat, so a
+    stale roster row or an old flag outside it stamps nothing."""
+    assert _present(room_mode=False, roster=["Owner", "Lex"],
+                    flags=[{"kind": "unknown_voice", "message_id": None}],
+                    messages=[_msg(4, "user", ["Voice 2"])]) == []
+
+
+def test_present_reads_only_the_recent_context():
+    """The roster answers WHO is present; the transcript is read only for a
+    recent unresolved voice. An uncertain turn far back in a long chat is
+    not "present" now."""
+    old = [_msg(1, "user", ["Voice 2"])]
+    recent = [_msg(i, "user") for i in range(2, 30)]
+    assert _present(roster=["Owner"], messages=old + recent) == []
+    assert _present(roster=["Owner"], messages=recent + old) == [GUEST_UNKNOWN]
+
+
+def test_identity_name_map_resolves_every_spelling_to_the_survivor():
+    people = [{"name": "Lex", "preferred_name": "Alex",
+               "merged_names": ["Lexi"]},
+              {"name": "Mateo", "preferred_name": ""}]
+    assert identity_name_map(people) == {"lex": "Lex", "alex": "Lex",
+                                         "lexi": "Lex", "mateo": "Mateo"}
 
 
 # ── the leave-hook handoff, end to end ──────────────────────────────────────

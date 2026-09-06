@@ -390,6 +390,23 @@ def test_prefix_is_byte_stable_when_room_state_changes(cfg, monkeypatch):
         assert a["messages"][-1] != b["messages"][-1], seat["model"]
 
 
+def test_guest_stamp_never_enters_any_prompt(cfg, monkeypatch):
+    """Contract 1.5: the round's guest stamp is a tool-side fact for
+    save_memory, like the web stamp. It is not context for the model, so
+    it lands in neither block and nowhere in the request."""
+    sentinel = "guest:GUESTSTAMP_SENTINEL_XYZ"
+    live_cfg = _cfg(cfg, room_mode=True, room_roster_names=["Alex"],
+                    _round_guest_speakers=[sentinel],
+                    _round_web_domains={"a.example"})
+    stable, volatile = providers.split_system_prompt(
+        PARTICIPANT, ROSTER, live_cfg, None, "", False)
+    assert sentinel not in stable and sentinel not in volatile
+    for seat in (SONNET, OPUS5):
+        client, _ = _drive(monkeypatch, live_cfg, ambient="a fact",
+                           preds=["gpt"], participant=seat)
+        assert sentinel not in str(client.messages.captured_kwargs), seat["model"]
+
+
 def test_memory_write_warning_rides_the_volatile_tail(cfg):
     stable, volatile = providers.split_system_prompt(
         PARTICIPANT, ROSTER,

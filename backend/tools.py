@@ -1434,6 +1434,9 @@ async def save_memory(args, cfg, memory, origin_agent=None):
         # #138 slice 4: a save in a web-touched round carries the stamp, so
         # the service holds it - the miner cannot be bypassed by saving.
         web_sources=sorted(cfg.get("_round_web_domains") or ()),
+        # Contract 1.5: the guests present in the round, so a save made
+        # while a guest could have been the source is held for review.
+        guest_speakers=list(cfg.get("_round_guest_speakers") or ()),
     )
     if result is None:
         return "Error: memory service unavailable - fact NOT saved"
