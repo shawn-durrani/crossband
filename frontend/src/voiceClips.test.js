@@ -39,13 +39,13 @@ test('a set-aside clip says WHY, and noise is not "sounded like" (#219)', () => 
 
 test('move targets are every other person by display name', () => {
   const people = [
-    { person_id: 'a-1', name: 'Catriona', preferred_name: 'Cat' },
+    { person_id: 'a-1', name: 'Rosalind', preferred_name: 'Ros' },
     { person_id: 'b-2', name: 'Alex' },
   ]
   assert.deepEqual(moveTargets(people, 'a-1'),
                    [{ person_id: 'b-2', name: 'Alex' }])
   assert.deepEqual(moveTargets(people, 'b-2'),
-                   [{ person_id: 'a-1', name: 'Cat' }])
+                   [{ person_id: 'a-1', name: 'Ros' }])
   assert.deepEqual(moveTargets([], 'a-1'), [])
 })
 
