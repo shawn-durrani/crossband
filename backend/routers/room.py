@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from .. import anchors, db, introductions, room_state
+from .. import anchors, db, introductions, person_sync, room_state
 
 router = APIRouter(tags=["room"])
 
@@ -379,11 +379,15 @@ def delete_person_clip(person_id: str, fname: str):
 
 
 @router.delete("/api/voice/people/{person_id}")
-def forget_person(person_id: str):
+def forget_person(person_id: str, request: Request):
     """Forget a remembered voice: deletes the person's anchor AUDIO from disk
     and the index entry, and unlinks every roster row that pointed at them
     (those names drop back to 'anchor pending' - they can be re-learned, but
-    only by being heard again)."""
+    only by being heard again). The forget then goes to membro at once, on
+    a worker thread the response never waits for (#334): a privacy action
+    should be done when the button returns, or as close to that as membro
+    allows. Move, delete and merge keep the round-end pass; they correct
+    attribution, they do not remove a person."""
     if not anchors.store().forget(person_id):
         raise HTTPException(404, "no such remembered voice")
     con = db.connect()
@@ -399,6 +403,7 @@ def forget_person(person_id: str):
         events.notify_room_update()
     log.info("voice forgotten: person=%s roster_rows_unlinked=%d",
              person_id, cur.rowcount)
+    person_sync.kick(request.app.state.settings.memory_url)
     return {"ok": True}
 
 
