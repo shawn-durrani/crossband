@@ -44,4 +44,25 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - run: cd frontend && npm ci --omit=dev --ignore-scripts && npm audit --omit=dev --audit-level=high
+      - run: cd frontend && npm ci --omit=dev --ignore-scripts
+      # npm audit asks the registry's advisory service for the lockfile's
+      # known vulnerabilities. When that service is down the command fails
+      # with "audit endpoint returned an error" even though it found
+      # nothing, and on 4 September that blocked a green PR for two hours
+      # (#341). Three attempts a minute apart ride out a short outage; a
+      # long one still fails the job, by the owner's decision, so the
+      # policy stays fail-closed.
+      - name: npm audit, with retries for a registry outage
+        run: |
+          cd frontend
+          for attempt in 1 2 3; do
+            if npm audit --omit=dev --audit-level=high; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "npm audit attempt $attempt failed; retrying in 60s"
+              sleep 60
+            fi
+          done
+          echo "npm audit failed on all three attempts"
+          exit 1
