@@ -1,71 +1,37 @@
 # Crossband
 
-Crossband is a group chat with several AI models at once. Any model can
-take a seat: Claude, GPT, a hosted open model through Groq or
-OpenRouter, or a local one through Ollama or LM Studio. They all sit in
-one shared transcript, see each other's messages, and can agree or
-disagree. Everything runs on your own computer: a FastAPI backend, one
-SQLite file, and a web page you open on that same computer. The models
-share a set of tools: web search, fetching a page, viewing a page the
-way a browser renders it, Reddit and YouTube, GitHub issues, and memory.
-Every tool result goes into the transcript, where you and every model
-can see it.
+Crossband is a group chat with several AI models in it at once.
+Claude, GPT, a hosted open model through Groq or OpenRouter, or a
+local one through Ollama or LM Studio: any of them can take a seat.
+They all read the same transcript, see each other's messages, and can
+agree or disagree. It runs on your own computer, and from there it can
+listen and talk, remember what was said last week, and let more than
+one person join in.
 
-The name comes from radio. A crossband repeater receives on one band and
-sends on another. The app does the same between model APIs that each
-only understand a conversation between two parties.
+```
+    you ──┐
+ Claude ──┤
+    GPT ──┼──▶  one transcript, on your computer  ──▶  search, pages, memory, voice
+  local ──┘
+```
 
-## What it does
+The name comes from radio. A crossband repeater receives on one band
+and sends on another. The app does the same between model APIs that
+each only understand a conversation between two parties.
 
-Every model sees the same conversation. A provider's API only knows two
-speakers, so the app shows each model its own past turns as the
-assistant and everyone else's turns as the user, each labelled with who
-said it.
+## Why it exists
 
-You can call Claude Code into the chat as a guest. It joins for one
-turn, works in its own copy of your repo (a git worktree), and by
-default it can only read. If you turn on implement mode, it can branch,
-run the tests, push, and open a pull request. It can never merge.
+Every chat app is you and one model. Crossband puts several in the
+room and lets them talk to each other, which is where the interesting
+disagreements happen. And because it runs at home, it can do things a
+hosted chat can't: hear who's speaking, keep a memory across
+conversations, and call a coding agent into your own repo.
 
-You can talk to the models and hear them answer. That works from your
-phone too, once the app is on your own Tailscale network. Every voice
-the app has learnt has a place on the Voices page. There you can listen
-to the stored clips, fix a name, move a recording to the right person,
-or forget someone.
+## Get it running
 
-A model can say nothing. If its whole reply is `[pass]`, the app removes
-it before anyone sees or hears it, so a model with nothing to add
-doesn't have to invent an angle. The first model to answer a direct
-question can't pass.
-
-Room mode is for when more than one person is talking to the models.
-When someone speaks, the app compares the voice with the voices it's
-learnt. That check happens on the computer the app runs on, in well
-under a second. If it knows the voice,
-it puts that person's name on the turn, so the models know who said
-what. If it doesn't, it asks who's joined. A turn from one person is
-transcribed once. Only a turn where two people talked over each other
-gets a second transcription, to untangle who said what. The small model
-that does the checking is about 38MB, downloaded once, and then works
-offline. Set `CROSSBAND_VOICE_ID_ENABLED=false` to turn it off.
-
-Spend is counted in three columns that are never added together: what
-was metered on an API key, what a subscription covered and would have
-cost if metered, and unknown. A model with no known price stays
-unpriced.
-
-Memory is optional. With
-[Membro](https://github.com/shawn-durrani/membro) running, the room
-remembers across conversations. Without it, everything else works and
-nothing is remembered from one conversation to the next.
-
-## Requirements
-
-- Python 3.12 or newer, and Node 20 or newer.
-- One model to talk to: an Anthropic key, an OpenAI key, or a local
-  model through Ollama or LM Studio, which needs no key at all.
-
-## Quick start
+You need Python 3.12 or newer, Node 20 or newer, and one model to talk
+to. That's an Anthropic key, an OpenAI key, or a local model through
+Ollama or LM Studio, which needs no key at all.
 
 ```sh
 git clone https://github.com/shawn-durrani/crossband.git
@@ -73,20 +39,79 @@ cd crossband
 ./start.sh
 ```
 
-The app is then at http://127.0.0.1:8902. `start.sh` creates the Python
-environment, installs dependencies when they change, builds the web app
-when it needs to, and won't start a second copy on the same port. If
-8902 is taken, set `CROSSBAND_PORT`.
+Open http://127.0.0.1:8902. The first run takes a few minutes, because
+`start.sh` creates the Python environment, installs the dependencies
+and builds the web app. After that it only redoes a step when something
+changed, and it won't start a second copy on the same port. If 8902 is
+taken, set `CROSSBAND_PORT`.
 
 Add your keys through the setup wizard in the app, or put them in
 `.env`. The app checks each key works before it saves it, and never
 shows a key back to you.
 
-You'll need one key for voice. Put your ElevenLabs key in `.env` as
+Voice needs one more key. Put your ElevenLabs key in `.env` as
 `ELEVENLABS_API_KEY` and restart the app. Each model then speaks in its
-own voice. Speech goes through the backend, so the key never reaches the
-browser. If you don't add a key, voice is off and everything else still
-works.
+own voice. Speech goes through the backend, so the key never reaches
+the browser. If you don't add a key, voice is off and everything else
+still works.
+
+## What you can do
+
+**Put several models in one conversation.** A provider's API only
+knows two speakers, so the app shows each model its own past turns as
+the assistant and everyone else's as the user, each labelled with who
+said it. The models share a set of tools: web search, fetching a page,
+viewing a page the way a browser renders it, Reddit and YouTube,
+GitHub issues, and memory. Every tool result goes into the transcript,
+where you and every model can see it.
+
+**Let a model stay quiet.** If a model's whole reply is `[pass]`, the
+app removes it before anyone sees or hears it, so a model with nothing
+to add doesn't have to invent an angle. The first model to answer a
+direct question can't pass.
+
+**Talk, and hear the answers.** Voice works from your phone too, once
+the app is on your own Tailscale network. Every voice the app has
+learnt has a place on the Voices page, where you can listen to the
+stored clips, fix a name, move a recording to the right person, or
+forget someone.
+
+**Have more than one person in the room.** Room mode is for when more
+than one person is talking to the models. When someone speaks, the app
+compares the voice with the voices it's learnt. That check happens on
+the computer the app runs on, in well under a second. If it knows the
+voice, it puts that person's name on the turn, so the models know who
+said what. If it doesn't, it asks who's joined. A turn from one person
+is transcribed once. Only a turn where two people talked over each
+other gets a second transcription, to untangle who said what. The
+small model that does the checking is about 38MB, downloaded once, and
+then works offline. Set `CROSSBAND_VOICE_ID_ENABLED=false` to turn it
+off.
+
+**Call in a coding agent.** You can call Claude Code into the chat as
+a guest. It joins for one turn, works in its own copy of your repo (a
+git worktree), and by default it can only read. If you turn on
+implement mode, it can branch, run the tests, push, and open a pull
+request. It can never merge.
+
+**Remember across conversations.** Memory is optional. With
+[Membro](https://github.com/shawn-durrani/membro) running, the room
+remembers from one conversation to the next. Without it, everything
+else works and nothing is remembered.
+
+**See what it costs.** Spend is counted in three columns that are
+never added together: what was metered on an API key, what a
+subscription covered and would have cost if metered, and unknown. A
+model with no known price stays unpriced.
+
+## What it isn't
+
+Crossband is built for one household with one owner. There's one
+login, not accounts for many people. It isn't a hosted service, and
+there's nothing to sign up for. It needs a model to talk to, so bring
+a key or run a local one. It's maintained by one person and was built for
+that person's own use first. Issues and pull requests are welcome,
+and response times vary.
 
 ## Configuration
 
