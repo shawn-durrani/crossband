@@ -50,6 +50,12 @@ git config core.hooksPath .githooks
   exempts that one line. A green scan covers key shapes, infrastructure
   identifiers and your deny-list. It is not a clearance: content must be
   synthetic by construction.
+  `scripts/secret-scan.sh` is the fleet's canonical scanner: membro and
+  spendglass carry byte-identical copies, each guarded by a test that
+  fails when the copy differs, so a pattern fix lands here first and is
+  then copied across. Exclusions only this repo needs (the frontend
+  lockfile, files that never ship) live in `.secret-scan-exclude`, one
+  path per line, so the script itself stays identical everywhere.
 - Scope boundaries in [ARCHITECTURE.md](ARCHITECTURE.md) are deliberate.
 
 ## Retiring code
