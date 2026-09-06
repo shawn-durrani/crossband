@@ -522,37 +522,62 @@ class AnchorStore:
         data.setdefault("pending_corrections", []).append(entry)
 
     @staticmethod
-    def _settle_corrections(rows: list, person_id: str, slug) -> list:
-        """The pending rows that name a person being forgotten, rewritten
-        so each can still land once their local id is gone (#335). A row
-        that names a local id nobody resolves any more would otherwise
-        stay pending forever, and a pending merge whose winner is
+    def _settle_corrections(rows: list, person_id: str, slug,
+                            into: str | None = None) -> list:
+        """The pending rows that name a person about to lose their local
+        id, rewritten so each can still land (#335 forget, #338 merge). A
+        row that names a local id nobody resolves any more would
+        otherwise stay pending forever, or be dropped by the replay as
+        nothing durable to fix, and a pending merge whose winner is
         forgotten leaves the loser living in membro, to be rebuilt here
         under the other name. Ledger order and each row's cid and at are
-        kept; the rewrites are the equivalences the owner already stated:
+        kept; the rewrites are the equivalences the owner already stated.
+
+        Forgotten (`into` is None):
 
         - a merge this person WON becomes a forget of the loser's slug:
           the merge said the loser is this same human;
         - a move INTO this person becomes a delete at its source: audio
-          moved into a forgotten person is that person's audio;
+          moved into a forgotten person is that person's audio.
+
+        Merged away (`into` is the survivor's local id), so the owner
+        said this person IS the survivor:
+
+        - a merge this person WON now names the survivor as its winner;
+        - a move INTO this person now targets the survivor. A move from
+          the survivor into this person has nothing left to do (the clip
+          sits under the survivor in both homes) and goes: sent on as a
+          move onto itself, membro would collapse it into a delete and
+          lose its only copy of the clip.
+
+        Either way:
+
         - a move or delete OUT of this person carries this person's slug,
           so the replay can still name the source. It sits ahead of the
-          forget in ledger order, so it lands first or converges on membro
-          saying the person is gone. With no slug there is nothing durable
-          to fix, and the row goes."""
+          forget or merge in ledger order, so it lands first or converges
+          on membro saying the person is gone. With no slug there is
+          nothing durable to fix, and the row goes;
+        - a forget names its person by slug already and is left alone."""
         out = []
         for corr in rows:
             kind = corr.get("kind")
             stamp = {k: corr[k] for k in ("cid", "at") if k in corr}
             if kind == "merge" and corr.get("winner") == person_id:
-                out.append({"kind": "forget", "slug": corr["loser_slug"],
-                            **stamp})
+                if into is not None:
+                    out.append({**corr, "winner": into})
+                else:
+                    out.append({"kind": "forget", "slug": corr["loser_slug"],
+                                **stamp})
             elif kind == "move" and corr.get("to") == person_id:
-                row = {"kind": "delete", "from": corr["from"],
-                       "sha": corr["sha"], **stamp}
-                if corr.get("from_slug"):
-                    row["from_slug"] = corr["from_slug"]
-                out.append(row)
+                if into is not None:
+                    if corr.get("from") != into:
+                        out.append({**corr, "to": into})
+                else:
+                    row = {"kind": "delete", "from": corr["from"],
+                           "sha": corr["sha"], **stamp}
+                    if corr.get("from_slug"):
+                        row["from_slug"] = corr["from_slug"]
+                    out.append(row)
             elif kind in ("move", "delete") and corr.get("from") == person_id:
                 if slug:
                     out.append({**corr, "from_slug": slug})
@@ -702,7 +727,16 @@ class AnchorStore:
         old voice labels and re-introductions under that name keep resolving.
         The survivor's own preferred name and owner-set flag are untouched -
         the caller applies the owner's chosen display name after the merge.
-        Returns the surviving person_id, or None (unknown id, or a == b)."""
+        Returns the surviving person_id, or None (unknown id, or a == b).
+
+        A correction still pending on the merged-away person is settled
+        onto the survivor as their local id goes (#338): a move into them
+        now targets the survivor, a merge they won names the survivor as
+        winner, and a move or delete out of them carries their membro slug,
+        ahead of the merge row in ledger order. So a clip the owner deleted
+        out of them is deleted in membro before the merge there moves the
+        rest across, instead of riding the merge into the survivor and
+        being restored here under the survivor's name."""
         if not person_id_a or not person_id_b or person_id_a == person_id_b:
             return None
         with self._lock:
@@ -724,7 +758,12 @@ class AnchorStore:
             kept = select_keep(active_clips(merged)) + quarantined
             survivor["clips"] = kept
             # #33 slice 3: a merged-away person with a durable record must
-            # merge there too, or its stale clips rebuild one day
+            # merge there too, or its stale clips rebuild one day. The rows
+            # still pending on them are settled onto the survivor first
+            # (#338), so each sits ahead of the merge and can still land.
+            data["pending_corrections"] = self._settle_corrections(
+                data.get("pending_corrections") or [], gone_id,
+                gone.get("membro_slug"), into=survivor_id)
             if gone.get("membro_slug"):
                 self._record_correction(data, {
                     "kind": "merge", "loser_slug": gone["membro_slug"],

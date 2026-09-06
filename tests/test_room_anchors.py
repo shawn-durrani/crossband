@@ -200,6 +200,148 @@ def test_forgetting_a_person_membro_never_knew_drops_their_out_rows(store):
     assert rows[1]["slug"] == "casey-slug"              # and no row for Alex
 
 
+# ── merge settles the pending rows that named the loser (#338) ─────────────
+
+def test_merging_retargets_a_move_into_the_loser_at_the_survivor(store):
+    """The owner said the loser IS the survivor, so a clip moved into the
+    loser was moved into the survivor. The pending move named the loser
+    by a local id the merge removed; left as it was, its target never
+    resolved and the row waited forever."""
+    alex = store.ensure_person("Alex")        # oldest: the merge survivor
+    blair = store.ensure_person("Blair")
+    casey = store.ensure_person("Casey")
+    assert store.add_clip(casey, loud_pcm(2.0), 16000, source="introduction")
+    for pid, slug in ((alex, "alex-slug"), (blair, "blair-slug"),
+                      (casey, "casey-slug")):
+        assert store.set_membro_slug(pid, slug)
+    fname = store.clips_of(casey)[0]["file"]
+    sha = _sha_of(store, fname)
+    assert store.move_clip(casey, fname, blair)
+    move = store.pending_corrections()[0]
+
+    assert store.merge_people(alex, blair) == alex
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["move", "merge"]
+    assert rows[0]["from"] == casey and rows[0]["to"] == alex
+    assert rows[0]["sha"] == sha and "from_slug" not in rows[0]
+    # the same ledger row, settled in place: order, cid and stamp kept
+    assert rows[0]["cid"] == move["cid"] and rows[0]["at"] == move["at"]
+    assert (rows[1]["loser_slug"], rows[1]["winner"]) == ("blair-slug", alex)
+
+
+def test_merging_drops_a_move_from_the_survivor_into_the_loser(store):
+    """A clip moved from the survivor into the loser is back under the
+    survivor the moment they merge, in both homes, so the pending move
+    has nothing left to do. Retargeted at the survivor it would be a
+    move onto itself, and membro collapses a move onto bytes the target
+    already holds into a delete: the durable home would lose its only
+    copy of the clip."""
+    alex = store.ensure_person("Alex")
+    blair = store.ensure_person("Blair")
+    assert store.add_clip(alex, loud_pcm(2.0), 16000, source="introduction")
+    assert store.set_membro_slug(alex, "alex-slug")
+    assert store.set_membro_slug(blair, "blair-slug")
+    fname = store.clips_of(alex)[0]["file"]
+    assert store.move_clip(alex, fname, blair)
+    assert [c["kind"] for c in store.pending_corrections()] == ["move"]
+
+    assert store.merge_people(alex, blair) == alex
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["merge"]
+    assert [c["file"] for c in store.clips_of(alex)] == [fname]
+
+
+def test_merging_keeps_the_losers_slug_on_rows_out_of_them(store):
+    """A move or delete OUT of the loser names a source the merge
+    removed. The row carries the loser's membro slug instead and stays
+    ahead of the merge in ledger order, so a clip the owner deleted out
+    of the loser is deleted in membro before the merge there moves the
+    rest across. Left as it was, the replay dropped the row as nothing
+    durable to fix, membro's merge moved the deleted clip into the
+    survivor, and the restore handed it back here under the survivor's
+    name."""
+    alex = store.ensure_person("Alex")
+    blair = store.ensure_person("Blair")
+    casey = store.ensure_person("Casey")
+    assert store.add_clip(blair, loud_pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(blair, loud_pcm(2.5), 16000, source="accumulated")
+    for pid, slug in ((alex, "alex-slug"), (blair, "blair-slug"),
+                      (casey, "casey-slug")):
+        assert store.set_membro_slug(pid, slug)
+    moved, deleted = [c["file"] for c in store.clips_of(blair)]
+    deleted_sha = _sha_of(store, deleted)
+    assert store.move_clip(blair, moved, casey)
+    assert store.delete_clip(blair, deleted)
+    before = store.pending_corrections()
+
+    assert store.merge_people(alex, blair) == alex
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["move", "delete", "merge"]
+    assert all(c["from"] == blair and c["from_slug"] == "blair-slug"
+               for c in rows[:2])
+    assert rows[0]["to"] == casey
+    assert rows[1]["sha"] == deleted_sha
+    assert [c["cid"] for c in rows[:2]] == [c["cid"] for c in before]
+    assert (rows[2]["loser_slug"], rows[2]["winner"]) == ("blair-slug", alex)
+
+
+def test_merging_retargets_a_merge_the_loser_won_at_the_survivor(store):
+    """Three names, one human, merged in two steps before a sync ran:
+    the first merge's winner is the second merge's loser. Its pending
+    row named a winner the second merge removed, so it waited forever
+    while the first loser lived on in membro as its own person. Now it
+    names the survivor, the human all three are."""
+    alex = store.ensure_person("Alex")        # oldest: survives both merges
+    blair = store.ensure_person("Blair")
+    casey = store.ensure_person("Casey")
+    for pid, slug in ((alex, "alex-slug"), (blair, "blair-slug"),
+                      (casey, "casey-slug")):
+        assert store.set_membro_slug(pid, slug)
+    assert store.merge_people(blair, casey) == blair
+    first = store.pending_corrections()[0]
+    assert (first["loser_slug"], first["winner"]) == ("casey-slug", blair)
+
+    assert store.merge_people(alex, blair) == alex
+    rows = store.pending_corrections()
+    assert [(c["loser_slug"], c["winner"]) for c in rows] == [
+        ("casey-slug", alex), ("blair-slug", alex)]
+    assert rows[0]["cid"] == first["cid"] and rows[0]["at"] == first["at"]
+
+
+def test_merging_a_person_membro_never_knew_drops_their_out_rows(store):
+    """No slug means nothing durable to fix for a move or delete OUT of
+    the loser, so those rows go (the replay would drop them the same
+    way), and no merge row is recorded. A move INTO them, or a merge
+    they won, still names records membro holds, and is retargeted at
+    the survivor."""
+    alex = store.ensure_person("Alex")        # oldest: the survivor
+    blair = store.ensure_person("Blair")      # never pushed: no slug
+    casey = store.ensure_person("Casey")
+    dana = store.ensure_person("Dana")
+    for pid in (blair, casey):
+        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(blair, loud_pcm(2.5), 16000, source="accumulated")
+    for pid, slug in ((alex, "alex-slug"), (casey, "casey-slug"),
+                      (dana, "dana-slug")):
+        assert store.set_membro_slug(pid, slug)
+    b1, b2 = [c["file"] for c in store.clips_of(blair)]
+    c1 = store.clips_of(casey)[0]["file"]
+    c1_sha = _sha_of(store, c1)
+    assert store.move_clip(blair, b1, casey)            # out of Blair
+    assert store.delete_clip(blair, b2)                 # out of Blair
+    assert store.move_clip(casey, c1, blair)            # into Blair
+    assert store.merge_people(blair, dana) == blair     # Blair won, Dana lost
+    assert [c["kind"] for c in store.pending_corrections()] == [
+        "move", "delete", "move", "merge"]
+
+    assert store.merge_people(alex, blair) == alex
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["move", "merge"]
+    assert rows[0]["from"] == casey and rows[0]["to"] == alex
+    assert rows[0]["sha"] == c1_sha
+    assert (rows[1]["loser_slug"], rows[1]["winner"]) == ("dana-slug", alex)
+
+
 def test_a_refused_clip_is_recorded_and_visible(store):
     """#312: a refusal is not silent - the person carries how many clips
     were refused recently and why the last one was, so "still learning at

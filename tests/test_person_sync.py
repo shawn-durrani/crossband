@@ -15,6 +15,10 @@ slice-1 routes), the contract under test:
   a merge they won forgets the loser too, a clip moved into them is
   deleted at its source, and the pull applies membro's forget marks
   before it rebuilds anyone, so a settled merge's loser cannot come back;
+- a merge settles the corrections still pending on the loser (#338): a
+  clip deleted out of them is deleted in membro before the merge there
+  moves the rest across, so the restore cannot hand it back under the
+  survivor's name;
 - a participant-named entry (#65 guard artefact) is never pushed;
 - no token, or membro unreachable, is a clean logged no-op - crossband
   behaves exactly as it did before membro existed;
@@ -537,6 +541,46 @@ def test_forgetting_a_person_deletes_the_clip_moved_into_them_in_membro(
     assert again["pulled_people"] == 0 and again["restored_clips"] == 0
     assert [p["person_id"] for p in store.people()] == [blair]
     assert moved_sha not in {x["sha256"] for x in membro.anchors[blair]}
+
+
+def test_merging_away_a_person_cannot_bring_back_a_clip_deleted_out_of_them(
+        app, membro):
+    """#338: a clip deleted out of a person who is then merged away. The
+    pending delete named the loser by a local id the merge removed, so
+    the replay dropped it as nothing durable to fix; membro's merge then
+    moved the deleted clip into the survivor, and the restore handed it
+    back here under the survivor's name. The owner deleted a recording
+    and the recording came back. Two passes on purpose, as for the
+    forget cases."""
+    store = anchors.store()
+    alex = store.ensure_person("Alex")        # older: merge_people keeps it
+    blair = store.ensure_person("Blair")
+    assert store.add_clip(alex, _pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(blair, _pcm(2.5), 16000, source="accumulated")
+    assert store.add_clip(blair, _pcm(3.0), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+    assert len(membro.anchors[alex]) == 1 and len(membro.anchors[blair]) == 2
+
+    gone = store.clips_of(blair)[0]["file"]
+    gone_sha = hashlib.sha256((store.root / gone).read_bytes()).hexdigest()
+    assert store.delete_clip(blair, gone)
+    assert store.merge_people(alex, blair) == alex
+    assert [c["kind"] for c in store.pending_corrections()] == [
+        "delete", "merge"]
+    assert len(store.clips_of(alex)) == 2
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 2 and store.pending_corrections() == []
+    assert out["pulled_people"] == 0 and out["restored_clips"] == 0
+    assert membro.persons[blair]["merged_into"] == alex
+    assert gone_sha not in {x["sha256"] for x in membro.anchors[alex]}
+    assert len(membro.anchors[alex]) == 2           # the other clip came across
+    assert membro.anchors.get(blair, []) == []
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["restored_clips"] == 0 and again["pushed_clips"] == 0
+    assert len(store.clips_of(alex)) == 2
+    assert gone_sha not in set(store.membro_stamps(alex).values())
 
 
 def test_a_participant_named_entry_is_never_pushed(app, membro):
