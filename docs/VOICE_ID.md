@@ -240,8 +240,10 @@ could not take. Membro deletes its copy of the audio and sends the
 facts it learned from that person back to review. Forgetting someone
 also settles any waiting correction that named them: the other record
 in a merge they won is forgotten too, and a clip moved into them is
-deleted at its source. A correction made while membro is down simply
-waits for the next pass.
+deleted at its source. Merging two people settles them the same way: a
+waiting correction that named the merged-away person now names the
+survivor. A correction made while membro is down simply waits for the
+next pass.
 
 ## Scale bounds
 

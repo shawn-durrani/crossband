@@ -185,10 +185,11 @@ def _replay_corrections(client, base, store) -> int:
     once what landed is settled, so sync_once can name it (workbench#61).
     Every branch is deliberate: dropping a correction silently is how a
     fixed mis-attribution resurrects through a rebuild.
-    A move or delete out of a person since forgotten carries that
-    person's slug on the row (#335): the local id no longer resolves, and
-    the row sits ahead of the forget in ledger order, so it lands first
-    or converges on membro saying the person is gone."""
+    A move or delete out of a person since forgotten or merged away
+    carries that person's slug on the row (#335, #338): the local id no
+    longer resolves, and the row sits ahead of the forget or merge in
+    ledger order, so it lands first or converges on membro saying the
+    person is gone."""
     done = []
     refused = None
     slugs = store.membro_slugs()
