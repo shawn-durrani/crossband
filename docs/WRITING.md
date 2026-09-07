@@ -48,9 +48,9 @@ to someone else after one read.
 A limitation:
 
 > The phrases the app listens for, like "this is Dave" or "solo mode",
-> came from one household speaking English. They won't cover
-> everything your household says. When a phrase is missed, the app
-> still recognises a voice it already knows, still asks who a new
+> came from real sessions in one home, in English, and they won't
+> cover everything people say in yours. When a phrase is missed, the
+> app still recognises a voice it already knows, still asks who a new
 > voice is, and you can always switch room mode by hand in the voice
 > settings.
 
