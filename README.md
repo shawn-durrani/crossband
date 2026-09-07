@@ -11,32 +11,30 @@ one person join in.
 ```mermaid
 flowchart LR
   subgraph seats["Any model can take a seat"]
-    direction TB
-    C["Claude"]
-    G["GPT"]
-    H["A hosted open model"]
-    L["A local model"]
+    C("Claude")
+    G("GPT")
+    H("A hosted open model")
+    L("A local model")
   end
-  subgraph home["Your computer"]
-    direction TB
-    T["One shared transcript"]
-    tools["Web search, pages, GitHub, memory"]
-    V["Voice in and out"]
-  end
-  subgraph room["The room"]
-    direction TB
-    Y["You"]
-    O["Anyone else who speaks"]
-  end
-  C <--> T
-  G <--> T
-  H <--> T
-  L <--> T
-  T <--> tools
-  T <--> V
-  Y <--> T
-  V <--> Y
-  V <--> O
+  T["One shared transcript"]
+  tools[("Web search, pages,<br/>GitHub, memory")]
+  V("Voice in and out")
+  Y(["You"])
+  O(["Anyone else<br/>who speaks"])
+  C -- "read, reply" --> T
+  G --> T
+  H --> T
+  L --> T
+  T -- "calls" --> tools
+  T -- "spoken aloud" --> V
+  Y -- "types" --> T
+  V -- "hears, speaks" --> Y
+  V -- "hears" --> O
+  classDef node fill:#d4d4d8,stroke:#757575,color:#18181b
+  classDef hero fill:#38bdf8,stroke:#0284c7,color:#18181b,stroke-width:2px
+  class C,G,H,L,tools,V,Y,O node
+  class T hero
+  style seats fill:transparent,stroke:#757575,color:#757575
 ```
 
 The name comes from radio. A crossband repeater receives on one band
@@ -88,6 +86,27 @@ said it. The models share a set of tools: web search, fetching a page,
 viewing a page the way a browser renders it, Reddit and YouTube,
 GitHub issues, and memory. Every tool result goes into the transcript,
 where you and every model can see it.
+
+One round looks like this.
+
+```mermaid
+%%{init: {"themeVariables": {"actorBkg": "#d4d4d8", "actorBorder": "#757575", "actorTextColor": "#18181b", "noteBkgColor": "#38bdf8", "noteTextColor": "#18181b", "noteBorderColor": "#0284c7", "activationBkgColor": "#38bdf8", "activationBorderColor": "#0284c7"}}}%%
+sequenceDiagram
+  participant You
+  participant App as Crossband
+  participant Claude
+  participant GPT
+  You->>App: a message
+  App->>Claude: the transcript, its own turns as assistant,<br/>everyone else's as user
+  activate Claude
+  Claude-->>App: reply
+  deactivate Claude
+  App->>GPT: the transcript again, with Claude's reply<br/>as a user turn
+  activate GPT
+  GPT-->>App: reply, or [pass]
+  deactivate GPT
+  Note over App: a whole reply of [pass] is removed before anyone sees it
+```
 
 **Let a model stay quiet.** If a model's whole reply is `[pass]`, the
 app removes it before anyone sees or hears it, so a model with nothing

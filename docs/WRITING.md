@@ -167,3 +167,61 @@ The document:
   holds a value and one sentence, under 45 words (CI).
 - Changelog entries use the same voice. They may name the issue, at
   the end.
+
+## Diagrams
+
+A diagram earns its place when it shows something you'd otherwise have
+to build up from prose: where data flows, which parts talk, what state
+a thing moves through. If a sentence says it faster, write the
+sentence. A box with the name of a thing in it says less than the
+prose did.
+
+Pick the shape that fits. A flow of parts and arrows for architecture.
+A sequence diagram for what happens in one round or one request. A
+state diagram for modes and what moves between them. A flow with
+diamonds for a procedure with decisions.
+
+Every diagram is a Mermaid block in the page, never an image file, so
+it's reviewed, versioned and searched like text. The one exception is
+a screenshot of the real app.
+
+GitHub draws the diagram in whichever mode the reader has on, and it
+swaps its own line and text colours to suit. We leave GitHub's theme
+alone and set only the fills, with dark text on every fill, which reads
+on white and on dark alike. This was checked on GitHub in both modes.
+
+For a flow, paste these lines at the end of the block. Put every node
+in the `node` class, and the one thing the diagram is about in `hero`.
+
+```
+classDef node fill:#d4d4d8,stroke:#757575,color:#18181b
+classDef hero fill:#38bdf8,stroke:#0284c7,color:#18181b,stroke-width:2px
+classDef bad fill:#fca5a5,stroke:#dc2626,color:#18181b
+style <group id> fill:transparent,stroke:#757575,color:#757575
+```
+
+For a sequence diagram, start the block with this line.
+
+```
+%%{init: {"themeVariables": {"actorBkg": "#d4d4d8", "actorBorder": "#757575", "actorTextColor": "#18181b", "noteBkgColor": "#38bdf8", "noteTextColor": "#18181b", "noteBorderColor": "#0284c7", "activationBkgColor": "#38bdf8", "activationBorderColor": "#0284c7"}}}%%
+```
+
+The rules:
+
+- Shapes mean things. A pill is a person. A rounded box is a model or
+  a service. A square box is a thing inside the app. A cylinder is a
+  store. A diamond is a decision.
+- One accent. The sky blue goes on the one thing the diagram is about.
+  Red only on a failure path. Everything else stays grey.
+- Label the arrows with what moves: "types", "read, reply", "checks
+  again in 20s". Leave one bare only when its label would repeat the
+  one beside it.
+- The doc's own words, in the same voice as the prose. A term from
+  the code appears in a diagram only after the prose has said what it
+  means.
+- Twelve nodes at most, and left to right. If it needs more, it's two
+  diagrams or a table. Group only for a real boundary such as a
+  computer, a repo or a service, and don't set a direction inside a
+  group, because GitHub ignores it and stacks the group into a column.
+- Never a theme block that fixes every colour. In dark mode GitHub
+  paints such a diagram on a white slab.
