@@ -1,18 +1,17 @@
 # Voice identification: where it falls short, and what to tune
 
-You can talk to the models and hear them answer, and when more than one
-person is talking, the app works out who said what and puts their name
-on each turn. That naming is voice identification. It rests on
-remembered voices: the app keeps short clips of each person it has
-learnt, compares every new turn with them on your own computer, and
-names the speaker only when it's sure. Room mode is the state the app
-is in while it does this for more than one person. The short version
-of all that is the readme's
-[Have more than one person in the room](../README.md#what-you-can-do).
+Crossband can hear you and talk back. When more than one person is in
+the room, it also works out who is speaking and puts a name on each
+turn. To do that it keeps a short recording of each person it has
+learnt, compares every new turn against those recordings on your own
+computer, and names the speaker only when the match is clear. The app
+calls this room mode, and the readme's
+[Have more than one person in the room](../README.md#what-you-can-do)
+has the short version.
 
-What follows is the long version: how the naming works, where it can
-get a name wrong, and what to change when it does. It was tuned on the
-voices in one home, and yours will sound different.
+The defaults were set using the voices of one family. If the app names
+the wrong person, or nobody, start with
+[What to check when identification misbehaves](#what-to-check-when-identification-misbehaves).
 
 The app puts a name on a turn only when the voice check on your own
 computer is sure. That check is called the matcher. When it isn't sure,
