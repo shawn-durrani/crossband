@@ -76,27 +76,35 @@ convention is retired:
 
 ## Writing documentation
 
-Budgets, not taste. `tests/test_doc_style.py` enforces the hard limits;
-the rest is review. The house reference is this repo's README, measured
-with the same prose extraction the tests use.
+The docs are written in the fleet's voice, and
+[docs/WRITING.md](docs/WRITING.md) says what that sounds like. Read the
+seven examples there before you write or change a page. The test is one
+line: read each sentence as if you're explaining the app to a smart
+friend who's never seen it, and if you wouldn't say it like that,
+rewrite it. README.md is the first doc rewritten that way, and the one
+to measure the others against.
 
-- One claim per sentence. Average under 18 words, and keep sentences
-  over 35 words under 10% of a document.
-- No em-dashes. Australian English. Plain English over jargon.
-- Caveats earn their own sentence. Appending a limitation to every claim
-  is how the important ones stop reading as important.
-- Antithesis ("X, not Y", "rather than", "instead of") is a tool, not a
-  cadence. If deleting the "not Y" half loses no information, delete it.
-- Never announce your own honesty. "Stated plainly", "the honest reason":
-  delete the phrase, keep the fact.
-- Issue numbers and bug history go in the CHANGELOG and the issue.
-  Reference prose says what is true now. A test file is the exception:
-  recording which bug a case guards is exactly what it is for.
-- Do not narrate a document's own structure or edit history. Nobody read
-  the previous version.
-- A table cell holds a value and a sentence, not a section.
-- Headings every 30 to 50 lines of prose, so a section can be navigated.
-- Say a thing once. Two copies of a rule is one copy that will go stale.
+`tests/test_doc_style.py` checks the mechanical part. Every markdown
+file in the repo is held to four ceilings: no em-dash, no sentence over
+55 words, no table cell over 45 words, and a heading at least every 50
+lines of prose. A doc rewritten in the voice is listed in `CONVERTED` at
+the top of that file, and those docs are also held to the rules the
+guide marks (CI):
+
+- no dashes and no semicolons
+- one colon per sentence, and only to introduce a list, a command or a
+  quoted value
+- bracketed asides under eight words, and no sentence starting with one
+- capitals only for acronyms
+- none of the filler words the guide names
+- contrasts ("rather than", "X, not Y") kept rare
+- no history and no issue numbers
+- no pointers to the page itself
+- no sentence opening with "So" or "Because"
+
+When you rewrite a doc, add its path to `CONVERTED` in the same PR, and
+the suite tells you what's left. Test files are different: a test names
+the issue it guards.
 
 ## Releasing
 
