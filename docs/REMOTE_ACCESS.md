@@ -1,40 +1,45 @@
 # Using the app from your phone
 
-Out of the box, the app answers only on the computer it runs on. You
-can use it from your phone, voice included, without putting it on the
-internet and without your conversations passing through anyone else's
-service. You need Tailscale and about ten minutes. There's no script
+You can use the app from your phone, voice included, without putting
+it on the internet and without your conversations passing through
+anyone else's service. Out of the box it answers only on the computer
+it runs on. The setup takes about ten minutes, and there's no script
 for it, so the steps are by hand.
 
-[Tailscale](https://tailscale.com) makes a private network between
-your own devices. That network is called a tailnet, and only devices
-signed in to your account are on it. One of its commands,
-`tailscale serve`, gives something running on your Mac an HTTPS
+You need [Tailscale](https://tailscale.com), which makes a private
+network between your own devices. That network is called a
+[tailnet](https://tailscale.com/docs/concepts/tailnet), and only
+devices signed in to your account are on it. One of its commands,
+[`tailscale serve`](https://tailscale.com/docs/features/tailscale-serve),
+gives something running on your Mac an
+[HTTPS](https://developer.mozilla.org/en-US/docs/Glossary/HTTPS)
 address that only your tailnet can reach. In short: run the app as
 usual, have Tailscale serve it, tell the app to expect its new name,
 and open that name on your phone.
 
 ## What you're agreeing to
 
-Once the app is on your tailnet, the tailnet is its outer boundary.
-Any device on it can reach the app's lock screen. Behind that screen
-are your conversations, your API credit, and your repositories if
-you've set up the coding guest. The lock screen asks for your owner
-password, or for your passkey once you've added one. If you haven't
-set a password yet, a device on your tailnet is asked to set one and
-can do nothing else. Setting one needs the recovery secret from the
-Mac.
+Once the app is on your tailnet, the tailnet is its outer boundary,
+and any device on it can reach the app's lock screen. Behind that
+screen are your conversations, your API credit, and your repositories
+if you've set up the coding guest. The lock screen asks for your owner
+password, or for your
+[passkey](https://passkeys.dev/docs/intro/what-are-passkeys/) once
+you've added one. If you haven't set a password yet, a device on your
+tailnet is asked to set one and can do nothing else. Setting one needs
+the recovery secret from the Mac.
 
-Two rules still hold. The lock screen is the second layer, and it
+Two rules still hold, because the lock screen is the second layer and
 doesn't make the app fit for a wider network.
 
 - Only your own devices go on that tailnet. If you wouldn't hand
   someone your unlocked laptop, don't add their device.
-- Use `tailscale serve`, never `tailscale funnel`. Funnel is the public
-  version of the same command. It would put the app on the open
-  internet, with no rate limiting, no audit log, and a login page
-  facing the whole world. Check any time with `tailscale serve status`.
-  It must say "tailnet only".
+- Use `tailscale serve`, never `tailscale funnel`.
+  [Funnel](https://tailscale.com/docs/features/tailscale-funnel) is the
+  public version of the same command, and it would put the app on the
+  open internet with no rate limiting, no audit log, and a login page
+  facing the whole world. Check any time with `tailscale serve status`,
+  which must say "tailnet only".
 
 The app isn't built to face the internet, and having a login doesn't
 change that. Past the tailnet, you're on your own.
@@ -50,9 +55,11 @@ command is what keeps the app off the internet, so one step does both.
 
 ## Setup
 
-The steps use the `tailscale` command. On a Mac it lives inside the
-Tailscale app, at `/Applications/Tailscale.app/Contents/MacOS/Tailscale`,
-and isn't on your `PATH`, so run it by that full path.
+The steps use the
+[`tailscale` command](https://tailscale.com/docs/reference/tailscale-cli).
+On a Mac it lives inside the Tailscale app, at
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale`, and isn't on
+your `PATH`, so run it by that full path.
 
 1. Install Tailscale on your Mac and on your phone, and sign in to the
    same account on both. The free personal plan is enough.
@@ -129,11 +136,13 @@ Mac won't offer itself at the tailnet name.
 Tailscale serve takes each request at the HTTPS address and passes it
 to the app at `127.0.0.1`, so the app sees a connection from the Mac
 itself. The request still carries the name it was sent to, in a field
-every web request has, called Host. The app checks that field on every
-request and refuses any name it doesn't know. The check is there
-because a hostile website can point its own name at `127.0.0.1`, and a
-browser would then treat that site as your app. The Host field still
-names the other site, so the app says no.
+every web request has, called
+[Host](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Host).
+The app checks that field on every request and refuses any name it
+doesn't know. The check is there because a hostile website can point
+its own name at `127.0.0.1`, and a browser would then treat that site
+as your app. The Host field still names the other site, so the app
+says no.
 
 Only devices signed in to your tailnet can look up or reach the
 tailnet name, so the tailnet is the outer fence. Inside it, the lock
@@ -163,35 +172,40 @@ flowchart LR
   style mac fill:transparent,stroke:#757575,color:#757575
 ```
 
-Two more checks run behind that.
+Two more checks run behind that. A browser marks every ordinary
+request with where it came from, in a field called
+[Sec-Fetch-Site](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Site).
+A request to an `/api/` route marked `cross-site` is refused, so a
+page on another website that has learnt your tailnet name can't drive
+the app from its own address. Only that one value is refused, so a
+page the browser calls `same-site`, meaning one served under another
+name on your tailnet domain, gets through.
 
-A browser marks every ordinary request with where it came from, in a
-field called Sec-Fetch-Site. A request to an `/api/` route marked
-`cross-site` is refused, so a page on another website that has learnt
-your tailnet name can't drive the app from its own address. Only that
-one value is refused. A page the browser calls `same-site`, meaning
-one served under another name on your tailnet domain, gets through.
+Voice runs over
+[websockets](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API),
+connections that stay open in both directions, and that check never
+sees them. The two voice relays, `/api/voice/tts` and
+`/api/voice/stt-stream`, do their own checking, in
+`backend/routers/voice.py`. They check the Host name against the same
+list, and a second field, called
+[Origin](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Origin),
+which the browser fills with the address of the page that opened the
+websocket. A page can't forge Origin. An Origin whose name isn't on
+the list is refused, so a page on another site can't open a relay and
+spend your ElevenLabs credit, even from a phone that's on your tailnet.
 
-Voice runs over websockets, and that check never sees them. The two
-voice relays, `/api/voice/tts` and `/api/voice/stt-stream`, do their
-own checking, in `backend/routers/voice.py`. They check the Host name
-against the same list, and a second field, called Origin, which the
-browser fills with the address of the page that opened the websocket.
-A page can't forge Origin. An Origin whose name isn't on the list is
-refused, so a page on another site can't open a relay and spend your
-ElevenLabs credit, even from a phone that's on your tailnet. A caller
-that sends no Origin at all is let through, the same as over HTTP.
-That means a script or `curl`, never a browser. For those the tailnet
-is the whole fence, so treat the tailnet name as semi-private.
+A caller that sends no Origin at all, meaning a script or `curl` and
+never a browser, is let through, the same as over HTTP. For those the
+tailnet is the whole fence, so treat the tailnet name as semi-private.
+Any device on it can reach every `/api/` route, and the lock screen is
+the only lock behind it.
 
-Any device on your tailnet can reach every `/api/` route. The tailnet
-is the fence, and the lock screen is the only lock behind it. Your own
-scripts and the deploy watcher post into chats through two routes,
-`/api/ingest` and the deploy-notice route, and each request carries
-`ingest_token`. [SECURITY.md](../SECURITY.md) calls that the machine
-side-channel. Once an owner password is set, every such script needs
-the token, on the Mac itself included, because a script has no browser
-session.
+Your own scripts and the deploy watcher post into chats through two
+routes, `/api/ingest` and the deploy-notice route, and each request
+carries `ingest_token`. [SECURITY.md](../SECURITY.md) calls that the
+machine side-channel. Once an owner password is set, every such script
+needs the token, on the Mac itself included, because a script has no
+browser session.
 
 Nothing faces the internet, and no messaging provider such as Meta or
 Twilio sits in the path. Your conversation goes only to the AI
@@ -222,11 +236,11 @@ and it has its own supported way onto a tailnet. Its settings:
 - `MEMORY_TAILSCALE_BIN` tells Membro where the `tailscale` command is
   when it isn't on your `PATH`, which on a Mac is the path in
   [Setup](#setup).
-- Membro always asks for its owner password, on the Mac included.
-  Crossband only asks once you've set one. For Membro, the password is
-  what keeps people out, and the tailnet is only a way to reach it.
-  Putting it on the tailnet doesn't change where it listens or what it
-  accepts as a credential.
+- Membro always asks for its owner password, on the Mac included,
+  while Crossband only asks once you've set one. For Membro, the
+  password is what keeps people out, and the tailnet is only a way to
+  reach it. Putting it on the tailnet doesn't change where it listens
+  or what it accepts as a credential.
 
 Read Membro's own `SECURITY.md` and `docs/TUNING.md` before you turn
 any of that on. The settings are Membro's, and its docs say how they
