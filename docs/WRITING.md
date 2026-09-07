@@ -123,6 +123,9 @@ Sentences:
   "Given" or "Otherwise" (CI).
 - Every sentence has a verb. A bold label at the start of a list item
   is a heading, not a sentence.
+- Don't announce a count. "Two rules still hold" and "Three things
+  catch what the lists miss" promise a list and delay it. Say the
+  things (CI).
 - A paragraph is one thought. Its first sentence says what the thought
   is, and the rest develops it. Join sentences that belong together, and
   keep a short sentence for landing a point.
