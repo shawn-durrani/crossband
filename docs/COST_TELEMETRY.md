@@ -312,7 +312,7 @@ When there's no key for the utility model, no call goes out and
 nothing is logged. The app carries on without the summary or title and
 says nothing.
 
-Two things to know when you read the numbers:
+When you read the numbers, keep these in mind:
 
 - `cost` can be empty. A utility model missing from the local price
   table is recorded with no cost, and the Spend page shows it as "not
