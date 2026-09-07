@@ -109,6 +109,42 @@ paragraph is about, each sentence does one job, the app or the reader
 is the subject, numbers where you'd want them, and no sentence is
 there to sound good.
 
+## Sentences that failed a read
+
+The owner reads each rewritten page, and the sentences that stop him
+go here with what they became. Add to this list every time it happens.
+It's the fastest way to learn the voice, and each entry usually earns a
+rule.
+
+Announced a count and delayed the list. "Two rules still hold. The
+lock screen is the second layer, and it doesn't make the app fit for
+a wider network." Became: "The lock screen is a second lock behind the
+tailnet, and it doesn't make it safe to open the port any wider. Keep
+to these rules."
+
+Set a scene before making the point. "Crossband is a service that runs
+on your computer and answers on port 8902. Say that computer is one
+you use as a home server, and you reach the app from your phone. Then
+you want it to start on its own, come back if it dies, and survive a
+reboot." Became one thought: "Crossband runs as a service on your
+computer, on port 8902, and if you leave it running on a home server
+and use it from your phone, it needs to look after itself. It should
+start when the computer starts, come back when it dies, and survive a
+reboot."
+
+Reassured where a fact was wanted. "It was built and tuned in one
+household, and yours is different." Became: "It was tuned on the
+voices in one home, and yours will sound different."
+
+Rounded off with a slogan. "Everywhere in the app, a wrong name counts
+as worse than no name." Cut, because the paragraph had already said
+that an unsure match leaves the turn unnamed.
+
+Opened a page on the detail with no ground under it. VOICE_ID.md began
+"Room mode is for when more than one person is talking to the models."
+It now begins by saying what voice identification is, in four
+sentences, before any detail.
+
 ## The rules behind it
 
 Rules marked (CI) are checked by each repo's `tests/test_doc_style.py`.
