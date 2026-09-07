@@ -123,6 +123,13 @@ Sentences:
   "Given" or "Otherwise" (CI).
 - Every sentence has a verb. A bold label at the start of a list item
   is a heading, not a sentence.
+- A paragraph is one thought. Its first sentence says what the thought
+  is, and the rest develops it. Join sentences that belong together, and
+  keep a short sentence for landing a point.
+- When you introduce something from outside the app, such as launchd,
+  Tailscale or a protocol, link its public documentation at the first
+  mention, so a reader who wants more has somewhere to go. Explain it
+  in a sentence first; the link is for depth.
 
 Punctuation:
 
