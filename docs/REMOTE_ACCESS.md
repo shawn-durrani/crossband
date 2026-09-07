@@ -29,8 +29,8 @@ you've added one. If you haven't set a password yet, a device on your
 tailnet is asked to set one and can do nothing else. Setting one needs
 the recovery secret from the Mac.
 
-Two rules still hold, because the lock screen is the second layer and
-doesn't make the app fit for a wider network.
+The lock screen is a second lock behind the tailnet, and it doesn't
+make it safe to open the port any wider. Keep to these rules.
 
 - Only your own devices go on that tailnet. If you wouldn't hand
   someone your unlocked laptop, don't add their device.
@@ -172,8 +172,8 @@ flowchart LR
   style mac fill:transparent,stroke:#757575,color:#757575
 ```
 
-Two more checks run behind that. A browser marks every ordinary
-request with where it came from, in a field called
+Behind that, the app checks where each request came from. A browser
+marks every ordinary request with its origin, in a field called
 [Sec-Fetch-Site](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Site).
 A request to an `/api/` route marked `cross-site` is refused, so a
 page on another website that has learnt your tailnet name can't drive
