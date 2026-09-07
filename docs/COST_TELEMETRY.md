@@ -2,22 +2,24 @@
 
 This is for anyone who wants to know what their chats cost and where
 the money goes. The Spend page splits your spend by where it came
-from. Every model in a chat has a seat, and each Claude seat writes
-one line to the log on every call saying what its prompt cache did,
-with none of your words in it. The cheap model that writes titles and
-summaries has its own spend record. None of that changes what gets
+from, and the cheap model that writes titles and summaries has its own
+spend record. Every model in a chat has a seat, and each Claude seat
+writes one line to the log on every call saying what its prompt cache
+did, with none of your words in it. None of that changes what gets
 cached, which model answers, or what you're billed.
 
-Anthropic can keep the start of a request between calls and charge
-less to read it back. That's the prompt cache. Crossband splits each
-Claude seat's system prompt into a part that stays the same and a
-part that changes every message. A cache mark after the first part
-tells Anthropic to keep everything before it, so a fresh memory result
-or a new reply in the round leaves the large part cached. That's a
-change to how the prompt is laid out. It's no promise about your bill. Whether
-it cuts cache writes on your traffic is what the log line lets you
-check, with your own before and after sample. Nobody has published a
-number, so don't repeat one.
+Crossband lays out each Claude seat's prompt to suit Anthropic's
+cache. Anthropic can keep the start of a request between calls and
+charge less to read it back, which it calls
+[prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+Crossband splits the seat's system prompt into a part that stays the
+same and a part that changes every message, and a cache mark after the
+first part tells Anthropic to keep everything before it. A fresh
+memory result or a new reply from another seat then leaves the large
+part cached. That's a change to how the prompt is laid out and no
+promise about your bill. Whether it cuts cache writes on your traffic
+is what the log line lets you check, with your own before and after
+sample. Nobody has published a number, so don't repeat one.
 
 ## Where the money goes
 
@@ -26,20 +28,23 @@ The Spend page's By source table splits your spend into these rows.
 | Source | What it is | How it's billed |
 |---|---|---|
 | **Model turns** | Every reply from a seated model, Claude and GPT alike. | Metered on your API key, always. |
-| **Coding agent** | A turn by a Claude Code guest you summoned into the chat. | Your API key or your Claude Code subscription, whichever the turn recorded. |
+| **Coding agent** | A turn by a Claude Code guest you summoned into the chat. | Your API key or your [Claude Code subscription](https://code.claude.com/docs/en/costs), whichever the turn recorded. |
 | **Utility (background model work)** | Rolling summaries, auto-titles and project distillation, plus the room and voice scans. | Metered on your API key, when a utility model is set. |
 
 The cache log line covers the Claude seats in Model turns and nothing
-else. A GPT seat talks to the OpenAI Responses API, which has no cache
-mark to instrument. A coding agent turn goes through its own code, in
-`backend/guest.py`. It records its own cache use, as
-`cache_creation_input_tokens` from the usage Claude Code reports, and
-writes no cache log line. Whether the turn was metered or covered by
-the subscription is stored on it as `usage_json.auth`. Every cost
-lands in one of three columns that are never added together: metered
-on a key, covered by a subscription, or unknown.
+else. A GPT seat talks to the
+[OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses),
+which has no cache mark to instrument. A coding agent turn goes through
+its own code, in `backend/guest.py`, which records the turn's cache use
+as `cache_creation_input_tokens` from the usage Claude Code reports and
+writes no cache log line.
+
+Every cost lands in one of three columns that are never added
+together: metered on a key, covered by a subscription, or unknown.
+Whether a coding agent turn was metered or covered by the subscription
+is stored on it as `usage_json.auth`, and
 [A recorded dollar is not a charged dollar](../ARCHITECTURE.md#a-recorded-dollar-is-not-a-charged-dollar)
-explains how they stay apart.
+explains how the columns stay apart.
 
 A utility call is a single call with no streaming and no prompt
 caching, so its token counts are the whole story. The default utility
@@ -48,9 +53,9 @@ shows the same money as Utility (titles/summaries).
 
 ## How a Claude request is laid out
 
-A round is one pass where each seated model gets a turn to reply.
 Every time a Claude seat replies, Crossband sends one request made of
-four blocks, in this order.
+four blocks. A round is one pass where each seated model gets a turn
+to reply, and the blocks come in this order.
 
 1. The tool definitions.
 2. The stable system block: the seat's persona, the project
@@ -63,23 +68,27 @@ four blocks, in this order.
    already claimed, and the warning appears when the memory service
    isn't healthy. The block changes on nearly every call.
 
-The cache works on the start of the request, called the prefix.
 Crossband puts a cache mark at the end of the stable block and another
-on the second-last message of the conversation. Everything before a
-mark can be stored and read back on the next call. A change anywhere
-before a mark throws away everything from that point on, and the next
-call stores it again. The volatile block comes after both marks, so it
-can change freely without touching what's stored. A model that accepts
-a system turn at the end of the conversation gets it as one. The
-others get it added to the end of the last user turn, framed as text
-Crossband assembled.
+on the second-last message of the conversation. The cache works on the
+start of the request, called the prefix, so everything before a mark
+can be stored and read back on the next call. A change anywhere before
+a mark throws away everything from that point on, and the next call
+stores it again.
+
+The volatile block comes after both marks, so it can change freely
+without touching what's stored. A model that accepts a system turn at
+the end of the conversation gets it as one, and the others get it
+added to the end of the last user turn, framed as text Crossband
+assembled.
 
 Storing a block costs more than reading it back. Anthropic charges
-1.25 times the normal input price to write a block into the cache and
-a tenth of it to read the block back, so one write costs as much as
-twelve and a half reads. A cache pays off when a prefix is written
-once and read many times. The Spend page shows this as a read to write
-ratio, per model, under Prompt cache health.
+1.25 times the
+[normal input price](https://platform.claude.com/docs/en/about-claude/pricing)
+to write a block into the cache and a tenth of it to read the block
+back, so one write costs as much as twelve and a half reads. A cache
+pays off when a prefix is written once and read many times. The Spend
+page shows this as a read to write ratio, per model, under Prompt
+cache health.
 
 The chat summary stays in the stable block. When the app folds older
 messages into the summary, the same database statement moves
@@ -130,14 +139,15 @@ claude_chat_cache speaker=<slug> model=<model-id> chat=<int> tool_round=<int>
 
 ### Nothing in it is your text
 
-Each `_hash` field is the first 16 characters of a SHA-256 fingerprint
-of one block, made by `_content_hash` and `_messages_hash` in
-`backend/providers.py`. A fingerprint proves whether a block changed
-between two calls and can't give the text back. Each `_chars` field is
-a character count. The token and cache-write counts come straight from
-the `usage` and `cache_creation` fields on Anthropic's response. No
-prompt or transcript text is ever written to the log, and no code path
-in this feature can write chat content to it.
+No prompt or transcript text is ever written to the log, and no code
+path in this feature can write chat content to it. Each `_hash` field
+is the first 16 characters of a SHA-256 fingerprint of one block, made
+by `_content_hash` and `_messages_hash` in `backend/providers.py`. A
+fingerprint proves whether a block changed between two calls and can't
+give the text back. Each `_chars` field is a character count, and the
+token and cache-write counts come straight from the `usage` and
+`cache_creation` fields on
+[Anthropic's response](https://platform.claude.com/docs/en/api/messages).
 
 ### What each field means
 
@@ -170,7 +180,7 @@ in this feature can write chat content to it.
   one reply. Compare it across calls to tell whether the
   conversation's cache mark saw the same prefix or a new one.
 - `thinking` and `effort`: what was sent on this call. `thinking` is
-  the thinking block's type, or `none`. `effort` is the seat's
+  the thinking block's type, or `none`, and `effort` is the seat's
   reasoning effort, or `default`. Both change the request without
   changing any fingerprint, so a miss they cause would otherwise have
   no visible reason.
@@ -198,25 +208,32 @@ well as the log.
 
 ### Where the line goes
 
-These are ordinary Python `logging` calls under the `crossband`
-logger, so they land in `data/service.log` under the launchd
-supervisor, or in your terminal when you run `./start.sh` yourself.
-By default only warnings and errors from the app's own code reach the
-log, so these lines are silent until you turn them on. Set
-`CROSSBAND_LOG_LEVEL=INFO` for the length of a sampling session, then
-unset it. Any standard level name works, and capitals don't matter.
-It changes what's written to the log, never what gets cached, priced
-or billed, and uvicorn's own request log is set up separately and
-unaffected. [docs/OPERATIONS.md](OPERATIONS.md) covers the supervisor
-and the log file.
+The line lands in `data/service.log` when the app runs under
+[launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html),
+the supervisor that keeps it running on macOS, or in your terminal
+when you run `./start.sh` yourself. That's because these are ordinary
+calls to Python's
+[`logging`](https://docs.python.org/3/library/logging.html) module
+under the `crossband` logger. [docs/OPERATIONS.md](OPERATIONS.md)
+covers the supervisor and the log file.
+
+To see the lines, set `CROSSBAND_LOG_LEVEL=INFO` for the length of a
+sampling session, then unset it. By default only warnings and errors
+from the app's own code reach the log, so these lines are silent until
+you turn them on. Any standard level name works, and capitals don't
+matter. The setting changes what's written to the log, never what gets
+cached, priced or billed. [Uvicorn](https://www.uvicorn.org/), the web
+server the app runs in, has its own request log, which is set up
+separately and unaffected.
 
 ## The database has the same numbers
 
-Every reply stores its cache counters on the message in
-`messages.usage_json`, as `input`, `cache_read`, `cache_creation` and
-`output`, summed across the reply's tool rounds. That means you can
-check cache behaviour after the fact, even when the log line was off
-at the time.
+You can check cache behaviour after the fact, even when the log line
+was off at the time. Every reply stores its cache counters on the
+message in `messages.usage_json`, as `input`, `cache_read`,
+`cache_creation` and `output`, summed across the reply's tool rounds.
+The database is a SQLite file, `data/chat.db`, and the
+[`sqlite3` shell](https://sqlite.org/cli.html) reads it directly.
 
 ```sh
 sqlite3 data/chat.db "SELECT json_extract(usage_json,'$.model'),
@@ -253,25 +270,29 @@ To tell them apart, compare `stable_hash` across consecutive lines for
 the same `speaker`. The same hash with a write still happening means
 the block expired, or this was the first write for that content. A
 different hash means the content changed somewhere before the cache
-mark. Check `volatile_hash` the same way to see whether the split is
-doing its job. A `volatile_hash` that changes every call while
-`stable_hash` holds across a short burst of messages is the shape you
-want.
+mark.
+
+Check `volatile_hash` the same way to see whether the split is doing
+its job. A `volatile_hash` that changes every call while `stable_hash`
+holds across a short burst of messages is the shape you want.
 
 ## How utility calls are counted
 
 Two places write utility spend, and they share one pricing step,
 `llm_util.price_utility_call`, so neither can price a call differently
-from the other. `chat_memory._run_utility` covers the chat's own uses,
-with `kind` set to `summarize`, `title` or `distill`. The rolling
-summary folds older messages into a summary once the unsummarised part
-of the transcript grows too large. The auto-title names a chat from
-its content, and project distillation folds a chat's new messages into
-the project's memory notes. `llm_util.utility_complete_logged` covers
-the room and voice scans, with `kind` set to `command_scan`,
-`intro_scan`, `correction_scan`, `depth_scan` or `mismatch_check`. A
-scan has a chat id but no open database connection, so that writer
-opens its own on a worker thread.
+from the other.
+
+`chat_memory._run_utility` covers the chat's own uses, with `kind` set
+to `summarize`, `title` or `distill`. The rolling summary folds older
+messages into a summary once the unsummarised part of the transcript
+grows too large. The auto-title names a chat from its content, and
+project distillation folds a chat's new messages into the project's
+memory notes.
+
+`llm_util.utility_complete_logged` covers the room and voice scans,
+with `kind` set to `command_scan`, `intro_scan`, `correction_scan`,
+`depth_scan` or `mismatch_check`. A scan has a chat id but no open
+database connection, so that writer opens its own on a worker thread.
 
 Each real call writes one row to `utility_usage` and commits it at
 once. The row holds `chat_id`, `kind`, `model`, `input_tokens`,
@@ -286,9 +307,10 @@ mismatch flag. The reply is returned either way.
 
 A busy room-mode turn can fire four scans, and the Spend page folds
 every kind into one utility line, so room mode makes that line grow.
-When no call went out, because there's no key for the utility model,
-nothing is logged. The app carries on without the summary or title
-and says nothing.
+
+When there's no key for the utility model, no call goes out and
+nothing is logged. The app carries on without the summary or title and
+says nothing.
 
 Two things to know when you read the numbers:
 
@@ -305,12 +327,12 @@ Two things to know when you read the numbers:
   A row with no provenance, written before the column existed, is
   priced against the live table when it's read.
 
-Utility calls made before the app kept this table have no row, because
-their token counts were never kept and can't be rebuilt. The Utility
-line on the Spend page covers calls made since the table existed,
-never your lifetime utility spend. A low Utility total on an old
-install can mean most of its history came before the table, so it's no
-proof that utility calls are cheap.
+The Utility line on the Spend page covers calls made since the table
+existed, never your lifetime utility spend. Calls made before the app
+kept this table have no row, because their token counts were never
+kept and can't be rebuilt. A low Utility total on an old install can
+mean most of its history came before the table, so it's no proof that
+utility calls are cheap.
 
 ## Checking your own before and after
 
@@ -325,12 +347,12 @@ the same rough length and pace, and best of all the same scripted
 messages replayed into a scratch chat. Comparing a two-message chat
 with a fifty-message chat tells you nothing.
 
-1. Turn on the log line for the session. `config.local.json` is your
-   own gitignored config layer, read the same way whether you run the
-   app yourself or under the supervisor, so the supervisor's plist
-   stays untouched. The layers are the defaults, then `config.json`,
-   then `config.local.json`, then the environment, and each one
-   overrides the last. Add this line.
+1. Turn on the log line for the session by adding this line to
+   `config.local.json`. That file is your own gitignored config layer,
+   read the same way whether you run the app yourself or under the
+   supervisor, so the supervisor's plist stays untouched. The layers
+   are the defaults, then `config.json`, then `config.local.json`,
+   then the environment, and each one overrides the last.
    ```json
    { "log_level": "INFO" }
    ```
