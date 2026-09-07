@@ -129,7 +129,7 @@ Sentences:
 - When you introduce something from outside the app, such as launchd,
   Tailscale or a protocol, link its public documentation at the first
   mention, so a reader who wants more has somewhere to go. Explain it
-  in a sentence first; the link is for depth.
+  in a sentence first. The link is for depth.
 
 Punctuation:
 
@@ -174,6 +174,30 @@ The document:
   holds a value and one sentence, under 45 words (CI).
 - Changelog entries use the same voice. They may name the issue, at
   the end.
+
+## The pass
+
+Every rewrite, and every new page, goes through these steps in this
+order. The first five are judgement. The last one is the machine, and
+it can't hear the voice, so the judgement steps are still yours.
+
+1. Keep every fact. List the facts, commands, settings and numbers on
+   the old page before you touch it, and check them off at the end.
+2. The voice, one sentence at a time. Read each sentence as if to a
+   smart friend who's never seen the app, and rewrite it until you'd say
+   it like that.
+3. The flow, one paragraph at a time. Each paragraph is one thought,
+   its first sentence says what that thought is, and the instruction
+   comes before the mechanism. Join what belongs together, and keep a
+   short sentence for landing a point.
+4. Explain, then link. A term from the code gets a sentence that says
+   what it means before it's used. Something from outside the app gets
+   that sentence and a link to its public documentation at the first
+   mention.
+5. A diagram only where there's a mechanism to show, following the
+   Diagrams section.
+6. Add the page to the converted list and run the checks. Fix the
+   writing, never the check.
 
 ## Diagrams
 
