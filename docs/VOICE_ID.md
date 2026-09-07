@@ -1,12 +1,19 @@
 # Voice identification: where it falls short, and what to tune
 
-Room mode is for when more than one person is talking to the models.
-When someone speaks, the app compares the voice with the voices it has
-learnt, which it calls remembered voices, and puts a name on the turn,
-so the models know who said what. It was built and tuned in one
-household, and yours is different. Here's how it tells voices apart,
-where it's likely to fall short for you, and which settings to change
-when it does.
+You can talk to the models and hear them answer, and when more than one
+person is talking, the app works out who said what and puts their name
+on each turn. That naming is voice identification. It rests on
+remembered voices: the app keeps short clips of each person it has
+learnt, compares every new turn with them on your own computer, and
+names the speaker only when it's sure. Room mode is the state the app
+is in while it does this for more than one person. The README's
+[Have more than one person in the room](../README.md#what-you-can-do)
+is the short version of all that.
+
+This page is the long version. It explains how the naming works, where
+it's likely to fall short for your household, and which settings to
+change when it does. It was built and tuned in one household, and
+yours is different.
 
 The app names a speaker only when the voice check on your own computer
 is sure, and that one rule holds all of it together. That check is the
