@@ -109,6 +109,18 @@ paragraph is about, each sentence does one job, the app or the reader
 is the subject, numbers where you'd want them, and no sentence is
 there to sound good.
 
+Defined a thing by pointing back at it, and dressed the mechanism up.
+"That naming is voice identification. It rests on remembered voices."
+Became: "To do that it keeps a short recording of each person it has
+learnt, compares every new turn against those recordings on your own
+computer, and names the speaker only when the match is clear."
+
+Talked about the page without saying "this page". "What follows is the
+long version: how the naming works, where it can get a name wrong, and
+what to change when it does." Cut. The headings say what the page
+covers, and the one pointer a reader needs is a link to the
+troubleshooting heading.
+
 ## The rules behind it
 
 Rules marked (CI) are checked by each repo's `tests/test_doc_style.py`.
