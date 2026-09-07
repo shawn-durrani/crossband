@@ -191,7 +191,7 @@ messages reach the page, and that connection never ends on its own.
 connection to finish before it exits, so the app ends those streams the
 moment the signal arrives and that wait is over in milliseconds.
 
-Two more things make a restart forgiving. Startup waits up to ten
+A restart is forgiving in two more ways. Startup waits up to ten
 seconds for a lock still held by the copy that's shutting down, so a
 restart a second too early still succeeds. If the lock is still held
 after that, the message says whether the process holding it is alive
