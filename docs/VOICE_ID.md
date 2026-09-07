@@ -29,7 +29,7 @@ hears a reason to. "room on · 2" means the room is on with two people
 seated. "solo" means you switched the room off for this chat, and the
 app won't switch it back on by itself.
 
-Four things arm the room from "listening":
+The room arms itself from "listening" when:
 
 - a voice the app remembers speaks, and it isn't yours
 - a clear voice the app doesn't know speaks, and the app asks who's
@@ -85,7 +85,7 @@ Room mode listens for spoken introductions, like "say hi to Alex" or
 household's real sessions, in English. They won't cover everything
 your household says.
 
-Three things catch what the phrase lists miss.
+What the phrase lists miss is caught another way.
 
 - A small, cheap model reads any turn that looks even roughly like an
   introduction or a command. An unusual phrasing still lands as long
@@ -213,7 +213,7 @@ in [CONFIG.md](CONFIG.md) override it together, both or neither. A new
 address checked against the old hash fails verification, and the
 matcher stays unavailable. It never runs an unverified file.
 
-Two things to know before you swap.
+Before you swap, know what a swap costs.
 
 - Every threshold here was calibrated for TitaNet-Small's score
   distribution. A different model needs its own calibration, using
