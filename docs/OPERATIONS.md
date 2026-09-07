@@ -9,7 +9,8 @@ meantime, since the chat list comes from the server.
 
 A supervisor is the program that does that looking after. It starts
 another program and keeps it running. On macOS the built-in one is
-launchd, and the repo ships a one-command installer that hands
+[launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html),
+and the repo ships a one-command installer that hands
 Crossband to it.
 
 ## Install the supervisor (macOS)
@@ -186,7 +187,7 @@ Here's why a stop is quick at all. It begins with `SIGTERM`, the signal
 `kill` and launchd send to ask a process to stop. Every open browser
 tab holds a connection to `/api/events/stream`, which is how new
 messages reach the page, and that connection never ends on its own.
-Uvicorn, the web server the app runs in, waits for every open
+[Uvicorn](https://www.uvicorn.org/), the web server the app runs in, waits for every open
 connection to finish before it exits, so the app ends those streams the
 moment the signal arrives and that wait is over in milliseconds.
 
@@ -213,7 +214,9 @@ workflow.
 
 ## Not on macOS?
 
-The same idea works with systemd on Linux: a unit with `Restart=always`
+The same idea works with
+[systemd](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)
+on Linux: a unit with `Restart=always`
 and `WantedBy=default.target`. The repo doesn't ship a unit file, but
 the plist template's `ProgramArguments` run `bash start.sh` with the
 repo as the working directory, and those map straight onto a systemd
