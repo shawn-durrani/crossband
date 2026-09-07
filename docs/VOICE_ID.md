@@ -14,13 +14,11 @@ What follows is the long version: how the naming works, where it can
 get a name wrong, and what to change when it does. It was tuned on the
 voices in one home, and yours will sound different.
 
-The app names a speaker only when the voice check on your own computer
-is sure, and that one rule holds all of it together. That check is the
-matcher, and when the matcher isn't sure the turn stays unnamed. No
-cloud service guesses names behind the scenes, and the one cloud
-transcription left in room mode runs when two people talk over each
-other, to untangle who said what. Everywhere in the app, a wrong name
-counts as worse than no name.
+The app puts a name on a turn only when the voice check on your own
+computer is sure. That check is called the matcher. When it isn't sure,
+the turn stays unnamed, and no cloud service is asked to guess instead.
+The only cloud transcription left in room mode runs when two people
+talk over each other, to work out which words were whose.
 
 ## How the room switches on and off
 
