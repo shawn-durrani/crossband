@@ -8,11 +8,35 @@ agree or disagree. It runs on your own computer, and from there it can
 listen and talk, remember what was said last week, and let more than
 one person join in.
 
-```
-    you ──┐
- Claude ──┤
-    GPT ──┼──▶  one transcript, on your computer  ──▶  search, pages, memory, voice
-  local ──┘
+```mermaid
+flowchart LR
+  subgraph seats["Any model can take a seat"]
+    direction TB
+    C["Claude"]
+    G["GPT"]
+    H["A hosted open model"]
+    L["A local model"]
+  end
+  subgraph home["Your computer"]
+    direction TB
+    T["One shared transcript"]
+    tools["Web search, pages, GitHub, memory"]
+    V["Voice in and out"]
+  end
+  subgraph room["The room"]
+    direction TB
+    Y["You"]
+    O["Anyone else who speaks"]
+  end
+  C <--> T
+  G <--> T
+  H <--> T
+  L <--> T
+  T <--> tools
+  T <--> V
+  Y <--> T
+  V <--> Y
+  V <--> O
 ```
 
 The name comes from radio. A crossband repeater receives on one band
