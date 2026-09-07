@@ -70,7 +70,7 @@ stateDiagram-v2
   listening --> solo: saying solo mode
   room --> solo: saying solo mode, or the switch in settings
   solo --> room: an introduction, saying group mode, or the switch in settings
-  class listening, solo, learning, asked node
+  class listening,solo,learning,asked node
   class named hero
   class room boundary
 ```
