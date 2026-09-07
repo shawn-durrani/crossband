@@ -241,6 +241,7 @@ def test_long_docs_stay_navigable():
 
 CONVERTED = {
     "README.md",
+    "docs/GUEST_PERMISSIONS.md",
     "docs/REMOTE_ACCESS.md",
     "docs/WRITING.md",
 }
