@@ -271,6 +271,13 @@ HISTORY = re.compile(r"\b(used to|no longer|previously|any more)\b|#\d+", re.I)
 SELF_REFERENCE = re.compile(
     r"\b(this page|this document|above|below|the next section)\b", re.I)
 OPENER = re.compile(r"^(So|Because|Since|Given|Otherwise)\b")
+# "Two rules still hold", "Three things catch what the lists miss": a count
+# announced before the things themselves. Say the things.
+COUNT = re.compile(
+    r"^(?:One|Two|Three|Four|Five|Six|Seven|Several|A few|A couple of) "
+    r"(?:more |other |last |final |small |quick )?"
+    r"(?:things?|rules?|facts?|reasons?|ways?|points?|cases?|notes?|"
+    r"caveats?|steps?|details?)\b", re.I)
 
 
 def converted_docs():
@@ -403,6 +410,12 @@ def opener_offences(text):
             for m in [OPENER.match(s)] if m]
 
 
+def count_offences(text):
+    return [(n, f'a count announced before the things: "{m.group(0)}"', s)
+            for n, _, s in converted_sentences(text)
+            for m in [COUNT.match(s)] if m]
+
+
 def _offences(checker):
     found = []
     for path in converted_docs():
@@ -468,6 +481,11 @@ def test_converted_docs_lead_with_the_claim():
                   "sentence, after the claim")
 
 
+def test_converted_docs_do_not_announce_a_count():
+    _assert_clean(count_offences, "say the things, without announcing how "
+                  "many are coming")
+
+
 # Each checker on a string that breaks its rule, so a checker that silently
 # stops matching fails here before it passes a real doc.
 
@@ -494,6 +512,8 @@ slow any more. See #342.
 See the section below, and this page above. The next section says more.
 
 A rather than B, C instead of D, E not just F, and G, not H.
+
+Two things still hold. Three more rules follow.
 """
 
 CLEAN_DOC = """\
@@ -533,6 +553,8 @@ def test_the_voice_checks_catch_a_bad_fixture():
         '"used to"', '"no longer"', '"Previously"', '"any more"', '"#342"']
     assert whys(self_reference_offences) == [
         '"below"', '"this page"', '"above"', '"The next section"']
+    assert [w.split('"')[1] for w in whys(count_offences)] == [
+        "Two things", "Three more rules"]
     contrasts = whys(contrast_offences)
     assert len(contrasts) == 4 and "where 2 are allowed" in contrasts[0], contrasts
     # Every offence names the block's first line, so the reader can find it.
@@ -545,7 +567,8 @@ def test_the_voice_checks_pass_a_clean_fixture():
     for checker in (dash_offences, semicolon_offences, colon_offences,
                     bracket_offences, caps_offences, filler_offences,
                     contrast_offences, history_offences,
-                    self_reference_offences, opener_offences):
+                    self_reference_offences, opener_offences,
+                    count_offences):
         assert checker(CLEAN_DOC) == [], checker.__name__
 
 
