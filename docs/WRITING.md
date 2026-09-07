@@ -163,6 +163,11 @@ Words:
 - "Rather than", "instead of", "not just" and "X, not Y" only when the
   reader would otherwise assume Y. At most one per 50 sentences (CI,
   checked at 2 per 100).
+- No slogans and no idioms. A line that sums up a paragraph in a
+  quotable way, like "a wrong name is worse than no name" or "one rule
+  holds it all together", is a machine rounding off. Say what the app
+  does and stop. The same goes for "behind the scenes", "under the
+  hood" and their kind.
 
 The document:
 
