@@ -10,10 +10,9 @@ is in while it does this for more than one person. The short version
 of all that is the readme's
 [Have more than one person in the room](../README.md#what-you-can-do).
 
-What follows is the long version: how the naming works, where it's
-likely to fall short for your household, and which settings to change
-when it does. It was built and tuned in one household, and yours is
-different.
+What follows is the long version: how the naming works, where it can
+get a name wrong, and what to change when it does. It was tuned on the
+voices in one home, and yours will sound different.
 
 The app names a speaker only when the voice check on your own computer
 is sure, and that one rule holds all of it together. That check is the
@@ -88,9 +87,9 @@ stateDiagram-v2
 
 Room mode listens for spoken introductions, like "say hi to Alex" or
 "my mate Dave is here", and for the mode commands "group mode" and
-"solo mode". The phrase lists that spot these came from one
-household's real sessions, in English. They won't cover everything
-your household says.
+"solo mode". The phrase lists that spot these came from real
+sessions in one home, in English, and they won't cover everything
+people say in yours.
 
 What the phrase lists miss is caught another way.
 
@@ -238,7 +237,7 @@ the Voice table in [CONFIG.md](CONFIG.md). Every one can be set in
 `config.local.json` or as a `CROSSBAND_*` environment variable. The
 defaults may need moving when voices in your house sound alike, like
 siblings or a parent and an adult child. They were calibrated on the
-model's published benchmarks plus a single household.
+model's published benchmarks plus the voices in one home.
 
 Change one knob at a time, and check the voice dock first. Its top
 row leads with the room state ("room on · N", "listening" or "solo").
@@ -251,7 +250,7 @@ turn can stay uncertain under a green tick. The matcher's own state
 and any "sound close" warning sit behind the settings button beside
 the controls, along with the manual room switches.
 
-## Similar-voice households
+## When two people sound alike
 
 Two people who sound alike are the hardest case. The app is built to
 stay quiet when in doubt, so when it can't tell them apart it leaves
