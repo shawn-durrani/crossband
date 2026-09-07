@@ -1,15 +1,16 @@
 # Keeping Crossband running
 
-Crossband runs as a service on your computer and answers on port 8902.
-If that computer is your home server and you reach the app from your
-phone, you want the service to start on its own, come back if it dies,
-and survive a reboot. Without that, a crash leaves the app dark until
-you notice and start it by hand, and the sidebar shows no chats in the
-meantime because the chat list comes from the server.
+Crossband runs as a service on your computer, on port 8902, and if
+you leave it running on a home server and use it from your phone, it
+needs to look after itself. It should start when the computer starts,
+come back when it dies, and survive a reboot. A crash would otherwise
+leave the app dark until you noticed, with an empty sidebar in the
+meantime, since the chat list comes from the server.
 
-The fix is a supervisor: a program that starts another program and
-keeps it running. On macOS the built-in one is launchd, and the repo
-ships a one-command installer that hands Crossband to it.
+A supervisor is the program that does that looking after. It starts
+another program and keeps it running. On macOS the built-in one is
+launchd, and the repo ships a one-command installer that hands
+Crossband to it.
 
 ## Install the supervisor (macOS)
 
