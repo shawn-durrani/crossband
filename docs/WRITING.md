@@ -104,7 +104,20 @@ What changed for the person, in their words, with the mechanism only
 as far as it explains the change. The issue number goes at the end of
 the entry.
 
-What the seven share: short words, the first sentence says what the
+Pointing at a neighbouring app, without restating its setup:
+
+> Crossband is one of a family of apps that all run on your computer,
+> and each of them answers only on that computer out of the box.
+> Membro, the memory, and Spendglass, the spending view, go on the
+> tailnet the same way as Crossband: `tailscale serve` on a port of
+> their own, never Funnel, with their own lock screen behind it. Each
+> app's own docs say how, and its settings are its own.
+
+Says how the neighbour fits, in one paragraph, and sends the reader
+to the neighbour's own docs for the steps, so the steps live in one
+place.
+
+What the eight share: short words, the first sentence says what the
 paragraph is about, each sentence does one job, the app or the reader
 is the subject, numbers where you'd want them, and no sentence is
 there to sound good.
