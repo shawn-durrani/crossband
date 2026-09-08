@@ -64,9 +64,9 @@ it appears.
    checks on every doc rewritten in that voice.
 4. [docs/TESTING.md](TESTING.md): what every suite guards, backend and
    frontend, and why both run keyless.
-5. [docs/COST_TELEMETRY.md](COST_TELEMETRY.md): operator-grade detail on the
-   Claude-chat cache telemetry line and utility-model spend attribution,
-   including a before/after sampling workflow you can run yourself.
+5. [docs/COST_TELEMETRY.md](COST_TELEMETRY.md): what your chats cost and
+   where the money goes, how to read the cache log line, and how to check
+   your own numbers before and after a change.
 6. [docs/LATENCY.md](LATENCY.md): what makes a reply fast or slow, covering the
    plain-English story of the latency pass, the measured budgets before and
    after, what deliberately wasn't changed, and how to re-measure any of it.
