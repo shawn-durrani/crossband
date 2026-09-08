@@ -59,9 +59,6 @@ it appears.
    pure-module rule. Opens with the shape block: which module owns what.
 2. [CONTRIBUTING.md](../CONTRIBUTING.md): setup, the keyless test suites, the
    rules that matter, and how work lands.
-3. [docs/WRITING.md](WRITING.md): how the docs should sound. Seven example
-   paragraphs that are the standard, the one-line test, and the rules CI
-   checks on every doc rewritten in that voice.
 4. [docs/TESTING.md](TESTING.md): what every suite guards, backend and
    frontend, and why both run keyless.
 5. [docs/COST_TELEMETRY.md](COST_TELEMETRY.md): operator-grade detail on the
