@@ -172,76 +172,28 @@ flowchart LR
   style mac fill:transparent,stroke:#757575,color:#757575
 ```
 
-Behind that, the app checks where each request came from. A browser
-marks every ordinary request with its origin, in a field called
-[Sec-Fetch-Site](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Site).
-A request to an `/api/` route marked `cross-site` is refused, so a
-page on another website that has learnt your tailnet name can't drive
-the app from its own address. Only that one value is refused, so a
-page the browser calls `same-site`, meaning one served under another
-name on your tailnet domain, gets through.
-
-Voice runs over
-[websockets](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API),
-connections that stay open in both directions, and that check never
-sees them. The two voice relays, `/api/voice/tts` and
-`/api/voice/stt-stream`, do their own checking, in
-`backend/routers/voice.py`. They check the Host name against the same
-list, and a second field, called
-[Origin](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Origin),
-which the browser fills with the address of the page that opened the
-websocket. A page can't forge Origin. An Origin whose name isn't on
-the list is refused, so a page on another site can't open a relay and
-spend your ElevenLabs credit, even from a phone that's on your tailnet.
-
-A caller that sends no Origin at all, meaning a script or `curl` and
-never a browser, is let through, the same as over HTTP. For those the
-tailnet is the whole fence, so treat the tailnet name as semi-private.
-Any device on it can reach every `/api/` route, and the lock screen is
-the only lock behind it.
-
-Your own scripts and the deploy watcher post into chats through two
-routes, `/api/ingest` and the deploy-notice route, and each request
-carries `ingest_token`. [SECURITY.md](../SECURITY.md) calls that the
-machine side-channel. Once an owner password is set, every such script
-needs the token, on the Mac itself included, because a script has no
-browser session.
+The app also checks where each request came from, refuses a request
+sent by a page on another website, and holds the two voice relays to
+the same rule. Your own scripts post into chats with a token of their
+own. [SECURITY.md](../SECURITY.md#how-a-request-from-the-tailnet-is-checked)
+has the detail.
 
 Nothing faces the internet, and no messaging provider such as Meta or
 Twilio sits in the path. Your conversation goes only to the AI
 providers you've set up.
 
-## Membro on the tailnet too
+## The other apps, on the same tailnet
 
-None of this is required. Crossband talks to Membro over the Mac's own
-address, so from your phone, recall, summary, search and saving facts
-all keep working whether or not Membro is on the tailnet.
+Crossband is one of a family of apps that all run on your computer,
+and each of them answers only on that computer out of the box. Membro,
+the memory, and Spendglass, the spending view, go on the tailnet the
+same way as Crossband: `tailscale serve` on a port of their own, never
+Funnel, with their own lock screen behind it. Each app's own docs say
+how, and its settings are its own. Start with
+[Membro's front page](https://github.com/shawn-durrani/membro#readme) and
+[Spendglass's front page](https://github.com/shawn-durrani/spendglass#readme).
 
-[Membro](https://github.com/shawn-durrani/membro), the memory service
-on port 8901, also answers only on its own computer out of the box,
-and it has its own supported way onto a tailnet. Its settings:
-
-- `MEMORY_TRUSTED_HOSTS` does for Membro what `CROSSBAND_TRUSTED_HOSTS`
-  does here. It's a comma-separated list of the names, other than the
-  computer's own, that may reach its sign-in page. A device on your
-  tailnet that hasn't signed in gets the lock screen and nothing else.
-- `MEMORY_TAILSCALE_SERVE=1` in Membro's own `.env` makes its
-  `start.sh` run `scripts/tailscale-serve.sh` at every start. That
-  script serves Membro with `tailscale serve`, never Funnel, on an
-  HTTPS port of its own, `MEMORY_TAILSCALE_PORT`, which defaults to
-  `8443`. Membro takes a port of its own because its admin pages link
-  absolute paths. Under a `/membro` prefix those links would land on
-  whatever is served at the root of the tailnet name, and on a Mac that
-  also serves Crossband, that's Crossband.
-- `MEMORY_TAILSCALE_BIN` tells Membro where the `tailscale` command is
-  when it isn't on your `PATH`, which on a Mac is the path in
-  [Setup](#setup).
-- Membro always asks for its owner password, on the Mac included,
-  while Crossband only asks once you've set one. For Membro, the
-  password is what keeps people out, and the tailnet is only a way to
-  reach it. Putting it on the tailnet doesn't change where it listens
-  or what it accepts as a credential.
-
-Read Membro's own `SECURITY.md` and `docs/TUNING.md` before you turn
-any of that on. The settings are Membro's, and its docs say how they
-behave.
+None of it is needed for memory to work from your phone. Crossband
+talks to Membro over the computer's own address, so recall, the profile
+and saving facts all work from your phone whether or not Membro is on
+the tailnet.
