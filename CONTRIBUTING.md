@@ -76,27 +76,28 @@ convention is retired:
 
 ## Writing documentation
 
-The docs are written in the fleet's voice, and
-[docs/WRITING.md](docs/WRITING.md) says what that sounds like. Read the
-seven examples there before you write or change a page. The test is one
-line: read each sentence as if you're explaining the app to a smart
-friend who's never seen it, and if you wouldn't say it like that,
-rewrite it. README.md is the first doc rewritten that way, and the one
-to measure the others against.
+Write a page the way you'd explain the app to a smart friend who's
+never seen it, and if you wouldn't say a sentence like that, rewrite
+it. Contractions are fine, the reader is "you", and short words beat
+long ones. A paragraph is one thought, and it opens with its point.
+When you bring in something from outside the app, say what it is in a
+sentence and link its own documentation. Don't announce a count before
+a list, and don't end a paragraph on a line that sounds good. README.md
+is the page to measure against.
 
 `tests/test_doc_style.py` checks the mechanical part. Every markdown
 file in the repo is held to four ceilings: no em-dash, no sentence over
 55 words, no table cell over 45 words, and a heading at least every 50
 lines of prose. A doc rewritten in the voice is listed in `CONVERTED` at
-the top of that file, and those docs are also held to the rules the
-guide marks (CI):
+the top of that file, and those docs are also held to these rules:
 
 - no dashes and no semicolons
 - one colon per sentence, and only to introduce a list, a command or a
   quoted value
 - bracketed asides under eight words, and no sentence starting with one
 - capitals only for acronyms
-- none of the filler words the guide names
+- none of the filler words the test names
+- no sentence that announces a count before the list
 - contrasts ("rather than", "X, not Y") kept rare
 - no history and no issue numbers
 - no pointers to the page itself

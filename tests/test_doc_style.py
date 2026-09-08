@@ -7,7 +7,8 @@ a paragraph at a time.
 
 Two layers. Every markdown file in the repo is held to the hard ceilings: no
 em-dash, no 55-word sentence, no 45-word table cell, a heading every 50 lines
-of prose. A doc rewritten in the fleet's voice (docs/WRITING.md) is listed in
+of prose. A doc rewritten in the fleet's voice (CONTRIBUTING.md, Writing
+documentation) is listed in
 CONVERTED and is also held to the rules that guide marks (CI). Taste is not
 automatable and is not attempted here: a doc can pass every check and still
 fail the guide's one-line test.
@@ -233,7 +234,8 @@ def test_long_docs_stay_navigable():
 
 
 # ---------------------------------------------------------------------------
-# The fleet's voice (docs/WRITING.md), on the docs rewritten in it.
+# The fleet's voice (CONTRIBUTING.md, Writing documentation), on the docs
+# rewritten in it.
 #
 # A doc joins CONVERTED in the PR that rewrites it, and from then on every
 # rule below holds it. Everything above runs on every markdown file.
@@ -242,7 +244,6 @@ def test_long_docs_stay_navigable():
 CONVERTED = {
     "README.md",
     "docs/REMOTE_ACCESS.md",
-    "docs/WRITING.md",
 }
 
 # Capitals are for acronyms. An all-capital word of three or more letters that
@@ -429,7 +430,7 @@ def _offences(checker):
 def _assert_clean(checker, rule):
     found = _offences(checker)
     assert not found, (
-        f'{rule} (docs/WRITING.md, "The rules behind it"):\n  '
+        f'{rule} (CONTRIBUTING.md, "Writing documentation"):\n  '
         + "\n  ".join(found))
 
 
