@@ -18,10 +18,10 @@ covers.
    layers, all keys with defaults, and `config.local.json.example` to copy
    from. You only need this once something in the README says "configured in
    `config.local.json`".
-4. [docs/VOICE_ID.md](VOICE_ID.md): voice identification's known limitations
-   and tuning, written for households that are not the one it was calibrated
-   in. Where the trigger phrases came from, the English bias, every tuning
-   knob, similar-sounding voices, and the scale bounds.
+4. [docs/VOICE_ID.md](VOICE_ID.md): how the app tells voices apart in room
+   mode, where that falls short in a house it wasn't tuned in, and what to
+   change. Where the trigger phrases came from, the English bias, every
+   tuning knob, similar-sounding voices, and the scale bounds.
 5. [docs/BENCHMARK.md](BENCHMARK.md): the Models-page synthetic benchmark.
    Identical scripted cases through your chosen seats, stage timings side
    by side, saved audio for your own ears, and what the numbers honestly
