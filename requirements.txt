@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pydantic>=2.13.5
 anthropic
-openai>=3.6.0
+openai>=3.8.0
 httpx
 python-dotenv
 python-multipart
