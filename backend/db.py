@@ -914,6 +914,26 @@ def prune_voice_traces(con, keep_days=30, keep_max=50000):
         "(SELECT id FROM voice_turn_traces ORDER BY id DESC LIMIT ?)", (int(keep_max),))
 
 
+EMPTY_CHAT_MIN_AGE_S = 48 * 3600
+
+
+def prune_empty_chats(con, min_age_s=EMPTY_CHAT_MIN_AGE_S) -> int:
+    """Delete chats nobody used (#354): no messages, older than `min_age_s`,
+    never renamed by the owner (title_upto = -1 marks a rename), not archived
+    (putting a chat away is a choice too), and nobody seated in the room.
+    A chat with any of those stays. Returns the number deleted; the caller
+    logs the count and nothing else about the chats."""
+    cutoff = now() - min_age_s
+    cur = con.execute(
+        "DELETE FROM chats WHERE created_at < ? "
+        "AND title_upto != -1 AND archived_at IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = chats.id) "
+        "AND NOT EXISTS (SELECT 1 FROM room_roster r WHERE r.chat_id = chats.id "
+        "                AND r.status = 'present')",
+        (cutoff,))
+    return cur.rowcount
+
+
 def get_chat_messages(con, chat_id):
     msgs = [dict(r) for r in con.execute(
         "SELECT * FROM messages WHERE chat_id=? ORDER BY id", (chat_id,))]
@@ -1263,16 +1283,34 @@ def command_acked(con, message_id) -> bool:
 
 def get_chat_seat_state(con, chat_id) -> dict:
     """slug -> stored reasoning_effort, for seats with spoken per-chat depth
-    (#105). Seats without a row (the normal case) are simply absent."""
+    (#105). Seats without a row (the normal case) are simply absent, and so
+    is a row that only holds a parked one-reply override: this is the
+    standing-depth view the engine threads into prompts. Use
+    get_chat_seat_rows when the parked override matters (#260)."""
     return {r["slug"]: r["reasoning_effort"] for r in con.execute(
         "SELECT slug, reasoning_effort FROM chat_seat_state WHERE chat_id=?",
         (chat_id,)) if r["reasoning_effort"]}
 
 
-def set_chat_seat_depth(con, chat_id, slug, effort):
+def get_chat_seat_rows(con, chat_id) -> dict:
+    """slug -> {"reasoning_effort", "once_effort"} for every seat with any
+    spoken state at all, blank fields included. A seat whose standing depth
+    is clear but still has a one-reply override parked shows up here, so a
+    reset can see what it is about to drop (#260)."""
+    return {r["slug"]: {"reasoning_effort": r["reasoning_effort"] or "",
+                        "once_effort": r["once_effort"] or ""}
+            for r in con.execute(
+                "SELECT slug, reasoning_effort, once_effort FROM chat_seat_state "
+                "WHERE chat_id=?", (chat_id,))}
+
+
+def set_chat_seat_depth(con, chat_id, slug, effort, keep_once=False):
     """Set one seat's spoken per-chat depth; '' clears it back to the seat's
-    configured default. A cleared row survives (blanked) while it still holds
-    a pending one-reply override, and is deleted once fully empty."""
+    configured default. A plain clear drops a parked one-reply override too,
+    so "back to normal" means what it says (#260). keep_once=True is the
+    compound instruction ("think hard about just this next one, and from now
+    on go back to normal"): the row survives, blanked, while it still holds
+    the override, and is deleted once fully empty."""
     if effort:
         con.execute(
             "INSERT INTO chat_seat_state(chat_id, slug, reasoning_effort, "
@@ -1281,13 +1319,16 @@ def set_chat_seat_depth(con, chat_id, slug, effort):
             "reasoning_effort=excluded.reasoning_effort, "
             "updated_at=excluded.updated_at",
             (chat_id, slug, effort, now()))
-    else:
+    elif keep_once:
         con.execute(
             "UPDATE chat_seat_state SET reasoning_effort='', updated_at=? "
             "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
         con.execute(
             "DELETE FROM chat_seat_state WHERE chat_id=? AND slug=? "
             "AND once_effort=''", (chat_id, slug))
+    else:
+        con.execute("DELETE FROM chat_seat_state WHERE chat_id=? AND slug=?",
+                    (chat_id, slug))
     con.commit()
 
 

@@ -1,6 +1,7 @@
 import math
 import struct
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,24 @@ def _reset_room_state():
         if container is not None:
             container.clear()
     anchors.clear_recent_audio()
+
+
+@pytest.fixture(autouse=True)
+def _private_tempdir(tmp_path, monkeypatch):
+    """Give every test its own temp directory (#361).
+
+    Guest worktrees live under the process temp dir at a path keyed only by
+    repo and chat (`crossband-guest-demo-chat0` for most tests), so every
+    test that ran a guest shared one directory. Teardown is capped at
+    GUEST_TEARDOWN_S and abandoned when it overruns; on a slow runner the
+    abandoned `git worktree remove` kept going in its thread while the next
+    test added a worktree at the same path, and that test reported "could
+    not join" with nothing wrong in it. A per-test temp dir means no test
+    can reach another's worktree, however slow the machine.
+    """
+    private = tmp_path / "tmp"
+    private.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(private))
 
 
 @pytest.fixture(autouse=True)

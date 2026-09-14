@@ -26,6 +26,12 @@ from backend.routers import chats as chats_router
 from roomkit import _wait_for
 
 TIMEOUT = 0.15
+# The restart sweep only re-arms commands stored inside twice the ack
+# timeout. At 0.15s that window is 0.3s, and one slow CI runner spent longer
+# than that stopping one app and starting the next, so the stored command
+# fell outside the sweep and nothing warned (#361). The restart test uses a
+# wider timeout: the same behaviour, with a window a slow runner can't cross.
+RESTART_TIMEOUT = 3.0
 
 
 @pytest.fixture
@@ -117,9 +123,10 @@ def test_restart_inside_the_window_still_warns(app, tmp_path):
         # died right after persisting it). Entering a new lifespan sweeps.
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1",
-                        slash_ack_timeout_s=TIMEOUT)
+                        slash_ack_timeout_s=RESTART_TIMEOUT)
     with TestClient(create_app(settings), base_url="http://127.0.0.1") as c2:
-        warnings = _wait_for(lambda: _warnings(chat["id"]))
+        warnings = _wait_for(lambda: _warnings(chat["id"]),
+                             timeout=RESTART_TIMEOUT * 4)
         assert len(warnings) == 1
 
 

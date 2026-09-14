@@ -112,10 +112,15 @@ def parse_depth_verdict(text) -> list:
     return out
 
 
-def _notice(seat_name, depth, user):
+def _notice(seat_name, depth, user, dropped_once=""):
     if depth == "normal":
-        return (f"{seat_name} is back to its configured thinking depth "
+        text = (f"{seat_name} is back to its configured thinking depth "
                 f"(spoken depth cleared by {user}).")
+        if dropped_once:
+            word = LEVEL_WORDS.get(dropped_once, dropped_once)
+            text += (f" The {word}-thinking override parked for its next "
+                     "reply was dropped too.")
+        return text
     word = LEVEL_WORDS[DEPTH_LEVELS[depth]]
     trade = ("replies here will take longer" if depth in ("deep", "max")
              else "replies here will be faster and shallower")
@@ -141,7 +146,22 @@ def apply_depth(chat_id, changes, cfg) -> str:
         for p in roster:
             by_key[p["slug"].casefold()] = p
             by_key[(p["name"] or "").casefold()] = p
-        current = db.get_chat_seat_state(con, chat_id)
+        rows = db.get_chat_seat_rows(con, chat_id)
+        current = {slug: r["reasoning_effort"] for slug, r in rows.items()
+                   if r["reasoning_effort"]}
+        parked = {slug: r["once_effort"] for slug, r in rows.items()
+                  if r["once_effort"]}
+        # A reset spoken in the same breath as a one-reply override is the
+        # compound instruction ("think hard about just this next one, and
+        # from now on go back to normal"): the override must survive it. A
+        # reset on its own means everything, override included (#260).
+        once_targets = set()
+        for ch in changes:
+            if ch.get("once") and DEPTH_LEVELS[ch["depth"]]:
+                key = ch["seat"].casefold()
+                once_targets |= ({p["slug"] for p in roster} if key == "all"
+                                 else {by_key[key]["slug"]} if key in by_key
+                                 else set())
         once_set = 0
         for ch in changes:
             key = ch["seat"].casefold()
@@ -151,27 +171,38 @@ def apply_depth(chat_id, changes, cfg) -> str:
                 log.info("depth change named no known seat: chat=%s", chat_id)
             for p in targets:
                 effort = DEPTH_LEVELS[ch["depth"]]
+                slug = p["slug"]
                 if ch.get("once"):
                     # Slice 2: one reply only. Consumed by the seat's next
                     # call, so no mode notice - nothing persistent changed
                     # and the effect is over by the time anyone reads it.
                     if effort:
-                        db.set_chat_seat_once(con, chat_id, p["slug"], effort)
+                        db.set_chat_seat_once(con, chat_id, slug, effort)
+                        parked[slug] = effort
                         once_set += 1
                     continue  # "normal, just this once" instructs nothing
-                if current.get(p["slug"], "") == effort:
-                    continue  # already there - no state write, no notice
-                if not effort and p["slug"] not in current:
-                    continue  # clearing a seat already at default
-                db.set_chat_seat_depth(con, chat_id, p["slug"], effort)
-                current[p["slug"]] = effort
-                db.insert_message(con, chat_id, "system",
-                                  _notice(p["name"] or p["slug"],
-                                          ch["depth"], user))
                 if effort:
+                    if current.get(slug, "") == effort:
+                        continue  # already there - no state write, no notice
+                    db.set_chat_seat_depth(con, chat_id, slug, effort)
+                    current[slug] = effort
+                    db.insert_message(con, chat_id, "system",
+                                      _notice(p["name"] or p["slug"],
+                                              ch["depth"], user))
                     changed += 1
-                else:
-                    cleared += 1
+                    continue
+                keep = slug in once_targets
+                dropped = "" if keep else parked.get(slug, "")
+                if slug not in current and not dropped:
+                    continue  # clearing a seat already at default, nothing parked
+                db.set_chat_seat_depth(con, chat_id, slug, "", keep_once=keep)
+                current.pop(slug, None)
+                if dropped:
+                    parked.pop(slug, None)
+                db.insert_message(con, chat_id, "system",
+                                  _notice(p["name"] or p["slug"], "normal",
+                                          user, dropped_once=dropped))
+                cleared += 1
     finally:
         con.close()
     if changed:
