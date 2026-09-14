@@ -73,6 +73,9 @@ it appears.
 8. [eval_silence/README.md](../eval_silence/README.md): the eval harness
    for the speak-or-pass rule in group chats. What it measures, the cases,
    and how to score a model's judgement of when silence reads as absence.
+9. [eval_attribution/README.md](../eval_attribution/README.md): the replay
+   harness for the transcript-shape question. Which projection lets a seat
+   answer who said what, including about itself.
 
 ## Safety, security, history
 

@@ -1,0 +1,102 @@
+{
+  "id": "remark_ownership_photos",
+  "category": "remark_ownership",
+  "user_name": "Alex",
+  "roster": [
+    {
+      "slug": "claude",
+      "name": "Claude"
+    },
+    {
+      "slug": "gpt",
+      "name": "GPT"
+    }
+  ],
+  "transcript": [
+    {
+      "speaker": "user",
+      "content": "Are you both there? Can you hear me?"
+    },
+    {
+      "speaker": "claude",
+      "content": "Loud and clear, good morning."
+    },
+    {
+      "speaker": "gpt",
+      "content": "Here too."
+    },
+    {
+      "speaker": "user",
+      "content": "Guess what, I'm away for a work offsite this week."
+    },
+    {
+      "speaker": "gpt",
+      "content": "A whole offsite in your first week is a strong start."
+    },
+    {
+      "speaker": "claude",
+      "content": "First week at a new place is full throttle. How is the team landing?"
+    },
+    {
+      "speaker": "user",
+      "content": "Some quick photos."
+    },
+    {
+      "speaker": "gpt",
+      "content": "That welcome pack is genuinely well made, understated enough to use every day."
+    },
+    {
+      "speaker": "claude",
+      "content": "That green jacket in the photo is nice, you'd wear it on a normal day."
+    },
+    {
+      "speaker": "user",
+      "content": "It's funny that you brought up the jacket, I bought a few new ones last month."
+    }
+  ],
+  "probes": [
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Quick check before we go on: which member brought up the jacket?",
+      "expected": "claude",
+      "tag": "jacket_who_gpt"
+    },
+    {
+      "seat": "gpt",
+      "kind": "yesno",
+      "question": "Quick check: did you bring up the jacket?",
+      "expected": "no",
+      "tag": "jacket_you_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "yesno",
+      "question": "Quick check: did you bring up the jacket?",
+      "expected": "yes",
+      "tag": "jacket_you_claude"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member first said the welcome pack was well made?",
+      "expected": "gpt",
+      "tag": "pack_who_claude"
+    },
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which member first said the welcome pack was well made?",
+      "expected": "self",
+      "tag": "pack_who_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member brought up the jacket?",
+      "expected": "self",
+      "tag": "jacket_who_claude"
+    }
+  ],
+  "notes": "The 2026-09 field shape: one seat raised a remark, the owner said 'you brought it up', and the other seat claimed it."
+}
