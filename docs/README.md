@@ -48,9 +48,9 @@ it appears.
 - [README § What it does](../README.md#what-it-does): the short version. A
   summoned Claude Code guest works in its own worktree, read-only unless
   you opt into implement mode.
-- [docs/GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md): exactly what a summoned
-  guest can and cannot do, in both modes, and why the bounds are enforced in
-  code rather than prompt. Read before widening anything.
+- [docs/GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md): what a summoned guest
+  can and can't do in each mode, and why the bounds live in code. Read it
+  before you widen anything.
 
 ## I want to understand or change the code
 
