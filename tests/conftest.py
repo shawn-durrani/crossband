@@ -113,6 +113,16 @@ def _no_disk_config_in_tools(monkeypatch):
     monkeypatch.setattr(tools_mod, "load_settings", _no_disk)
 
 
+@pytest.fixture(autouse=True)
+def _seat_trace_clean():
+    """The seat ledger (#162) is a process global; each test starts with it
+    empty so a repeat is only ever judged against that test's own rounds."""
+    from backend import seat_trace
+    seat_trace._reset_for_tests()
+    yield
+    seat_trace._reset_for_tests()
+
+
 @pytest.fixture
 def client_factory(tmp_path):
     """Build a TestClient against a fresh data dir, with a chosen base_url so

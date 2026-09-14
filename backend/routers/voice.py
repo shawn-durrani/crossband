@@ -57,8 +57,8 @@ import logging
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi import WebSocketDisconnect
 
-from .. import (db, diagnostics, diarize, engine, room_state, voice,
-                voice_trace)
+from .. import (db, diagnostics, diarize, engine, room_state, seat_trace,
+                voice, voice_trace)
 
 router = APIRouter(tags=["voice"])
 
@@ -285,6 +285,8 @@ def voice_debug_dump(payload: dict = Body(...)):
             "label_flow": diarize.label_flow(),
         },
         "trace_summary": summary,
+        # #162: what each seat's completions did in this chat, content-free.
+        "seat_trace": seat_trace.entries(chat_id) if chat_id is not None else [],
     }
     folder = db.DATA_DIR / "voice_debug"
     folder.mkdir(parents=True, exist_ok=True)

@@ -8,6 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from .. import accounting, auth, context_weight, db, diarize, engine, introductions, memory_client, rounds
+from .. import seat_trace
 
 router = APIRouter(tags=["chats"])
 
@@ -486,6 +487,10 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
             con.close()
 
     chat, user_msg, roster = await asyncio.to_thread(_persist_user_message)
+    # #162: a second send of the same text within seconds is written down
+    # (by hash, never the text) so a seat that seems to answer twice can
+    # be told from a client that asked twice. Nothing is blocked.
+    seat_trace.note_send(chat_id, body.text)
 
     # Slash command: a message starting with "/" is addressed to tooling, not
     # to the participants - persisted (the record stays complete), but no

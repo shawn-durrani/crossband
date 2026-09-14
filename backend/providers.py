@@ -2225,6 +2225,7 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
                         slot["name"] = fn.name
                     if getattr(fn, "arguments", None):
                         slot["arguments"] += fn.arguments
+        yield ("meta", {"finish": finish})   # #162: for the seat ledger only
         if finish != "tool_calls" or not calls:
             flags = _check_attribution("".join(reply_text_parts), transcript,
                                        p, cfg, names)

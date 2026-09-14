@@ -19,6 +19,8 @@ import time
 from . import attachments as att_mod
 from . import chat_memory, citations, db, echo, guest, passes, person_sync
 from . import depth as depth_mod
+from . import rounds as rounds_mod
+from . import seat_trace
 from . import memory_client as memory_client_mod
 from . import providers
 from . import provenance as prov
@@ -814,6 +816,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 participant, roster, transcript, names, round_cfg, project, summary,
                 voice_mode, tools=tool_defs, memory=tool_memory,
             )
+            # #162: the content-free ledger entry for this completion
+            # attempt, closed on every way out of the loop below.
+            active_round = rounds_mod.active(chat_id)
+            trace = seat_trace.begin(
+                chat_id, active_round.round_id if active_round else None,
+                participant)
             try:
                 stream_it = stream.__aiter__()
                 while True:
@@ -831,6 +839,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                             f"produced nothing for {int(SEAT_STALL_TIMEOUT_S)}s "
                             "- treating the seat as stalled and moving on")
                     if kind == "text":
+                        seat_trace.text(trace, payload)
                         if t_provider_call is not None:
                             # First visible token - record the split once,
                             # best-effort (a trace-write failure must never break
@@ -852,6 +861,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                         # chip. Arrives once, at natural completion.
                         live["audit"] = payload
                     elif kind == "tool":
+                        seat_trace.tool(trace)
                         # #149: a tool that produced a file (view_page's
                         # screenshot) parked it on round_cfg keyed by tool +
                         # URL; claim it onto this event and queue the
@@ -874,6 +884,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                             "output_text": payload["output"],
                             "attachment_id": payload.get("attachment_id"),
                         })
+                    elif kind == "meta":
+                        # #162: the server's finish reason, for the ledger only.
+                        seat_trace.finish_reason(trace, payload.get("finish"))
                     elif kind == "work_status":
                         # A structured liveness event (never text) - proves the
                         # round is alive over the SAME SSE stream the reply
@@ -891,8 +904,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                             "label": payload["label"],
                         })
             except (GeneratorExit, asyncio.CancelledError):
+                seat_trace.finish(trace, live["content"], "cancelled")
                 raise  # client disconnected - run_round persists the partial reply
             except Exception as e:
+                seat_trace.finish(
+                    trace, live["content"],
+                    "stalled" if isinstance(e, RuntimeError)
+                    and "stalled" in str(e) else "error",
+                    error=type(e).__name__)
                 # Close the provider generator before reporting. On the stall
                 # path wait_for already cancelled the pending step; this is
                 # the bounded finaliser, so a wedged SDK teardown can never
@@ -905,6 +924,8 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 if not live["content"]:
                     live["participant"] = None
                     skip_speaker = True
+            else:
+                seat_trace.finish(trace, live["content"], "ok")
             if not skip_speaker and not live["content"] and not live["tools"]:
                 # model finished without text or tool calls (some local reasoning
                 # models occasionally emit only reasoning) - say so, never vanish
