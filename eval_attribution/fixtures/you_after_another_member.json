@@ -1,0 +1,57 @@
+{
+  "id": "you_after_another_member",
+  "category": "addressed_you",
+  "user_name": "Alex",
+  "roster": [
+    {
+      "slug": "claude",
+      "name": "Claude"
+    },
+    {
+      "slug": "gpt",
+      "name": "GPT"
+    }
+  ],
+  "transcript": [
+    {
+      "speaker": "user",
+      "content": "Can we sort out Thursday?"
+    },
+    {
+      "speaker": "gpt",
+      "content": "Thursday works for me. Morning or afternoon?"
+    },
+    {
+      "speaker": "claude",
+      "content": "I have the draft timetable ready, two sessions before lunch and one after."
+    },
+    {
+      "speaker": "user",
+      "content": "Great, can you send that timetable through to the group?"
+    }
+  ],
+  "probes": [
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Before anyone acts: which member was Alex asking to send the timetable?",
+      "expected": "claude",
+      "tag": "timetable_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Before anyone acts: which member was Alex asking to send the timetable?",
+      "expected": "self",
+      "tag": "timetable_claude"
+    },
+    {
+      "seat": "gpt",
+      "kind": "yesno",
+      "question": "Was Alex asking you to send the timetable?",
+      "expected": "no",
+      "tag": "timetable_you_gpt"
+    }
+  ],
+  "notes": "A 'you' from the owner straight after another member's turn."
+}
