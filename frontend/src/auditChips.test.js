@@ -44,3 +44,18 @@ test('a citation finding renders unverified-until-checked copy', () => {
   assert.match(chips[0].label, /cites a source, nothing fetched this turn/)
   assert.match(chips[0].title, /unverified until checked/)
 })
+
+test('an exclusivity finding names who else said it', () => {
+  const chips = auditChips(JSON.stringify([
+    { kind: 'exclusivity', who: 'Claude', also: 'GPT', claim: 'the merch kit is genuinely great' },
+  ]))
+  assert.equal(chips.length, 1)
+  assert.match(chips[0].label, /GPT said this too, not only Claude/)
+  assert.match(chips[0].title, /prompt to check who said what, not a verdict/)
+})
+
+test('an exclusivity finding without the other speaker does not render', () => {
+  assert.deepEqual(auditChips(JSON.stringify([
+    { kind: 'exclusivity', who: 'Claude', claim: 'the merch kit is genuinely great' },
+  ])), [])
+})
