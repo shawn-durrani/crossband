@@ -843,3 +843,78 @@ def test_recent_audio_tail_caps_long_utterances():
     assert len(pcm) == int(anchors.RECENT_MAX_SECONDS * 16000) * 2
     assert n == 2
     anchors.clear_recent_audio()
+
+
+# ── rows about one clip are read as a chain (#353) ─────────────────────────
+
+def test_merging_follows_a_clip_through_a_chain_of_rows(store):
+    """Move a clip from the survivor into the loser, delete it out of the
+    loser, then merge the loser into the survivor before any of it has
+    synced. The move is dropped as a move onto itself, so in membro the
+    clip never left the survivor. Read row by row, the delete then looked
+    under the loser's old record, found nothing, counted as converged,
+    and membro kept the clip for the restore to hand back. The delete now
+    comes from the survivor, where the clip actually is."""
+    alex = store.ensure_person("Alex")
+    blair = store.ensure_person("Blair")
+    assert store.add_clip(alex, loud_pcm(2.0), 16000, source="introduction")
+    assert store.set_membro_slug(alex, "alex-slug")
+    assert store.set_membro_slug(blair, "blair-slug")
+    fname = store.clips_of(alex)[0]["file"]
+    sha = _sha_of(store, fname)
+    assert store.move_clip(alex, fname, blair)
+    moved = store.clips_of(blair)[0]["file"]
+    assert store.delete_clip(blair, moved)
+    delete = store.pending_corrections()[1]
+
+    assert store.merge_people(alex, blair) == alex
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["delete", "merge"]
+    assert rows[0]["from"] == alex and rows[0]["sha"] == sha
+    assert "from_slug" not in rows[0]
+    assert rows[0]["cid"] == delete["cid"] and rows[0]["at"] == delete["at"]
+    assert store.clips_of(alex) == []
+
+
+def test_merging_follows_a_retargeted_move_too(store):
+    """The same chain from a third person: the move into the loser is
+    retargeted at the survivor, so the clip lands under the survivor in
+    membro, and the delete out of the loser must look there."""
+    alex = store.ensure_person("Alex")
+    blair = store.ensure_person("Blair")
+    casey = store.ensure_person("Casey")
+    assert store.add_clip(casey, loud_pcm(2.0), 16000, source="introduction")
+    for pid, slug in ((alex, "alex-slug"), (blair, "blair-slug"),
+                      (casey, "casey-slug")):
+        assert store.set_membro_slug(pid, slug)
+    fname = store.clips_of(casey)[0]["file"]
+    sha = _sha_of(store, fname)
+    assert store.move_clip(casey, fname, blair)
+    assert store.delete_clip(blair, store.clips_of(blair)[0]["file"])
+
+    assert store.merge_people(alex, blair) == alex
+    rows = store.pending_corrections()
+    assert [c["kind"] for c in rows] == ["move", "delete", "merge"]
+    assert (rows[0]["from"], rows[0]["to"]) == (casey, alex)
+    assert (rows[1]["from"], rows[1]["sha"]) == (alex, sha)
+    assert "from_slug" not in rows[1]
+
+
+def test_a_clip_moved_back_before_the_merge_needs_no_row(store):
+    """Move a clip from the survivor into the loser and back again, then
+    merge. In membro the clip never moved, so neither row has anything to
+    do, and a move from the survivor onto itself would be collapsed into
+    a delete there."""
+    alex = store.ensure_person("Alex")
+    blair = store.ensure_person("Blair")
+    assert store.add_clip(alex, loud_pcm(2.0), 16000, source="introduction")
+    assert store.set_membro_slug(alex, "alex-slug")
+    assert store.set_membro_slug(blair, "blair-slug")
+    fname = store.clips_of(alex)[0]["file"]
+    assert store.move_clip(alex, fname, blair)
+    assert store.move_clip(blair, store.clips_of(blair)[0]["file"], alex)
+    assert [c["kind"] for c in store.pending_corrections()] == ["move", "move"]
+
+    assert store.merge_people(alex, blair) == alex
+    assert [c["kind"] for c in store.pending_corrections()] == ["merge"]
+    assert len(store.clips_of(alex)) == 1
