@@ -158,6 +158,29 @@ def test_recall_sends_origin_label():
     run(c.aclose())
 
 
+def test_recall_names_the_chat_when_it_has_one():
+    """Contract 1.6 (membro#72): a recall for a chat carries the same
+    (source_app, conversation_id) pair ingest uses, so membro can hand back
+    the facts bound to that chat. A recall for no chat sends neither."""
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.6"})
+    sent = {}
+
+    async def fake_post(url, json=None):
+        sent["body"] = json
+        return httpx.Response(200, json={"facts": []},
+                              request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    run(c.recall("coriander", chat_id=42))
+    assert sent["body"]["source_app"] == SOURCE_APP
+    assert sent["body"]["conversation_id"] == "42"
+    run(c.recall("coriander"))
+    assert "source_app" not in sent["body"]
+    assert "conversation_id" not in sent["body"]
+    run(c.aclose())
+
+
 def test_ingest_carries_attachments_and_placeholder():
     """Attachments ride the ingest payload; an attachments-only message is
     sent with a placeholder line rather than dropped."""

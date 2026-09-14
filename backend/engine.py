@@ -119,7 +119,8 @@ def prewarm_recall(chat_id, text, memory):
         if not await asyncio.to_thread(_chat_memory_enabled, chat_id):
             log.info("recall prewarm skipped (memory off): chat=%s", chat_id)
             return []
-        facts = await memory.recall((text or "").strip()[:500], limit=6, origin="auto")
+        facts = await memory.recall((text or "").strip()[:500], limit=6,
+                                    origin="auto", chat_id=chat_id)
         log.info("recall prewarm fetched: chat=%s facts=%d", chat_id, len(facts))
         return facts
 
@@ -775,7 +776,8 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                     recall_task = asyncio.create_task(_timed_ms(_adopted_result(adopted)))
                 else:
                     recall_task = asyncio.create_task(_timed_ms(
-                        memory.recall(q, limit=6, origin="auto"))) if q else None
+                        memory.recall(q, limit=6, origin="auto",
+                                      chat_id=chat_id))) if q else None
                 memory_summary_cache, memory_summary_ms = await summary_task
                 facts = []
                 if recall_task:
