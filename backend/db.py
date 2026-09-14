@@ -914,6 +914,26 @@ def prune_voice_traces(con, keep_days=30, keep_max=50000):
         "(SELECT id FROM voice_turn_traces ORDER BY id DESC LIMIT ?)", (int(keep_max),))
 
 
+EMPTY_CHAT_MIN_AGE_S = 48 * 3600
+
+
+def prune_empty_chats(con, min_age_s=EMPTY_CHAT_MIN_AGE_S) -> int:
+    """Delete chats nobody used (#354): no messages, older than `min_age_s`,
+    never renamed by the owner (title_upto = -1 marks a rename), not archived
+    (putting a chat away is a choice too), and nobody seated in the room.
+    A chat with any of those stays. Returns the number deleted; the caller
+    logs the count and nothing else about the chats."""
+    cutoff = now() - min_age_s
+    cur = con.execute(
+        "DELETE FROM chats WHERE created_at < ? "
+        "AND title_upto != -1 AND archived_at IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = chats.id) "
+        "AND NOT EXISTS (SELECT 1 FROM room_roster r WHERE r.chat_id = chats.id "
+        "                AND r.status = 'present')",
+        (cutoff,))
+    return cur.rowcount
+
+
 def get_chat_messages(con, chat_id):
     msgs = [dict(r) for r in con.execute(
         "SELECT * FROM messages WHERE chat_id=? ORDER BY id", (chat_id,))]
