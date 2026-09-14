@@ -245,6 +245,7 @@ CONVERTED = {
     "README.md",
     "docs/OPERATIONS.md",
     "docs/REMOTE_ACCESS.md",
+    "docs/VOICE_ID.md",
 }
 
 # Capitals are for acronyms. An all-capital word of three or more letters that
