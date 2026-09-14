@@ -56,3 +56,16 @@ def test_peer_action_rule_present_in_stable_rules(cfg):
     stable, volatile = split_system_prompt(PARTICIPANT, ROSTER, dict(cfg), None, "", False)
     assert "never announce another member's action" in stable
     assert "don't echo their climbdowns as your own" in stable
+
+
+def test_transcript_shape_rule_present_in_stable_rules(cfg):
+    """After the 2026-09 offsite chat, where a seat answered "yes, I meant
+    the ElevenLabs one" about another seat's remark: the rules must state
+    the two things a seat cannot infer from its own context, that its own
+    turns carry no label and that a "you" after another member's turn most
+    likely addresses that member (#374)."""
+    from backend.providers import split_system_prompt
+    stable, volatile = split_system_prompt(PARTICIPANT, ROSTER, dict(cfg), None, "", False)
+    assert "your OWN earlier turns carry no name label" in stable
+    assert "answer for yourself only" in stable
+    assert "carry no name label" not in volatile

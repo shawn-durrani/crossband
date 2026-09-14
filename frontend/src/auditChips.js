@@ -32,6 +32,15 @@ export function auditChips(auditFlagsJson) {
           'or an older message folded into the summary, looks exactly the ' +
           'same - treat this as a prompt to check, not proof of a misquote.',
       })
+    } else if (f.kind === 'exclusivity' && f.who && f.also) {
+      out.push({
+        label: `“${shown}” – ${f.also} said this too, not only ${f.who}`,
+        title:
+          `This reply says ${f.who} was the only one to say this, but the ` +
+          `same words appear in ${f.also}'s messages in the visible window. ` +
+          'A stock phrase two people both used looks exactly the same - ' +
+          'treat this as a prompt to check who said what, not a verdict.',
+      })
     } else if (f.kind === 'citation') {
       out.push({
         label: `“${shown}” – cites a source, nothing fetched this turn`,
