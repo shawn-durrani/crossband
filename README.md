@@ -137,22 +137,62 @@ git worktree), and by default it can only read. If you turn on
 implement mode, it can branch, run the tests, push, and open a pull
 request. It can never merge.
 
-**Remember across conversations.** Memory is optional. With
-[Membro](https://github.com/shawn-durrani/membro) running, the room
-remembers from one conversation to the next. Without it, everything
-else works and nothing is remembered.
+**Remember across conversations.** On its own, Crossband forgets
+everything when a chat ends. With Membro running beside it, the room
+remembers from one conversation to the next.
+[Memory, with Membro](#memory-with-membro) says how.
 
 **See what it costs.** Spend is counted in three columns that are
 never added together: what was metered on an API key, what a
 subscription covered and would have cost if metered, and unknown. A
 model with no known price stays unpriced.
 
+## Memory, with Membro
+
+[Membro](https://github.com/shawn-durrani/membro) is a second app you
+run on the same computer, and it's the memory. It's optional: everything
+else works without it, and nothing is remembered.
+
+With Membro running, Crossband hands each chat over when it ends, and
+Membro distils what was said into facts about you. At the start of
+every new chat, each model gets a short profile built from those facts,
+so it already knows what you told it last week, and during a chat a
+model can ask for more with the memory tools. The voices the app has
+learnt live in Membro too, so a person you introduce is remembered in
+both apps, and forgetting someone in one forgets them in the other.
+Anything a guest said, or a model read on a web page, waits in Membro's
+review queue for your approval before it counts.
+
+```mermaid
+flowchart LR
+  T["One shared transcript"]
+  V("Voices the app has learnt")
+  M[("Membro")]
+  Q["Review queue"]
+  Y(["You"])
+  T -- "each chat, when it ends" --> M
+  M -- "a profile at the start of each chat,<br/>and recall when a model asks" --> T
+  V <-- "the same people, in both apps" --> M
+  M -- "what a guest said, or a page said" --> Q
+  Q -- "approve or dismiss" --> Y
+  classDef node fill:#d4d4d8,stroke:#757575,color:#18181b
+  classDef hero fill:#38bdf8,stroke:#0284c7,color:#18181b,stroke-width:2px
+  class T,V,Q,Y node
+  class M hero
+```
+
+Membro has its own repo, its own port and its own setup. Crossband
+finds it at `CROSSBAND_MEMORY_URL`, and the two share the token in
+`MEMORY_AUTH_TOKEN`. [docs/CONFIG.md](docs/CONFIG.md) lists both.
+
 ## What it isn't
 
 Crossband is built for one household with one owner. There's one
 login, not accounts for many people. It isn't a hosted service, and
-there's nothing to sign up for. It needs a model to talk to, so bring
-a key or run a local one. It's maintained by one person and was built for
+there's no account to create with us. The accounts you may need are
+with the providers you choose, such as Anthropic, OpenAI or Tavily for
+search, and a local model needs none. It needs a model to talk to, so
+bring a key or run a local one. It's maintained by one person and was built for
 that person's own use first. Issues and pull requests are welcome,
 and response times vary.
 

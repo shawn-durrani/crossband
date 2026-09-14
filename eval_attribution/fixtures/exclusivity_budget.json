@@ -1,0 +1,68 @@
+{
+  "id": "exclusivity_budget",
+  "category": "exclusivity",
+  "user_name": "Alex",
+  "roster": [
+    {
+      "slug": "claude",
+      "name": "Claude"
+    },
+    {
+      "slug": "gpt",
+      "name": "GPT"
+    }
+  ],
+  "transcript": [
+    {
+      "speaker": "user",
+      "content": "Budget thoughts?"
+    },
+    {
+      "speaker": "claude",
+      "content": "The budget should stay under twenty; anything more needs sign-off."
+    },
+    {
+      "speaker": "gpt",
+      "content": "Agreed, the budget should stay under twenty. I'd also keep a small reserve."
+    },
+    {
+      "speaker": "user",
+      "content": "Reserve of how much?"
+    },
+    {
+      "speaker": "gpt",
+      "content": "Two, held back until the venue invoice lands."
+    }
+  ],
+  "probes": [
+    {
+      "seat": "claude",
+      "kind": "yesno",
+      "question": "Was Claude the only member who said the budget should stay under twenty?",
+      "expected": "no",
+      "tag": "excl_claude"
+    },
+    {
+      "seat": "gpt",
+      "kind": "yesno",
+      "question": "Was Claude the only member who said the budget should stay under twenty?",
+      "expected": "no",
+      "tag": "excl_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member suggested holding back a reserve?",
+      "expected": "gpt",
+      "tag": "reserve_claude"
+    },
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which member suggested holding back a reserve?",
+      "expected": "self",
+      "tag": "reserve_gpt"
+    }
+  ],
+  "notes": "Both seats said the same thing; an 'only X' answer is wrong either way."
+}

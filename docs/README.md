@@ -59,9 +59,6 @@ it appears.
    pure-module rule. Opens with the shape block: which module owns what.
 2. [CONTRIBUTING.md](../CONTRIBUTING.md): setup, the keyless test suites, the
    rules that matter, and how work lands.
-3. [docs/WRITING.md](WRITING.md): how the docs should sound. Seven example
-   paragraphs that are the standard, the one-line test, and the rules CI
-   checks on every doc rewritten in that voice.
 4. [docs/TESTING.md](TESTING.md): what every suite guards, backend and
    frontend, and why both run keyless.
 5. [docs/COST_TELEMETRY.md](COST_TELEMETRY.md): what your chats cost and
@@ -76,6 +73,9 @@ it appears.
 8. [eval_silence/README.md](../eval_silence/README.md): the eval harness
    for the speak-or-pass rule in group chats. What it measures, the cases,
    and how to score a model's judgement of when silence reads as absence.
+9. [eval_attribution/README.md](../eval_attribution/README.md): the replay
+   harness for the transcript-shape question. Which projection lets a seat
+   answer who said what, including about itself.
 
 ## Safety, security, history
 
