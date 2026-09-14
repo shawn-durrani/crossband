@@ -232,8 +232,9 @@ def test_once_is_consumed_exactly_once_and_survives_a_clear(app):
             # pending once on a seat with a persistent depth underneath
             db.set_chat_seat_depth(con, chat_id, "claude", "high")
             db.set_chat_seat_once(con, chat_id, "claude", "low")
-            # clearing the persistent depth must not kill the pending once
-            db.set_chat_seat_depth(con, chat_id, "claude", "")
+            # the compound instruction clears the standing depth and keeps
+            # the pending once (#260: keep_once is the caller saying so)
+            db.set_chat_seat_depth(con, chat_id, "claude", "", keep_once=True)
             assert db.take_chat_seat_once(con, chat_id, "claude") == "low"
             assert db.take_chat_seat_once(con, chat_id, "claude") == ""
             # and a consumed once on a persistent seat leaves the depth alone
@@ -299,3 +300,93 @@ def test_v22_to_v23_migration_leaves_old_rows_without_an_override(tmp_path):
         assert row["once_effort"] == "" and row["reasoning_effort"] == "high"
     finally:
         con.close()
+
+
+# ---------- #260: a reset means everything, unless it was compound ----------
+
+def test_plain_reset_drops_a_parked_override_and_says_so(app):
+    """"Back to normal" over a standing depth with a one-reply override
+    parked used to announce the reset while the next reply still ran deep.
+    Now the override goes too, and the notice says it did."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        depth.apply_depth(chat_id, [{"seat": "Claude", "depth": "deep"}], CFG)
+        depth.apply_depth(
+            chat_id, [{"seat": "Claude", "depth": "max", "once": True}], CFG)
+        out = depth.apply_depth(
+            chat_id, [{"seat": "Claude", "depth": "normal"}], CFG)
+        assert out == "depth_cleared"
+        assert _seat_state(chat_id) == {}
+        con = db.connect()
+        try:
+            assert db.take_chat_seat_once(con, chat_id, "claude") == ""
+            assert db.get_chat_seat_rows(con, chat_id) == {}
+        finally:
+            con.close()
+        cleared = [m for m in _messages(c, chat_id)
+                   if m["speaker"] == "system"][-1]["content"]
+        assert "back to its configured thinking depth" in cleared
+        assert "maximum-thinking override" in cleared and "dropped" in cleared
+
+
+def test_reset_with_only_a_parked_override_is_not_a_silent_no_change(app):
+    """A parked one-off and no standing depth: the old code saw no standing
+    row, wrote nothing, said nothing, and left the override armed."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        depth.apply_depth(
+            chat_id, [{"seat": "gpt", "depth": "quick", "once": True}], CFG)
+        out = depth.apply_depth(chat_id, [{"seat": "all", "depth": "normal"}], CFG)
+        assert out == "depth_cleared"
+        con = db.connect()
+        try:
+            assert db.take_chat_seat_once(con, chat_id, "gpt") == ""
+        finally:
+            con.close()
+        notices = [m for m in _messages(c, chat_id) if m["speaker"] == "system"]
+        assert len(notices) == 1  # gpt only; claude had nothing to clear
+        assert "GPT" in notices[0]["content"] and "quick-thinking override" in notices[0]["content"]
+
+
+def test_compound_instruction_keeps_the_once_through_the_reset(app):
+    """"Think hard about just this next one, and from now on go back to
+    normal", in either order within one turn: standing depth cleared, the
+    one-reply override survives, and the notice does not claim it was
+    dropped."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        for order in (("once", "normal"), ("normal", "once")):
+            chat_id = c.post("/api/chats", json={}).json()["id"]
+            depth.apply_depth(chat_id, [{"seat": "Claude", "depth": "deep"}], CFG)
+            changes = {"once": {"seat": "Claude", "depth": "max", "once": True},
+                       "normal": {"seat": "Claude", "depth": "normal"}}
+            out = depth.apply_depth(chat_id, [changes[k] for k in order], CFG)
+            assert out == "depth_cleared"
+            assert _seat_state(chat_id) == {}
+            con = db.connect()
+            try:
+                assert db.take_chat_seat_once(con, chat_id, "claude") == "max"
+            finally:
+                con.close()
+            cleared = [m for m in _messages(c, chat_id)
+                       if m["speaker"] == "system"][-1]["content"]
+            assert "dropped" not in cleared
+
+
+def test_db_plain_clear_drops_the_once_and_keep_once_keeps_it(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        con = db.connect()
+        try:
+            db.set_chat_seat_once(con, chat_id, "claude", "low")
+            assert db.get_chat_seat_rows(con, chat_id) == {
+                "claude": {"reasoning_effort": "", "once_effort": "low"}}
+            assert db.get_chat_seat_state(con, chat_id) == {}
+            db.set_chat_seat_depth(con, chat_id, "claude", "")
+            assert db.get_chat_seat_rows(con, chat_id) == {}
+            db.set_chat_seat_depth(con, chat_id, "gpt", "high")
+            db.set_chat_seat_once(con, chat_id, "gpt", "low")
+            db.set_chat_seat_depth(con, chat_id, "gpt", "", keep_once=True)
+            assert db.get_chat_seat_rows(con, chat_id) == {
+                "gpt": {"reasoning_effort": "", "once_effort": "low"}}
+        finally:
+            con.close()
