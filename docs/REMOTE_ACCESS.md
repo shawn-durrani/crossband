@@ -41,6 +41,15 @@ make it safe to open the port any wider. Keep to these rules.
   facing the whole world. Check any time with `tailscale serve status`,
   which must say "tailnet only".
 
+The app checks too. Every few minutes it asks Tailscale whether Funnel
+is on for its port. While it is, the app serves nothing but a page
+that says so, and posts one line in chat. Turn Funnel off with
+`tailscale funnel reset`, run the serve command again, and the app
+resumes on its own. Between checks there's a backstop. Tailscale names
+the tailnet user on every request it proxies, and a request on your
+tailnet address without that name is refused before the lock screen.
+[CONFIG.md](CONFIG.md#server) has the two settings.
+
 The app isn't built to face the internet, and having a login doesn't
 change that. Past the tailnet, you're on your own.
 
