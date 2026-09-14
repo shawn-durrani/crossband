@@ -1,0 +1,88 @@
+{
+  "id": "fact_surfaced_earlier",
+  "category": "own_words_deep",
+  "user_name": "Alex",
+  "roster": [
+    {
+      "slug": "claude",
+      "name": "Claude"
+    },
+    {
+      "slug": "gpt",
+      "name": "GPT"
+    }
+  ],
+  "transcript": [
+    {
+      "speaker": "user",
+      "content": "Where are we on the venue?"
+    },
+    {
+      "speaker": "gpt",
+      "content": "The venue is confirmed for the fourteenth; the organiser's email came through this morning."
+    },
+    {
+      "speaker": "claude",
+      "content": "Good. I'll draft the invite text once we settle the start time."
+    },
+    {
+      "speaker": "user",
+      "content": "Let's say ten."
+    },
+    {
+      "speaker": "claude",
+      "content": "Ten it is. Draft coming."
+    },
+    {
+      "speaker": "gpt",
+      "content": "Ten leaves time for setup. I'd keep the first slot short."
+    },
+    {
+      "speaker": "user",
+      "content": "Agreed. What about catering?"
+    },
+    {
+      "speaker": "claude",
+      "content": "Two options from the caterer, one vegetarian; I'd take the second."
+    },
+    {
+      "speaker": "user",
+      "content": "Fine by me."
+    },
+    {
+      "speaker": "gpt",
+      "content": "Second option it is."
+    }
+  ],
+  "probes": [
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member told us the venue is confirmed for the fourteenth?",
+      "expected": "gpt",
+      "tag": "venue_claude"
+    },
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which member told us the venue is confirmed for the fourteenth?",
+      "expected": "self",
+      "tag": "venue_gpt"
+    },
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which member said they'd draft the invite text?",
+      "expected": "claude",
+      "tag": "invite_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member said they'd draft the invite text?",
+      "expected": "self",
+      "tag": "invite_claude"
+    }
+  ],
+  "notes": "The 2026-08-23 shape: a fact one seat surfaced several turns back, later read as the other's."
+}

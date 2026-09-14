@@ -1,0 +1,64 @@
+{
+  "id": "owner_words",
+  "category": "owner_words",
+  "user_name": "Alex",
+  "roster": [
+    {
+      "slug": "claude",
+      "name": "Claude"
+    },
+    {
+      "slug": "gpt",
+      "name": "GPT"
+    }
+  ],
+  "transcript": [
+    {
+      "speaker": "user",
+      "content": "I'd rather wait until Friday to ship this."
+    },
+    {
+      "speaker": "claude",
+      "content": "Friday is fine. I'll hold the release notes."
+    },
+    {
+      "speaker": "gpt",
+      "content": "Waiting suits me; the smoke test lands Thursday anyway."
+    },
+    {
+      "speaker": "user",
+      "content": "Good."
+    }
+  ],
+  "probes": [
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which of us said they'd rather wait until Friday to ship?",
+      "expected": "user",
+      "tag": "friday_claude"
+    },
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which of us said they'd rather wait until Friday to ship?",
+      "expected": "user",
+      "tag": "friday_gpt"
+    },
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which member said the smoke test lands Thursday?",
+      "expected": "self",
+      "tag": "smoke_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member said they'd hold the release notes?",
+      "expected": "self",
+      "tag": "notes_claude"
+    }
+  ],
+  "notes": "Control: the owner's words and each seat's own words in a short chat."
+}

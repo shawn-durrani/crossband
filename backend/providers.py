@@ -532,6 +532,12 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "the labelled transcript shows who said what. Own YOUR mistakes plainly; never "
         "claim another member's statement or mistake as your own just to be agreeable, "
         f"and if nobody made the error ({user} may be mistaken), say so politely.",
+        "- Two facts about the transcript you see, because they are easy to get wrong: "
+        "your OWN earlier turns carry no name label (only other members' turns do), so "
+        "before saying who said something, or that someone was the first or only one to "
+        "say it, check your unlabelled turns as well as the labelled ones. And when "
+        f"{user} says \"you\" straight after another member's turn, they most likely mean "
+        "that member: answer for yourself only, never as though their words were yours.",
         "- The same goes for actions: never announce another member's action - a memory "
         "save, a search, a concession - as if it were yours. If they saved it, say THEY "
         "saved it; don't echo their climbdowns as your own, and don't say \"saved\" or "
@@ -1397,6 +1403,38 @@ def _member_claim_re(display_names):
     )
 
 
+# #374: a FIRST-person self-claim ("I said …", "I meant …") is grounded
+# against the claimant's OWN raw turns. The field shape: a seat answered
+# "yes, I meant the ElevenLabs one" about a remark another seat had made.
+_SELF_CLAIM_RE = re.compile(
+    r"\bI\s+(?:said|meant|mentioned|raised|brought\s+up|wrote|told\s+(?:you|us))\b"
+    r"\s*(?:that\s+)?[:,]?\s*(?P<claim>[^.?!\n]{8,200})",
+    re.IGNORECASE,
+)
+
+# #374: an EXCLUSIVITY claim ("only Claude said …", "GPT alone raised …",
+# "Claude was the only one who mentioned …") is checked the other way round:
+# the claim text is searched in every OTHER speaker's raw turns, and a hit
+# means the "only" is contradicted by words someone else actually used.
+_EXCL_VERBS = (r"(?:said|says|raised|mentioned|brought\s+up|wrote|asked|claimed|"
+               r"suggested|told\s+(?:me|you|us))")
+_EXCL_ONLY_ONE_VERBS = (r"(?:said|say|raised|raise|mentioned|mention|brought\s+up|"
+                        r"bring\s+up|wrote|write|asked|ask|suggested|suggest)")
+
+
+def _exclusivity_claim_re(display_names):
+    alts = "|".join(sorted((re.escape(n) for n in display_names if n),
+                           key=len, reverse=True))
+    return re.compile(
+        rf"\b(?:only\s+(?P<who>{alts})\s+{_EXCL_VERBS}"
+        rf"|(?P<who2>{alts})\s+(?:alone\s+{_EXCL_VERBS}"
+        rf"|(?:was|is)\s+the\s+only\s+(?:one|member|seat)\s+(?:who|that|to)\s+"
+        rf"{_EXCL_ONLY_ONE_VERBS}))"
+        r"\b\s*(?:that\s+)?[:,]?\s*(?P<claim>[^.?!\n]{8,200})",
+        re.IGNORECASE,
+    )
+
+
 def _norm_for_match(text):
     """Lowercase, alphanumeric-only, whitespace-collapsed - deliberately crude
     so the substring check is exact and deterministic (no fuzzy/semantic
@@ -1490,7 +1528,13 @@ def _check_attribution(reply_text, transcript, participant, cfg, names=None):
     - third person over the roster and the user's name ("Claude said …",
       "Alex told us …"), grounded against that member's own raw turns.
       `names` is the engine's slug->display map; without it only the
-      second-person shape is checked.
+      second-person shape is checked;
+    - first person ("I said …", "I meant …"), grounded against the
+      claimant's own raw turns (#374);
+    - exclusivity ("only Claude said …", "GPT was the only one who raised
+      …"), the one shape checked the other way round: the claim is searched
+      in every OTHER speaker's raw turns, and a finding means someone else
+      used those words too, so the "only" does not hold (#374).
 
     Privacy: the LOG line carries NO conversation text - only a one-way
     fingerprint of the normalized claim, its normalized length, its offset/index
@@ -1550,6 +1594,14 @@ def _check_attribution(reply_text, transcript, participant, cfg, names=None):
         _audit(_ATTRIBUTION_CLAIM_RE.finditer(reply_text), user_name or "you",
                user_text, "no_verbatim_user_match", [_flip_to_first_person])
 
+    self_slug = participant.get("slug")
+    if self_slug:
+        own_text = _speaker_turns_text(transcript, self_slug)
+        if own_text:
+            _audit(_SELF_CLAIM_RE.finditer(reply_text),
+                   (names or {}).get(self_slug) or participant.get("name") or self_slug,
+                   own_text, "no_verbatim_self_match", [])
+
     by_name = {}
     for slug, display in (names or {}).items():
         if display:
@@ -1578,6 +1630,61 @@ def _check_attribution(reply_text, transcript, participant, cfg, names=None):
             _audit(matches, matches[0].group("who"), ground,
                    "no_verbatim_user_match" if slug == PRIMARY_HUMAN_SPEAKER
                    else "no_verbatim_member_match", flips)
+        findings += _audit_exclusivity(reply_text, transcript, participant,
+                                       by_name, names or {}, user_name)
+    return findings
+
+
+def _audit_exclusivity(reply_text, transcript, participant, by_name, names,
+                       user_name):
+    """The exclusivity half of #374. For each "only X said Y" claim, look for
+    Y in every speaker's raw turns EXCEPT X's. A hit is returned as
+    {kind: "exclusivity", who: X, also: <that speaker>, claim} and logged
+    content-free like every other finding. The same head-of-claim variant
+    the said-verb audit uses applies, because the regex cannot see where a
+    quote ends. Still a diagnostic: a common phrase two people both used is
+    a hit, and that is a prompt to check, never a verdict."""
+    findings = []
+    excl_re = _exclusivity_claim_re(by_name.keys())
+    for idx, m in enumerate(excl_re.finditer(reply_text)):
+        who = m.group("who") or m.group("who2")
+        slug = by_name[who.lower()]
+        claim = m.group("claim")
+        needle = _norm_for_match(claim)[:60]
+        if len(needle) < 8:
+            continue
+        head = re.split(r"[,;]|\s[-—]\s", claim, 1)[0]
+        variants = [claim] + ([head] if head != claim else [])
+        candidates = set()
+        for v in variants:
+            for f in (lambda t: t, _flip_third_to_first, _flip_to_first_person):
+                c = _norm_for_match(f(v))[:60]
+                if len(c) >= 8:
+                    candidates.add(c)
+        by_speaker = {}
+        for t in transcript:
+            sp = t.get("speaker")
+            if sp and sp != slug:
+                by_speaker.setdefault(sp, []).append(t.get("content") or "")
+        for sp, parts in by_speaker.items():
+            ground = _norm_for_match(" ".join(parts))
+            if not ground or not any(c in ground for c in candidates):
+                continue
+            also = (user_name or "the user") if sp == PRIMARY_HUMAN_SPEAKER \
+                else (names.get(sp) or sp)
+            log.warning(
+                "attribution_audit result=%s speaker=%s model=%s "
+                "claim_fp=%s claim_norm_len=%d claim_offset=%d claim_index=%d "
+                "ground_turns_norm_len=%d",
+                "exclusivity_contradicted",
+                participant.get("slug") or participant.get("name"),
+                participant.get("model"),
+                _claim_fingerprint(needle), len(needle),
+                m.start("claim"), idx, len(ground),
+            )
+            findings.append({"kind": "exclusivity", "who": who, "also": also,
+                             "claim": claim.strip()[:160]})
+            break
     return findings
 
 
