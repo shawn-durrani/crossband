@@ -46,6 +46,12 @@ _DEPTH_RE = re.compile(
     r"|(?:quick|fast|short|snappy)\s+(?:answers?|repl(?:y|ies))"
     r"|back\s+to\s+normal"
     r"|max(?:imum)?\s+(?:effort|thinking|reasoning)"
+    # #305: "use your fastest reasoning setting" reached no branch above,
+    # so no check ran and the seat guessed. The superlatives and the word
+    # "setting" are shapes people reach for when they know the knob.
+    r"|(?:fastest|quickest|slowest|lowest|highest|least|most)\s+"
+    r"(?:reasoning|thinking|effort)"
+    r"|(?:reasoning|thinking|effort)\s+setting"
     r")\b")
 
 
@@ -195,13 +201,23 @@ def once_note(level, user) -> str:
             f"reverts by itself - do not treat it as a standing mode.")
 
 
-def depth_note(level, user) -> str:
-    """The volatile prompt note telling a seat its own current spoken depth
-    (engine threads it per seat). Empty level = no note."""
+def depth_note(level, user, configured="") -> str:
+    """The volatile prompt note telling a seat its own current depth (engine
+    threads it per seat). With no spoken level the seat is told its
+    configured setting instead (#305): a seat that knew nothing about its
+    effort once claimed to have changed it, which it cannot do. Either way
+    the note names the one door, a person in the chat saying so."""
+    doors = ("Anyone in this chat can change it by saying so (\"think "
+             "harder\", \"quick answers\", \"back to normal\"), and it "
+             "applies to this chat only. You cannot change it yourself, "
+             "so never say you have. If asked how hard you are thinking, "
+             "say this honestly.")
     if not level:
-        return ""
+        word = LEVEL_WORDS.get(configured, configured) or "default"
+        return (f"\n## Your reasoning depth (this chat)\nYou are at your "
+                f"configured setting, {word}. Nobody has changed it in "
+                f"this conversation. {doors}")
     word = LEVEL_WORDS.get(level, level)
     return (f"\n## Your reasoning depth (this chat)\n{user} set your "
             f"thinking to {word} for this conversation. It persists until "
-            f"they change it (\"back to normal\" clears it). If asked how "
-            f"hard you are thinking, say this honestly.")
+            f"someone changes it (\"back to normal\" clears it). {doors}")
