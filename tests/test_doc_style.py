@@ -243,6 +243,7 @@ def test_long_docs_stay_navigable():
 
 CONVERTED = {
     "README.md",
+    "docs/COST_TELEMETRY.md",
     "docs/OPERATIONS.md",
     "docs/REMOTE_ACCESS.md",
     "docs/VOICE_ID.md",
