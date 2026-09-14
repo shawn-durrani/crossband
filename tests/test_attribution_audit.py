@@ -340,3 +340,91 @@ def test_budget_exhausted_reply_is_audited(monkeypatch):
     # The budget notice itself must not be what got flagged.
     text = "".join(v for k, v in events if k == "text")
     assert "research budget" in text
+
+
+# ---------- #374: a seat's own words, and "only X said" ----------
+
+GPT_SEAT = {"name": "GPT", "slug": "gpt", "model": "gpt-5"}
+
+
+def _run_as(caplog, participant, reply_text, transcript, cfg=None):
+    caplog.set_level(logging.INFO, logger="crossband.providers")
+    flags = providers._check_attribution(reply_text, transcript, participant,
+                                         cfg or {}, NAMES)
+    return flags, [r for r in caplog.records
+                   if "attribution_audit" in r.getMessage()]
+
+
+OFFSITE = [
+    make_msg(1, "user", "Some quick photos"),
+    make_msg(2, "gpt", "That merch kit is genuinely great and the shirt looks good."),
+    make_msg(3, "claude", "That olive tee is genuinely nice, you'd wear that on a normal day."),
+    make_msg(4, "user", "It's funny that you brought up the T-shirt."),
+]
+
+
+def test_a_seat_claiming_another_seats_remark_as_its_own_is_flagged(caplog):
+    """The 2026-09 field shape: Claude raised the tee, the owner said "you
+    brought up the T-shirt", and GPT answered as if the remark were its own."""
+    reply = "Ha, yes, I meant the ElevenLabs one. It's a good shirt though."
+    flags, hits = _run_as(caplog, GPT_SEAT, reply, OFFSITE)
+    assert len(flags) == 1
+    assert flags[0]["kind"] == "attribution" and flags[0]["who"] == "GPT"
+    assert "ElevenLabs one" in flags[0]["claim"]
+    assert len(hits) == 1
+    msg = hits[0].getMessage()
+    assert "result=no_verbatim_self_match" in msg
+    assert "elevenlabs" not in msg.lower()  # the log stays content-free
+
+
+def test_a_seats_faithful_report_of_its_own_words_is_not_flagged(caplog):
+    reply = "As I said, that merch kit is genuinely great."
+    flags, hits = _run_as(caplog, GPT_SEAT, reply, OFFSITE)
+    assert flags == [] and hits == []
+
+
+def test_self_claims_need_no_roster_names(caplog):
+    """The first-person shape grounds against the participant's own slug,
+    so it runs even when the engine passes no names map."""
+    reply = "I said the ElevenLabs one looked good, remember?"
+    flags = providers._check_attribution(reply, OFFSITE, GPT_SEAT, {})
+    assert len(flags) == 1 and flags[0]["who"] == "GPT"
+
+
+def test_only_x_said_is_contradicted_by_another_seats_words(caplog):
+    """"Only Claude said the shirt looks good" when GPT's own turn carries
+    those exact words: the one shape checked against everyone ELSE."""
+    reply = "Only Claude said the shirt looks good, so that one is on me."
+    flags, hits = _run_as(caplog, PARTICIPANT, reply, OFFSITE)
+    excl = [f for f in flags if f["kind"] == "exclusivity"]
+    assert len(excl) == 1
+    assert excl[0]["who"] == "Claude" and excl[0]["also"] == "GPT"
+    assert "shirt looks good" in excl[0]["claim"]
+    log_lines = [h.getMessage() for h in hits]
+    assert any("result=exclusivity_contradicted" in m for m in log_lines)
+    assert all("shirt" not in m for m in log_lines)  # content-free log
+
+
+def test_only_x_said_stays_silent_when_nobody_else_used_the_words(caplog):
+    reply = "Only Claude said that olive tee is genuinely nice."
+    flags, hits = _run_as(caplog, PARTICIPANT, reply, OFFSITE)
+    assert [f for f in flags if f["kind"] == "exclusivity"] == []
+
+
+def test_the_only_one_who_shape_and_the_user_as_the_other_speaker(caplog):
+    """"GPT was the only one who mentioned …" is the same claim in a longer
+    coat; here the owner's own turn carries the words, so `also` names the
+    owner by the configured name."""
+    transcript = OFFSITE + [make_msg(5, "user", "the shirt looks good on you, mate")]
+    reply = "GPT was the only one who mentioned the shirt looks good."
+    flags, _ = _run_as(caplog, PARTICIPANT, reply, transcript,
+                       {"user_name": "Alex"})
+    excl = [f for f in flags if f["kind"] == "exclusivity"]
+    assert len(excl) == 1 and excl[0]["who"] == "GPT" and excl[0]["also"] == "Alex"
+
+
+def test_exclusivity_findings_are_disabled_with_the_audit(caplog):
+    reply = "Only Claude said the shirt looks good."
+    flags, _ = _run_as(caplog, PARTICIPANT, reply, OFFSITE,
+                       {"attribution_audit": False})
+    assert flags == []

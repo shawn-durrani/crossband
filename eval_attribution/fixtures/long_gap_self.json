@@ -1,0 +1,110 @@
+{
+  "id": "long_gap_self",
+  "category": "own_words_deep",
+  "user_name": "Alex",
+  "roster": [
+    {
+      "slug": "claude",
+      "name": "Claude"
+    },
+    {
+      "slug": "gpt",
+      "name": "GPT"
+    }
+  ],
+  "transcript": [
+    {
+      "speaker": "user",
+      "content": "Morning. Two things today: the poster and the map."
+    },
+    {
+      "speaker": "gpt",
+      "content": "I'd print the poster at A2; A3 gets lost on that wall."
+    },
+    {
+      "speaker": "claude",
+      "content": "For the map, the north entrance is the one people miss; mark it twice."
+    },
+    {
+      "speaker": "user",
+      "content": "Noted. Anything on colours?"
+    },
+    {
+      "speaker": "claude",
+      "content": "Keep the poster to two colours; the venue's lighting is warm."
+    },
+    {
+      "speaker": "gpt",
+      "content": "Two colours works. Dark text on the lighter one."
+    },
+    {
+      "speaker": "user",
+      "content": "What about the QR code?"
+    },
+    {
+      "speaker": "gpt",
+      "content": "Bottom right, large enough to scan from a metre."
+    },
+    {
+      "speaker": "claude",
+      "content": "And test it on a phone before printing."
+    },
+    {
+      "speaker": "user",
+      "content": "Will do. And the map legend?"
+    },
+    {
+      "speaker": "claude",
+      "content": "Three symbols at most."
+    },
+    {
+      "speaker": "gpt",
+      "content": "Agreed."
+    }
+  ],
+  "probes": [
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which member said to print the poster at A2?",
+      "expected": "self",
+      "tag": "a2_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member said to print the poster at A2?",
+      "expected": "gpt",
+      "tag": "a2_claude"
+    },
+    {
+      "seat": "claude",
+      "kind": "who",
+      "question": "Which member said to mark the north entrance twice?",
+      "expected": "self",
+      "tag": "north_claude"
+    },
+    {
+      "seat": "gpt",
+      "kind": "who",
+      "question": "Which member said to mark the north entrance twice?",
+      "expected": "claude",
+      "tag": "north_gpt"
+    },
+    {
+      "seat": "gpt",
+      "kind": "yesno",
+      "question": "Did you say to keep the poster to two colours?",
+      "expected": "no",
+      "tag": "colours_you_gpt"
+    },
+    {
+      "seat": "claude",
+      "kind": "yesno",
+      "question": "Did you say to keep the poster to two colours?",
+      "expected": "yes",
+      "tag": "colours_you_claude"
+    }
+  ],
+  "notes": "A seat's own remark from early in a longer chat."
+}

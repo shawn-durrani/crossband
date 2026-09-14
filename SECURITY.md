@@ -55,6 +55,45 @@ session-only rule everywhere.
   even on a trusted host. A remote caller also sees environment variable
   names without their values.
 
+## How a request from the tailnet is checked
+
+The short version is in [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md#where-a-request-goes). This is the rest.
+
+Behind that, the app checks where each request came from. A browser
+marks every ordinary request with its origin, in a field called
+[Sec-Fetch-Site](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Site).
+A request to an `/api/` route marked `cross-site` is refused, so a
+page on another website that has learnt your tailnet name can't drive
+the app from its own address. Only that one value is refused, so a
+page the browser calls `same-site`, meaning one served under another
+name on your tailnet domain, gets through.
+
+Voice runs over
+[websockets](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API),
+connections that stay open in both directions, and that check never
+sees them. The two voice relays, `/api/voice/tts` and
+`/api/voice/stt-stream`, do their own checking, in
+`backend/routers/voice.py`. They check the Host name against the same
+list, and a second field, called
+[Origin](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Origin),
+which the browser fills with the address of the page that opened the
+websocket. A page can't forge Origin. An Origin whose name isn't on
+the list is refused, so a page on another site can't open a relay and
+spend your ElevenLabs credit, even from a phone that's on your tailnet.
+
+A caller that sends no Origin at all, meaning a script or `curl` and
+never a browser, is let through, the same as over HTTP. For those the
+tailnet is the whole fence, so treat the tailnet name as semi-private.
+Any device on it can reach every `/api/` route, and the lock screen is
+the only lock behind it.
+
+Your own scripts and the deploy watcher post into chats through two
+routes, `/api/ingest` and the deploy-notice route, and each request
+carries `ingest_token`. [SECURITY.md](../SECURITY.md) calls that the
+machine side-channel. Once an owner password is set, every such script
+needs the token, on the Mac itself included, because a script has no
+browser session.
+
 ## Keys
 
 Keys live in `.env`, which is chmod 600 on every start and gitignored.
