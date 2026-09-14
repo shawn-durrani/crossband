@@ -160,6 +160,21 @@ def _configure_log_level(level_name: str) -> None:
     logging.getLogger("crossband").setLevel(level)
 
 
+def _sweep_empty_chats() -> None:
+    """Run the empty-chat sweep once (#354) and log the count. A failure is
+    logged and never stops startup; the chats are only ever a tidy-up."""
+    try:
+        con = db.connect()
+        try:
+            n = db.prune_empty_chats(con)
+            con.commit()
+        finally:
+            con.close()
+        log.info("empty-chat sweep removed %d chat(s)", n)
+    except Exception:
+        log.exception("empty-chat sweep failed")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     _secure_env_file(ROOT / ".env")
     load_dotenv(ROOT / ".env")
@@ -272,6 +287,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             con.close()
         except Exception:
             log.exception("voice-trace prune failed")
+        # #354: chats nobody ever used go on their own, at startup and once
+        # a day after that. One line with the count, nothing about the chats.
+        _sweep_empty_chats()
+
+        async def empty_chat_sweep_loop():
+            while True:
+                await asyncio.sleep(86400)
+                await asyncio.to_thread(_sweep_empty_chats)
+
+        empty_chat_task = asyncio.create_task(empty_chat_sweep_loop())
         # These belong HERE, not in router.on_startup: Starlette ignores
         # on_startup/on_shutdown when a lifespan context is provided - the
         # sweep registered that way had silently never run.
@@ -286,8 +311,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             backup_task.cancel()
             person_sync_task.cancel()
+            empty_chat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await backup_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await empty_chat_task
             app.state.reflection_sweep.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await app.state.reflection_sweep
