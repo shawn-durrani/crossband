@@ -243,6 +243,7 @@ def test_long_docs_stay_navigable():
 
 CONVERTED = {
     "README.md",
+    "docs/README.md",
     "eval_critic/README.md",
     "CONTRIBUTING.md",
     "docs/CONFIG.md",
