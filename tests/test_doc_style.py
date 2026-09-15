@@ -244,6 +244,11 @@ def test_long_docs_stay_navigable():
 CONVERTED = {
     "README.md",
     "docs/MODELS.md",
+    "docs/TESTING.md",
+    "docs/WEB_RESEARCH.md",
+    "docs/PRODUCERS.md",
+    "docs/LATENCY.md",
+    "docs/BENCHMARK.md",
     "docs/COST_TELEMETRY.md",
     "docs/GUEST_PERMISSIONS.md",
     "docs/OPERATIONS.md",
@@ -254,8 +259,8 @@ CONVERTED = {
 # Capitals are for acronyms. An all-capital word of three or more letters that
 # is not one of these reads as shouting. Add one when a converted doc needs it;
 # a name in a code span or a file name like README.md is never read as prose.
-CAPS_ALLOWED = {"API", "GPT", "HTTP", "HTTPS", "ISO", "JSON", "MCP", "MIT",
-                "SDK", "URL"}
+CAPS_ALLOWED = {"API", "CLI", "DNS", "GPT", "HTTP", "HTTPS", "ISO", "JSON",
+                "MCP", "MIT", "SDK", "STT", "URL"}
 
 # A colon may introduce a list, a command or a quoted value. Approximated as:
 # what follows starts with a backtick or a quote, holds an inline list (two or
