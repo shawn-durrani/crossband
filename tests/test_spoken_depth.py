@@ -59,11 +59,17 @@ def test_prefilter_shapes():
            "quick answers from now on please",
            "back to normal now",
            "maximum effort on this one",
-           "can you think deeper"]
+           "can you think deeper",
+           # #305: the words the owner used in the field, and their kin
+           "use your fastest reasoning setting",
+           "switch to the slowest reasoning you have",
+           "lowest effort from here",
+           "what's your reasoning setting right now"]
     no = ["what do you think about the plan?",
           "good thinking",
           "the quick brown fox",
-          "let's talk about depth charges"]
+          "let's talk about depth charges",
+          "the fastest route is the motorway"]
     for t in yes:
         assert depth.depth_prefilter(t), t
     for t in no:
@@ -152,12 +158,27 @@ def test_round_carries_spoken_depth_and_tells_the_seat(app, monkeypatch):
     assert claude["reasoning_effort"] == "high"
     assert (gpt.get("reasoning_effort") or "") == ""
     # and the seat is told, in the VOLATILE block (cache layout law)
-    assert "Your reasoning depth" in claude_cfg["depth_note"]
-    assert gpt_cfg["depth_note"] == ""
-    stable, volatile = split_system_prompt(
-        claude, [claude, gpt], claude_cfg, None, "", False)
-    assert "Your reasoning depth" in volatile
-    assert "Your reasoning depth" not in stable
+    assert "set your thinking to deep" in claude_cfg["depth_note"]
+    # #305: the untouched seat is told its configured setting and that only
+    # a person in the chat can change it, so it can never claim a change
+    assert "configured setting" in gpt_cfg["depth_note"]
+    assert "You cannot change it yourself" in gpt_cfg["depth_note"]
+    assert "Anyone in this chat can change it" in claude_cfg["depth_note"]
+    for seat, seat_cfg in ((claude, claude_cfg), (gpt, gpt_cfg)):
+        stable, volatile = split_system_prompt(
+            seat, [claude, gpt], seat_cfg, None, "", False)
+        assert "Your reasoning depth" in volatile
+        assert "Your reasoning depth" not in stable
+
+
+def test_the_default_note_names_the_configured_setting():
+    assert "configured setting, default" in depth.depth_note("", "Shawn")
+    assert "configured setting, deep" in depth.depth_note("", "Shawn",
+                                                          configured="high")
+    assert "configured setting, adaptive" in depth.depth_note(
+        "", "Shawn", configured="adaptive")
+    assert "Nobody has changed it" in depth.depth_note("", "Shawn")
+    assert "Nobody has changed it" not in depth.depth_note("low", "Shawn")
 
 
 # ---------- the scan, end to end at the llm_util seam ----------

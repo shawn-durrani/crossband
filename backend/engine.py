@@ -658,14 +658,18 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # this call and carries its own scoped note.
         spoken_depth = state["seat_state"].get(participant["slug"], "")
         once_depth = state.get("once_effort", "")
+        configured = (participant.get("reasoning_effort") or "").strip()
         level = once_depth or spoken_depth
         if level:
             participant = {**participant, "reasoning_effort": level}
         user_name = cfg.get("user_name", "User")
+        # #305: every seat is told its effective depth and the one way it
+        # changes, so none can claim a change it cannot make.
         round_cfg["depth_note"] = (depth_mod.once_note(once_depth, user_name)
                                    if once_depth else
                                    depth_mod.depth_note(spoken_depth,
-                                                        user_name))
+                                                        user_name,
+                                                        configured=configured))
         round_cfg["memory_write_warning"] = (
             "a recent memory save failed, so some facts from a just-finished chat "
             "may not be recorded yet - don't assume they're stored."
