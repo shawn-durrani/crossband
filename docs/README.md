@@ -70,19 +70,30 @@ it appears.
 5. [docs/LATENCY.md](LATENCY.md): where the wait before a reply goes,
    how to measure it on your own install, and the two ways the numbers
    mislead.
-6. [eval_critic/README.md](../eval_critic/README.md): the offline eval
-   harness for the memory-provenance critic. Fixtures, scoring, and how
-   to run it against a live model.
-7. [eval_silence/README.md](../eval_silence/README.md): the eval harness
-   for the speak-or-pass rule in group chats. What it measures, the
-   cases, and how to score a model's judgement of when silence reads as
-   absence.
-8. [eval_attribution/README.md](../eval_attribution/README.md): the
-   replay harness for the transcript-shape question. Which projection
-   lets a seat answer who said what, including about itself.
-9. [eval_recall/README.md](../eval_recall/README.md): the replay
-   harness for the ambient memory recall. Whether the facts a round
-   fetches earn their wait, and where to set the floor and the count.
+
+### The eval harnesses, by kind
+
+A guard runs on every change, needs no key, passes or fails, and pins a
+rule so it can't drift. CI presses it, so it never needs a button.
+
+- [eval_silence/README.md](../eval_silence/README.md): the guard for
+  the speak-or-pass rule in group chats. Five hand-graded scenarios
+  that hold the rule steady as the prompt text changes.
+
+A measurement runs by hand when a decision needs numbers. It produces a
+report to read, and it can cost money or touch your own data. Each
+page says what it costs and what it touches.
+
+- [eval_critic/README.md](../eval_critic/README.md): the critic
+  question. Can a cheap critic catch a made-up memory fact in a draft
+  reply? Made-up scenarios, a real model, API spend per run.
+- [eval_attribution/README.md](../eval_attribution/README.md): the
+  transcript shape question. Which shape lets a seat say who said
+  what, including about itself? Made-up chats, a real model, API spend
+  per run.
+- [eval_recall/README.md](../eval_recall/README.md): whether the facts
+  a round fetches from memory earn their wait. Your own turns and your
+  own membro, so its corpus stays on the machine.
 
 ## Safety, security, history
 
