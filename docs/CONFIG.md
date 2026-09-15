@@ -225,6 +225,7 @@ lists only together with that page.
 | `mcp_servers` | `{}` | MCP servers the seats may call over stdio, each name mapping to `{command, args, label?}`. Set it in `config.local.json`. The optional `label` shows in the work-status chip while that server is in flight, and a server without one shows a plain "Working on it". |
 | `ingest_token` | `""` | The bearer for the machine side-channel, `POST /api/ingest` and `POST /api/chats/{id}/notice`, set as `CROSSBAND_INGEST_TOKEN`. Once a password is enrolled it's the only way a producer reaches either route. [PRODUCERS.md](PRODUCERS.md). |
 | `slash_commands` | `[]` | Suggestion chips in the composer for `/` messages, each `{insert, label, hint}`. Crossband gives no command a meaning, so a `/` message goes to your tooling and no model replies. [PRODUCERS.md](PRODUCERS.md) has the contract. |
+| `spend_note_every` | `30` | While a seat sits at a spoken depth above its default, the chat gets one short system line every this many messages saying what that seat has spent since it was raised. A rate-card estimate, never a bill. `0` turns the line off. |
 | `slash_ack_timeout_s` | `120` | The dead-man for `/` messages. If nothing acknowledges a slash command within this window, one system line says nothing picked it up, so a stopped watcher stops looking like a queued deploy. `0` turns it off. [PRODUCERS.md](PRODUCERS.md). |
 
 ## Research tool caps

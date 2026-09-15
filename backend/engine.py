@@ -21,6 +21,7 @@ from . import chat_memory, citations, db, echo, guest, passes, person_sync
 from . import depth as depth_mod
 from . import rounds as rounds_mod
 from . import seat_trace
+from . import spend_note
 from . import memory_client as memory_client_mod
 from . import providers
 from . import provenance as prov
@@ -1206,6 +1207,9 @@ async def post_round_reflect_job(chat_id, cfg):
             try:
                 await chat_memory.maybe_summarize(con, chat, messages, cfg)
                 await chat_memory.maybe_title_chat(con, chat, messages, cfg)
+                # #259: the running-cost line for a raised seat, on the
+                # same watermark shape, off the critical path.
+                spend_note.maybe_spend_note(con, chat, messages, cfg)
             finally:
                 con.close()
     except Exception:
@@ -1255,6 +1259,16 @@ async def reflection_sweep_loop(get_cfg, memory):
             log.exception("reflection sweep failed; retrying next interval")
 
 
+def ingest_rows(con, chat_id, upto) -> list:
+    """The rows past the ingest watermark that memory should see. The
+    running-cost line (#259) is left out: a dollar figure is not a fact about
+    anyone. The watermark still moves past it with the rest."""
+    rows = [dict(r) for r in con.execute(
+        "SELECT id, speaker, content, created_at, voice_labels, web_sources "
+        "FROM messages WHERE chat_id=? AND id>? ORDER BY id", (chat_id, upto))]
+    return [m for m in rows if not spend_note.is_spend_note(m)]
+
+
 async def leave_chat_job(chat_id, cfg, memory):
     """The /distill leave hook, run in the background so leaving is instant:
     (a) chat-side reflection - rolling summary, auto-title, project distill;
@@ -1294,11 +1308,7 @@ async def leave_chat_job(chat_id, cfg, memory):
         if upto is None:
             c.close()
             return []
-        msgs = [dict(r) for r in c.execute(
-            "SELECT id, speaker, content, created_at, voice_labels, "
-            "web_sources "
-            "FROM messages WHERE chat_id=? AND id>? ORDER BY id",
-            (chat_id, upto[0]))]
+        msgs = ingest_rows(c, chat_id, upto[0])
         by_id = {m["id"]: m for m in msgs}
         if msgs:
             rows = [dict(r) for r in c.execute(
