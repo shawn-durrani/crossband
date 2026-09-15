@@ -80,6 +80,9 @@ it appears.
 8. [eval_attribution/README.md](../eval_attribution/README.md): the
    replay harness for the transcript-shape question. Which projection
    lets a seat answer who said what, including about itself.
+9. [eval_recall/README.md](../eval_recall/README.md): the replay
+   harness for the ambient memory recall. Whether the facts a round
+   fetches earn their wait, and where to set the floor and the count.
 
 ## Safety, security, history
 
