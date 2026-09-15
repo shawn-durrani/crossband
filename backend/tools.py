@@ -275,13 +275,18 @@ def code_tool_definitions(cfg):
             "Summon Claude Code - the coding agent installed on this machine - "
             "into the chat for one turn, working in the configured "
             "repositories. Claude Code joins at the END of the current round and "
-            "its reply is visible to everyone. Two modes: \"investigate\" "
-            "(default) is read-only - it answers questions about the actual "
-            "code and produces implementation plans. \"implement\" - use ONLY "
-            "when the user explicitly asked for the change to be made - lets "
-            "it create a branch, implement, run the tests, and open a pull "
-            "request for the user to review; it can never merge or push to "
-            "main. Set continue_last=true to resume Claude Code's previous "
+            "its reply is visible to everyone. Three modes: \"investigate\" "
+            "(default) is read-only and has NO shell - it answers questions "
+            "about the actual code and produces implementation plans, and it "
+            "cannot run anything. \"run\" gives it a shell for the project's "
+            "own commands (its Python and pytest, npm, read-only git, gh and "
+            "sqlite3) with no way to edit, commit, push or open a pull "
+            "request - use it when the user wants a command run and its "
+            "output reported, such as a test run or a harness. \"implement\" "
+            "- use ONLY when the user explicitly asked for the change to be "
+            "made - lets it create a branch, implement, run the tests, and "
+            "open a pull request for the user to review; it can never merge "
+            "or push to main. Set continue_last=true to resume Claude Code's previous "
             "visit in this chat (e.g. \"now implement the plan you just "
             "made\"). Sessions are bound to ONE repo: continue_last only "
             "carries the working context when repo matches the previous "
@@ -316,8 +321,8 @@ def code_tool_definitions(cfg):
                          "description": "What Claude Code should do, self-contained"},
                 "repo": {"type": "string", "enum": repos,
                          "description": "Which repository to work in"},
-                "mode": {"type": "string", "enum": ["investigate", "implement"],
-                         "description": "investigate (read-only, default) or implement (branch + PR; only on the user's explicit ask)"},
+                "mode": {"type": "string", "enum": ["investigate", "run", "implement"],
+                         "description": "investigate (read-only, no shell, default), run (a shell for the project's own commands, no writes; for running something and reporting its output), or implement (branch + PR; only on the user's explicit ask)"},
                 "model": {"type": "string",
                           "enum": list(guest.MODEL_ALIASES),
                           "description": "Model tier for this summon: default (Claude Code's own default), opus, sonnet, or haiku. Separate from auth/billing."},

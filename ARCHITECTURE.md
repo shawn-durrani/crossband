@@ -87,9 +87,9 @@ the payload. The namespace does the work.
 A summoned Claude Code session runs with permissions this process
 injects, and it never reads the operator's personal settings. It works
 in its own git worktree at a fresh checkout. Denied tools override
-allowed ones, which is how implement mode keeps a broad read permission
-away from `.env` and `config.local.json`. That protection belongs to
-implement mode alone. The default investigate mode denies whole tools
+allowed ones, which is how the two modes with a shell, implement and
+run, keep a broad read permission away from `.env` and
+`config.local.json`. The default investigate mode denies whole tools
 and carries no path rule, so it doesn't restrict what a read only guest
 may open. The list bounds built in tools only, and any MCP server
 mounted for the guest is available whole.

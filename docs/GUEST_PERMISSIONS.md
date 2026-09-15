@@ -36,12 +36,22 @@ in from your checkout, so the tests can run without a reinstall. When
 the visit ends, the worktree is removed, and a branch the guest pushed
 survives.
 
-## The two modes
+## The three modes
 
 Investigate is the default, and it's read-only. The guest has three
-tools, `Read`, `Grep` and `Glob`, and no shell, so it can't write a
-file. It reads, reasons and answers, or writes a plan for a later visit
-to carry out. It can open any file it can name.
+tools, `Read`, `Grep` and `Glob`, and no shell, so it can't run a
+command or write a file. It reads, reasons and answers, or writes a
+plan for a later visit to carry out. It can open any file it can name.
+
+Run gives the guest a shell for the project's own commands and nothing
+that writes. Ask for a test run or a harness run and the output comes
+back in the chat. The commands are the ones implement mode may run,
+minus everything that changes or ships: `Edit`, `Write`, `git add`,
+`commit`, `push`, `checkout`, `switch`, `restore`, `stash`, `fetch`
+and `ls-remote`, `gh pr create` and `gh issue comment` are all denied.
+The worktree has no `.env`, so a command that needs the live install's
+files, such as its database, must be given their paths. It runs on the
+investigate visit's turn and time caps.
 
 Implement is off until you set `code_allow_writes`, and then the guest
 can make a branch, edit files, run the tests, commit, push the branch
@@ -51,7 +61,7 @@ and open a pull request. It can never merge and can never push to
 An MCP server is a separate program that offers Claude Code more tools
 over [MCP](https://modelcontextprotocol.io/docs/getting-started/intro),
 an open standard for connecting an AI app to outside tools and data.
-Both modes mount every MCP server in `code_mcp`, and each one whole, so
+Every mode mounts every MCP server in `code_mcp`, and each one whole, so
 every tool the server offers is allowed, write tools included.
 `code_mcp` is empty out of the box, so a fresh install mounts none. See
 [Giving a guest read access to memory](#giving-a-guest-read-access-to-memory).
@@ -109,8 +119,8 @@ project's real commands.
 A rule is a command prefix in Claude Code's own
 [permission rule](https://code.claude.com/docs/en/permissions) form, so
 `Bash(git push:*)` runs anything that starts with `git push`. A deny
-rule beats an allow rule, which is how implement mode can allow `Read`
-in general and still deny it on `.env`.
+rule beats an allow rule, which is how implement and run mode can
+allow `Read` in general and still deny it on `.env`.
 
 That precedence is Claude Code's own behaviour, and this repo relies on
 it without testing it. Every guest test mocks the boundary, so the
@@ -156,7 +166,8 @@ flowchart LR
 ## What implement mode may run
 
 These run without asking, and each is a prefix, so `git push` covers
-`git push origin my-branch` too.
+`git push origin my-branch` too. Run mode has the same table with the
+writing rows taken out, as listed under the three modes.
 
 | What | Pre-approved prefixes |
 |---|---|
@@ -181,8 +192,9 @@ approved.
 
 ## What implement mode blocks
 
-These are `IMPLEMENT_DENIED` in `backend/guest.py`. The last row holds
-in both modes, and every other row is implement mode only. A read-only
+These are `IMPLEMENT_DENIED` in `backend/guest.py`, and `RUN_DENIED`
+is the same list plus the writing commands. The last row holds in every
+mode, and every other row holds in implement and run mode. A read-only
 visit has no shell, so the shell rows have nothing to bite on there,
 and the credential row isn't there at all.
 
@@ -196,10 +208,11 @@ and the credential row isn't there at all.
 | `env` and `printenv` | Dumping the environment prints every key the app holds. |
 | `curl`, `wget`, `nc`, `ssh` and `scp` | No network beyond `git`, `gh` and `npm`. |
 | `rm -rf`, `rm -fr`, `sudo` and `git clean` | Nothing destructive in the shell. |
-| `WebFetch`, `WebSearch`, `Task`, `NotebookEdit` and `KillShell` | Off in both modes, so the guest has no web search, no web fetch and no subagents. |
+| `WebFetch`, `WebSearch`, `Task`, `NotebookEdit` and `KillShell` | Off in every mode, so the guest has no web search, no web fetch and no subagents. |
 
 Investigate mode denies `TodoWrite` as well, because it has nothing to
-build and so nothing to track. The network reach a guest keeps is
+build and so nothing to track. Run mode denies `Edit` and `Write`
+outright, on top of the rows. The network reach a guest keeps is
 `git`, `gh`, and `npm` fetching packages when it installs or builds.
 
 ## What the rules don't protect against
@@ -225,17 +238,17 @@ damage is where the guest stands, since a visit runs in a fresh
 checkout and a gitignored file like `.env` isn't in one. That's a fact
 about the worktree, and no rule enforces it.
 
-In implement mode, the credential rules bind `Read` alone, and a `Grep`
-or `Glob` over `.env` is covered by no rule, in either mode. No test
-here watches a read being refused.
+In implement and run mode, the credential rules bind `Read` alone, and
+a `Grep` or `Glob` over `.env` is covered by no rule, in any mode. No
+test here watches a read being refused.
 
 An MCP server sits outside all of this. Whatever server you mount is
-available whole, in both modes, and if it can write, so can the guest.
+available whole, in every mode, and if it can write, so can the guest.
 
 ## Where the credential rules live
 
-The six rules that keep implement mode out of credential files live in
-`IMPLEMENT_DENIED` and nowhere else: `Read(.env)`, `Read(**/.env)`,
+The six rules that keep a guest with a shell out of credential files
+live in `IMPLEMENT_DENIED`, which `RUN_DENIED` carries whole: `Read(.env)`, `Read(**/.env)`,
 `Read(**/.env.*)`, `Read(**/config.local.json)`, `Read(**/*.pem)` and
 `Read(**/id_rsa*)`. Investigate mode's deny list is `DENIED_TOOLS`,
 which names whole tools: `Bash`, `Write`, `Edit`, `NotebookEdit`,
@@ -243,9 +256,10 @@ which names whole tools: `Bash`, `Write`, `Edit`, `NotebookEdit`,
 no `Read` rule of any kind, and its allow list is the bare `Read`,
 `Grep` and `Glob`.
 
-If you want the file rules in both modes, add them to `DENIED_TOOLS` as
-well, and update `docs/GUEST_PERMISSIONS.md` and `SECURITY.md` in the
-same change. `tests/test_guest.py` pins the behaviour of both modes, and
+If you want the file rules in investigate mode too, add them to
+`DENIED_TOOLS` as well, and update `docs/GUEST_PERMISSIONS.md` and
+`SECURITY.md` in the same change. `tests/test_guest.py` pins the
+behaviour of every mode, and
 pins that the rule list in both docs matches the code, so the edit turns
 a test red until the docs catch up.
 

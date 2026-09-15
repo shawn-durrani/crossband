@@ -101,6 +101,7 @@ def test_batch_activity_picks_the_first_non_fast_tools_label():
 def test_guest_job_label_keys_on_mode():
     assert work_status.guest_job_label("investigate") == "Investigating the code"
     assert work_status.guest_job_label("implement") == "Building the change"
+    assert work_status.guest_job_label("run") == "Running the command"
     assert work_status.guest_job_label("bogus") == work_status.GUEST_JOB_LABEL_DEFAULT
 
 

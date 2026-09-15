@@ -127,7 +127,7 @@ export function capabilityRows(chat, cfg) {
     rows.push({
       key: 'code', label: 'Code', on: !!chat.code_enabled,
       hint: chat.code_enabled
-        ? `ON - the AIs can ${[cfg.code?.available && (cfg.code?.writes ? 'summon Claude Code (investigate, or implement + open PRs - never merge)' : 'summon Claude Code (read-only)'), cfg.github?.available && 'read & file GitHub issues'].filter(Boolean).join(' and ')}`
+        ? `ON - the AIs can ${[cfg.code?.available && (cfg.code?.writes ? 'summon Claude Code (read-only, run a command, or implement + open PRs - never merge)' : 'summon Claude Code (read-only, or run a command)'), cfg.github?.available && 'read & file GitHub issues'].filter(Boolean).join(' and ')}`
         : 'OFF - turn on to let the AIs work with your repos',
     })
   }

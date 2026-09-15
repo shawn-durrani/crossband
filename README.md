@@ -133,9 +133,11 @@ off.
 
 **Call in a coding agent.** You can call Claude Code into the chat as
 a guest. It joins for one turn, works in its own copy of your repo (a
-git worktree), and by default it can only read. If you turn on
-implement mode, it can branch, run the tests, push, and open a pull
-request. It can never merge.
+git worktree), and by default it can only read. In run mode it can run
+the project's own commands, such as the tests or a harness, and report
+what they printed, without changing a file. If you turn on implement
+mode, it can branch, run the tests, push, and open a pull request. It
+can never merge.
 
 **Remember across conversations.** On its own, Crossband forgets
 everything when a chat ends. With Membro running beside it, the room

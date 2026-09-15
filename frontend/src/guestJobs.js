@@ -45,7 +45,8 @@ export function isActive(job) {
 // other live field, no history replay involved.
 export function chipLabel(job) {
   if (!job) return ''
-  const verb = job.mode === 'implement' ? 'building' : 'working'
+  const verb = job.mode === 'implement' ? 'building'
+    : job.mode === 'run' ? 'running' : 'working'
   switch (job.status) {
     case 'running': {
       const steps = job.step_count ? ` · ${job.step_count} steps` : ''

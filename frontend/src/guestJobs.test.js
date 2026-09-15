@@ -54,6 +54,7 @@ test('chip label is a single quiet line, no reasoning', () => {
   assert.equal(chipLabel({ status: 'running', mode: 'investigate' }), 'Claude Code working…')
   assert.equal(chipLabel({ status: 'running', mode: 'implement', step_count: 3 }),
     'Claude Code building… · 3 steps')
+  assert.equal(chipLabel({ status: 'running', mode: 'run' }), 'Claude Code running…')
   assert.equal(chipLabel({ status: 'completed', kind: 'result' }),
     'Claude Code finished - handing back')
   assert.equal(chipLabel({ status: 'completed', kind: 'blocker' }),

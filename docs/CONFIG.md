@@ -211,7 +211,7 @@ lists only together with that page.
 | `code_use_api_key` | `false` | `false` means guest turns ride the computer's Claude Code login, the subscription. `true` bills `ANTHROPIC_API_KEY` per token. Either way the turn records which one paid. |
 | `code_model` | `default` | The guest's model tier, one of `default`, `opus`, `sonnet` or `haiku`. A summon may override it. It changes the rate and never the account that pays. |
 | `code_effort` | `default` | The guest's thinking level, one of `default`, `think`, `think-hard` or `ultrathink`. A summon may override it. |
-| `code_allow_writes` | `false` | Implement mode. The guest may branch, test, push and open a pull request, and never merge or push `main`. Off means read-only investigation. |
+| `code_allow_writes` | `false` | Implement mode. The guest may branch, test, push and open a pull request, and never merge or push `main`. Off leaves investigate, which only reads, and run, which runs the project's own commands without writing. |
 | `code_default_on` | `false` | New chats start with the `code` toggle already on, which is harmless without `code_repos`. |
 | `code_max_turns` | `50` | The SDK turn cap for one read-only visit. |
 | `code_timeout_s` | `600` | The wall-clock cap for one read-only visit. |
