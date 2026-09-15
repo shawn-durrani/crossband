@@ -49,6 +49,14 @@ diagnostic reading it as a defect is reading it wrong.
   participant for the `conversation_performance` diagnostic, which names
   the cause in words.
 - **Pacing between speakers:** compare `created_at` deltas in `chat.db`.
+- **What each seat's completion did:** `GET /api/models/seat_trace`
+  lists the recent completions, newest last, with the round and seat,
+  time to first token, total time, chunk and character counts, the
+  finish reason, how it ended, a short hash of the reply, and whether
+  that reply repeats an earlier one by the same seat in the same chat.
+  A doubled send of the same text within ten seconds appears too. Never
+  the text itself. Add `?chat_id=` to narrow it, and the voice
+  diagnostics dump carries the same list for its chat.
 
 ## Two traps when reading the numbers
 
