@@ -1,0 +1,129 @@
+[
+  {
+    "id": "intro_wife_named",
+    "category": "introduction",
+    "text": "My wife Sam is here with me.",
+    "expected": {
+      "introductions": [
+        "Sam"
+      ]
+    }
+  },
+  {
+    "id": "intro_self",
+    "category": "introduction",
+    "text": "I'm here too. I'm Dave, his brother.",
+    "expected": {
+      "introductions": [
+        "Dave"
+      ]
+    }
+  },
+  {
+    "id": "intro_relationship_only",
+    "category": "introduction",
+    "text": "My wife is here.",
+    "expected": {
+      "introductions": [
+        "Wife"
+      ]
+    },
+    "notes": "No name anywhere, so the relationship word comes back for the app to resolve."
+  },
+  {
+    "id": "intro_with_alias",
+    "category": "introduction",
+    "text": "This is Samantha, also known as Sam.",
+    "expected": {
+      "introductions": [
+        "Samantha"
+      ],
+      "aliases": {
+        "Samantha": "Sam"
+      }
+    }
+  },
+  {
+    "id": "depart_named",
+    "category": "departure",
+    "text": "Dave has left.",
+    "present": [
+      "Dave"
+    ],
+    "expected": {
+      "departures": [
+        "Dave"
+      ]
+    }
+  },
+  {
+    "id": "intro_neg_story",
+    "category": "introduction_negative",
+    "text": "I was talking to my wife about the trip last night.",
+    "expected": {},
+    "notes": "Talking about someone not in the room."
+  },
+  {
+    "id": "correction_spelt",
+    "category": "correction",
+    "user_name": "Priya",
+    "known": [
+      "Alex",
+      "Dave"
+    ],
+    "text": "Her name is actually spelt Aleks.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "Alex",
+          "name": "Aleks",
+          "also": ""
+        }
+      ]
+    }
+  },
+  {
+    "id": "correction_call_her",
+    "category": "correction",
+    "known": [
+      "Samantha",
+      "Dave"
+    ],
+    "text": "Call her Sam.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "Samantha",
+          "name": "Sam",
+          "also": ""
+        }
+      ]
+    }
+  },
+  {
+    "id": "correction_two_forms",
+    "category": "correction",
+    "known": [
+      "Matteo"
+    ],
+    "text": "Matteo is the spelling but it's pronounced Mateo.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "Matteo",
+          "name": "Matteo",
+          "also": "Mateo"
+        }
+      ]
+    }
+  },
+  {
+    "id": "correction_neg_mention",
+    "category": "correction_negative",
+    "known": [
+      "Sam"
+    ],
+    "text": "Sam said the spelling test was hard.",
+    "expected": {}
+  }
+]
