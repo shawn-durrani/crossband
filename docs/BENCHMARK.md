@@ -1,58 +1,68 @@
-# Synthetic voice benchmark
+# Comparing seats on the same small job
 
-A Models-page runner that puts identical scripted cases through the
-seats you pick and compares stage timings side by side (#94). It answers
-"how do these seats compare on the same tiny job". It does not predict a
-live turn: real turns carry history, memory, tools and caches, so their
-latency is their own. Every result file says so.
+The benchmark puts the same few scripted cases through the seats you
+pick and lines up the timings side by side. It answers one question:
+how do these seats compare on the same tiny job. It doesn't tell you
+how long a live turn will take, because a real turn carries the
+transcript, memory, tools and caches, and its timing is its own. Every
+result file says so.
 
-Open it from the Models page, under Benchmark.
+Open it from the Models page, under Benchmark. Pick the seats and the
+legs you want, and start the run.
+
+## What it measures
+
+- Text reply: the time to the first visible word, the total seconds,
+  the token count, and the reply itself.
+- Speech to text: one spoken clip, transcribed once per run.
+- Text to speech: one fixed sentence, spoken in each seat's own voice.
+- The full pipeline: listen, think and speak in sequence, timed per
+  stage.
+
+Each leg is selectable on its own. A leg a seat can't run is marked
+skipped with the reason, never left blank and never shown as a
+failure. Hosted and self-hosted seats run the same cases.
 
 ## What it never does
 
-The runner never opens the microphone and never plays audio on its own.
-Generated clips are saved and offered as download links; listening is
-your move. Where quality needs human judgement, the artefact is kept
-instead of a score being invented. Fixtures and results carry no
-conversation content and no key values; tests pin both.
+The benchmark never opens the microphone and never plays audio on its
+own. The clips it generates are saved and offered as download links,
+and listening is your move. Where a result needs a human ear, the clip
+is kept and no score is invented. The fixture files and the result
+files hold no conversation content and no key values, and the tests
+check both.
 
-## Dimensions
+## The spoken clip
 
-- Text reply: time to first visible word, total seconds, token count and
-  the reply itself.
-- Speech-to-text: a spoken fixture clip transcribed once per run.
-- Text-to-speech: one fixed sentence through each seat's own voice.
-- Full pipeline: listen, think, speak in sequence, timed per stage.
+The listening legs use one fixed sentence, generated once through the
+voice you pick and cached under `data/benchmarks/fixtures/`. The file
+beside it, `spoken-prompt.json`, records how the clip was made. To
+test against a real human voice, replace the clip with your own
+recording. Keep the sentence in the json, so the transcript can be
+checked against it. Without a reference sentence the transcript is
+shown and left unjudged.
 
-Each dimension is selectable on its own. A leg a seat cannot run is
-reported as skipped with the reason, never as a silent gap or a fake
-failure. Hosted and self-hosted seats run the same cases.
+## Why the numbers are slow and fair
 
-## Fixtures
+Calls run one at a time, with never more than one in flight. A big
+selection is slow for that reason: overlapping calls would measure
+contention between them, not the seats. Each text call carries the
+seat's own reasoning and thinking settings, because those decide most
+of the wait before the first word. A seat on an OpenAI-style API tries
+the Responses API first and falls back to chat completions, the same
+order a live turn uses. A call that hasn't answered after three
+minutes fails, so a wedged local model can't stall the run.
 
-The spoken fixture is one fixed sentence, generated once through a
-configured voice and cached under data/benchmarks/fixtures/. Its
-provenance sits beside it in spoken-prompt.json. Replace the clip with
-your own recording to test against a real human voice. Keep the sentence
-in the json so the transcript check still has a reference; without one,
-the transcript is shown unjudged.
+## Where the results go
 
-## Honest numbers
+Each run writes `results.json`, plus any audio, under
+`data/benchmarks/runs/`. The file is updated after every unit, so an
+interrupted run keeps what it measured. Every result file is labelled
+synthetic and carries the run's timestamp, the cases, how the clip was
+made, and each seat's settings. The voice legs carry an estimated cost
+from the voice pricing map. A pipeline reply longer than 400
+characters is cut before it's spoken, and the result says so.
 
-Calls are minimal and strictly sequential, one in flight at a time. A
-big selection is therefore slow on purpose: overlap would measure
-contention, not seats. Text calls carry each seat's own reasoning and
-thinking settings, because those dominate first-word latency. OpenAI-
-style seats try the Responses API first and fall back to chat
-completions, the same adapter order a live turn uses.
-
-## Results and retention
-
-Each run writes results.json plus any audio under
-data/benchmarks/runs/, updated after every unit, so an interrupted run
-keeps what it measured. Every file is labelled synthetic and carries the
-run timestamp, the cases, the fixture provenance and each seat's
-configuration. Voice legs carry an estimated cost from the voice pricing
-map. Runs persist locally until deleted from the panel, which removes
-the audio too. Benchmark spend never lands on a chat, so the spend page
-ignores it; the ElevenLabs quota reflects it.
+Runs stay on disk until you delete them from the panel, which removes
+the audio too. Benchmark spend never lands on a chat, so the spend
+page ignores it. Your ElevenLabs quota still counts it.
