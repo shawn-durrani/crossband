@@ -102,7 +102,8 @@ export default function PasskeysPanel() {
         ) : (
           <ul className="space-y-2">
             {rows.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-3 text-sm">
+              <li key={c.id}
+                  className="flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                 <span className="flex items-center gap-2 min-w-0">
                   <Fingerprint size={14} className="shrink-0 text-ink-dim" />
                   {editing === c.id ? (
@@ -133,7 +134,10 @@ export default function PasskeysPanel() {
                     </span>
                   )}
                 </span>
-                <span className="flex items-center gap-3 shrink-0 text-xs text-ink-faint">
+                {/* #377: on a phone the dates and the remove link wrap under the
+                    name, indented past the icon, instead of one fixed-width line
+                    that ran off the row and over the next one. */}
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-6 text-xs text-ink-faint sm:shrink-0 sm:pl-0">
                   <span title="When this passkey was enrolled">added {(c.created_at || '').slice(0, 10) || '?'}</span>
                   <span title="Last successful unlock with this passkey">
                     {c.last_used_at ? `used ${new Date(c.last_used_at * 1000).toLocaleDateString()}` : 'never used'}

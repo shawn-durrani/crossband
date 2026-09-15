@@ -80,6 +80,13 @@ The app backs up its database and its learnt voices on its own, into
 folder are settings, and [docs/CONFIG.md](CONFIG.md#backups) lists
 them.
 
+## Empty chats
+
+A chat you opened and never used goes on its own two days later. The
+app deletes it at startup and once a day after that, and the log shows
+one line with the count. A chat stays if it has a message, if you
+renamed or archived it, or if someone is still seated in its room.
+
 ## Deploying a change
 
 A deploy has to restart the service through launchd, because launchd

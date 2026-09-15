@@ -45,7 +45,10 @@ session-only rule everywhere.
   is manual and written out in
   [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md); this repository ships
   no script for it. Never expose the port to the internet, and never
-  use Tailscale Funnel.
+  use Tailscale Funnel. The app checks for Funnel every few minutes and
+  refuses to serve while it is on, and a request on a trusted host
+  without the identity header Tailscale adds for tailnet users is
+  refused before the lock screen (#363).
 - **Cross-site requests to `/api/*` are rejected** when the browser
   stamps them, and websocket routes check `Origin` as well as `Host`,
   since websockets are exempt from CORS and would otherwise let any page

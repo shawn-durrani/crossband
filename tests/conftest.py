@@ -1,6 +1,7 @@
 import math
 import struct
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,24 @@ def _reset_room_state():
 
 
 @pytest.fixture(autouse=True)
+def _private_tempdir(tmp_path, monkeypatch):
+    """Give every test its own temp directory (#361).
+
+    Guest worktrees live under the process temp dir at a path keyed only by
+    repo and chat (`crossband-guest-demo-chat0` for most tests), so every
+    test that ran a guest shared one directory. Teardown is capped at
+    GUEST_TEARDOWN_S and abandoned when it overruns; on a slow runner the
+    abandoned `git worktree remove` kept going in its thread while the next
+    test added a worktree at the same path, and that test reported "could
+    not join" with nothing wrong in it. A per-test temp dir means no test
+    can reach another's worktree, however slow the machine.
+    """
+    private = tmp_path / "tmp"
+    private.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(private))
+
+
+@pytest.fixture(autouse=True)
 def _voiceid_offline(monkeypatch):
     """Keep the local speaker matcher (#28) OFFLINE for the keyless suite:
     stub the one-time background model fetch to a no-op and reset the
@@ -111,6 +130,36 @@ def _no_disk_config_in_tools(monkeypatch):
         raise RuntimeError("tests build cfg explicitly; no disk config")
 
     monkeypatch.setattr(tools_mod, "load_settings", _no_disk)
+
+
+@pytest.fixture(autouse=True)
+def _funnel_check_off(monkeypatch):
+    """The Funnel guard (#363) shells out to `tailscale` at every app start.
+    The suite never wants the real answer: on a Mac with Tailscale that is
+    a subprocess per test, and the answer depends on the machine. Tests of
+    the guard patch `funnel.check` themselves."""
+    from backend import funnel
+    monkeypatch.setattr(funnel, "check", lambda port, binary=None: None)
+
+
+@pytest.fixture(autouse=True)
+def _test_clients_are_tailnet_users(monkeypatch):
+    """Every test client is a tailnet user's browser unless a test says
+    otherwise (#363). Tailscale serve adds an identity header to each
+    request it proxies for a tailnet user, and a trusted host refuses a
+    request without one as having come in through Funnel. Loopback never
+    reads the header, so it is harmless there. The Funnel tests drop it to
+    play the public internet."""
+    from starlette.testclient import TestClient
+
+    from backend import funnel
+    original = TestClient.__init__
+
+    def init(self, *a, **k):
+        original(self, *a, **k)
+        self.headers.setdefault(funnel.IDENTITY_HEADER, "owner@example.com")
+
+    monkeypatch.setattr(TestClient, "__init__", init)
 
 
 @pytest.fixture(autouse=True)

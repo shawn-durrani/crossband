@@ -786,3 +786,44 @@ def test_corrections_survive_membro_being_down(app, membro):
     # membro back: it lands and clears
     out = person_sync.sync_once(membro.url, force=True)
     assert out["replayed"] == 1 and store.pending_corrections() == []
+
+
+def test_a_clip_deleted_along_a_chain_of_rows_stays_gone(app, membro):
+    """#353: move a clip from the survivor into the loser, delete it out
+    of the loser, merge the loser into the survivor, all before a sync.
+    The move is dropped as a move onto itself, so membro's copy never
+    left the survivor; read row by row, the delete looked under the
+    loser, found nothing, and counted as converged. Membro kept the clip
+    and the restore handed it back. Two passes, as for the other cases."""
+    store = anchors.store()
+    alex = store.ensure_person("Alex")        # older: merge_people keeps it
+    blair = store.ensure_person("Blair")
+    assert store.add_clip(alex, _pcm(2.0), 16000, source="introduction")
+    assert store.add_clip(alex, _pcm(2.5), 16000, source="accumulated")
+    assert store.add_clip(blair, _pcm(3.0), 16000, source="accumulated")
+    person_sync.sync_once(membro.url, force=True)
+    assert len(membro.anchors[alex]) == 2 and len(membro.anchors[blair]) == 1
+
+    gone = store.clips_of(alex)[0]["file"]
+    gone_sha = hashlib.sha256((store.root / gone).read_bytes()).hexdigest()
+    assert store.move_clip(alex, gone, blair)
+    moved = next(c["file"] for c in store.clips_of(blair)
+                 if hashlib.sha256((store.root / c["file"]).read_bytes())
+                 .hexdigest() == gone_sha)
+    assert store.delete_clip(blair, moved)
+    assert store.merge_people(alex, blair) == alex
+    assert [c["kind"] for c in store.pending_corrections()] == [
+        "delete", "merge"]
+    assert len(store.clips_of(alex)) == 2
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 2 and store.pending_corrections() == []
+    assert out["restored_clips"] == 0
+    assert gone_sha not in {x["sha256"] for x in membro.anchors[alex]}
+    assert len(membro.anchors[alex]) == 2
+    assert membro.persons[blair]["merged_into"] == alex
+
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["restored_clips"] == 0 and again["pushed_clips"] == 0
+    assert len(store.clips_of(alex)) == 2
+    assert gone_sha not in set(store.membro_stamps(alex).values())

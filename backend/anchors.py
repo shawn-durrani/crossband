@@ -557,8 +557,18 @@ class AnchorStore:
           forget or merge in ledger order, so it lands first or converges
           on membro saying the person is gone. With no slug there is
           nothing durable to fix, and the row goes;
-        - a forget names its person by slug already and is left alone."""
+        - a forget names its person by slug already and is left alone.
+
+        Rows about one clip are read as a chain (#353). Once a move into
+        the merged-away person is retargeted or dropped, the clip sits
+        under the survivor in membro from then on, so a later move or
+        delete of that clip out of this person is rewritten to come from
+        the survivor, where the clip actually is. Read row by row, the
+        later delete looked under this person's old record, found
+        nothing, counted as converged, and membro kept the clip the owner
+        deleted, for the restore to hand back."""
         out = []
+        carried: dict = {}   # sha -> local id the clip now sits under
         for corr in rows:
             kind = corr.get("kind")
             stamp = {k: corr[k] for k in ("cid", "at") if k in corr}
@@ -572,6 +582,7 @@ class AnchorStore:
                 if into is not None:
                     if corr.get("from") != into:
                         out.append({**corr, "to": into})
+                    carried[corr.get("sha")] = into
                 else:
                     row = {"kind": "delete", "from": corr["from"],
                            "sha": corr["sha"], **stamp}
@@ -579,7 +590,14 @@ class AnchorStore:
                         row["from_slug"] = corr["from_slug"]
                     out.append(row)
             elif kind in ("move", "delete") and corr.get("from") == person_id:
-                if slug:
+                home = carried.pop(corr.get("sha"), None)
+                if home is not None:
+                    if kind == "move" and corr.get("to") == home:
+                        carried[corr.get("sha")] = home   # onto itself: stays
+                        continue
+                    row = {k: v for k, v in corr.items() if k != "from_slug"}
+                    out.append({**row, "from": home})
+                elif slug:
                     out.append({**corr, "from_slug": slug})
             else:
                 out.append(corr)

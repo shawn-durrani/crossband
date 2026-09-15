@@ -21,6 +21,7 @@ from . import db
 from . import egress
 from . import engine
 from . import events
+from . import funnel
 from . import guest
 from . import rounds
 from . import tools as tools_mod
@@ -160,6 +161,21 @@ def _configure_log_level(level_name: str) -> None:
     logging.getLogger("crossband").setLevel(level)
 
 
+def _sweep_empty_chats() -> None:
+    """Run the empty-chat sweep once (#354) and log the count. A failure is
+    logged and never stops startup; the chats are only ever a tidy-up."""
+    try:
+        con = db.connect()
+        try:
+            n = db.prune_empty_chats(con)
+            con.commit()
+        finally:
+            con.close()
+        log.info("empty-chat sweep removed %d chat(s)", n)
+    except Exception:
+        log.exception("empty-chat sweep failed")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     _secure_env_file(ROOT / ".env")
     load_dotenv(ROOT / ".env")
@@ -247,6 +263,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             log.info("memory service UP at %s (contract %s)", st["url"], st["contract_version"])
         else:
             log.warning("memory service not reachable at %s - running memoryless", st["url"])
+        # #363: refuse to serve while Tailscale Funnel has this port on the
+        # public internet. The first check runs before anything is served;
+        # the loop repeats it every funnel_check_s seconds.
+        app.state.funnel_exposed = None
+        funnel_task = None
+        if settings.funnel_check_s > 0:
+            await funnel.run_check(app)
+            funnel_task = asyncio.create_task(
+                funnel.loop(app, settings.funnel_check_s))
 
         async def backup_loop():
             while True:
@@ -272,6 +297,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             con.close()
         except Exception:
             log.exception("voice-trace prune failed")
+        # #354: chats nobody ever used go on their own, at startup and once
+        # a day after that. One line with the count, nothing about the chats.
+        _sweep_empty_chats()
+
+        async def empty_chat_sweep_loop():
+            while True:
+                await asyncio.sleep(86400)
+                await asyncio.to_thread(_sweep_empty_chats)
+
+        empty_chat_task = asyncio.create_task(empty_chat_sweep_loop())
         # These belong HERE, not in router.on_startup: Starlette ignores
         # on_startup/on_shutdown when a lifespan context is provided - the
         # sweep registered that way had silently never run.
@@ -286,8 +321,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             backup_task.cancel()
             person_sync_task.cancel()
+            empty_chat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await backup_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await empty_chat_task
+            if funnel_task is not None:
+                funnel_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await funnel_task
             app.state.reflection_sweep.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await app.state.reflection_sweep
@@ -315,6 +357,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     allowed_hosts = set(auth.GATE_LOOPBACK_HOSTS) | {
         h.strip().lower() for h in settings.trusted_hosts.split(",") if h.strip()}
     app.state.allowed_hosts = allowed_hosts
+    app.state.funnel_exposed = None   # set by the Funnel check (#363)
     app.state.recovery_secret = recovery_secret
     app.state.auth_sessions = {}
     app.state.auth_enrolled = auth_enrolled
@@ -322,10 +365,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def _host_allowlist(request, call_next):
+        # #363: while Tailscale Funnel has this port on the public internet,
+        # nothing is served but the page that says why.
+        exposed = getattr(app.state, "funnel_exposed", None)
+        if exposed:
+            return funnel.refusal(request, exposed)
         host = (request.url.hostname or "").lower()
         if host not in allowed_hosts:
             return JSONResponse(status_code=403, content={
                 "detail": "This app serves localhost (and configured trusted hosts) only."})
+        # #363: a request on a trusted host without the identity header
+        # Tailscale adds for tailnet users came in through Funnel, from the
+        # public internet. Refused before the lock screen and any route.
+        if settings.tailscale_identity_required \
+                and funnel.outside_the_tailnet(request, auth.GATE_LOOPBACK_HOSTS):
+            return JSONResponse(status_code=403, content={
+                "detail": "This address is served to tailnet devices only."})
         # Defense-in-depth for the trusted-host (Tailscale) path: browsers stamp
         # Sec-Fetch-Site, so reject cross-site requests to /api/* - a malicious
         # page that knows the tailnet name can't drive the API from another origin.
