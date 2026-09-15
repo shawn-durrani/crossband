@@ -109,8 +109,8 @@ never a value. Status and diagnostic endpoints return true or false. A
 summoned guest starts with the inherited provider variables blanked, so
 a subscription turn can't quietly fall back onto your metered key.
 
-Blocking a guest from reading credential files happens in implement
-mode only. That mode's deny list names `Read(.env)`, `Read(**/.env)`,
+Blocking a guest from reading credential files happens in the two
+modes with a shell, implement and run. Their deny lists name `Read(.env)`, `Read(**/.env)`,
 `Read(**/.env.*)`, `Read(**/config.local.json)`, `Read(**/*.pem)` and
 `Read(**/id_rsa*)`. Those rules bite only if `disallowed_tools` is
 applied over the broad `Read` allow. That is Claude Code's documented
@@ -119,9 +119,9 @@ tests mock the SDK boundary, so they pin which rules are sent and never
 see a read refused. The default investigate mode carries no path rule
 at all. It denies whole tools, such as `Bash`, `Write` and `Edit`, and
 leaves `Read` open, so nothing in that loadout stands between a read
-only guest and a credential file it can name. Neither mode restricts
+only guest and a credential file it can name. No mode restricts
 the paths `Grep` or `Glob` may touch. Treat the file rules as a
-guardrail in one mode and a guarantee in neither.
+guardrail in two modes and a guarantee in none.
 [docs/GUEST_PERMISSIONS.md](docs/GUEST_PERMISSIONS.md) has the detail.
 
 ## Outbound: the web the models reach
@@ -143,7 +143,7 @@ limits.
 - No isolation between operating system users on a shared machine
   beyond file permissions.
 - The guest tool allowlist bounds built in tools only. Any MCP server
-  you mount for a guest is available to it in full, in both modes. If
+  you mount for a guest is available to it in full, in every mode. If
   one of those servers can write, so can the guest.
 - A fetched page arrives labelled untrusted, and the label informs the
   models without binding them. Page text is still input a model may act

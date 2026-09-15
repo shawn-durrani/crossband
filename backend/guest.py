@@ -160,19 +160,23 @@ _TEST_ALLOWED = [
     "Bash(npm --prefix frontend run:*)", "Bash(npm --prefix frontend test:*)",
     "Bash(npm --prefix frontend ci:*)",
 ]
-# Normal branch/commit/push + reading issues and opening PRs (never merging).
-_GIT_ALLOWED = [
+# Git and gh that only look: run mode gets these and nothing that writes.
+_GIT_READ_ALLOWED = [
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
-    "Bash(git add:*)", "Bash(git commit:*)", "Bash(git checkout:*)",
-    "Bash(git switch:*)", "Bash(git branch:*)", "Bash(git restore:*)",
-    "Bash(git stash:*)", "Bash(git push:*)", "Bash(git rev-parse:*)",
-    "Bash(git fetch:*)", "Bash(git ls-remote:*)", "Bash(git show:*)",
+    "Bash(git branch:*)", "Bash(git rev-parse:*)", "Bash(git show:*)",
     "Bash(git remote -v:*)", "Bash(git remote get-url:*)",
-    "Bash(gh pr create:*)", "Bash(gh pr view:*)", "Bash(gh pr checks:*)",
-    "Bash(gh pr diff:*)", "Bash(gh pr list:*)", "Bash(gh pr status:*)",
-    "Bash(gh issue view:*)", "Bash(gh issue list:*)", "Bash(gh issue comment:*)",
-    "Bash(gh auth status:*)",
+    "Bash(gh pr view:*)", "Bash(gh pr checks:*)", "Bash(gh pr diff:*)",
+    "Bash(gh pr list:*)", "Bash(gh pr status:*)", "Bash(gh issue view:*)",
+    "Bash(gh issue list:*)", "Bash(gh auth status:*)",
 ]
+# Normal branch/commit/push + opening PRs (never merging): implement only.
+_GIT_WRITE_ALLOWED = [
+    "Bash(git add:*)", "Bash(git commit:*)", "Bash(git checkout:*)",
+    "Bash(git switch:*)", "Bash(git restore:*)", "Bash(git stash:*)",
+    "Bash(git push:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)",
+    "Bash(gh pr create:*)", "Bash(gh issue comment:*)",
+]
+_GIT_ALLOWED = _GIT_READ_ALLOWED + _GIT_WRITE_ALLOWED
 # Read-only SQLite diagnostics against the live DB - ONLY when explicitly asked.
 # The `-readonly` / `-ro` flag opens the database read-only, so a stray UPDATE
 # or DROP fails at the engine; a bare `sqlite3 <db>` (which CAN write) is NOT
@@ -212,6 +216,28 @@ IMPLEMENT_DENIED = [
     "NotebookEdit", "WebFetch", "WebSearch", "Task", "KillShell",
 ]
 
+# Run mode (#404): the shell implement mode has, minus everything that
+# changes or ships anything. A seat asked to "run the harness and paste the
+# output" or "run the tests and tell me" used to have no mode that fits:
+# investigate has no shell, and implement is a write loadout the tool tells
+# seats to use only when the owner asked for a change. Bash rules are the
+# same prefixes as implement's (the venv's python and pytest, npm, git and gh
+# that only look, read-only sqlite3), and Edit, Write and every git/gh command
+# that writes are denied outright. The credential Read rules ride along,
+# because a shell can read what a file rule names. Same caveat as implement:
+# guardrails against accidents, not a sandbox - `.venv/bin/python` runs any
+# Python the guest writes.
+RUN_TOOLS = ["Read", "Grep", "Glob", "Bash", "TodoWrite"]
+RUN_ALLOWED = (["Read", "Grep", "Glob", "TodoWrite"]
+               + _TEST_ALLOWED + _GIT_READ_ALLOWED + _SQLITE_ALLOWED)
+RUN_DENIED = IMPLEMENT_DENIED + [
+    "Edit", "Write",
+    "Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)",
+    "Bash(git checkout:*)", "Bash(git switch:*)", "Bash(git restore:*)",
+    "Bash(git stash:*)", "Bash(git fetch:*)", "Bash(git ls-remote:*)",
+    "Bash(gh pr create:*)", "Bash(gh issue comment:*)",
+]
+
 # The behavior contract every coding guest speaks under - part of the guest
 # FRAMEWORK, not the Claude Code adapter: any future adapter (Codex etc.)
 # appends this same block, so all guests are equally brief and equally willing
@@ -248,6 +274,28 @@ GUEST_SYSTEM = (
     "Your reply is read by {user_name} and the other AI participants "
     "verbatim. Keep it in plain English and reference files as path:line so "
     "they're easy to find later." + GUEST_STYLE
+)
+
+GUEST_SYSTEM_RUN = (
+    "You are Claude Code, joining a group chat as a specialist teammate "
+    "on {user_name}'s machine, with a shell and READ-ONLY files in the "
+    "\"{repo}\" repository at {path}. The group asked you to run something "
+    "and report what it printed. You can run the project's own commands - "
+    "its Python and pytest, npm, git and gh commands that only look, and "
+    "read-only sqlite3 - and read files. You cannot edit or write a file, "
+    "commit, push, or open a pull request, and you must not try. That one "
+    "checkout is your entire reach: if the task actually targets a different "
+    "repository, say so immediately and ask to be re-summoned with that repo "
+    "instead of trying to reach it from here.\n\n"
+    "Run exactly what was asked, then reply with the full output, or the full "
+    "error if it failed. Paste it whole rather than summarising it, unless "
+    "the group asked for a summary. This checkout has no .env, so a command "
+    "that needs the live install's files must be given their paths.\n\n"
+    "Your shell is headless: only pre-approved command shapes run, and "
+    "everything else is denied without asking. If a command you need is "
+    "denied, say which one and stop.\n\n"
+    "Your reply is read by {user_name} and the other AI participants "
+    "verbatim. Keep it in plain English." + GUEST_STYLE
 )
 
 GUEST_SYSTEM_IMPLEMENT = (
@@ -343,8 +391,8 @@ def request(chat_id, args, cfg, requested_by=None) -> str:
         return (f"Error: unknown repo {repo!r} - available: "
                 f"{', '.join(sorted(repos)) or '(none configured)'}")
     mode = (args.get("mode") or "investigate").strip()
-    if mode not in ("investigate", "implement"):
-        return "Error: mode must be \"investigate\" or \"implement\""
+    if mode not in ("investigate", "run", "implement"):
+        return "Error: mode must be \"investigate\", \"run\" or \"implement\""
     # Optional model alias; omission ("" / absent) means "use the config
     # default, else Claude Code's own default". Reject anything outside the
     # constrained set here, at the boundary - nothing arbitrary reaches the SDK.
@@ -404,7 +452,9 @@ def request(chat_id, args, cfg, requested_by=None) -> str:
                          "requested_by": requested_by or "unknown",
                          "ts": time.time()}
     doing = ("implement, test, and open a pull request for"
-             if mode == "implement" else "work on")
+             if mode == "implement" else
+             "run the command and report the output for" if mode == "run"
+             else "work on")
     bits = [b for b in ((f"model: {model}" if model else ""),
                         (f"effort: {effort}" if effort else ""),
                         (f"ref: {ref}" if ref else "")) if b]
@@ -768,7 +818,9 @@ def build_prompt(task, context, mode="investigate", resumed=False) -> str:
     if context:
         parts.append("Recent conversation, for context:\n" + context)
     parts.append("Implement, ship the pull request, and reply to the group."
-                 if mode == "implement" else "Investigate and reply to the group.")
+                 if mode == "implement" else
+                 "Run what was asked and reply to the group with what it printed."
+                 if mode == "run" else "Investigate and reply to the group.")
     return "\n\n".join(parts)
 
 
@@ -818,6 +870,15 @@ async def run_guest(task, repo_key, context, cfg, mode="investigate",
         system = GUEST_SYSTEM_IMPLEMENT
         max_turns = int(cfg.get("code_impl_max_turns", 150))
         timeout_s = float(cfg.get("code_impl_timeout_s", 1800))
+    elif mode == "run":
+        # #404: a shell without writes, on the investigate visit's caps - a
+        # command and its output, not a build.
+        loadout = list(RUN_TOOLS)
+        allowed = list(RUN_ALLOWED)
+        denied = list(RUN_DENIED)
+        system = GUEST_SYSTEM_RUN
+        max_turns = int(cfg.get("code_max_turns", 50))
+        timeout_s = float(cfg.get("code_timeout_s", 600))
     else:
         loadout = list(READ_ONLY_TOOLS)
         allowed = list(READ_ONLY_TOOLS)

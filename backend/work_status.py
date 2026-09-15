@@ -86,6 +86,7 @@ GENERIC_TOOL_LABEL = "Working on it"
 # ping uses a fixed label keyed on mode instead of the tool table above.
 GUEST_JOB_LABELS = {
     "investigate": "Investigating the code",
+    "run": "Running the command",
     "implement": "Building the change",
 }
 GUEST_JOB_LABEL_DEFAULT = "Still working"
@@ -133,5 +134,5 @@ def batch_activity(tool_names, mcp=None):
 
 def guest_job_label(mode):
     """Fixed label for a still-running guest job's periodic ping, keyed on
-    its mode (investigate/implement) - see GUEST_JOB_LABELS above."""
+    its mode (investigate/run/implement) - see GUEST_JOB_LABELS above."""
     return GUEST_JOB_LABELS.get(mode, GUEST_JOB_LABEL_DEFAULT)

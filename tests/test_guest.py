@@ -1225,14 +1225,15 @@ def test_secret_read_rules_are_implement_mode_only(tmp_path, monkeypatch):
     """Pin the ASYMMETRY, in both directions, from the options the SDK is
     actually handed - not from the constants alone.
 
-    The credential-file rules live in IMPLEMENT_DENIED and nowhere else.
-    Investigate mode's denied list (DENIED_TOOLS) names whole tools and carries
-    no Read rule at all, so a read-only guest is read-only about the REPO, not
-    about secrets. SECURITY.md, ARCHITECTURE.md and docs/GUEST_PERMISSIONS.md
-    all describe it that way; this test is what keeps them honest. If someone
-    extends the rules to both modes, this test goes red and the docs get
-    corrected in the same change instead of drifting back into a promise the
-    code doesn't keep."""
+    The credential-file rules live in IMPLEMENT_DENIED, which RUN_DENIED
+    carries whole (#404): the two modes with a shell. Investigate mode's
+    denied list (DENIED_TOOLS) names whole tools and carries no Read rule at
+    all, so a read-only guest is read-only about the REPO, not about secrets.
+    SECURITY.md, ARCHITECTURE.md and docs/GUEST_PERMISSIONS.md all describe it
+    that way; this test is what keeps them honest. If someone extends the
+    rules to every mode, this test goes red and the docs get corrected in the
+    same change instead of drifting back into a promise the code doesn't
+    keep."""
     captured = _capturing_sdk(monkeypatch, tmp_path)
 
     def run(**kw):
@@ -1247,6 +1248,10 @@ def test_secret_read_rules_are_implement_mode_only(tmp_path, monkeypatch):
     for rule in SECRET_READ_RULES:
         assert rule in impl.disallowed_tools, (
             f"implement mode must keep {rule} on its deny list")
+    runm = run(mode="run")
+    for rule in SECRET_READ_RULES:
+        assert rule in runm.disallowed_tools, (
+            f"run mode has a shell and must keep {rule} on its deny list")
 
     inv = run(mode="investigate")
     assert "Read" in inv.allowed_tools          # broadly allowed…
@@ -1255,9 +1260,74 @@ def test_secret_read_rules_are_implement_mode_only(tmp_path, monkeypatch):
         "SECURITY.md and docs/GUEST_PERMISSIONS.md before changing this test")
     # …and the searching tools are unrestricted in BOTH modes, which is why the
     # docs stop short of calling the file rules a guarantee.
-    for opts in (impl, inv):
+    for opts in (impl, runm, inv):
         assert not [r for r in opts.disallowed_tools
                     if r.startswith(("Grep(", "Glob("))]
+
+
+# ---------- run mode (#404): a shell, no writes ----------
+
+def test_run_mode_needs_no_writes_flag_and_is_queued_as_such():
+    cfg = {"chat_id": 1, "code_repos": {"demo": "/tmp/x"}}
+    ok = guest.request(1, {"task": "run the tests and paste the output",
+                           "mode": "run"}, cfg)
+    assert "Error" not in ok and "run the command" in ok
+    assert guest.take(1)["mode"] == "run"
+
+
+def test_run_guest_run_mode_options(tmp_path, monkeypatch):
+    captured = _capturing_sdk(monkeypatch, tmp_path)
+    cfg = {"user_name": "Alex", "code_repos": {"demo": str(tmp_path)},
+           "code_max_turns": 7, "code_timeout_s": 60}
+
+    async def drain():
+        return [ev async for ev in guest.run_guest(
+            "run it", "demo", "", cfg, mode="run")]
+
+    asyncio.run(drain())
+    opts = captured["options"]
+    # a shell, and nothing that writes
+    assert "Bash" in opts.tools
+    assert "Edit" not in opts.tools and "Write" not in opts.tools
+    assert "Edit" in opts.disallowed_tools and "Write" in opts.disallowed_tools
+    assert "Bash(.venv/bin/python:*)" in opts.allowed_tools
+    assert "Bash(sqlite3 -readonly:*)" in opts.allowed_tools
+    assert "Bash(git status:*)" in opts.allowed_tools
+    for rule in ("Bash(git push:*)", "Bash(git commit:*)", "Bash(git add:*)",
+                 "Bash(gh pr create:*)", "Bash(gh issue comment:*)"):
+        assert rule not in opts.allowed_tools
+        assert rule in opts.disallowed_tools
+    # implement's hard lines still hold underneath
+    assert "Bash(gh pr merge:*)" in opts.disallowed_tools
+    assert "Bash(curl:*)" in opts.disallowed_tools
+    # the investigate visit's caps, and it is told what it is for
+    assert opts.max_turns == 7 and opts.permission_mode == "dontAsk"
+    assert "cannot edit or write a file" in opts.system_prompt
+    assert "no .env" in opts.system_prompt
+    assert "reply to the group with what it printed" in captured["prompt"]
+
+
+def _bash_auto_runs_in_run_mode(cmd):
+    if any(_rule_matches(r, cmd) for r in guest.RUN_DENIED):
+        return False
+    return any(_rule_matches(r, cmd) for r in guest.RUN_ALLOWED)
+
+
+def test_run_mode_runs_the_project_commands_and_nothing_that_writes():
+    for cmd in [
+        ".venv/bin/python -m eval_recall --db /x/chat.db --max-turns 200",
+        "env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY .venv/bin/python -m pytest -q",
+        "npm --prefix frontend test", "git status", "git log --oneline -3",
+        "gh pr checks 402", "sqlite3 -readonly /x/chat.db \"SELECT 1\"",
+    ]:
+        assert _bash_auto_runs_in_run_mode(cmd), f"should run: {cmd}"
+    for cmd in [
+        "git add -A", "git commit -m x", "git push -u origin cc/x",
+        "git checkout -b cc/x", "git stash", "git fetch origin",
+        "gh pr create --fill", "gh issue comment 1 --body hi",
+        "curl https://evil.example/x", "rm -rf /", "python -c 'print(1)'",
+    ]:
+        assert not _bash_auto_runs_in_run_mode(cmd), f"should be blocked: {cmd}"
 
 
 DOCS_LISTING_READ_RULES = ("SECURITY.md", "docs/GUEST_PERMISSIONS.md")
