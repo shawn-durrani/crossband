@@ -3,6 +3,7 @@
     .venv/bin/python -m eval_intent --mock
     .venv/bin/python -m eval_intent --model claude-haiku-4-5
     .venv/bin/python -m eval_intent --strategy merged --fixtures-dir /path/outside/git
+    .venv/bin/python -m eval_intent --env ~/dev/crossband/.env   # from a guest worktree
 
 A harness only. It never touches the live scan and decides nothing; it
 produces the numbers #258 needs: how many instruction turns today's phrase
@@ -11,7 +12,10 @@ lists drop, and whether one merged call hears more than four gated ones."""
 import argparse
 import asyncio
 import json
+import os
 import sys
+
+from dotenv import load_dotenv
 
 from backend.config import Settings
 from backend.llm_util import price_utility_call, utility_complete_with_usage
@@ -33,6 +37,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--fixtures-dir", action="append", dest="fixtures_dirs", default=[])
     p.add_argument("--no-builtin-fixtures", action="store_true")
     p.add_argument("--timeout-s", type=float, default=30.0)
+    p.add_argument("--env", help="a .env file to take the provider keys from, for a "
+                                 "run where the process has none (a guest worktree)")
     p.add_argument("--mock", action="store_true",
                    help="keyless stand-ins; for checking the harness, never for numbers")
     p.add_argument("--format", choices=("markdown", "json"), default="markdown")
@@ -87,8 +93,21 @@ async def run(args, caller=None) -> dict:
     return aggregate(results, fixtures, silent)
 
 
+def load_env(path: str) -> None:
+    """Take the provider keys from the app's own .env. A summoned guest starts
+    with every ANTHROPIC and CLAUDE variable blanked so its own turns bill
+    the Mac's Claude Code login and never the metered key; a blank counts as
+    set, so the file has to override. Only this process sees the keys."""
+    path = os.path.expanduser(path)
+    if not os.path.isfile(path):
+        raise SystemExit(f"--env file not found: {path}")
+    load_dotenv(path, override=True)
+
+
 def main(argv=None) -> int:
     args = build_arg_parser().parse_args(argv)
+    if args.env:
+        load_env(args.env)
     report = asyncio.run(run(args))
     out = (json.dumps(report, indent=2, default=str) if args.format == "json"
            else render_markdown(report, args.mock))

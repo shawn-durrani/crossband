@@ -150,3 +150,14 @@ def test_mock_caller_answers_each_live_prompt_for_its_axis():
     fx = _fx("room_on_please")
     done = asyncio.run(caller(today_prompts(fx)["mode_command"], "mode_command"))
     assert json.loads(done.text) == {"mode_command": "on"}
+
+
+def test_env_flag_loads_keys_over_a_blank(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("ANTHROPIC_API_KEY=sk-made-up\n")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")   # what a guest inherits
+    runner.load_env(str(env))
+    import os
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-made-up"
+    with pytest.raises(SystemExit):
+        runner.load_env(str(tmp_path / "missing.env"))

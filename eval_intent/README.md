@@ -54,7 +54,15 @@ prefilters over the corpus, so it is true in mock mode too.
 # one path only, or a private corpus kept outside the repository:
 .venv/bin/python -m eval_intent --strategy merged \
   --fixtures-dir /path/outside/git --no-builtin-fixtures
+
+# from a summoned guest in run mode, whose worktree has no .env:
+.venv/bin/python -m eval_intent --env ~/dev/crossband/.env
 ```
+
+A summoned guest starts with the provider keys blanked, so that its own
+turns bill the Mac's Claude Code login and never your metered key.
+`--env` takes the keys from the app's own file for this run alone, and
+the guest's own turns stay on the login.
 
 `--mock` runs the whole pipeline against keyless stand ins that answer
 with the graded verdicts, wrong on a fixed few, so the report has
