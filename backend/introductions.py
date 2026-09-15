@@ -839,7 +839,7 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             changes = depth.parse_depth_verdict(reply)
             if changes:
                 depth_outcome = await asyncio.to_thread(
-                    depth.apply_depth, chat_id, changes, cfg)
+                    depth.apply_depth, chat_id, changes, cfg, message_id)
                 if outcome is None or outcome == "no_change":
                     outcome = depth_outcome
         if outcome is None:

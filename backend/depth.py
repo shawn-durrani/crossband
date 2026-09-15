@@ -119,9 +119,14 @@ def parse_depth_verdict(text) -> list:
 
 
 def _notice(seat_name, depth, user, dropped_once=""):
+    """The transcript line for one real change. `user` is who spoke the cue
+    as resolve_speaker found them, or '' when the app could not say (#255):
+    the line then names nobody rather than the wrong person. Anyone can
+    clear a depth, so the line never says who has to."""
+    by = f" by {user}" if user else ""
     if depth == "normal":
         text = (f"{seat_name} is back to its configured thinking depth "
-                f"(spoken depth cleared by {user}).")
+                f"(spoken depth cleared{by}).")
         if dropped_once:
             word = LEVEL_WORDS.get(dropped_once, dropped_once)
             text += (f" The {word}-thinking override parked for its next "
@@ -130,23 +135,78 @@ def _notice(seat_name, depth, user, dropped_once=""):
     word = LEVEL_WORDS[DEPTH_LEVELS[depth]]
     trade = ("replies here will take longer" if depth in ("deep", "max")
              else "replies here will be faster and shallower")
-    return (f"{seat_name} set to {word} thinking - {trade} until "
-            f"{user} says back to normal.")
+    return (f"{seat_name} set to {word} thinking{by} - {trade} until "
+            "someone says back to normal.")
 
 
-def apply_depth(chat_id, changes, cfg) -> str:
+def _people():
+    """The anchor store's people, or [] when voice identity is not set up."""
+    try:
+        from . import anchors
+        return anchors.store().people()
+    except Exception:
+        return []
+
+
+def resolve_speaker(con, chat_id, message_id, cfg) -> str:
+    """Who spoke the turn that carried a depth cue, as the name to print,
+    or '' when the app cannot say (#255). Resolved late, in apply_depth's
+    worker thread, so a label attached a moment after insert is seen.
+
+    The rule is the memory path's (memory_client.ingest_speaker), so the
+    transcript credits exactly whom the ledger would: an open attribution
+    doubt, a crosstalk turn, an uncertain or ordinal label, or several
+    confident voices all read as nobody. A confident guest label prints the
+    person's preferred name; the identity name only carries the wire. An
+    unlabelled turn is the owner outside room mode, where one voice is one
+    person, and nobody inside it, where the label may simply not have
+    landed. The owner is never a fallback: a blank stays blank."""
+    from . import memory_client
+    owner = cfg.get("user_name", "User")
+    if not message_id:
+        return ""
+    row = con.execute(
+        "SELECT id, speaker, voice_labels FROM messages WHERE id=? AND chat_id=?",
+        (message_id, chat_id)).fetchone()
+    if not row or row["speaker"] != "user":
+        return ""
+    labels, _, _ = memory_client._parse_voice_labels(row["voice_labels"])
+    if not labels:
+        chat = con.execute("SELECT room_mode FROM chats WHERE id=?",
+                           (chat_id,)).fetchone()
+        return "" if (chat and chat["room_mode"]) else owner
+    flagged = {f["message_id"] for f in db.get_room_flags(con, chat_id, open_only=True)
+               if f.get("message_id")}
+    people = _people()
+    wire = memory_client.ingest_speaker(dict(row), flagged, owner,
+                                        memory_client.identity_name_map(people))
+    if wire == "user":
+        return owner
+    if not wire.startswith("guest:") or wire == memory_client.GUEST_UNKNOWN:
+        return ""
+    name = wire[len("guest:"):]
+    for p in people:
+        if (p.get("name") or "").casefold() == name.casefold():
+            return p.get("preferred_name") or p["name"]
+    return name
+
+
+def apply_depth(chat_id, changes, cfg, message_id=None) -> str:
     """Apply confirmed depth changes (synchronous; worker thread). Resolves
     seat names against the CHAT's participants (name or slug, spoken case),
     'all' meaning every one of them. Writes chat_seat_state, and inserts one
     system notice per real change so the transcript shows the trade the
     moment it is made. Unknown seat names change nothing - a misheard name
-    must not move a different seat. Returns the scan outcome word."""
+    must not move a different seat. Returns the scan outcome word.
+
+    `message_id` is the user turn that carried the cue; the notice and the
+    stored setter name whoever spoke it, or nobody (#255)."""
     if not changes:
         return "no_change"
-    user = cfg.get("user_name", "User")
     changed = cleared = 0
     con = db.connect()
     try:
+        user = resolve_speaker(con, chat_id, message_id, cfg)
         roster = db.get_chat_participants(con, chat_id)
         by_key = {}
         for p in roster:
@@ -183,14 +243,16 @@ def apply_depth(chat_id, changes, cfg) -> str:
                     # call, so no mode notice - nothing persistent changed
                     # and the effect is over by the time anyone reads it.
                     if effort:
-                        db.set_chat_seat_once(con, chat_id, slug, effort)
+                        db.set_chat_seat_once(con, chat_id, slug, effort,
+                                              once_by=user)
                         parked[slug] = effort
                         once_set += 1
                     continue  # "normal, just this once" instructs nothing
                 if effort:
                     if current.get(slug, "") == effort:
                         continue  # already there - no state write, no notice
-                    db.set_chat_seat_depth(con, chat_id, slug, effort)
+                    db.set_chat_seat_depth(con, chat_id, slug, effort,
+                                           set_by=user)
                     current[slug] = effort
                     db.insert_message(con, chat_id, "system",
                                       _notice(p["name"] or p["slug"],
@@ -220,14 +282,20 @@ def apply_depth(chat_id, changes, cfg) -> str:
     return "no_change"
 
 
+def _who(user) -> str:
+    """The subject of a depth note: the person who spoke the cue, or the
+    plain truth that someone did when the app could not say who (#255)."""
+    return user or "Someone in this chat"
+
+
 def once_note(level, user) -> str:
     """The volatile prompt note for a consumed one-reply override (#105
     slice 2) - scoped to THIS reply so the seat neither adopts it as a mode
-    nor announces a change of one."""
+    nor announces a change of one. `user` is who parked it, or ''."""
     if not level:
         return ""
     word = LEVEL_WORDS.get(level, level)
-    return (f"\n## Your reasoning depth (THIS reply only)\n{user} asked for "
+    return (f"\n## Your reasoning depth (THIS reply only)\n{_who(user)} asked for "
             f"{word} thinking for just this one reply. It applies now and "
             f"reverts by itself - do not treat it as a standing mode.")
 
@@ -237,7 +305,8 @@ def depth_note(level, user, configured="") -> str:
     threads it per seat). With no spoken level the seat is told its
     configured setting instead (#305): a seat that knew nothing about its
     effort once claimed to have changed it, which it cannot do. Either way
-    the note names the one door, a person in the chat saying so."""
+    the note names the one door, a person in the chat saying so. `user` is
+    who set the depth, or '' when the app could not say (#255)."""
     doors = ("Anyone in this chat can change it by saying so (\"think "
              "harder\", \"quick answers\", \"back to normal\"), and it "
              "applies to this chat only. You cannot change it yourself, "
@@ -249,6 +318,6 @@ def depth_note(level, user, configured="") -> str:
                 f"configured setting, {word}. Nobody has changed it in "
                 f"this conversation. {doors}")
     word = LEVEL_WORDS.get(level, level)
-    return (f"\n## Your reasoning depth (this chat)\n{user} set your "
+    return (f"\n## Your reasoning depth (this chat)\n{_who(user)} set your "
             f"thinking to {word} for this conversation. It persists until "
             f"someone changes it (\"back to normal\" clears it). {doors}")
