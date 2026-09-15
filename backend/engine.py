@@ -246,8 +246,9 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0,
                 # whose call is being built - a round that dies earlier never
                 # reaches this, so the override keeps for the next round.
                 "seat_state": db.get_chat_seat_state(con, chat_id),
-                "once_effort": (db.take_chat_seat_once(con, chat_id, slug)
-                                if slug else ""),
+                "seat_setters": db.get_chat_seat_setters(con, chat_id),
+                "once": (db.take_chat_seat_once_by(con, chat_id, slug)
+                         if slug else ("", "")),
                 "shared_instructions": db.get_setting(con, "shared_instructions")}
     finally:
         con.close()
@@ -658,7 +659,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # the state read above) outranks the persistent depth for exactly
         # this call and carries its own scoped note.
         spoken_depth = state["seat_state"].get(participant["slug"], "")
-        once_depth = state.get("once_effort", "")
+        once_depth, once_by = state.get("once", ("", ""))
+        # #255: the note names who spoke the cue, or nobody when the app
+        # could not say; it never credits the owner by default.
+        set_by = state.get("seat_setters", {}).get(participant["slug"], "")
         configured = (participant.get("reasoning_effort") or "").strip()
         level = once_depth or spoken_depth
         if level:
@@ -666,10 +670,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         user_name = cfg.get("user_name", "User")
         # #305: every seat is told its effective depth and the one way it
         # changes, so none can claim a change it cannot make.
-        round_cfg["depth_note"] = (depth_mod.once_note(once_depth, user_name)
+        round_cfg["depth_note"] = (depth_mod.once_note(once_depth, once_by)
                                    if once_depth else
-                                   depth_mod.depth_note(spoken_depth,
-                                                        user_name,
+                                   depth_mod.depth_note(spoken_depth, set_by,
                                                         configured=configured))
         round_cfg["memory_write_warning"] = (
             "a recent memory save failed, so some facts from a just-finished chat "

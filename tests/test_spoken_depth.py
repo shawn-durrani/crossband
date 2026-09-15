@@ -411,3 +411,159 @@ def test_db_plain_clear_drops_the_once_and_keep_once_keeps_it(app):
                 "gpt": {"reasoning_effort": "", "once_effort": "low"}}
         finally:
             con.close()
+
+
+# ---------- #255: the notice and the seat note name who spoke the cue ----------
+
+def _say(chat_id, text, voice_labels=None, room=False):
+    """Persist one user turn the way POST /send does, with labels already
+    attached, and flip the chat into room mode when asked."""
+    con = db.connect()
+    try:
+        if room:
+            con.execute("UPDATE chats SET room_mode=1 WHERE id=?", (chat_id,))
+            con.commit()
+        msg = db.insert_message(con, chat_id, "user", text,
+                                voice_labels=voice_labels)
+        return msg["id"]
+    finally:
+        con.close()
+
+
+PEOPLE = [{"name": "Dave", "preferred_name": "Dai", "merged_names": ["David"]},
+          {"name": "Shawn", "preferred_name": "Shawn", "merged_names": []}]
+
+
+def _resolve(chat_id, message_id):
+    con = db.connect()
+    try:
+        return depth.resolve_speaker(con, chat_id, message_id, CFG)
+    finally:
+        con.close()
+
+
+def test_resolver_credits_the_ledger_speaker_and_never_the_owner_by_default(
+        app, monkeypatch):
+    monkeypatch.setattr(depth, "_people", lambda: PEOPLE)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        solo = c.post("/api/chats", json={}).json()["id"]
+        # outside room mode an unlabelled turn is the owner: one voice, one person
+        assert _resolve(solo, _say(solo, "think harder")) == "Shawn"
+        room = c.post("/api/chats", json={}).json()["id"]
+        # inside it an unlabelled turn names nobody: the label may not have landed
+        assert _resolve(room, _say(room, "think harder", room=True)) == ""
+        # a confident guest label prints the preferred name, resolved through
+        # a merged-away spelling
+        assert _resolve(room, _say(room, "x", {"labels": ["David"]})) == "Dai"
+        assert _resolve(room, _say(room, "x", {"labels": ["Dave"]})) == "Dai"
+        # the owner's own confident label is the owner
+        assert _resolve(room, _say(room, "x", {"labels": ["Shawn"]})) == "Shawn"
+        # doubted, crosstalk, ordinal, uncertain and shared turns credit nobody
+        assert _resolve(room, _say(room, "x", {"labels": ["Voice 1"]})) == ""
+        assert _resolve(room, _say(room, "x", {"labels": ["Dave"], "crosstalk": True})) == ""
+        assert _resolve(room, _say(room, "x", {"labels": ["Dave"],
+                                               "uncertain": ["Dave"]})) == ""
+        assert _resolve(room, _say(room, "x", {"labels": ["Dave", "Shawn"]})) == ""
+        doubted = _say(room, "x", {"labels": ["Dave"]})
+        con = db.connect()
+        try:
+            db.insert_room_flag(con, room, "mismatch", message_id=doubted,
+                                label="Dave")
+        finally:
+            con.close()
+        assert _resolve(room, doubted) == ""
+        # no turn, or not a user turn, is nobody too
+        assert _resolve(room, None) == ""
+
+
+def test_notice_and_seat_note_name_the_guest_or_nobody(app, monkeypatch):
+    monkeypatch.setattr(depth, "_people", lambda: PEOPLE)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        by_dave = _say(chat_id, "think harder claude", {"labels": ["Dave"]}, room=True)
+        assert depth.apply_depth(chat_id, [{"seat": "Claude", "depth": "deep"}],
+                                 CFG, by_dave) == "depth_set"
+        notice = [m for m in _messages(c, chat_id) if m["speaker"] == "system"][-1]
+        assert "Claude set to deep thinking by Dai" in notice["content"]
+        assert "until someone says back to normal" in notice["content"]
+        assert "Shawn" not in notice["content"]
+        con = db.connect()
+        try:
+            assert db.get_chat_seat_setters(con, chat_id) == {"claude": "Dai"}
+        finally:
+            con.close()
+        assert "Dai set your thinking to deep" in depth.depth_note("high", "Dai")
+        # a cue the app cannot attribute names nobody, in both places
+        nobody = _say(chat_id, "quick answers gpt", {"labels": ["Voice 2"]})
+        depth.apply_depth(chat_id, [{"seat": "gpt", "depth": "quick"}], CFG, nobody)
+        notice = [m for m in _messages(c, chat_id) if m["speaker"] == "system"][-1]
+        assert "GPT set to quick thinking - " in notice["content"] or \
+            "set to quick thinking - " in notice["content"]
+        assert " by " not in notice["content"]
+        assert "Someone in this chat set your thinking to quick" in \
+            depth.depth_note("low", "")
+        assert "Someone in this chat asked for quick" in depth.once_note("low", "")
+        # clearing says who cleared, or nothing, and blanks the setter
+        depth.apply_depth(chat_id, [{"seat": "all", "depth": "normal"}], CFG, by_dave)
+        cleared = [m for m in _messages(c, chat_id) if m["speaker"] == "system"][-1]
+        assert "cleared by Dai" in cleared["content"]
+        con = db.connect()
+        try:
+            assert db.get_chat_seat_setters(con, chat_id) == {}
+        finally:
+            con.close()
+
+
+def test_round_tells_the_seat_who_set_and_who_parked(app, monkeypatch):
+    monkeypatch.setattr(depth, "_people", lambda: PEOPLE)
+    captured = []
+
+    async def stream_reply(participant, roster, transcript, names, cfg, project,
+                           chat_summary, voice_mode, tools=None, memory=None):
+        captured.append((dict(participant), dict(cfg)))
+        yield ("text", "ok")
+
+    monkeypatch.setattr(engine.providers, "stream_reply", stream_reply)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        by_dave = _say(chat_id, "think harder claude", {"labels": ["Dave"]}, room=True)
+        depth.apply_depth(chat_id, [{"seat": "Claude", "depth": "deep"}], CFG, by_dave)
+        nobody = _say(chat_id, "gpt, quick just this once", {"labels": ["Voice 1"]})
+        depth.apply_depth(chat_id, [{"seat": "gpt", "depth": "quick", "once": True}],
+                          CFG, nobody)
+        with c.stream("POST", f"/api/chats/{chat_id}/send",
+                      json={"text": "hi both"}) as r:
+            "".join(r.iter_text())
+    by_slug = {p["slug"]: cfg for p, cfg in captured}
+    assert "Dai set your thinking to deep" in by_slug["claude"]["depth_note"]
+    assert "Shawn" not in by_slug["claude"]["depth_note"]
+    assert "Someone in this chat asked for quick" in by_slug["gpt"]["depth_note"]
+
+
+def test_v25_to_v26_migration_leaves_old_rows_with_no_setter(tmp_path):
+    import sqlite3
+    data = tmp_path / "data3"
+    data.mkdir()
+    con0 = sqlite3.connect(data / "chat.db")
+    con0.executescript(
+        "CREATE TABLE chat_seat_state(chat_id INTEGER NOT NULL,"
+        " slug TEXT NOT NULL, reasoning_effort TEXT NOT NULL DEFAULT '',"
+        " once_effort TEXT NOT NULL DEFAULT '',"
+        " updated_at REAL NOT NULL, PRIMARY KEY (chat_id, slug));"
+        "INSERT INTO chat_seat_state VALUES(1, 'claude', 'high', 'low', 0);")
+    con0.execute("PRAGMA user_version = 25")
+    con0.commit()
+    con0.close()
+    db.configure(data)
+    db.init()
+    con = db.connect()
+    try:
+        assert (con.execute("PRAGMA user_version").fetchone()[0]
+                == db.SCHEMA_VERSION)
+        row = con.execute("SELECT * FROM chat_seat_state").fetchone()
+        assert row["set_by"] == "" and row["once_by"] == ""
+        assert row["reasoning_effort"] == "high" and row["once_effort"] == "low"
+        assert db.get_chat_seat_setters(con, 1) == {"claude": ""}
+        assert db.take_chat_seat_once_by(con, 1, "claude") == ("low", "")
+    finally:
+        con.close()

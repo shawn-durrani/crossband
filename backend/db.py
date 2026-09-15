@@ -23,7 +23,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -62,6 +62,7 @@ SCHEMA_VERSION = 25
 #        turns: native-API keep_alive nudge)
 #   v25  messages.audit_flags (per-reply attribution-audit findings for the
 #        row's quiet chip)
+#   v26  chat_seat_state.set_by + once_by (who spoke the depth cue, #255)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -295,6 +296,12 @@ CREATE TABLE IF NOT EXISTS chat_seat_state(
   slug TEXT NOT NULL,
   reasoning_effort TEXT NOT NULL DEFAULT '',
   once_effort TEXT NOT NULL DEFAULT '',
+  -- #255: who spoke the cue, as a display name, or '' when the app could
+  -- not say (a doubted, crosstalk or unlabelled room turn). Never the
+  -- owner as a fallback: the seat note and the notice read these, so a
+  -- blank must stay blank rather than credit the wrong person.
+  set_by TEXT NOT NULL DEFAULT '',
+  once_by TEXT NOT NULL DEFAULT '',
   updated_at REAL NOT NULL,
   PRIMARY KEY (chat_id, slug)
 );
@@ -616,6 +623,17 @@ def init(settings=None):
         if mcols and "web_sources" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN web_sources "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 25:  # v26: who set a seat's spoken depth (#255).
+        # Default-empty: every existing row reads as "set by someone the app
+        # could not name", which is the truth about rows written before the
+        # speaker was recorded.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='chat_seat_state'").fetchone():
+            cols = {r[1] for r in con.execute("PRAGMA table_info(chat_seat_state)")}
+            for col in ("set_by", "once_by"):
+                if col not in cols:
+                    con.execute(f"ALTER TABLE chat_seat_state ADD COLUMN {col} "
+                                "TEXT NOT NULL DEFAULT ''")
     if 1 <= version <= 24:  # v25: attribution-audit flags on messages (#211)
         mcols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
         if mcols and "audit_flags" not in mcols:
@@ -1292,6 +1310,15 @@ def get_chat_seat_state(con, chat_id) -> dict:
         (chat_id,)) if r["reasoning_effort"]}
 
 
+def get_chat_seat_setters(con, chat_id) -> dict:
+    """slug -> who set the seat's standing spoken depth (#255), a display
+    name or '' when the app could not say. Only seats with a standing depth
+    appear, matching get_chat_seat_state."""
+    return {r["slug"]: r["set_by"] or "" for r in con.execute(
+        "SELECT slug, set_by FROM chat_seat_state WHERE chat_id=? "
+        "AND reasoning_effort != ''", (chat_id,))}
+
+
 def get_chat_seat_rows(con, chat_id) -> dict:
     """slug -> {"reasoning_effort", "once_effort"} for every seat with any
     spoken state at all, blank fields included. A seat whose standing depth
@@ -1304,7 +1331,7 @@ def get_chat_seat_rows(con, chat_id) -> dict:
                 "WHERE chat_id=?", (chat_id,))}
 
 
-def set_chat_seat_depth(con, chat_id, slug, effort, keep_once=False):
+def set_chat_seat_depth(con, chat_id, slug, effort, keep_once=False, set_by=""):
     """Set one seat's spoken per-chat depth; '' clears it back to the seat's
     configured default. A plain clear drops a parked one-reply override too,
     so "back to normal" means what it says (#260). keep_once=True is the
@@ -1314,15 +1341,15 @@ def set_chat_seat_depth(con, chat_id, slug, effort, keep_once=False):
     if effort:
         con.execute(
             "INSERT INTO chat_seat_state(chat_id, slug, reasoning_effort, "
-            "updated_at) VALUES(?,?,?,?) "
+            "set_by, updated_at) VALUES(?,?,?,?,?) "
             "ON CONFLICT(chat_id, slug) DO UPDATE SET "
             "reasoning_effort=excluded.reasoning_effort, "
-            "updated_at=excluded.updated_at",
-            (chat_id, slug, effort, now()))
+            "set_by=excluded.set_by, updated_at=excluded.updated_at",
+            (chat_id, slug, effort, set_by or "", now()))
     elif keep_once:
         con.execute(
-            "UPDATE chat_seat_state SET reasoning_effort='', updated_at=? "
-            "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
+            "UPDATE chat_seat_state SET reasoning_effort='', set_by='', "
+            "updated_at=? WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
         con.execute(
             "DELETE FROM chat_seat_state WHERE chat_id=? AND slug=? "
             "AND once_effort=''", (chat_id, slug))
@@ -1332,15 +1359,16 @@ def set_chat_seat_depth(con, chat_id, slug, effort, keep_once=False):
     con.commit()
 
 
-def set_chat_seat_once(con, chat_id, slug, effort):
+def set_chat_seat_once(con, chat_id, slug, effort, once_by=""):
     """Park a one-reply depth override (#105 slice 2). Replaces any pending
-    one - the newest spoken instruction wins."""
+    one - the newest spoken instruction wins, and so does its speaker."""
     con.execute(
-        "INSERT INTO chat_seat_state(chat_id, slug, once_effort, updated_at) "
-        "VALUES(?,?,?,?) "
+        "INSERT INTO chat_seat_state(chat_id, slug, once_effort, once_by, "
+        "updated_at) VALUES(?,?,?,?,?) "
         "ON CONFLICT(chat_id, slug) DO UPDATE SET "
-        "once_effort=excluded.once_effort, updated_at=excluded.updated_at",
-        (chat_id, slug, effort, now()))
+        "once_effort=excluded.once_effort, once_by=excluded.once_by, "
+        "updated_at=excluded.updated_at",
+        (chat_id, slug, effort, once_by or "", now()))
     con.commit()
 
 
@@ -1349,20 +1377,26 @@ def take_chat_seat_once(con, chat_id, slug) -> str:
     one call, so reading it clears it. A round that dies BEFORE the seat's
     call is built never reaches this, so the override survives for the next
     round - consumed at use, not at dispatch."""
+    return take_chat_seat_once_by(con, chat_id, slug)[0]
+
+
+def take_chat_seat_once_by(con, chat_id, slug) -> tuple:
+    """take_chat_seat_once, plus who parked it (#255): (effort, once_by),
+    both '' when nothing was parked."""
     row = con.execute(
-        "SELECT once_effort, reasoning_effort FROM chat_seat_state "
+        "SELECT once_effort, once_by, reasoning_effort FROM chat_seat_state "
         "WHERE chat_id=? AND slug=?", (chat_id, slug)).fetchone()
     if not row or not row["once_effort"]:
-        return ""
+        return "", ""
     if row["reasoning_effort"]:
         con.execute(
-            "UPDATE chat_seat_state SET once_effort='', updated_at=? "
+            "UPDATE chat_seat_state SET once_effort='', once_by='', updated_at=? "
             "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
     else:
         con.execute("DELETE FROM chat_seat_state WHERE chat_id=? AND slug=?",
                     (chat_id, slug))
     con.commit()
-    return row["once_effort"]
+    return row["once_effort"], row["once_by"] or ""
 
 
 def mark_room_person_left(con, chat_id, name):
