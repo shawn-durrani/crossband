@@ -185,6 +185,6 @@ no automated guard, and running the app is part of changing it.
 
 Whether the models say anything useful. Conversation quality, tool
 choice and answer accuracy are judged by the eval harnesses in
-`eval_critic/`, `eval_silence/`, `eval_attribution/` and `eval_recall/`,
-and by use,
+`eval_critic/`, `eval_silence/`, `eval_attribution/`, `eval_recall/` and
+`eval_intent/`, and by use,
 never by unit tests. Green CI means the machinery keeps its promises.

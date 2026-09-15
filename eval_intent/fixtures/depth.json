@@ -1,0 +1,203 @@
+[
+  {
+    "id": "depth_think_harder",
+    "category": "depth",
+    "text": "Claude, think harder from now on.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "Claude",
+          "depth": "deep"
+        }
+      ]
+    },
+    "notes": "The wording the phrase list was written for."
+  },
+  {
+    "id": "depth_return_to_defaults",
+    "category": "depth_missed_wording",
+    "text": "Return to defaults please.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "normal"
+        }
+      ]
+    },
+    "notes": "A reset the phrase list does not know. Named in #258."
+  },
+  {
+    "id": "depth_back_to_defaults",
+    "category": "depth_missed_wording",
+    "text": "Back to defaults, everyone.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "normal"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_reset_to_defaults",
+    "category": "depth_missed_wording",
+    "text": "Reset to defaults.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "normal"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_fast_responses",
+    "category": "depth_missed_wording",
+    "text": "Fast responses from here on.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "quick"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_go_faster",
+    "category": "depth_missed_wording",
+    "text": "Can you all go faster?",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "quick"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_speed_up",
+    "category": "depth_missed_wording",
+    "text": "Speed up please, GPT.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "GPT",
+          "depth": "quick"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_keep_it_short",
+    "category": "depth_missed_wording",
+    "text": "Keep it short from now on.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "quick"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_quicker_all",
+    "category": "depth_missed_wording",
+    "text": "Can you all be quicker?",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "quick"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_take_your_time",
+    "category": "depth",
+    "text": "Take your time, Claude.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "Claude",
+          "depth": "deep"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_max_effort",
+    "category": "depth",
+    "text": "Maximum effort on this chat, both of you.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "max"
+        }
+      ]
+    }
+  },
+  {
+    "id": "depth_once_quick",
+    "category": "depth_once",
+    "text": "Just answer this one quickly.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "quick",
+          "once": true
+        }
+      ]
+    },
+    "notes": "Limited to the next reply, so a one-off."
+  },
+  {
+    "id": "depth_back_to_normal",
+    "category": "depth",
+    "text": "Back to normal now.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "normal"
+        }
+      ]
+    },
+    "notes": "The one reset wording the phrase list accepts."
+  },
+  {
+    "id": "depth_neg_praise",
+    "category": "depth_negative",
+    "text": "Good thinking, Claude, that was well reasoned.",
+    "expected": {},
+    "notes": "Praise is not an instruction."
+  },
+  {
+    "id": "depth_neg_question",
+    "category": "depth_negative",
+    "text": "Are you thinking hard about this or just guessing?",
+    "expected": {},
+    "notes": "A question about thinking is not an instruction."
+  },
+  {
+    "id": "depth_neg_topic",
+    "category": "depth_negative",
+    "text": "Think harder about whether the bridge design is actually safe.",
+    "expected": {},
+    "notes": "More thought about a topic within one answer, not a standing change."
+  },
+  {
+    "id": "depth_neg_discussion",
+    "category": "depth_negative",
+    "text": "I read that thinking harder doesn't help these models much.",
+    "expected": {}
+  }
+]

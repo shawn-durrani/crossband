@@ -1,0 +1,42 @@
+[
+  {
+    "id": "both_dig_into_this",
+    "category": "two_intents",
+    "text": "Really dig into this one, take your time.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "deep"
+        }
+      ],
+      "research": "more"
+    },
+    "notes": "Moves both control axes at once, the case #258 names."
+  },
+  {
+    "id": "both_group_and_intro",
+    "category": "two_intents",
+    "text": "Group mode on, this is Dave.",
+    "expected": {
+      "mode_command": "on",
+      "introductions": [
+        "Dave"
+      ]
+    }
+  },
+  {
+    "id": "both_think_and_research",
+    "category": "two_intents",
+    "text": "Claude, think harder and research more.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "Claude",
+          "depth": "deep"
+        }
+      ],
+      "research": "more"
+    }
+  }
+]

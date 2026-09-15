@@ -94,6 +94,10 @@ page says what it costs and what it touches.
 - [eval_recall/README.md](../eval_recall/README.md): whether the facts
   a round fetches from memory earn their wait. Your own turns and your
   own membro, so its corpus stays on the machine.
+- [eval_intent/README.md](../eval_intent/README.md): the spoken
+  instruction question. How many wordings do today's phrase lists
+  drop, and does one merged model call hear more? Made-up turns, the
+  utility model, API spend per run.
 
 ## Safety, security, history
 

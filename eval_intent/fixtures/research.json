@@ -1,0 +1,55 @@
+[
+  {
+    "id": "research_more",
+    "category": "research",
+    "text": "Research more on this before you answer.",
+    "expected": {
+      "research": "more"
+    },
+    "notes": "The cue by name (#253)."
+  },
+  {
+    "id": "research_properly",
+    "category": "research",
+    "text": "Look into that properly, all of you.",
+    "expected": {
+      "research": "more"
+    }
+  },
+  {
+    "id": "research_go_deeper",
+    "category": "research",
+    "text": "Go deeper on this one.",
+    "expected": {
+      "research": "more"
+    },
+    "notes": "The owner's second wording for the cue, 4 September."
+  },
+  {
+    "id": "research_search_more",
+    "category": "research",
+    "text": "Search more from now on, I want sources.",
+    "expected": {
+      "research": "more"
+    }
+  },
+  {
+    "id": "research_neg_flight",
+    "category": "research_negative",
+    "text": "Can you search for a flight to Hobart on Friday?",
+    "expected": {},
+    "notes": "A request to use a tool once, not a change to how the chat researches."
+  },
+  {
+    "id": "research_neg_weather",
+    "category": "research_negative",
+    "text": "Look up the weather for tomorrow.",
+    "expected": {}
+  },
+  {
+    "id": "research_neg_last_search",
+    "category": "research_negative",
+    "text": "What did the search return last time?",
+    "expected": {}
+  }
+]

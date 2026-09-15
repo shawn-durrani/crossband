@@ -1,0 +1,20 @@
+[
+  {
+    "id": "plain_recipe",
+    "category": "plain_chat",
+    "text": "What's a good recipe for banana bread?",
+    "expected": {}
+  },
+  {
+    "id": "plain_thanks",
+    "category": "plain_chat",
+    "text": "Thanks both, that was helpful.",
+    "expected": {}
+  },
+  {
+    "id": "plain_shops",
+    "category": "plain_chat",
+    "text": "Heading to the shops, back in ten.",
+    "expected": {}
+  }
+]
