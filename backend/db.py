@@ -23,7 +23,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -63,6 +63,8 @@ SCHEMA_VERSION = 26
 #   v25  messages.audit_flags (per-reply attribution-audit findings for the
 #        row's quiet chip)
 #   v26  chat_seat_state.set_by + once_by (who spoke the depth cue, #255)
+#   v27  chat_seat_state.set_at + chats.spend_note_upto (the running-cost
+#        line an escalated chat posts now and then, #259)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -117,6 +119,7 @@ CREATE TABLE IF NOT EXISTS chats(
   distilled_upto INTEGER NOT NULL DEFAULT 0,    -- project-memory distill watermark
   title_upto INTEGER NOT NULL DEFAULT 0,        -- 0=auto; >0 titled thru id; -1 user-locked
   ingested_upto INTEGER NOT NULL DEFAULT 0,     -- memory-service /ingest watermark
+  spend_note_upto INTEGER NOT NULL DEFAULT 0,   -- running-cost line watermark (#259)
   next_first TEXT NOT NULL DEFAULT 'claude',
   voice_mode INTEGER NOT NULL DEFAULT 0,
   web_enabled INTEGER NOT NULL DEFAULT 1,
@@ -302,6 +305,10 @@ CREATE TABLE IF NOT EXISTS chat_seat_state(
   -- blank must stay blank rather than credit the wrong person.
   set_by TEXT NOT NULL DEFAULT '',
   once_by TEXT NOT NULL DEFAULT '',
+  -- #259: when the standing depth was set. updated_at moves on every
+  -- one-reply override too, so a "since the escalation" figure anchored
+  -- there would silently reset; this only moves when the depth does.
+  set_at REAL NOT NULL DEFAULT 0,
   updated_at REAL NOT NULL,
   PRIMARY KEY (chat_id, slug)
 );
@@ -623,6 +630,19 @@ def init(settings=None):
         if mcols and "web_sources" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN web_sources "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 26:  # v27: the running-cost line's anchors (#259).
+        # Default 0 on both: an escalation set before this column existed
+        # reads as "since it was set", and a chat starts with no line posted.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='chat_seat_state'").fetchone():
+            cols = {r[1] for r in con.execute("PRAGMA table_info(chat_seat_state)")}
+            if "set_at" not in cols:
+                con.execute("ALTER TABLE chat_seat_state ADD COLUMN set_at "
+                            "REAL NOT NULL DEFAULT 0")
+        ccols = {r[1] for r in con.execute("PRAGMA table_info(chats)")}
+        if ccols and "spend_note_upto" not in ccols:
+            con.execute("ALTER TABLE chats ADD COLUMN spend_note_upto "
+                        "INTEGER NOT NULL DEFAULT 0")
     if 1 <= version <= 25:  # v26: who set a seat's spoken depth (#255).
         # Default-empty: every existing row reads as "set by someone the app
         # could not name", which is the truth about rows written before the
@@ -1319,6 +1339,15 @@ def get_chat_seat_setters(con, chat_id) -> dict:
         "AND reasoning_effort != ''", (chat_id,))}
 
 
+def get_chat_seat_escalations(con, chat_id) -> list:
+    """The seats whose standing spoken depth costs more than their default
+    (#259): [{slug, effort, set_by, set_at}], oldest escalation first."""
+    return [dict(r) for r in con.execute(
+        "SELECT slug, reasoning_effort AS effort, set_by, set_at "
+        "FROM chat_seat_state WHERE chat_id=? AND reasoning_effort IN ('high', 'max') "
+        "ORDER BY set_at, slug", (chat_id,))]
+
+
 def get_chat_seat_rows(con, chat_id) -> dict:
     """slug -> {"reasoning_effort", "once_effort"} for every seat with any
     spoken state at all, blank fields included. A seat whose standing depth
@@ -1339,17 +1368,20 @@ def set_chat_seat_depth(con, chat_id, slug, effort, keep_once=False, set_by=""):
     on go back to normal"): the row survives, blanked, while it still holds
     the override, and is deleted once fully empty."""
     if effort:
+        ts = now()
         con.execute(
             "INSERT INTO chat_seat_state(chat_id, slug, reasoning_effort, "
-            "set_by, updated_at) VALUES(?,?,?,?,?) "
+            "set_by, set_at, updated_at) VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(chat_id, slug) DO UPDATE SET "
             "reasoning_effort=excluded.reasoning_effort, "
-            "set_by=excluded.set_by, updated_at=excluded.updated_at",
-            (chat_id, slug, effort, set_by or "", now()))
+            "set_by=excluded.set_by, set_at=excluded.set_at, "
+            "updated_at=excluded.updated_at",
+            (chat_id, slug, effort, set_by or "", ts, ts))
     elif keep_once:
         con.execute(
             "UPDATE chat_seat_state SET reasoning_effort='', set_by='', "
-            "updated_at=? WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
+            "set_at=0, updated_at=? WHERE chat_id=? AND slug=?",
+            (now(), chat_id, slug))
         con.execute(
             "DELETE FROM chat_seat_state WHERE chat_id=? AND slug=? "
             "AND once_effort=''", (chat_id, slug))

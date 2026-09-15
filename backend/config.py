@@ -360,6 +360,12 @@ class Settings(BaseModel):
     # seconds, ONE system line says nothing picked it up - so a stopped
     # watcher stops being indistinguishable from a queued deploy. 0 = off.
     slash_ack_timeout_s: float = 120.0
+    # #259: while any seat in a chat is at a spoken depth that costs more
+    # than its default, the chat gets one short system line every this many
+    # messages saying what that seat has spent since it was raised. 0 turns
+    # the line off. Sparse on purpose: the line is re-sent to every seat on
+    # every later turn, so it must never become the spend it reports.
+    spend_note_every: int = 30
     code_max_turns: int = 50       # SDK turn cap for one guest visit
     code_timeout_s: float = 600.0  # wall-clock cap for one guest visit
     # Guest auth: false (default) = the machine's own Claude Code login
