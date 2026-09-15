@@ -178,7 +178,10 @@ def _ws_stub(app, host="127.0.0.1", origin=None, cookies=None):
     return SimpleNamespace(
         app=app,
         url=SimpleNamespace(hostname=host),
-        headers={} if origin is None else {"origin": origin},
+        # a tailnet user's browser: Tailscale serve adds the identity
+        # header, and a trusted-host socket without it is refused (#363)
+        headers={"tailscale-user-login": "owner@example.com",
+                 **({} if origin is None else {"origin": origin})},
         cookies=cookies or {})
 
 

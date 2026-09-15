@@ -39,6 +39,8 @@ supervisor, see [OPERATIONS.md](OPERATIONS.md)).
 | `port` | `8902` | The one port everything is served on. |
 | `data_dir` | `""` | Where SQLite + backups + logs live. Empty → `<repo>/data`. |
 | `trusted_hosts` | `""` | Extra Host headers to accept (comma-separated), for Tailscale serve: `my-mac.my-tailnet.ts.net`. Empty = loopback only. [REMOTE_ACCESS.md](REMOTE_ACCESS.md). |
+| `funnel_check_s` | `180` | How often the app asks `tailscale serve status --json` whether Funnel has its port on the public internet. While it does, the app serves nothing but a page that says so. `0` turns the check off. [REMOTE_ACCESS.md](REMOTE_ACCESS.md). |
+| `tailscale_identity_required` | `true` | A request on a trusted host must carry the `Tailscale-User-Login` header Tailscale adds for tailnet users; one without it came in through Funnel and is refused. Turn off only for a trusted host that isn't Tailscale serve. |
 | `recovery_secret` | `""` | Gates first-run password enrolment and reset, never the everyday login. Empty mints a fresh random secret each start, printed only while no password is enrolled. Set it in `.env` so reset works without terminal access. [SECURITY.md](../SECURITY.md). |
 | `log_level` | `""` | Verbosity for the app's own `crossband.*` loggers. Empty = WARNING+. Set `INFO` for a deliberate cache-telemetry sampling session ([COST_TELEMETRY.md](COST_TELEMETRY.md)), then unset. |
 | `shutdown_timeout_s` | `15` | Seconds a stop waits on work in flight before exiting anyway. Live-events connections end at once regardless. Raise it so long rounds finish, lower it for a snappier deploy loop. [OPERATIONS.md](OPERATIONS.md). |

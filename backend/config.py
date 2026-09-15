@@ -166,6 +166,16 @@ class Settings(BaseModel):
     # DNS-rebinding guard would otherwise 403. Set
     # CROSSBAND_TRUSTED_HOSTS=my-mac.my-tailnet.ts.net. Empty = loopback only (default).
     trusted_hosts: str = ""
+    # The Tailscale Funnel guard (#363). Every `funnel_check_s` seconds the
+    # app asks `tailscale serve status --json` whether Funnel has its port on
+    # the public internet, and serves nothing but a page that says so while
+    # it does. 0 turns the check off.
+    funnel_check_s: float = 180.0
+    # The backstop between checks: a request on a trusted host must carry
+    # the identity header Tailscale adds for tailnet users
+    # (Tailscale-User-Login). One without it came in through Funnel. Turn
+    # this off only for a trusted host that is not Tailscale serve.
+    tailscale_identity_required: bool = True
     # Verbosity for the app's own "crossband.*" loggers - separate from uvicorn's
     # request/access logging, which is unaffected either way. Empty (default):
     # unchanged from before this existed - only WARNING+ reaches

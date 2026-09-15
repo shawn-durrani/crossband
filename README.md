@@ -227,7 +227,8 @@ plain HTTP page. There's no script for this.
 [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md) writes out every step.
 
 Never open the port to the internet, and never use Tailscale Funnel.
-The app is built to be reached over your own tailnet and nowhere else.
+The app is built to be reached over your own tailnet and nowhere else,
+and it stops serving while Funnel has its port on the open internet.
 Anyone who can reach the port still needs the owner password or a
 passkey, but that's the second lock, not the first. Once you enrol a
 passkey, the lock screen asks for it first and keeps the password as

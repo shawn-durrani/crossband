@@ -36,9 +36,19 @@ def _ws_local(ws) -> bool:
     not one: loopback is open and a trusted non-loopback host is not. Both
     guards read auth.GATE_LOOPBACK_HOSTS so they cannot drift apart again."""
     from .. import auth as auth_mod
+    from .. import funnel
     app = ws.app
+    # #363: while Funnel has the port on the public internet nothing is
+    # served, sockets included; and a trusted-host socket without the
+    # identity Tailscale adds for tailnet users came in through Funnel.
+    if getattr(app.state, "funnel_exposed", None):
+        return False
     allowed = getattr(app.state, "allowed_hosts", auth_mod.GATE_LOOPBACK_HOSTS)
     if (ws.url.hostname or "").lower() not in allowed:
+        return False
+    settings = getattr(app.state, "settings", None)
+    if getattr(settings, "tailscale_identity_required", True) \
+            and funnel.outside_the_tailnet(ws, auth_mod.GATE_LOOPBACK_HOSTS):
         return False
     origin = ws.headers.get("origin")
     if origin is not None and (urlparse(origin).hostname or "").lower() not in allowed:
