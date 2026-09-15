@@ -1366,7 +1366,9 @@ def _format_facts(facts, cap):
 
 async def recall_memory(args, cfg, memory, origin_agent=None):
     query = (args.get("query") or "").strip()
-    facts = await memory.recall(query, limit=10)
+    # contract 1.6 (membro#72): name the chat, so facts a guest gave in
+    # this chat come back here and nowhere else.
+    facts = await memory.recall(query, limit=10, chat_id=cfg.get("chat_id"))
     if not facts:
         return "No matching memory entries."
     return _format_facts(facts, cfg["max_tool_output"])

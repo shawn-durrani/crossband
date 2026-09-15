@@ -355,7 +355,8 @@ class FakeMemory:
     async def get_summary(self):
         return "Alex builds things."
 
-    async def recall(self, query, limit=10, include_superseded=False, origin="http"):
+    async def recall(self, query, limit=10, include_superseded=False, origin="http",
+                     chat_id=None):
         self.recall_calls.append({"query": query, "limit": limit, "origin": origin})
         return self.facts
 

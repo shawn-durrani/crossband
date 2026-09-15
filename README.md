@@ -161,7 +161,8 @@ model can ask for more with the memory tools. The voices the app has
 learnt live in Membro too, so a person you introduce is remembered in
 both apps, and forgetting someone in one forgets them in the other.
 Anything a guest said, or a model read on a web page, waits in Membro's
-review queue for your approval before it counts.
+review queue for your approval before it counts, and what a guest said
+in one chat is only ever recalled in that chat.
 
 ```mermaid
 flowchart LR

@@ -382,19 +382,27 @@ class MemoryClient:
 
     async def recall(self, query: str, limit: int = 10,
                      include_superseded: bool = False,
-                     origin: str = "http") -> list[dict]:
+                     origin: str = "http", chat_id=None) -> list[dict]:
         """origin="auto" marks ambient recalls (fired per user message to
         prepare context) apart from a model's deliberate tool call - the
         service's access log and live view keep the two distinguishable.
-        Older services without the field simply ignore it."""
+        Older services without the field simply ignore it.
+
+        `chat_id` (contract 1.6, membro#72) names the chat the recall is
+        for, as the same (source_app, conversation_id) pair ingest uses.
+        Membro binds a guest's facts to the chat they came from and hands
+        them back only to that chat; without the pair a recall gets global
+        facts alone. An older membro ignores the two fields."""
         if not await self.probe():
             return []
-        try:
-            r = await self._client.post(self.api + "/recall", json={
-                "query": query, "limit": limit,
+        body = {"query": query, "limit": limit,
                 "include_superseded": include_superseded,
-                "origin": origin,
-            })
+                "origin": origin}
+        if chat_id is not None:
+            body["source_app"] = SOURCE_APP
+            body["conversation_id"] = str(chat_id)
+        try:
+            r = await self._client.post(self.api + "/recall", json=body)
             r.raise_for_status()
             return r.json().get("facts", [])
         except Exception as e:

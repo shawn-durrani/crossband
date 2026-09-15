@@ -33,8 +33,10 @@ class FakeMemory:
                            "guest_speakers": guest_speakers})
         return {"id": 1, "quarantined": self.quarantined}
 
-    async def recall(self, query, limit=10, include_superseded=False):
+    async def recall(self, query, limit=10, include_superseded=False,
+                     chat_id=None):
         self.recalled.append(query)
+        self.recall_chat_ids = getattr(self, "recall_chat_ids", []) + [chat_id]
         return [{"content": "Alex lives in Fairhaven", "event_date": "2026-01-01",
                  "origin_agent": "user", "confidence": "high", "score": 0.9}]
 
@@ -143,9 +145,12 @@ def test_memory_tools_without_service(cfg):
 
 def test_recall_and_search_formatting(cfg):
     mem = FakeMemory()
+    cfg["chat_id"] = 7
     out = run(run_tool("recall_memory", {"query": "where does he live"}, cfg,
                        origin_agent="claude", memory=mem))
     assert "Alex lives in Fairhaven" in out
+    # contract 1.6 (membro#72): the tool names the chat it runs in
+    assert mem.recall_chat_ids == [7]
     # provenance is preserved end to end: date, authoring agent, and confidence
     assert "[2026-01-01 ·user ·conf:high]" in out
     out = run(run_tool("search_history", {"query": "espresso"}, cfg,
