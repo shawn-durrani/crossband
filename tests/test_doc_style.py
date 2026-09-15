@@ -243,6 +243,7 @@ def test_long_docs_stay_navigable():
 
 CONVERTED = {
     "README.md",
+    "docs/PRODUCERS.md",
     "docs/LATENCY.md",
     "docs/BENCHMARK.md",
     "docs/COST_TELEMETRY.md",
