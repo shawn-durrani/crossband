@@ -125,5 +125,34 @@
     ],
     "text": "Sam said the spelling test was hard.",
     "expected": {}
+  },
+  {
+    "id": "intro_this_voice_is_for",
+    "category": "introduction_missed_wording",
+    "text": "Uh, this voice is for Joel, J-O-E-L.",
+    "expected": {
+      "introductions": [
+        "Joel"
+      ]
+    },
+    "notes": "Said in a real session on 15 September to introduce a new person. No list shape matched, so no model was asked and nobody was created."
+  },
+  {
+    "id": "intro_voice_belongs_to",
+    "category": "introduction_missed_wording",
+    "text": "This voice belongs to Joel.",
+    "expected": {
+      "introductions": [
+        "Joel"
+      ]
+    }
+  },
+  {
+    "id": "intro_owner_alias_here",
+    "category": "introduction_negative",
+    "user_name": "Shawn",
+    "text": "Hey guys, Sean here.",
+    "expected": {},
+    "notes": "The owner's own name spelt by ear. Never an introduction, whatever the spelling."
   }
 ]
