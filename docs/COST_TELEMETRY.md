@@ -290,9 +290,9 @@ project distillation folds a chat's new messages into the project's
 memory notes.
 
 `llm_util.utility_complete_logged` covers the room and voice scans,
-with `kind` set to `command_scan`, `intro_scan`, `correction_scan`,
-`depth_scan` or `mismatch_check`. A scan has a chat id but no open
-database connection, so that writer opens its own on a worker thread.
+with `kind` set to `intent_scan` or `mismatch_check`. A scan has a chat
+id but no open database connection, so that writer opens its own on a
+worker thread.
 
 Each real call writes one row to `utility_usage` and commits it at
 once. The row holds `chat_id`, `kind`, `model`, `input_tokens`,

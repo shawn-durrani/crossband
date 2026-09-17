@@ -10,8 +10,9 @@ tests pin the two halves of the fix.
    round is dispatched and the SSE stream fully drains - while the command
    confirmation is deliberately wedged open. Nothing about a command is ever
    awaited by dispatch.
-2. The command paths: a deterministic prefilter gates one utility call; a
-   confirmed ARM flips the chat's durable room mode on through the existing
+2. The command paths: one merged utility call per turn (#412) hears the
+   command among everything else; a confirmed ARM flips the chat's durable
+   room mode on through the existing
    control plumbing (durable flag + diarize's live mirror), rosters the
    owner (linked to remembered anchors when they exist, seeded from the
    stashed utterance when the command was spoken); a confirmed DISARM flips
@@ -78,22 +79,20 @@ def _send(client, chat_id, text):
 
 @pytest.fixture
 def utility(monkeypatch):
-    """Mock the utility model at the llm_util seam, routing by prompt: a
-    command-confirmation prompt (it names mode_command) answers from
-    state['command'], the introduction prompt from state['verdict'].
-    state['gate'] (a threading.Event) wedges every call open; state['calls']
-    records every prompt."""
-    state = {"verdict": {"introductions": [], "departures": []},
-             "command": {"mode_command": "none"},
+    """Mock the utility model at the llm_util seam. Since #412 every turn
+    makes exactly ONE merged call, so state['reply'] is the one JSON verdict
+    returned for it (introductions/departures default empty so a plain
+    command reply still parses); state['gate'] (a threading.Event) wedges
+    every call open; state['calls'] records every prompt."""
+    state = {"reply": {"mode_command": "none", "introductions": [],
+                       "departures": []},
              "gate": None, "calls": []}
 
     async def fake_utility(prompt, cfg, max_tokens=2000):
         state["calls"].append(prompt)
         if state["gate"] is not None:
             await asyncio.to_thread(state["gate"].wait, 10)
-        if "mode_command" in prompt:
-            return json.dumps(state["command"])
-        return json.dumps(state["verdict"])
+        return json.dumps(state["reply"])
 
     monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
                         as_utility_completion(fake_utility))
@@ -118,7 +117,7 @@ def test_send_completes_while_the_command_confirm_is_wedged_open(app, utility):
     """The core law: the round is dispatched and done while the command
     confirmation is still blocked. Only after the gate opens does the chat's
     room mode change."""
-    utility["command"] = {"mode_command": "on"}
+    utility["reply"] = {"mode_command": "on"}
     utility["gate"] = threading.Event()
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _make_chat(c)
@@ -136,7 +135,7 @@ def test_group_mode_please_arms_end_to_end(app, utility, caplog):
     mirrors it into diarize's registry so a live session's pass machinery
     starts at its next commit, rosters the owner, and logs
     armed_by_command."""
-    utility["command"] = {"mode_command": "on"}
+    utility["reply"] = {"mode_command": "on"}
     with caplog.at_level(logging.INFO, logger="crossband.introductions"):
         with TestClient(app, base_url="http://127.0.0.1") as c:
             chat = _make_chat(c)
@@ -160,7 +159,7 @@ def test_room_mode_off_disarms_end_to_end(app, utility, caplog):
                 chat["id"], {"introductions": ["Alex"], "departures": []},
                 CFG)
             assert _chat_room_mode(chat["id"]) is True
-            utility["command"] = {"mode_command": "off"}
+            utility["reply"] = {"mode_command": "off"}
             _send(c, chat["id"], "room mode off, thanks")
             assert _wait_for(lambda: not _chat_room_mode(chat["id"]))
             assert diarize.room_enabled(chat["id"]) is False
@@ -182,7 +181,7 @@ def test_typed_and_spoken_commands_take_the_same_path(app, utility):
     """A TYPED "room mode on" arms exactly like a spoken one - both arrive
     through /send and the same scan. (No audio means no owner anchor seed,
     same as a typed introduction.)"""
-    utility["command"] = {"mode_command": "on"}
+    utility["reply"] = {"mode_command": "on"}
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _make_chat(c)
         _send(c, chat["id"], "turn on room mode")
@@ -191,10 +190,10 @@ def test_typed_and_spoken_commands_take_the_same_path(app, utility):
 
 
 def test_talk_about_the_mode_is_rejected_not_armed(app, utility, caplog):
-    """"Is group mode on?" passes the prefilter (it names the mode), the
+    """"Is group mode on?" reaches the merged call same as any turn; the
     model confirms none, and nothing changes - the seat answers the question
     from the volatile room-state line, not by flipping anything."""
-    utility["command"] = {"mode_command": "none"}
+    utility["reply"] = {"mode_command": "none"}
     with caplog.at_level(logging.INFO, logger="crossband.introductions"):
         with TestClient(app, base_url="http://127.0.0.1") as c:
             chat = _make_chat(c)
@@ -216,11 +215,11 @@ def test_keyless_command_scan_is_a_quiet_no_op(app):
 
 
 def test_command_and_introduction_in_one_breath(app, utility, caplog):
-    """"Group mode on - this is Dave": both prefilters hit, both confirm,
-    both apply - the mode arms AND Dave joins the roster - and the single
-    verdict line reports the command outcome."""
-    utility["command"] = {"mode_command": "on"}
-    utility["verdict"] = {"introductions": ["Dave"], "departures": []}
+    """"Group mode on - this is Dave": one merged call hears both a command
+    and an introduction, both apply - the mode arms AND Dave joins the
+    roster - and the single verdict line reports the command outcome."""
+    utility["reply"] = {"mode_command": "on", "introductions": ["Dave"],
+                        "departures": []}
     with caplog.at_level(logging.INFO, logger="crossband.introductions"):
         with TestClient(app, base_url="http://127.0.0.1") as c:
             chat = _make_chat(c)
@@ -238,10 +237,10 @@ def test_command_and_introduction_in_one_breath(app, utility, caplog):
 
 def test_just_me_now_disarms_even_though_it_is_also_a_departure_shape(
         app, utility, caplog):
-    """"It's just me now" hits the departure prefilter AND the command
-    prefilter. The command wins the scan: room mode off, everyone left, one
+    """"It's just me now" is shaped like both a departure and a command. The
+    command wins the scan: room mode off, everyone left, one
     disarmed_by_command line."""
-    utility["command"] = {"mode_command": "off"}
+    utility["reply"] = {"mode_command": "off"}
     with caplog.at_level(logging.INFO, logger="crossband.introductions"):
         with TestClient(app, base_url="http://127.0.0.1") as c:
             chat = _make_chat(c)

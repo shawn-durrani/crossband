@@ -80,30 +80,29 @@ stateDiagram-v2
   class room boundary
 ```
 
-## Where the trigger phrases came from
+## How room mode hears what you say
 
 Room mode listens for spoken introductions, like "say hi to Alex" or
-"my mate Dave is here", and for the mode commands "group mode" and
-"solo mode". The phrase lists that spot these came from real
-sessions in one home, in English, and they won't cover everything
-people say in yours.
+"my mate Dave is here", for the mode commands "group mode" and "solo
+mode", for a spoken name correction, and for a change to how hard a
+seat should think. A small, cheap model reads every user turn once
+and says which of these it holds, so an unusual phrasing lands the
+same way a common one does.
 
-What the phrase lists miss is caught another way.
-
-- A small, cheap model reads any turn that looks even roughly like an
-  introduction or a command. An unusual phrasing still lands as long
-  as the rough shape is there.
-- Recognising a voice needs no phrases at all. Every spoken turn gets
+- Recognising a voice needs no wording at all. Every spoken turn gets
   a quiet voice check on your own computer, so a person the app
   already knows is recognised however they were greeted. That holds
   whether or not room mode is on. With the room armed, the check
   compares against everyone the app remembers, and a remembered
   person who isn't seated yet joins the room on their first turn.
-- The third is the ask. When a clearly new voice appears and nothing
-  on record explains it, the app asks who's speaking. It doesn't
-  guess.
+- The other door is the ask. When a clearly new voice appears and
+  nothing on record explains it, the app asks who's speaking. It
+  doesn't guess.
 
-If a phrasing never triggers anything, the manual doors always work:
+When the model hears an instruction and the room stays as it was, one
+system line says so, naming what it heard and that nothing changed.
+
+If a turn is never heard as anything, the manual doors always work:
 the two switches in the voice settings drawer, "switch on now" and
 "switch off for this chat", and typing the command. There's no switch
 in the dock itself, which shows the state while the automation does
@@ -179,12 +178,12 @@ as a final guard.
 
 ## English bias
 
-Two separate parts lean English. The first is the phrase lists and the
-confirmation step, so an introduction or a command spoken in another
-language will often not be recognised. Use the switches in the voice
-settings drawer, or type the command. Recognising a voice the app
-already knows still works in any language, because it listens to the
-voice and not to the words.
+Two separate parts lean English. The first is the one model call that
+reads every turn, so an introduction, a command, a correction or a
+depth change spoken in another language will often not be recognised.
+Use the switches in the voice settings drawer, or type the command.
+Recognising a voice the app already knows still works in any language,
+because it listens to the voice and not to the words.
 
 The second is the speaker model, which ships trained on English, and
 every threshold here was calibrated with English speech. Matching goes

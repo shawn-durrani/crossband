@@ -476,10 +476,11 @@ def test_both_writers_price_a_call_identically(con):
 
 
 def test_every_scan_kind_reaches_the_spend_page(con):
-    """The claim the issue is actually about. Eight kinds, one bucket."""
+    """The claim the issue is actually about. Five kinds, one bucket.
+    #412 folds command_scan/intro_scan/correction_scan/depth_scan into the
+    single intent_scan."""
     chat_id = _seeded_chat(con)
-    kinds = ["summarize", "title", "distill", "command_scan", "intro_scan",
-             "correction_scan", "depth_scan", "mismatch_check"]
+    kinds = ["summarize", "title", "distill", "intent_scan", "mismatch_check"]
     for k in kinds:
         db.log_utility_usage(con, chat_id, k, "claude-haiku-4-5", 100, 10, 0.0001,
                              provenance=provenance.RATE_CARD_ESTIMATE)

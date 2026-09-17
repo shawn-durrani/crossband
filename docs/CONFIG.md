@@ -55,7 +55,7 @@ supervisor as [OPERATIONS.md](OPERATIONS.md) describes.
 |---|---|---|
 | `anthropic_model` | `claude-opus-4-8` | The model for the default Claude seat. It seeds the seat on first run, and after that you edit seats on the Models page. |
 | `openai_model` | `gpt-5.1` | The model for the default GPT seat, with the same seed rule. |
-| `utility_model` | `claude-haiku-4-5` | The cheap model behind rolling summaries, auto-titles and project distillation. A `gpt-*` value routes to OpenAI. |
+| `utility_model` | `claude-haiku-4-5` | The cheap model behind rolling summaries, auto-titles, project distillation, and the one-call read of every spoken instruction in room mode. A `gpt-*` value routes to OpenAI. |
 | `pricing` | the built-in rate card | Per-model `{input, output}` prices per million tokens, with provenance. Matched by exact model id, then an entry's `aliases`, then a date-stamped reissue of the same model. There's no family fallback, so an unknown model stays unpriced. |
 
 ### Pricing a model
