@@ -284,8 +284,11 @@ def test_resumed_speech_after_the_hint_discards_the_cached_verdict(
             assert _wait_for(lambda: len(matcher["calls"]) == 2)
             time.sleep(0.3)
             ws.send_json({"done": True})
-    # the stale match was NOT trusted: the turn stayed honestly unresolved
-    assert _message_labels(msg["id"]) == ""
+    # the stale match was NOT trusted: the turn stayed unnamed, and since
+    # #411 the row says why, with no label of any kind
+    assert json.loads(_wait_for(lambda: _message_labels(msg["id"]))) \
+        == {"clusters": ["local"], "labels": [], "uncertain": [],
+            "source": "local", "unresolved": "below_threshold"}
 
 
 def test_speculative_freshness_rule_is_pure():

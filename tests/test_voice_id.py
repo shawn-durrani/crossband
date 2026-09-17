@@ -821,10 +821,13 @@ def test_run_pass_fast_match_skips_batch(monkeypatch):
 def test_run_pass_defer_fires_no_batch_call(monkeypatch):
     """THE RETIREMENT PIN (#28 PR-B; deliberately inverts the pre-PR-B
     test_run_pass_defer_runs_batch): a deferred verdict leaves the turn
-    unresolved - NO ElevenLabs call, NO label, NO metering. Every defer
-    reason takes the same silent exit."""
+    unnamed - NO ElevenLabs call, NO name, NO metering. Every defer reason
+    takes the same exit. Since #411 that exit writes one marker on the row,
+    with no label and the matcher's reason, so the seats and memory can read
+    that it looked and could not tell."""
     for reason in ("below_threshold", "ambiguous", "too_short", "not_speech",
                    "unavailable", "no_candidates", "no_enrolled"):
+        written = []
         monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
         monkeypatch.setattr(diarize.voiceid, "identify_utterance",
                             lambda *a, _r=reason, **k: {
@@ -833,15 +836,19 @@ def test_run_pass_defer_fires_no_batch_call(monkeypatch):
         monkeypatch.setattr(
             diarize.voice, "transcribe_diarized",
             lambda *a, **k: pytest.fail("no EL call on a deferred verdict"))
-        monkeypatch.setattr(
-            diarize, "_attach_until_deadline",
-            lambda *a, **k: pytest.fail("no label write on a defer"))
+
+        async def capture(chat_id, commit_ts, payload, session, turn_id=None):
+            written.append(payload)
+            return None
+        monkeypatch.setattr(diarize, "_attach_until_deadline", capture)
         monkeypatch.setattr(
             diarize, "_meter",
             lambda *a: pytest.fail("no metering without a batch call"))
         session = diarize.RoomSession(enabled=True)
         _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
                               _cfg(), turn_id="t1"))
+        assert [w["labels"] for w in written] == [[]]
+        assert written[0]["unresolved"] == reason
 
 
 def test_run_pass_multi_verdict_runs_the_crosstalk_split(monkeypatch):
