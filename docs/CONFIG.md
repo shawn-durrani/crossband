@@ -237,6 +237,7 @@ lists only together with that page.
 | `max_tool_output` | `8000` | Characters of tool output returned to the calling model. |
 | `tool_log_chars` | `1200` | Characters per tool event when it's replayed into later transcripts. |
 | `max_tool_rounds` | `6` | The tool-call loop cap per reply. |
+| `research_tool_rounds` | `18` | The tool-call loop cap per reply while [research mode](WEB_RESEARCH.md#research-mode) is on for the chat. |
 | `max_transcript_chars` | `100000` | The cap on a YouTube transcript in the chat. |
 | `max_audio_mb` | `60` | The download cap for `transcribe_audio_url`. |
 | `max_search_results` | `5` | Results per search. |

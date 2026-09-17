@@ -481,3 +481,55 @@ def test_command_prompt_documents_both_directions_and_about_talk():
 def test_command_outcomes_are_allowlisted():
     assert "armed_by_command" in introductions.SCAN_OUTCOMES
     assert "disarmed_by_command" in introductions.SCAN_OUTCOMES
+
+
+# ── 5. the research cue, same merged scan (#253/#417) ───────────────────────
+
+def _research_state(chat_id):
+    con = db.connect()
+    try:
+        row = con.execute(
+            "SELECT research_mode, research_set_by FROM chats WHERE id=?",
+            (chat_id,)).fetchone()
+        return bool(row["research_mode"]), row["research_set_by"]
+    finally:
+        con.close()
+
+
+def test_scan_turns_research_mode_on_and_verdict_says_so(app, utility, caplog):
+    """"Research more" reaches the merged call same as any turn; the mocked
+    verdict applies through the research branch and the single verdict line
+    reports it, same shape as a command or a depth change."""
+    utility["reply"] = {"mode_command": "none", "introductions": [],
+                        "departures": [], "research": "more"}
+    with caplog.at_level(logging.INFO, logger="crossband.introductions"):
+        with TestClient(app, base_url="http://127.0.0.1") as c:
+            chat = _make_chat(c)
+            _send(c, chat["id"], "research more please")
+            assert _wait_for(lambda: _research_state(chat["id"])[0])
+            assert _wait_for(lambda: any(
+                "outcome=research_set" in m for m in _verdict_lines(caplog)))
+
+
+def test_scan_research_already_on_gets_the_nothing_changed_line(app, utility,
+                                                                caplog):
+    utility["reply"] = {"mode_command": "none", "introductions": [],
+                        "departures": [], "research": "more"}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _make_chat(c)
+        con = db.connect()
+        try:
+            db.set_chat_research(con, chat["id"], True, set_by="Shawn")
+        finally:
+            con.close()
+        with caplog.at_level(logging.INFO, logger="crossband.introductions"):
+            _send(c, chat["id"], "research more please")
+            assert _wait_for(lambda: any(
+                "outcome=no_change" in m for m in _verdict_lines(caplog)))
+        con = db.connect()
+        try:
+            lines = [m["content"] for m in db.get_chat_messages(con, chat["id"])
+                    if m["speaker"] == "system"]
+        finally:
+            con.close()
+        assert any("already on" in ln for ln in lines)

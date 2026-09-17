@@ -23,7 +23,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -65,6 +65,9 @@ SCHEMA_VERSION = 27
 #   v26  chat_seat_state.set_by + once_by (who spoke the depth cue, #255)
 #   v27  chat_seat_state.set_at + chats.spend_note_upto (the running-cost
 #        line an escalated chat posts now and then, #259)
+#   v28  chats.research_mode + research_set_by + research_set_at (spoken
+#        research mode, per chat: a bigger tool budget and the research
+#        routine until "back to normal", #253/#417)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -131,6 +134,14 @@ CREATE TABLE IF NOT EXISTS chats(
   ambient_off INTEGER NOT NULL DEFAULT 0,       -- owner said "solo mode" (#28 ambient):
                                                 -- suppresses automatic arming until an
                                                 -- explicit re-enable; durable per chat
+  research_mode INTEGER NOT NULL DEFAULT 0,     -- spoken research mode (#253/#417): a
+                                                -- bigger tool budget and the research
+                                                -- routine, durable per chat until
+                                                -- "back to normal"
+  research_set_by TEXT NOT NULL DEFAULT '',     -- who spoke the cue, or '' when the app
+                                                -- could not say (#255's rule)
+  research_set_at REAL NOT NULL DEFAULT 0,      -- when it was turned on; the cost
+                                                -- line's since-anchor (#259)
   archived_at REAL,                             -- hidden from the sidebar; nothing deleted
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL,
@@ -629,6 +640,16 @@ def init(settings=None):
         if mcols and "web_sources" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN web_sources "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 27:  # v28: spoken research mode (#253/#417).
+        # All three default off/blank/zero, so every existing chat simply
+        # has research mode off - exactly its pre-migration behaviour.
+        ccols0 = {r[1] for r in con.execute("PRAGMA table_info(chats)")}
+        if ccols0:
+            for col, decl in (("research_mode", "INTEGER NOT NULL DEFAULT 0"),
+                              ("research_set_by", "TEXT NOT NULL DEFAULT ''"),
+                              ("research_set_at", "REAL NOT NULL DEFAULT 0")):
+                if col not in ccols0:
+                    con.execute(f"ALTER TABLE chats ADD COLUMN {col} {decl}")
     if 1 <= version <= 26:  # v27: the running-cost line's anchors (#259).
         # Default 0 on both: an escalation set before this column existed
         # reads as "since it was set", and a chat starts with no line posted.
@@ -1227,6 +1248,22 @@ def set_chat_room_state(con, chat_id, *, room_mode=None, ambient_off=None):
         return
     con.execute("UPDATE chats SET " + ", ".join(sets) + " WHERE id=?",
                 (*args, chat_id))
+    con.commit()
+
+
+def set_chat_research(con, chat_id, on: bool, set_by: str = ""):
+    """Flip the durable per-chat research-mode flag (#253/#417). On writes
+    the name (or '' when the app could not say, #255's rule) and now(); off
+    blanks both, since nobody set an "off" and the cost line's since-anchor
+    means nothing once the mode is off."""
+    if on:
+        con.execute(
+            "UPDATE chats SET research_mode=1, research_set_by=?, "
+            "research_set_at=? WHERE id=?", (set_by or "", now(), chat_id))
+    else:
+        con.execute(
+            "UPDATE chats SET research_mode=0, research_set_by='', "
+            "research_set_at=0 WHERE id=?", (chat_id,))
     con.commit()
 
 

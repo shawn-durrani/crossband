@@ -1,18 +1,22 @@
 """The running-cost line for an escalated chat (#259).
 
 A spoken depth change tells the chat replies will be slower and never that
-they cost more, and anyone in the room may raise a seat. So while a seat
-sits above its configured depth, the chat gets one short system line now
-and then saying what that seat has spent since it was raised. Watermark
-gated like the rolling summary and the auto title: it fires on a message
-count, never on a clock, and `spend_note_every` sets the count.
+they cost more, and anyone in the room may raise a seat; research mode
+(#253/#417) is the chat-wide version of the same raise, a bigger tool budget
+that spends more per reply. So while a seat sits above its configured depth,
+OR research mode is on, the chat gets one short system line now and then
+saying what has been spent since it was raised. Watermark gated like the
+rolling summary and the auto title: it fires on a message count, never on a
+clock, and `spend_note_every` sets the count.
 
 What the line says, and what it may not: a per-seat figure, because depth
-is per seat and one chat-wide line is wrong in a mixed room; the metered
-figure alone as cash, with subscription-covered and unpriced use named
-apart and never summed; and "a rate-card estimate", because nothing here
-is a bill. The line is a system row, so it persists and every seat reads
-it, and it never reaches membro: is_spend_note() is the ingest filter."""
+is per seat and one chat-wide line is wrong in a mixed room, plus one
+chat-wide clause for research mode, because that raise has no single seat
+to name; the metered figure alone as cash, with subscription-covered and
+unpriced use named apart and never summed; and "a rate-card estimate",
+because nothing here is a bill. The line is a system row, so it persists
+and every seat reads it, and it never reaches membro: is_spend_note() is
+the ingest filter."""
 
 import time
 
@@ -52,27 +56,46 @@ def seat_line(name, effort, set_at, group) -> str:
             + ", ".join(parts) + " since then")
 
 
-def compose(seats: list) -> str:
-    """seats: [(name, effort, set_at, group)]. One line, however many seats."""
-    clauses = "; ".join(seat_line(*s) for s in seats)
-    return (f"{SPEND_NOTE_HEAD} {clauses}. Rate-card estimates, not a bill. "
+def research_line(set_at, totals) -> str:
+    """The chat-wide clause for research mode (#253/#417): no single seat to
+    name, so it names the chat instead. `totals` is
+    accounting.summarize(...)["totals"] since the mode was set."""
+    metered = float((totals or {}).get(accounting.CAT_METERED, 0.0))
+    return (f"research mode since {_since(set_at)}, {_money(metered)} "
+            "metered across the chat since then")
+
+
+def compose(seats: list, research_clause: str = "") -> str:
+    """seats: [(name, effort, set_at, group)]. `research_clause`
+    (spend_note.research_line, or "") leads the seat clauses - it is
+    chat-wide, not one seat's raise."""
+    clauses = ([research_clause] if research_clause else []) + \
+        [seat_line(*s) for s in seats]
+    text = "; ".join(clauses)
+    return (f"{SPEND_NOTE_HEAD} {text}. Rate-card estimates, not a bill. "
             "Anyone can say back to normal.")
 
 
 def maybe_spend_note(con, chat, messages, cfg) -> bool:
-    """Post the line when it is due. Due means: the knob is on, at least one
-    seat is raised, and `spend_note_every` messages have landed since the
-    later of the last line and the earliest raise. Returns True when a line
-    was written."""
+    """Post the line when it is due. Due means: the knob is on, and either a
+    seat is raised or research mode is on for the chat, and
+    `spend_note_every` messages have landed since the later of the last line
+    and the earliest raise (a seat's, or research mode's own). Returns True
+    when a line was written."""
     every = int(cfg.get("spend_note_every") or 0)
     if every <= 0 or not messages:
         return False
     chat_id = chat["id"]
     raised = db.get_chat_seat_escalations(con, chat_id)
-    if not raised:
+    research_on = bool(chat.get("research_mode"))
+    if not raised and not research_on:
         return False
     upto = int(chat.get("spend_note_upto") or 0)
-    earliest = min((r["set_at"] for r in raised), default=0.0)
+    anchors = [r["set_at"] for r in raised]
+    research_set_at = chat.get("research_set_at") or 0.0
+    if research_on:
+        anchors.append(research_set_at)
+    earliest = min(anchors, default=0.0)
     fresh = [m for m in messages
              if m["id"] > upto and (m.get("created_at") or 0) >= earliest]
     if len(fresh) < every:
@@ -87,7 +110,11 @@ def maybe_spend_note(con, chat, messages, cfg) -> bool:
         summary = accounting.summarize(events, since=since)
         group = next((g for g in summary["by_party"] if g["key"] == r["slug"]), None)
         seats.append((names.get(r["slug"], r["slug"]), r["effort"], r["set_at"], group))
-    row = db.insert_message(con, chat_id, "system", compose(seats))
+    research_clause = ""
+    if research_on:
+        summary = accounting.summarize(events, since=research_set_at or None)
+        research_clause = research_line(research_set_at, summary["totals"])
+    row = db.insert_message(con, chat_id, "system", compose(seats, research_clause))
     con.execute("UPDATE chats SET spend_note_upto=? WHERE id=?",
                 (row["id"], chat_id))
     con.commit()

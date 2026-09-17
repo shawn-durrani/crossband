@@ -1,8 +1,8 @@
 """The merged intent scan (#258, #412): one utility call per user turn that
 reads every instruction the live scan acts on - a room-mode command, an
 introduction or departure (with aliases), a name correction, a reasoning-
-depth change - plus the research cue #253 will consume, and returns them all
-in one JSON verdict.
+depth change, a research cue (#253/#417) - and returns them all in one JSON
+verdict.
 
 The prompt and the parser live here, not in eval_intent, so the harness that
 justified the switch (`python -m eval_intent`) and the live scan
@@ -10,8 +10,8 @@ justified the switch (`python -m eval_intent`) and the live scan
 happens in one place, and the harness can never silently drift from what the
 app actually sends.
 
-RESEARCH_MORE is heard and logged (introductions.py: outcome
-"research_heard"); applying it is #253's build, not this one.
+RESEARCH_MORE is applied by backend/research.py (introductions.py: outcome
+"research_set").
 """
 
 import json
@@ -148,7 +148,7 @@ def parse_merged(text) -> dict:
 
 # Outcomes that mean "heard, confirmed, and changed nothing" - the set
 # nothing_changed_line and scan_user_turn both need agree on.
-_NOTHING_CHANGED = {"no_change", "correction_unmatched", "research_heard"}
+_NOTHING_CHANGED = {"no_change", "correction_unmatched"}
 
 
 def _mode_line(direction) -> str:
@@ -177,8 +177,8 @@ def _depth_line() -> str:
 
 
 def _research_line() -> str:
-    return ("Heard a request to research more, and nothing changed: that "
-            "mode is not built yet.")
+    return ("Heard a request to research more, and nothing changed: "
+            "research mode is already on for this chat.")
 
 
 def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
@@ -187,8 +187,8 @@ def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
     at all, or ANY confirmed axis actually changed something. `outcomes`
     maps the axes the scan applied - "mode_command", "introductions",
     "corrections", "depth", "research" - to the outcome string apply_command
-    / apply_scan / apply_corrections / apply_depth (or the "research_heard"
-    marker) returned.
+    / apply_scan / apply_corrections / apply_depth / research.apply_research
+    returned.
 
     A turn that instructs on more than one axis at once only gets the line
     when EVERY instructed axis was a no-op; the wording then names the

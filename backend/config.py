@@ -402,6 +402,11 @@ class Settings(BaseModel):
     max_tool_output: int = 8000
     tool_log_chars: int = 1200  # per tool event when replayed into later transcripts
     max_tool_rounds: int = 6
+    # #253/#417: the tool-call loop cap per reply while spoken research mode
+    # is on for the chat (backend/research.py) - engine.py substitutes this
+    # for max_tool_rounds on every round of a research-mode chat, seat by
+    # seat, so a plan-then-search routine gets room to actually run one.
+    research_tool_rounds: int = 18
     max_transcript_chars: int = 100_000  # fetch_youtube_transcript in-chat cap
     max_audio_mb: int = 60  # transcribe_audio_url download cap
     max_search_results: int = 5
