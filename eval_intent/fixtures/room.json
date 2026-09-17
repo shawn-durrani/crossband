@@ -1,0 +1,48 @@
+[
+  {
+    "id": "room_on_please",
+    "category": "room_command",
+    "text": "Group mode, please.",
+    "expected": {
+      "mode_command": "on"
+    }
+  },
+  {
+    "id": "room_on_announce",
+    "category": "room_command",
+    "text": "We're in group mode now.",
+    "expected": {
+      "mode_command": "on"
+    }
+  },
+  {
+    "id": "room_off_solo",
+    "category": "room_command",
+    "text": "Solo mode.",
+    "expected": {
+      "mode_command": "off"
+    }
+  },
+  {
+    "id": "room_off_just_me",
+    "category": "room_command",
+    "text": "It's just me now.",
+    "expected": {
+      "mode_command": "off"
+    },
+    "present": [],
+    "notes": "Nobody is known present, so no departure to record."
+  },
+  {
+    "id": "room_neg_question",
+    "category": "room_command_negative",
+    "text": "Is group mode on right now?",
+    "expected": {}
+  },
+  {
+    "id": "room_neg_recollection",
+    "category": "room_command_negative",
+    "text": "Group mode worked well yesterday.",
+    "expected": {}
+  }
+]
