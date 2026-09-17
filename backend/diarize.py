@@ -966,6 +966,19 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                         turn_id=turn_id)
         log.info("diarize pass (voiceid defer): chat=%s reason=%s", chat_id,
                  reason)
+        # #411: the turn stays unnamed, and the row now says so and why. No
+        # name, no banking, no cloud call - the same defer as before, with
+        # the reason written where the seats and memory can read it, so a
+        # seat can say "voice not recognised" and memory never files the
+        # turn as the owner's. The audio is remembered so the turn can be
+        # tap-corrected like a named one.
+        try:
+            await _deliver_label(chat_id, pcm, sample_rate, commit_ts, session,
+                                 label_payload([], unresolved=reason),
+                                 turn_id=turn_id)
+        except Exception:
+            log.info("unresolved marker failed: chat=%s", chat_id)
+            log.debug("unresolved marker failure detail", exc_info=True)
         return
     log.info("diarize pass (crosstalk trigger): chat=%s score=%.3f",
              chat_id, verdict.get("score", 0.0))
@@ -1168,7 +1181,7 @@ def _room_plan(chat_id, sample_rate):
 
 
 def label_payload(labels, *, clusters=("local",), uncertain=(), source="local",
-                  score=None, owner=False, learning=False):
+                  score=None, owner=False, learning=False, unresolved=""):
     """One label write's payload, the shape every consumer of labels_json
     reads. Six passes hand-built this dict and two of them drifted
     (workbench review, #237); build it in exactly one place. Consumers
@@ -1184,6 +1197,12 @@ def label_payload(labels, *, clusters=("local",), uncertain=(), source="local",
         payload["owner"] = True
     if learning:
         payload["learning"] = True
+    if unresolved:
+        # #411: a deferred verdict names nobody and says why, in the matcher's
+        # own word (one of DEFER_REASONS). The projection turns it into a
+        # plain head the seats can repeat, and memory reads it as a doubted
+        # turn, never as the owner.
+        payload["unresolved"] = unresolved
     return payload
 
 

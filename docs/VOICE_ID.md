@@ -191,8 +191,13 @@ on how a voice sounds more than on what it says, so other languages
 are expected to work. Nobody has measured them, so the calibration
 promises hold for English only.
 
-When the matcher can't name a turn, the turn stays unnamed, and room
-mode then arms only through a voice it knows or the manual doors.
+When the matcher can't name a turn, the turn stays unnamed, and the
+turn says why in the words the voice panel uses: too short to judge,
+voice not recognised, too close to call, no voices learnt yet. The
+seats read that reason, so when you ask who's speaking they can say
+what stopped the match. Memory treats such a turn as a doubted guest's,
+never as yours. Room mode then arms only through a voice it knows or
+the manual doors.
 
 ## The model itself
 

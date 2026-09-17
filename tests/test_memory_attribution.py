@@ -391,3 +391,18 @@ def test_speaker_identity_truth_table():
     for speaker in ("user", "claude", "guest:unknown"):
         assert speaker_identity({"voice_labels": labels}, speaker,
                                 slugs) is None
+
+
+def test_unresolved_turn_ingests_as_guest_unknown():
+    """#411: the matcher looked and could not name the voice. The row has no
+    label and says why; that is a doubted turn, so it goes as guest:unknown
+    and never as the owner, which is what an unmarked unlabelled turn still
+    means."""
+    marked = _msg(1, "user", voice_labels=json.dumps(
+        {"clusters": ["local"], "labels": [], "uncertain": [],
+         "source": "local", "unresolved": "below_threshold"}))
+    assert ingest_speaker(marked, set(), "Shawn") == GUEST_UNKNOWN
+    plain = _msg(2, "user", voice_labels="")
+    assert ingest_speaker(plain, set(), "Shawn") == "user"
+    junk = _msg(3, "user", voice_labels="{not json")
+    assert ingest_speaker(junk, set(), "Shawn") == "user"

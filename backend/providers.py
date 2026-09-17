@@ -791,7 +791,12 @@ def _volatile_system_parts(cfg):
             parts.append(
                 f"\n(Room state this round: room mode is ON; {roster_note}. "
                 "This line is ground truth when someone asks whether room/"
-                "group mode is on.)")
+                "group mode is on. Names on spoken turns come from the "
+                "on-device voice check alone: a person saying who they are "
+                "seats them on the roster but never names a turn, and an "
+                "unnamed turn's head says why it went unnamed. When someone "
+                "asks who is speaking, repeat that reason plainly; never "
+                "treat their own name as a claim to doubt.)")
         else:
             parts.append(
                 "\n(Room state this round: room mode is OFF - spoken turns "
@@ -903,6 +908,22 @@ VOICE_CONFIRMED_SUFFIX = " (voice confirmed)"
 # "voice confirmed" (nothing was recognised); the seats got fourteen
 # "identity pending" heads in a row for a person the room could only contain.
 LEARNING_SUFFIX = " (learning this voice)"
+# Why a turn went unnamed (#411), in the words the browser's voice panel
+# uses (frontend/src/voiceHealth.js UNRESOLVED_COPY): the matcher writes
+# its reason on the row, and the head repeats it, so a seat asked "who am I"
+# can say "voice not recognised" instead of "pending". Keyed by
+# diarize.DEFER_REASONS; a test pins the two sets equal.
+UNRESOLVED_HEAD_COPY = {
+    "too_short": "too short to judge",
+    "not_speech": "not a voice",
+    "below_threshold": "voice not recognised",
+    "ambiguous": "too close to call",
+    "multi": "more than one voice",
+    "no_candidates": "no voices learnt yet",
+    "unavailable": "matcher not ready",
+    "disabled": "matching off",
+    "error": "check failed",
+}
 
 # Honest pending identity (#28, night test 4; meaning narrowed by PR-B).
 # A room-mode user turn whose label has not landed yet projects this head,
@@ -1000,6 +1021,12 @@ def _user_turn_head(msg, cfg, now=None):
     labels = [l for l in (data.get("labels") if isinstance(data.get("labels"), list) else [])
               if isinstance(l, str) and _clean_head(l)]
     if not labels:
+        why = UNRESOLVED_HEAD_COPY.get(data.get("unresolved"))
+        if why:
+            # #411: the matcher looked and could not name the voice. Never
+            # the owner, and never a bare "pending": the head says why.
+            return (UNIDENTIFIED_SPEAKER[0].upper() + UNIDENTIFIED_SPEAKER[1:]
+                    + f" (in the room, {why})")
         return owner
     if data.get("learning") is True and len(labels) == 1:
         # Cold start (#28): named by elimination, still being learned. Read
