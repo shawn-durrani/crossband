@@ -237,32 +237,36 @@ def test_cold_start_records_the_local_pulse(app, monkeypatch):
         assert got and got["path"] == "local"
 
 
-def test_without_a_candidate_a_defer_still_labels_nothing(app, monkeypatch):
-    """THE RETIREMENT PIN, unchanged (#28 PR-B): outside the cold-start
-    shape a deferred verdict leaves the turn unresolved - no label, no
-    banking, no pulse, no cloud call."""
+def test_without_a_candidate_a_defer_names_nobody_and_says_why(app, monkeypatch):
+    """THE RETIREMENT PIN (#28 PR-B), with #411's one addition: outside the
+    cold-start shape a deferred verdict leaves the turn unnamed - no name,
+    no banking, no cloud call - and the row now carries the matcher's own
+    reason, so the seats and memory can read that it looked and could not
+    tell. The write holds no label of any kind."""
     from fastapi.testclient import TestClient
+    written = []
     monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan(None))
     monkeypatch.setattr(diarize.voiceid, "identify_utterance",
                         lambda *a, **k: _defer("below_threshold"))
     monkeypatch.setattr(
         diarize.voice, "transcribe_diarized",
         lambda *a, **k: pytest.fail("no cloud call on a defer"))
-    monkeypatch.setattr(
-        diarize, "_attach_until_deadline",
-        lambda *a, **k: pytest.fail("a defer with no candidate labels nothing"))
+
+    async def capture(chat_id, commit_ts, payload, session, turn_id=None):
+        written.append(payload)
+        return None
+    monkeypatch.setattr(diarize, "_attach_until_deadline", capture)
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         session = diarize.RoomSession(enabled=True)
         asyncio.run(diarize.run_pass(chat["id"], loud_pcm(3.0), 16000,
                                      time.time(), session, {}))
-        # Since the thirteenth field test a defer records WHY on the
-        # pulse (the reason was already computed); the point of this
-        # pin is that no LABEL is written, which still holds.
         decision = diarize.last_decision(chat["id"])
         assert decision["path"] == diarize.DECISION_UNRESOLVED
         assert decision["reason"] == "below_threshold"
         assert anchors.store().people() == []
+        assert written == [{"clusters": ["local"], "labels": [], "uncertain": [],
+                            "source": "local", "unresolved": "below_threshold"}]
 
 
 def test_a_clip_that_fails_the_quality_gate_is_not_banked(app):

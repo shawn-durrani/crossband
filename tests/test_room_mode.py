@@ -409,9 +409,10 @@ def test_solo_utterances_never_trigger_an_el_call(app, relay, batch_stt,
     """THE PIN the eighth field test bought: a solo speaker - whether the
     matcher names them or honestly defers - NEVER causes an ElevenLabs call.
     Two commits (a confident owner-of-roster match, then a defer): zero
-    batch calls, zero extra metering, and the deferred turn stays unlabelled
-    (the pending head simply ages out). Deliberately replaces the phase-1
-    lone-speaker/new-cluster ordinal tests, whose EL passes retired."""
+    batch calls, zero extra metering, and the deferred turn stays unnamed -
+    since #411 the row says why, with no label of any kind. Deliberately
+    replaces the phase-1 lone-speaker/new-cluster ordinal tests, whose EL
+    passes retired."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat, pid = _room_chat(c)
         matcher["verdicts"] = [_verdict_match("Shawn", pid),
@@ -432,7 +433,9 @@ def test_solo_utterances_never_trigger_an_el_call(app, relay, batch_stt,
             time.sleep(0.3)  # give a wrongly-scheduled EL call time to fire
             ws.send_json({"done": True})
         assert json.loads(labels)["labels"] == ["Shawn"]   # named locally
-        assert _message_labels(m2["id"]) == ""             # honestly unresolved
+        unresolved = json.loads(_wait_for(lambda: _message_labels(m2["id"])))
+        assert unresolved["labels"] == []                  # honestly unnamed
+        assert unresolved["unresolved"] == "below_threshold"  # and says why (#411)
         assert batch_stt["calls"] == []                    # NO cloud identity
         # the session's ONLY stt spend is the relay's own realtime metering
         assert _wait_for(lambda: _stt_usage_rows() == 1)

@@ -801,3 +801,36 @@ def test_text_description_names_file_mime_and_size():
     att = {"filename": "a.pdf", "mime": "application/pdf", "size": 10}
     assert att_mod.text_description(att) == \
         "[attachment: a.pdf (application/pdf, 10 bytes)]"
+
+
+# ---------- #411: an unnamed turn says why ----------
+
+def test_unresolved_turn_head_says_why_and_never_the_owner(names, cfg):
+    """The matcher looked and could not name the voice: the row carries no
+    label and the reason, and the head repeats the reason in the voice
+    panel's words. Never the owner, and never a bare pending, however old
+    the turn is."""
+    import json as _json
+    from backend.providers import UNRESOLVED_HEAD_COPY
+    old = _voice_msg("who am I", age_secs=PENDING_IDENTITY_SECS + 5,
+                     voice_labels=_json.dumps({"clusters": ["local"], "labels": [],
+                                               "uncertain": [], "source": "local",
+                                               "unresolved": "below_threshold"}))
+    head = _user_turn_head(old, _room_cfg(cfg))
+    assert head == "Unidentified speaker (in the room, voice not recognised)"
+    assert cfg["user_name"] not in head
+    msgs = build_anthropic_messages("claude", [old], names, _room_cfg(cfg))
+    assert LABEL_RE.match(msgs[0]["content"][0]["text"]).group("name") == head
+    # every reason the matcher can give has words, and no other key does
+    from backend import diarize
+    assert set(UNRESOLVED_HEAD_COPY) == diarize.DEFER_REASONS
+    junk = _voice_msg("hm", age_secs=99, voice_labels=_json.dumps(
+        {"clusters": ["local"], "labels": [], "unresolved": "made-up"}))
+    assert _user_turn_head(junk, _room_cfg(cfg)) == cfg["user_name"]
+
+
+def test_room_note_tells_seats_names_come_from_voice(cfg):
+    from backend.providers import _volatile_system_parts
+    text = "".join(_volatile_system_parts(dict(cfg, room_mode=True)))
+    assert "come from the on-device voice check alone" in text
+    assert "never treat their own name as a claim to doubt" in text

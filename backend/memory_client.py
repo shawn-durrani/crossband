@@ -122,6 +122,20 @@ def _parse_voice_labels(raw):
     return labels, uncertain, data.get("crosstalk") is True
 
 
+def _unresolved(raw) -> bool:
+    """True when the matcher wrote that it looked and could not name the
+    voice (#411): the row carries no label and an `unresolved` reason. Such
+    a turn is doubted by construction, so it ingests as guest:unknown and
+    never as the owner. Malformed data reads as not marked."""
+    if not raw or not isinstance(raw, str):
+        return False
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(data, dict) and bool(data.get("unresolved"))
+
+
 def _wire_name(name: str) -> str:
     """A guest name as it may appear inside the speaker class: single-line,
     colon-free (the class separator), bounded."""
@@ -134,7 +148,9 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
 
     - a non-user message (model slug, system) passes through untouched;
     - a user turn with NO voice labels is the owner typing or speaking
-      alone: "user", exactly as it has always been sent;
+      alone: "user", exactly as it has always been sent; a room turn the
+      matcher looked at and could not name carries an `unresolved` reason
+      and no label (#411), and that is "guest:unknown";
     - an OPEN attribution flag on the turn means the attribution is doubted:
       "guest:unknown", even if the label itself reads confident;
     - a CROSSTALK-marked turn (#28 phase 4): two voices shared the
@@ -167,6 +183,8 @@ def ingest_speaker(msg, open_flag_ids=frozenset(), owner_name="",
     if crosstalk:
         return GUEST_UNKNOWN
     if not labels:
+        if _unresolved(msg.get("voice_labels")):
+            return GUEST_UNKNOWN
         return "user"
     if any(l in uncertain or _VOICE_ORDINAL_RE.match(l) for l in labels):
         return GUEST_UNKNOWN
