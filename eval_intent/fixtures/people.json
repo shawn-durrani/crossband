@@ -93,12 +93,13 @@
     "expected": {
       "corrections": [
         {
-          "who": "Samantha",
+          "who": "",
           "name": "Sam",
           "also": ""
         }
       ]
-    }
+    },
+    "notes": "'Her' names nobody in particular, so who is left blank and the app falls back to the most recent confident speaker, as it does today."
   },
   {
     "id": "correction_two_forms",
