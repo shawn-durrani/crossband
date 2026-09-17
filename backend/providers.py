@@ -698,6 +698,11 @@ def _volatile_system_parts(cfg):
         # #105: the seat's own spoken depth, per seat per round - volatile
         # by nature (it flips on a spoken command), so it lives here.
         parts.append("\n" + note)
+    research_note = (cfg.get("research_note") or "").strip()
+    if research_note:
+        # #253/#417: spoken research mode, per chat - volatile by the same
+        # reasoning as depth_note, right beside it.
+        parts.append("\n" + research_note)
     mem = (cfg.get("memory_summary") or "").strip()
     if mem:
         parts.append(

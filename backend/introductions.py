@@ -33,7 +33,7 @@ import logging
 import re
 import unicodedata
 
-from . import anchors, db, depth, diarize, intent, llm_util, room_state
+from . import anchors, db, depth, diarize, intent, llm_util, research, room_state
 
 log = logging.getLogger("crossband.introductions")
 
@@ -761,7 +761,7 @@ SCAN_OUTCOMES = (
     "depth_set",            # spoken reasoning depth set for seat(s) (#105)
     "depth_cleared",        # spoken reasoning depth back to default (#105)
     "depth_once",           # a one-reply depth override parked (#105 slice 2)
-    "research_heard",       # a research cue was heard; applying it is #253
+    "research_set",         # spoken research mode turned on for the chat (#253/#417)
     "no_change",            # a confirmed verdict that changed nothing
     "scan_error",           # the scan itself failed (detail logged below it)
 )
@@ -805,13 +805,13 @@ def _insert_nothing_changed_line(chat_id, line):
 async def scan_user_turn(chat_id, message_id, text, cfg):
     """One user turn's scan (#412): a single merged utility call reads every
     instruction the app acts on - a room-mode command, an introduction or
-    departure (with aliases), a name correction, a reasoning-depth change -
-    plus the research cue #253 will consume, in one JSON verdict
-    (backend/intent.py). Each confirmed part applies through exactly the
-    path it always has, each on its own worker thread, in the order the
-    verdict line has always preferred: the command outcome wins when it
-    changed anything, then the introduction/departure outcome, then the
-    correction, then the depth change; the rare turn that confirms on
+    departure (with aliases), a name correction, a reasoning-depth change,
+    a research cue (#253/#417) - in one JSON verdict (backend/intent.py).
+    Each confirmed part applies through exactly the path it always has,
+    each on its own worker thread, in the order the verdict line has
+    always preferred: the command outcome wins when it changed anything,
+    then the introduction/departure outcome, then the correction, then the
+    depth change, then research mode; the rare turn that confirms on
     several axes at once ("group mode on - this is Dave") applies all of
     them under the one verdict line. A confirmed instruction that changed
     nothing on every axis it touched posts one plain system line saying so
@@ -858,10 +858,12 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             if outcome is None or outcome == "no_change":
                 outcome = result
         if verdict["research"] == intent.RESEARCH_MORE:
-            # Heard and recorded; applying it is #253's build.
-            outcomes["research"] = "research_heard"
-            if outcome is None:
-                outcome = "research_heard"
+            # #253/#417: spoken research mode, per chat.
+            result = await asyncio.to_thread(research.apply_research,
+                                             chat_id, cfg, message_id)
+            outcomes["research"] = result
+            if outcome is None or outcome == "no_change":
+                outcome = result
         if outcome is None:
             outcome = "model_rejected"
         line = intent.nothing_changed_line(verdict, outcomes)

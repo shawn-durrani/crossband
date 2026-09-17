@@ -233,6 +233,12 @@ def apply_depth(chat_id, changes, cfg, message_id=None) -> str:
                                  else {by_key[key]["slug"]} if key in by_key
                                  else set())
         once_set = 0
+        # #260: a reset means everything. Spoken to EVERYONE ("all", not a
+        # named seat) and standing (not a one-off, which instructs nothing),
+        # it also clears research mode (#253/#417) - the mode has no seat of
+        # its own to name.
+        reset_all = any(not ch.get("once") and ch["seat"].casefold() == "all"
+                        and ch["depth"] == "normal" for ch in changes)
         for ch in changes:
             key = ch["seat"].casefold()
             targets = roster if key == "all" else \
@@ -274,6 +280,10 @@ def apply_depth(chat_id, changes, cfg, message_id=None) -> str:
                 db.insert_message(con, chat_id, "system",
                                   _notice(p["name"] or p["slug"], "normal",
                                           user, dropped_once=dropped))
+                cleared += 1
+        if reset_all:
+            from . import research  # lazy: research.py imports this module
+            if research.clear_research(con, chat_id):
                 cleared += 1
     finally:
         con.close()

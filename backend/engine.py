@@ -25,6 +25,7 @@ from . import spend_note
 from . import memory_client as memory_client_mod
 from . import providers
 from . import provenance as prov
+from . import research
 from . import tools as tools_mod
 from . import voice_trace
 from .config import compute_cost, provenance_for
@@ -702,6 +703,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # on?" from.
         round_cfg["room_mode"] = bool(chat["room_mode"])
         round_cfg["room_roster_names"] = state["room_names"]
+        # #253/#417: spoken research mode is per CHAT, not per seat - a
+        # bigger tool budget for every seat's call this round, and the
+        # research routine told to each in the volatile block (cache layout
+        # law, same as depth_note just above).
+        if chat["research_mode"]:
+            round_cfg["max_tool_rounds"] = cfg["research_tool_rounds"]
+            round_cfg["research_note"] = research.research_note(
+                chat["research_set_by"])
         # Naming is law (#28): the projection resolves voice-label identity
         # names to preferred display names through this per-round map.
         round_cfg["preferred_names"] = state.get("preferred_names") or {}

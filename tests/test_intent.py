@@ -8,8 +8,9 @@ and "heard but changed nothing" wording, tested without a model.
 3. nothing_changed_line, for each no-op case #412 names: a room-mode
    command that named the state the room was already in, an introduction of
    someone already present, a correction that resolved to nobody, a depth
-   instruction that named no known seat, and a research cue (never built).
-   A real change on any axis, or nothing confirmed at all, gets no line.
+   instruction that named no known seat, and a research cue heard while the
+   mode is already on. A real change on any axis, or nothing confirmed at
+   all, gets no line.
 4. schedule_scan's two cheap guards: an empty turn and a `/` command never
    reach the model.
 """
@@ -98,10 +99,10 @@ def test_line_for_a_depth_instruction_that_named_no_known_seat():
     assert "thinking depth" in line and "nothing changed" in line
 
 
-def test_line_for_research_heard_while_not_built():
+def test_line_for_research_heard_while_already_on():
     verdict = {**intent.empty_verdict(), "research": "more"}
-    line = intent.nothing_changed_line(verdict, {"research": "research_heard"})
-    assert "research" in line and "not built" in line
+    line = intent.nothing_changed_line(verdict, {"research": "no_change"})
+    assert "research" in line and "already on" in line
 
 
 def test_no_line_when_something_actually_changed():
