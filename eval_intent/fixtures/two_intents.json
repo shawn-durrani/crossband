@@ -7,12 +7,13 @@
       "depth": [
         {
           "seat": "all",
-          "depth": "deep"
+          "depth": "deep",
+          "once": true
         }
       ],
       "research": "more"
     },
-    "notes": "Moves both control axes at once, the case #258 names."
+    "notes": "Moves both control axes at once, the case #258 names. 'This one' limits the thinking to the next reply, so the depth change is a one-off; the research request has no such flag."
   },
   {
     "id": "both_group_and_intro",
