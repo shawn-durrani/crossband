@@ -185,13 +185,13 @@ def test_the_default_note_names_the_configured_setting():
 
 @pytest.fixture
 def utility(monkeypatch):
-    state = {"depth": {"changes": []}, "calls": []}
+    """Since #412 every turn makes exactly one merged call; state['reply']
+    is the JSON verdict returned for it."""
+    state = {"reply": {}, "calls": []}
 
     async def fake_utility(prompt, cfg, max_tokens=2000):
         state["calls"].append(prompt)
-        if "INSTRUCTING a change" in prompt:  # the depth prompt
-            return json.dumps(state["depth"])
-        return json.dumps({"introductions": [], "departures": []})
+        return json.dumps(state["reply"])
 
     monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
                         as_utility_completion(fake_utility))
@@ -199,7 +199,7 @@ def utility(monkeypatch):
 
 
 def test_scan_applies_confirmed_depth(app, utility):
-    utility["depth"] = {"changes": [{"seat": "Claude", "depth": "deep"}]}
+    utility["reply"] = {"depth": [{"seat": "Claude", "depth": "deep"}]}
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat_id = c.post("/api/chats", json={}).json()["id"]
         asyncio.run(introductions.scan_user_turn(

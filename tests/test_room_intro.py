@@ -11,8 +11,9 @@ What these tests prove, in order of importance:
    into diarize's in-process registry, and appends the named people to the
    roster (anchor pending); departures mark them left and free the cap.
 3. The roster cap (Settings.room_roster_max, env-mapped) is enforced.
-4. The lexical prefilter gates the utility spend: a turn that is not
-   introduction-shaped never makes a model call at all.
+4. Since #412 every user turn - other than an empty one or a `/` command -
+   makes exactly one merged utility call; there is no phrase-shaped
+   prefilter gating this axis any more (backend/intent.py, test_intent.py).
 5. The owner's anchor seeds from the stashed introduction utterance, and a
    remembered (sufficient) person links immediately - re-identification.
 
@@ -99,14 +100,17 @@ def test_send_completes_while_the_confirmation_is_wedged_open(app, utility):
         assert [p["name"] for p in roster] == ["Alex"]
 
 
-def test_prefilter_gates_the_utility_spend(app, utility):
-    """A turn with no introduction shape makes NO model call at all - the
-    prefilter is what keeps this feature nearly free on normal turns."""
+def test_an_ordinary_turn_still_makes_one_call_and_changes_nothing(app, utility):
+    """Since #412 there is no phrase-shaped prefilter gating this axis: an
+    ordinary turn still makes exactly ONE merged call (it is cheap - about a
+    third of a cent), the model hears nothing, and nothing changes."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         _send(c, chat["id"], "let's plan the weekend")
         time.sleep(0.3)
-        assert utility["calls"] == []
+        assert len(utility["calls"]) == 1
+        assert _chat_room_mode(chat["id"]) is False
+        assert _roster(chat["id"]) == []
 
 
 def test_keyless_scan_is_a_quiet_no_op(app, monkeypatch):
@@ -764,12 +768,16 @@ def test_every_scan_logs_one_allowlisted_verdict_line(app, utility, caplog):
     with caplog.at_level(_logging.INFO, logger="crossband.introductions"):
         with TestClient(app, base_url="http://127.0.0.1") as c:
             chat = c.post("/api/chats", json={"participant_ids": []}).json()
-            # 1. not introduction-shaped: the scan is not scheduled, and the
-            #    verdict line SAYS so instead of leaving silence.
-            _send(c, chat["id"], "let's plan the weekend")
+            # 1. one of schedule_scan's two cheap guards: an empty turn is
+            #    never scanned at all, and the verdict line SAYS so instead
+            #    of leaving silence. (A `/` turn through POST /send never
+            #    even reaches schedule_scan - routers/chats.py answers it
+            #    itself - so this calls the guard directly, the way an
+            #    attachment-only send with no text would.)
+            introductions.schedule_scan(chat["id"], None, "   ", {})
             assert _wait_for(lambda: any(
                 "outcome=no_prefilter_match" in m for m in _verdict_lines(caplog)))
-            # 2. prefilter hit, model says no: model_rejected.
+            # 2. an ordinary turn is scanned; the model says no: model_rejected.
             utility["verdict"] = {"introductions": [], "departures": []}
             _send(c, chat["id"], "say hi to nobody in this story I'm telling")
             assert _wait_for(lambda: any(

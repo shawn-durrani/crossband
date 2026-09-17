@@ -18,10 +18,9 @@ import sys
 from dotenv import load_dotenv
 
 from backend.config import Settings
+from backend.intent import build_merged_prompt, parse_merged
 from backend.llm_util import price_utility_call, utility_complete_with_usage
 from eval_intent.fixtures_loader import load_fixtures
-from eval_intent.parse import parse_merged
-from eval_intent.prompt import build_merged_prompt
 from eval_intent.report import render_markdown
 from eval_intent.scoring import STRATEGIES, Result, aggregate
 from eval_intent.today import merge_today, silent_misses, today_prompts
@@ -48,7 +47,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 async def run_one(fx, strategy: str, caller, cfg, model: str) -> Result:
     if strategy == "merged":
-        done = await caller(build_merged_prompt(fx), "merged")
+        prompt = build_merged_prompt(fx.text, fx.user_name, fx.seats,
+                                     fx.present, fx.known)
+        done = await caller(prompt, "merged")
         cost = price_utility_call(model, done, cfg)[0] if done.text is not None else 0.0
         return Result(fixture=fx, strategy=strategy,
                       heard=parse_merged(done.text),

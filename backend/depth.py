@@ -57,7 +57,11 @@ _DEPTH_RE = re.compile(
 
 def depth_prefilter(text: str) -> bool:
     """Is this turn shaped like a depth instruction, worth one utility-model
-    call?"""
+    call?
+
+    Unused by the live scan since #412 (every turn gets one merged call
+    instead); kept because eval_intent/today.py measures it against the
+    merged path."""
     head = (text or "")[:600]
     return bool(head.strip()) and bool(_DEPTH_RE.search(head))
 

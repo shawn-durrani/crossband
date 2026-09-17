@@ -1,11 +1,12 @@
 """Introduction detection (#28 phase 2): the spoken introduction IS the trigger.
 
 The owner already introduces a second human out loud ("my wife Alex is here",
-"say hi to Dave"). This module turns that into room mode: a cheap lexical
-prefilter runs over every user turn, and only a prefilter hit pays for a
-utility-model confirmation. On a confirmed introduction the chat's room mode
-flips on server-side, the named people join the roster (up to the configured
-cap), and their anchors are marked pending; a confirmed departure ("Dave has
+"say hi to Dave"). This module turns that into room mode: every user turn
+(#412) goes to one cheap utility-model call that hears every instruction the
+app acts on at once - see `backend/intent.py` for the merged prompt and
+parser. On a confirmed introduction the chat's room mode flips on
+server-side, the named people join the roster (up to the configured cap),
+and their anchors are marked pending; a confirmed departure ("Dave has
 left") frees their roster slot. The owner's own anchor is seeded from the
 introduction utterance itself - the voice that spoke it is the owner's by
 design.
@@ -32,7 +33,7 @@ import logging
 import re
 import unicodedata
 
-from . import anchors, db, depth, diarize, llm_util, room_state
+from . import anchors, db, depth, diarize, intent, llm_util, room_state
 
 log = logging.getLogger("crossband.introductions")
 
@@ -143,7 +144,11 @@ def command_prefilter(text: str) -> bool:
     """Is this turn shaped like a room-mode command, worth one utility-model
     confirmation? Same posture as prefilter(): cheap, bounded, over-inclusive
     on purpose - a question ABOUT the mode also matches, and the model is
-    what separates a command from a mention."""
+    what separates a command from a mention.
+
+    Unused by the live scan since #412 (every turn gets one merged call
+    instead); kept because eval_intent/today.py measures it against the
+    merged path."""
     head = (text or "")[:600]
     if not head.strip():
         return False
@@ -199,7 +204,11 @@ def prefilter(text: str) -> bool:
     """Is this turn introduction- or departure-shaped enough to be worth one
     utility-model call? Cheap, over-inclusive on purpose; the model confirms.
     Bounded input - an introduction lives in the first breath of a turn, and
-    an unbounded regex over a pasted document is silly work."""
+    an unbounded regex over a pasted document is silly work.
+
+    Unused by the live scan since #412 (every turn gets one merged call
+    instead); kept because eval_intent/today.py measures it against the
+    merged path."""
     head = (text or "")[:600]
     if not head.strip():
         return False
@@ -598,7 +607,11 @@ CORRECTION_TARGET_OWNER = "owner"
 def correction_prefilter(text: str) -> bool:
     """Is this turn shaped like a naming correction, worth one utility-model
     confirmation? Same posture as the other prefilters: cheap, bounded,
-    over-inclusive on purpose - the model is the judge."""
+    over-inclusive on purpose - the model is the judge.
+
+    Unused by the live scan since #412 (every turn gets one merged call
+    instead); kept because eval_intent/today.py measures it against the
+    merged path."""
     head = (text or "")[:600]
     if not head.strip():
         return False
@@ -748,6 +761,7 @@ SCAN_OUTCOMES = (
     "depth_set",            # spoken reasoning depth set for seat(s) (#105)
     "depth_cleared",        # spoken reasoning depth back to default (#105)
     "depth_once",           # a one-reply depth override parked (#105 slice 2)
+    "research_heard",       # a research cue was heard; applying it is #253
     "no_change",            # a confirmed verdict that changed nothing
     "scan_error",           # the scan itself failed (detail logged below it)
 )
@@ -762,12 +776,15 @@ def _log_verdict(chat_id, outcome):
 def schedule_scan(chat_id, message_id, text, cfg):
     """Fire the scan for one persisted user turn and return IMMEDIATELY - the
     caller (POST /send) never awaits it, and a failure to even schedule must
-    not break the send. One scan covers BOTH detections (introductions and
-    room-mode commands), so every user turn still ends in exactly one
-    verdict line."""
-    if not prefilter(text) and not command_prefilter(text) \
-            and not correction_prefilter(text) \
-            and not depth.depth_prefilter(text):
+    not break the send.
+
+    Two cheap guards only (#412 - the four phrase-shaped prefilters that used
+    to gate this are gone): an empty or whitespace-only turn has nothing to
+    read, and a `/` message runs no round at all (PRODUCERS.md) - neither is
+    worth a call. Every other turn is scheduled for the one merged call in
+    scan_user_turn, so every user turn still ends in exactly one verdict
+    line."""
+    if not (text or "").strip() or text.lstrip().startswith("/"):
         _log_verdict(chat_id, "no_prefilter_match")
         return None
     task = asyncio.get_running_loop().create_task(
@@ -777,76 +794,79 @@ def schedule_scan(chat_id, message_id, text, cfg):
     return task
 
 
+def _insert_nothing_changed_line(chat_id, line):
+    con = db.connect()
+    try:
+        db.insert_message(con, chat_id, "system", line)
+    finally:
+        con.close()
+
+
 async def scan_user_turn(chat_id, message_id, text, cfg):
-    """One user turn's scan: the command confirmation first (#28, chat 198),
-    then the introduction confirmation, then the name-correction
-    confirmation (#28: naming is law), each gated on its own prefilter so a
-    turn normally pays for at most one utility call. A confirmed command's
-    outcome wins the verdict line when it changed anything; the rare turn
-    that matches two shapes ("group mode on - this is Dave") applies both.
+    """One user turn's scan (#412): a single merged utility call reads every
+    instruction the app acts on - a room-mode command, an introduction or
+    departure (with aliases), a name correction, a reasoning-depth change -
+    plus the research cue #253 will consume, in one JSON verdict
+    (backend/intent.py). Each confirmed part applies through exactly the
+    path it always has, each on its own worker thread, in the order the
+    verdict line has always preferred: the command outcome wins when it
+    changed anything, then the introduction/departure outcome, then the
+    correction, then the depth change; the rare turn that confirms on
+    several axes at once ("group mode on - this is Dave") applies all of
+    them under the one verdict line. A confirmed instruction that changed
+    nothing on every axis it touched posts one plain system line saying so
+    (intent.nothing_changed_line) - a miss must never be silent again (#258).
     Every failure ends here (log only)."""
     try:
+        seats = await asyncio.to_thread(_all_participant_names)
+        present = await asyncio.to_thread(_present_names, chat_id)
+        known = await asyncio.to_thread(_correction_known_names, chat_id)
+        prompt = intent.build_merged_prompt(
+            text, cfg.get("user_name", "User"), seats, present, known)
+        reply = await llm_util.utility_complete_logged(
+            chat_id, "intent_scan", prompt, cfg, max_tokens=300)
+        verdict = intent.parse_merged(reply)
         outcome = None
-        command_confirmed = False
-        if command_prefilter(text):
-            reply = await llm_util.utility_complete_logged(
-                chat_id, "command_scan",
-                build_command_prompt(text), cfg, max_tokens=60)
-            direction = parse_command_verdict(reply)
-            if direction:
-                command_confirmed = True
-                result = await asyncio.to_thread(apply_command, chat_id,
-                                                 direction, cfg)
-                if result != "no_change":
-                    outcome = result
-        if prefilter(text):
-            roster = await asyncio.to_thread(_present_names, chat_id)
-            agents = await asyncio.to_thread(_all_participant_names)
-            prompt = build_prompt(text, cfg.get("user_name", "User"), roster,
-                                  participant_names=agents)
-            reply = await llm_util.utility_complete_logged(
-                chat_id, "intro_scan", prompt, cfg, max_tokens=200)
-            verdict = parse_verdict(reply)
-            if verdict["introductions"] or verdict["departures"]:
-                intro_outcome = await asyncio.to_thread(apply_scan, chat_id,
-                                                        verdict, cfg, text,
-                                                        message_id)
-                if outcome is None:
-                    outcome = intro_outcome
-        if correction_prefilter(text):
+        outcomes = {}
+        if verdict["mode_command"] != "none":
+            direction = (COMMAND_ARM if verdict["mode_command"] == "on"
+                        else COMMAND_DISARM)
+            result = await asyncio.to_thread(apply_command, chat_id,
+                                             direction, cfg)
+            outcomes["mode_command"] = result
+            if result != "no_change":
+                outcome = result
+        if verdict["introductions"] or verdict["departures"]:
+            result = await asyncio.to_thread(apply_scan, chat_id, verdict,
+                                             cfg, text, message_id)
+            outcomes["introductions"] = result
+            if outcome is None:
+                outcome = result
+        if verdict["corrections"]:
             # Naming is law (#28): a spoken correction sets the preferred
-            # name, owner-set. Its own prefilter + utility call, same
-            # fire-and-forget scan, still one verdict line per turn.
-            known = await asyncio.to_thread(_correction_known_names, chat_id)
-            reply = await llm_util.utility_complete_logged(
-                chat_id, "correction_scan",
-                build_correction_prompt(text, cfg.get("user_name", "User"),
-                                        known),
-                cfg, max_tokens=120)
-            corrections = parse_correction_verdict(reply)
-            if corrections:
-                corr_outcome = await asyncio.to_thread(
-                    apply_corrections, chat_id, corrections, cfg)
-                if outcome is None or outcome == "no_change":
-                    outcome = corr_outcome
-        if depth.depth_prefilter(text):
-            # Spoken reasoning depth (#105): own prefilter + utility call,
-            # same fire-and-forget scan, still one verdict line per turn.
-            seats = await asyncio.to_thread(_all_participant_names)
-            reply = await llm_util.utility_complete_logged(
-                chat_id, "depth_scan",
-                depth.build_depth_prompt(text, seats), cfg, max_tokens=200)
-            changes = depth.parse_depth_verdict(reply)
-            if changes:
-                depth_outcome = await asyncio.to_thread(
-                    depth.apply_depth, chat_id, changes, cfg, message_id)
-                if outcome is None or outcome == "no_change":
-                    outcome = depth_outcome
+            # name, owner-set.
+            result = await asyncio.to_thread(apply_corrections, chat_id,
+                                             verdict["corrections"], cfg)
+            outcomes["corrections"] = result
+            if outcome is None or outcome == "no_change":
+                outcome = result
+        if verdict["depth"]:
+            # Spoken reasoning depth (#105).
+            result = await asyncio.to_thread(depth.apply_depth, chat_id,
+                                             verdict["depth"], cfg, message_id)
+            outcomes["depth"] = result
+            if outcome is None or outcome == "no_change":
+                outcome = result
+        if verdict["research"] == intent.RESEARCH_MORE:
+            # Heard and recorded; applying it is #253's build.
+            outcomes["research"] = "research_heard"
+            if outcome is None:
+                outcome = "research_heard"
         if outcome is None:
-            # A confirmed command that changed nothing (arm while already
-            # armed, disarm while off) is an honest no_change; with nothing
-            # confirmed at all, the model rejected the turn.
-            outcome = "no_change" if command_confirmed else "model_rejected"
+            outcome = "model_rejected"
+        line = intent.nothing_changed_line(verdict, outcomes)
+        if line:
+            await asyncio.to_thread(_insert_nothing_changed_line, chat_id, line)
         _log_verdict(chat_id, outcome)
     except Exception:
         _log_verdict(chat_id, "scan_error")

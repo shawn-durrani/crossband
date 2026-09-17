@@ -1,73 +1,7 @@
-"""The merged prompt: one utility call that reads a user turn and returns
-every intent the scan handles today plus the research request, in one JSON
-object. The rules are the ones the four live prompts state, brought
-together, so a change in what the app hears is a change here and not a
-change of judge."""
+"""Moved to `backend/intent.py` (#412): the merged prompt is now the app's
+own, not the harness's, so the live scan and this harness can never drift
+apart. Re-exported here only because this sandbox cannot delete a file - new
+code should import `backend.intent` directly, which is what
+`eval_intent/runner.py` does."""
 
-from eval_intent.schema import Fixture
-
-
-def build_merged_prompt(fx: Fixture) -> str:
-    seats = ", ".join(fx.seats) or "(none)"
-    present = ", ".join(fx.present) if fx.present else "(nobody yet)"
-    known = ", ".join(fx.known) if fx.known else "(nobody yet)"
-    return (
-        "You watch one message from a conversation between a person and "
-        f"several AI assistants, sometimes with other people in the room. "
-        f"The device owner is {fx.user_name}. The assistants are: {seats}. "
-        f"People already known present: {present}. People known by name: "
-        f"{known}.\n"
-        "Decide, all at once, which of these the message does. Merely "
-        "talking ABOUT any of them (a question, praise, a recollection, a "
-        "mention in passing) counts for none of them.\n"
-        "1. mode_command: does it ask BY NAME to switch ROOM MODE (group, "
-        "multi-user or multi-person mode: several people sharing one "
-        "microphone) on or off? Requests and announcements both count "
-        "('group mode please', 'we're in group mode now' mean on; 'solo "
-        "mode', 'it's just me now' mean off). Introducing a person or "
-        "saying someone is here is NOT a mode command, even though it "
-        "implies company: the app switches the room on by itself when "
-        "someone is introduced, so return \"none\" unless the mode is "
-        "named. Otherwise \"none\".\n"
-        "2. introductions and departures: does it INTRODUCE another human "
-        "who is physically present and may speak, or ANNOUNCE that a "
-        "present person has left? The owner introducing someone, a guest "
-        "introducing themselves, and a handover to someone about to speak "
-        "all count. Talking about someone not in the room does not. Use "
-        "the proper name as spoken, never the relationship word when a "
-        "name is given; a relationship-only introduction returns the "
-        "relationship word itself. A stated short form ('call me Sam') "
-        f"goes in aliases keyed by the name. Never return {fx.user_name} "
-        "or an assistant.\n"
-        "3. corrections: does it CORRECT how a person's name is spelt or "
-        "what they should be called, or DECLARE two forms of one name (a "
-        "spelling plus how it is pronounced)? `name` is the corrected "
-        "name as the message spells it, `also` the second form or \"\", "
-        "`who` one of the known names, \"owner\" when the speaker corrects "
-        "their own name, or \"\" when the message does not say.\n"
-        "4. depth: does it INSTRUCT a change to how hard an assistant "
-        "should think from now on? 'deep' means think harder, take your "
-        "time, slow down; 'quick' means faster, shorter, shallower "
-        "answers, whatever the wording; 'max' means the hardest possible "
-        "thinking; 'normal' means back to the default, whatever the "
-        "wording ('back to normal', 'return to defaults', 'reset'). A named "
-        "assistant means that one, no name means all. An instruction "
-        "limited to the next reply is a one-off: \"once\": true. Asking "
-        "for more thought about a TOPIC within one answer is not an "
-        "instruction.\n"
-        "5. research: does it ask the assistants to research or look into "
-        "things more thoroughly ('research more', 'look into that "
-        "properly', 'search more', 'dig into this', 'dig deeper', 'go "
-        "deeper')? 'Go deeper' and 'dig deeper' are research requests, "
-        "not depth changes, unless the message also says how hard to "
-        "think. A request to use a tool once ('can you search for a "
-        "flight', 'look up the weather') is not. \"more\" or \"none\".\n"
-        "Reply with ONLY JSON: {\"mode_command\": \"on\"|\"off\"|\"none\", "
-        "\"introductions\": [names], \"departures\": [names], \"aliases\": "
-        "{name: preferred}, \"corrections\": [{\"who\": ..., \"name\": ..., "
-        "\"also\": ...}], \"depth\": [{\"seat\": \"<assistant or all>\", "
-        "\"depth\": \"deep\"|\"quick\"|\"max\"|\"normal\", \"once\": "
-        "true|false}], \"research\": \"more\"|\"none\"}. Empty lists, "
-        "\"none\" and {} when the message does none of it.\n\n"
-        f"Message: {fx.text[:1200]}"
-    )
+from backend.intent import build_merged_prompt  # noqa: F401

@@ -9,11 +9,10 @@ import json
 
 import pytest
 
+from backend.intent import build_merged_prompt, parse_merged
 from eval_intent import runner
 from eval_intent.fixtures_loader import load_fixtures
 from eval_intent.mock import MockCaller
-from eval_intent.parse import parse_merged
-from eval_intent.prompt import build_merged_prompt
 from eval_intent.schema import Fixture, FixtureError, empty_verdict
 from eval_intent.scoring import Result, aggregate, normalise
 from eval_intent.today import merge_today, prefilters_fired, silent_misses, today_prompts
@@ -84,7 +83,8 @@ def test_todays_path_builds_only_the_prompts_whose_list_fires():
 
 def test_merged_prompt_carries_the_context_and_the_message():
     fx = _fx("correction_call_her")
-    prompt = build_merged_prompt(fx)
+    prompt = build_merged_prompt(fx.text, fx.user_name, fx.seats, fx.present,
+                                 fx.known)
     assert "Samantha" in prompt and "Alex" in prompt and "Claude, GPT" in prompt
     assert prompt.endswith(fx.text)
 
