@@ -41,13 +41,18 @@ the rest. That is the case the current shape is suspected of failing.
 # smoke-test the harness itself, no keys and no cost:
 .venv/bin/python -m eval_attribution --mock
 
-# the real experiment, one cheap model per family; needs the keys:
-.venv/bin/python -m eval_attribution --model claude-haiku-4-5 --model gpt-5
+# the real experiment, one model per family; needs the keys:
+.venv/bin/python -m eval_attribution --model claude-haiku-4-5 --model gpt-5 \
+  --max-tokens 4000 --timeout-s 120
 
 # one shape only, a private replay set kept outside the repository:
 .venv/bin/python -m eval_attribution --model claude-haiku-4-5 \
   --variant self_labelled --fixtures-dir /path/outside/git --no-builtin-fixtures
 ```
+
+GPT-5 thinks before it answers, and that thinking counts against
+`--max-tokens`, so at the default of 40 every GPT-5 reply comes back
+empty and scores 0%.
 
 `--mock` runs the whole pipeline against a keyless stand in that acts
 out the hypothesis. Under `current` it answers self probes wrongly, and

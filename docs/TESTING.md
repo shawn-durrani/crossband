@@ -143,11 +143,11 @@ error text, never speech.
 A guest is isolated. Its permissions come from this process and never
 from the operator's own settings, and each visit gets its own worktree
 at a freshly fetched base. On credential files the suite pins an
-asymmetry and no guarantee: implement mode's options carry the
-`Read(.env)` family, investigate mode's options carry no `Read` rule at
-all, and neither mode path-restricts `Grep` or `Glob`. Every guest test
-mocks the SDK boundary, so what's asserted is which rules are handed to
-Claude Code, not that the CLI refused a read.
+asymmetry and no guarantee: the options for implement and run modes
+carry the `Read(.env)` family, investigate mode's options carry no
+`Read` rule at all, and no mode path-restricts `Grep` or `Glob`. Every
+guest test mocks the SDK boundary, so what's asserted is which rules
+are handed to Claude Code, not that the CLI refused a read.
 
 Cost and provenance stay apart. Metered, subscription-equivalent and
 unknown never merge. Provenance is stamped at write time and can't be

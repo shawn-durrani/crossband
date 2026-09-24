@@ -29,7 +29,7 @@ The Spend page's By source table splits your spend into these rows.
 |---|---|---|
 | **Model turns** | Every reply from a seated model, Claude and GPT alike. | Metered on your API key, always. |
 | **Coding agent** | A turn by a Claude Code guest you summoned into the chat. | Your API key or your [Claude Code subscription](https://code.claude.com/docs/en/costs), whichever the turn recorded. |
-| **Utility (background model work)** | Rolling summaries, auto-titles and project distillation, plus the room and voice scans. | Metered on your API key, when a utility model is set. |
+| **Utility (background model work)** | Rolling summaries, auto-titles and project distillation, plus the scans that read what you say. | Metered on your API key, when a utility model is set. |
 
 The cache log line covers the Claude seats in Model turns and nothing
 else. A GPT seat talks to the
@@ -289,10 +289,10 @@ grows too large. The auto-title names a chat from its content, and
 project distillation folds a chat's new messages into the project's
 memory notes.
 
-`llm_util.utility_complete_logged` covers the room and voice scans,
-with `kind` set to `intent_scan` or `mismatch_check`. A scan has a chat
-id but no open database connection, so that writer opens its own on a
-worker thread.
+`llm_util.utility_complete_logged` covers the scans that read what you
+say, with `kind` set to `intent_scan` or `mismatch_check`. A scan has a
+chat id but no open database connection, so that writer opens its own
+on a worker thread.
 
 Each real call writes one row to `utility_usage` and commits it at
 once. The row holds `chat_id`, `kind`, `model`, `input_tokens`,
@@ -305,8 +305,11 @@ their whole turn in a handler that abandons the remaining work, so a
 failed spend insert would otherwise cost you a name correction or a
 mismatch flag. The reply is returned either way.
 
-A busy room-mode turn can fire four scans, and the Spend page folds
-every kind into one utility line, so room mode makes that line grow.
+Every message you send fires one `intent_scan`, which looks for an
+instruction, unless it's a `/` message. A voice turn the app puts a
+name on can add one `mismatch_check`, which asks whether the words fit
+that name. The Spend page folds every kind into one utility line, so
+that line grows with every message you send.
 
 When there's no key for the utility model, no call goes out and
 nothing is logged. The app carries on without the summary or title and

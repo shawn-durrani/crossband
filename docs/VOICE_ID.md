@@ -82,12 +82,14 @@ stateDiagram-v2
 
 ## How room mode hears what you say
 
-Room mode listens for spoken introductions, like "say hi to Alex" or
-"my mate Dave is here", for the mode commands "group mode" and "solo
-mode", for a spoken name correction, and for a change to how hard a
-seat should think. A small, cheap model reads every user turn once
-and says which of these it holds, so an unusual phrasing lands the
-same way a common one does.
+The app listens for spoken introductions, like "say hi to Alex" or "my
+mate Dave is here", and for the mode commands "group mode" and "solo
+mode". It also hears a spoken name correction, a change to how hard a
+seat should think, and "research more", which turns on
+[research mode](WEB_RESEARCH.md#research-mode). A small, cheap model
+reads every turn you send once and says which of these it holds, so an
+unusual phrasing lands the same way a common one does. It reads typed
+turns as well as spoken ones, whether or not room mode is on.
 
 - Recognising a voice needs no wording at all. Every spoken turn gets
   a quiet voice check on your own computer, so a person the app
@@ -179,8 +181,9 @@ as a final guard.
 ## English bias
 
 Two separate parts lean English. The first is the one model call that
-reads every turn, so an introduction, a command, a correction or a
-depth change spoken in another language will often not be recognised.
+reads every turn, so an introduction, a command, a correction, a depth
+change or a research request spoken in another language will often not
+be recognised.
 Use the switches in the voice settings drawer, or type the command.
 Recognising a voice the app already knows still works in any language,
 because it listens to the voice and not to the words.

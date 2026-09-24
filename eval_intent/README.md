@@ -2,18 +2,18 @@
 
 You can change how a chat works by saying so: "group mode on" lets
 several people talk, "this is Dave" adds a person, "her name is spelt
-Aleks" fixes a name, and "think harder" makes a seat think more. Before
-the app asks a model whether you meant one of those, it checks your
-words against four fixed phrase lists, and a wording that isn't on a
-list goes nowhere, with nothing to say so. This package measures that,
-and measures the proposed fix. The fix is one model call per turn that
-reads the message and returns every kind of instruction at once, with
-the "research more" cue as a fifth kind.
+Aleks" fixes a name, "think harder" makes a seat think more, and
+"research more" turns on research mode. The app hears all of these
+with one call to the utility model per turn. That call reads the
+message and returns every kind of instruction at once. This package
+measures how well it hears them, against a baseline of four fixed
+phrase lists.
 
 It measures and nothing more. It never touches the live scan, and
-nothing here changes what the app hears. It produces the numbers a
-person needs to decide whether the merged call should replace the four
-lists.
+nothing here changes what the app hears. It runs the app's own prompt
+and parser from `backend/intent.py`, so a change to either shows up in
+the next run. Run it when you change that prompt or try a different
+utility model.
 
 ## What a fixture is
 
@@ -22,25 +22,28 @@ it, graded by hand across five axes: a room mode switch, introductions
 and departures with any alias, name corrections, a thinking depth
 change with a one-off flag, and a research request. A fixture also
 names the owner, who is known present, who is known by name, and the
-seats, because the live prompts take those. An empty expectation means
+seats, because the prompts take those. An empty expectation means
 the turn is plain chat, or only talks about one of these things.
 
-The corpus in `fixtures/` covers the wordings the lists are known to
-drop, the negatives the live depth prompt guards against, research
+The corpus in `fixtures/` covers the wordings the phrase lists are
+known to drop, the negatives the depth rules guard against, research
 requests against tool requests, and turns that carry two instructions
 at once. All of it is made up. A set built from real turns belongs
 outside the repository.
 
 ## What it compares
 
-Today's path runs the four live prompts, each only when its phrase
-list fires, and hears no research cue at all. The merged path builds
-one prompt from the same rules and parses the reply with the app's own
-parsers, so the judge is the same and only the gate changes.
+The `merged` strategy is the path the app runs, one call per turn.
+The strategy named `today` is the baseline, and the app doesn't run it.
+It checks each turn against the four phrase lists, sends a separate
+prompt for each list that fires, and hears no research cue at all. The
+lists stay in the code only so the harness has that baseline. Both
+paths parse replies with the app's own parsers, so the judge is the
+same and only the gate changes.
 
-One number needs no model and no key: how many instruction turns
-today's lists never send to a model. It comes from running the real
-prefilters over the corpus, so it is true in mock mode too.
+One number needs no model and no key: how many instruction turns the
+phrase lists never send to a model. It comes from running the lists
+over the corpus, so it is true in mock mode too.
 
 ## Run it
 
@@ -78,15 +81,16 @@ keyless:
 
 ## Reading the report
 
-The first line is the dropped-turn count, the instruction turns
-today's lists never send to a model, and on which axes. Any count but
-zero is a silent miss in the live app today.
+Near the top is the dropped-turn count, the instruction turns the
+phrase lists never send to a model, and on which axes. The report calls
+them today's lists. It's a count for the baseline, and the app itself
+sends every turn to the model.
 
 The strategy table gives, for each path, the share of turns heard
 right on every axis, the calls per turn, the cost per turn from the
-rate card, and the median latency. The merged path earns the switch
-if it hears at least as much as today on every axis, and the cost line
-says what that costs.
+rate card, and the median latency. The merged path should hear at
+least as much as the baseline on every axis, and the cost line says
+what that costs.
 
 The axis and category tables say where each path fails. Misses are
 listed with the turn's text and the reply, so a wrong parse can be told

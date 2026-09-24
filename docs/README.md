@@ -19,9 +19,8 @@ you, or an AI assistant you paste it to, can do the task it covers.
    something in README.md says "configured in `config.local.json`".
 4. [docs/VOICE_ID.md](VOICE_ID.md): how the app tells voices apart in
    room mode, where that falls short in a house it wasn't tuned in, and
-   what to change. Where the trigger phrases came from, the English
-   bias, every tuning knob, similar-sounding voices, and the scale
-   bounds.
+   what to change. How room mode hears what you say, the English bias,
+   every tuning knob, similar-sounding voices, and the scale bounds.
 5. [docs/BENCHMARK.md](BENCHMARK.md): the benchmark on the Models page.
    The same scripted cases through the seats you pick, stage timings
    side by side, saved audio for your own ears, and what the numbers
@@ -95,9 +94,10 @@ page says what it costs and what it touches.
   a round fetches from memory earn their wait. Your own turns and your
   own membro, so its corpus stays on the machine.
 - [eval_intent/README.md](../eval_intent/README.md): the spoken
-  instruction question. How many wordings do today's phrase lists
-  drop, and does one merged model call hear more? Made-up turns, the
-  utility model, API spend per run.
+  instruction question. Does the one model call that reads every turn
+  hear what you meant, and does it hear at least as much as a baseline
+  of fixed phrase lists? Made-up turns, the utility model, API spend
+  per run.
 
 ## Safety, security, history
 
