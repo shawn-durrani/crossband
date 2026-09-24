@@ -83,7 +83,7 @@ export default function VoiceDock({
             <div
               className="voice-chips"
               title={rosterHint || undefined}
-              aria-label={rosterText || 'Voices this session can name'}
+              aria-label={rosterText || 'Room mode and your voice'}
             >
               {/* The room-mode indicator (#28: the room button became an
                   indicator). Passive by design - NO click handler: arming

@@ -239,7 +239,7 @@ export function boundedChips(chips, max = MAX_DOCK_CHIPS) {
   }
 }
 
-// The mobile call screen's single line - "Listening · Shawn ✓ +1" - which
+// The mobile call screen's single line - "Listening · Alex ✓ +1" - which
 // expands on tap into the same chips the desktop tray shows. `status` is
 // the already-derived status line (voiceView.statusFor); its trailing
 // ellipsis is dropped so the separators read as one sentence. With no
@@ -258,9 +258,11 @@ export function collapsedVoiceSummary(status, chips) {
 // `chips` (#28, dock refinement) is the two-tier dock's status tier: one
 // bounded chip per person, replacing the unbounded prose run that used to
 // overflow the tray. `voices` and the readouts stay - they moved behind the
-// settings disclosure rather than away.
+// settings disclosure rather than away. `ownerName` (the user_name setting)
+// is who the chips show when there is no roster: the owner alone (#306),
+// never every remembered voice. `voices` still lists them all.
 export function healthStrip({ health, people, roster, sufficientSeconds,
-                              minShortClips, sessionActive,
+                              minShortClips, sessionActive, ownerName,
                               maxChips = MAX_DOCK_CHIPS }) {
   if (!health || typeof health !== 'object') return null
   return {
@@ -271,7 +273,8 @@ export function healthStrip({ health, people, roster, sufficientSeconds,
     close: closeVoiceLines(people),
     learning: learningLines(people, health.learning),
     chips: boundedChips(
-      voiceChips(roster, people, sufficientSeconds, minShortClips), maxChips),
+      voiceChips(roster, people, sufficientSeconds, minShortClips, ownerName),
+      maxChips),
   }
 }
 

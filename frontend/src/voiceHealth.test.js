@@ -264,6 +264,65 @@ test('the strip hands over a ready-bounded chip row', () => {
   assert.equal(many.chips.more, '+2')
 })
 
+// #306: with room mode off, the tray and the phone's one-liner listed every
+// remembered voice with a tick ("Listening · Alex ✓ +7"), which read as
+// "these people are in the call". They show the owner alone now, and the
+// full remembered list stays in `voices`, behind the settings button.
+const remembered = ['Alex', 'Sam', 'Dave', 'Mateo']
+  .map((name) => ({ person_id: name.toLowerCase(), name, seconds: 9, sufficient: true }))
+
+test('room mode off: the tray, the "+N" and the phone line show the owner alone', () => {
+  const strip = healthStrip({
+    health: { matcher: 'ready', chat: { room_mode: false, ambient_off: false,
+                                        roster_count: 0 },
+              last_decision: null },
+    roster: [], people: remembered, ownerName: 'Alex',
+    // A tight bound, so the old fallback would have shown a "+N" here.
+    sufficientSeconds: 6, sessionActive: true, maxChips: 2,
+  })
+  assert.equal(strip.mode.label, 'listening')
+  assert.deepEqual(strip.chips.all.map((c) => c.name), ['Alex'])
+  assert.deepEqual(strip.chips.shown.map((c) => c.label), ['Alex'])
+  assert.equal(strip.chips.more, '')
+  assert.equal(strip.chips.moreTitle, '')
+  // The tooltip is the one tick explainer, and it names only the owner.
+  assert.match(strip.chips.shown[0].title, /^Alex's voice is remembered/)
+  assert.equal(collapsedVoiceSummary('Listening…', strip.chips.all), 'Listening · Alex ✓')
+  // Nothing is lost: the settings readout still lists every learnt voice.
+  assert.equal(strip.voices.length, remembered.length)
+})
+
+test('room mode off with no learnt voice for the owner: no chip, just the status', () => {
+  const strip = healthStrip({
+    health: { matcher: 'ready', chat: { room_mode: false, roster_count: 0 },
+              last_decision: null },
+    roster: [], people: remembered, ownerName: 'User',
+    sufficientSeconds: 6, sessionActive: true,
+  })
+  assert.deepEqual(strip.chips.all, [])
+  assert.equal(strip.chips.more, '')
+  assert.equal(collapsedVoiceSummary('Listening…', strip.chips.all), 'Listening')
+})
+
+test('room mode on: the chips stay the seated roster, owner or not', () => {
+  const roster = [
+    { person_id: 'alex', name: 'Alex', status: 'present', sufficient: true, anchor_seconds: 9 },
+    { person_id: 'sam', name: 'Sam', status: 'present', sufficient: true, anchor_seconds: 9 },
+    { person_id: 'dave', name: 'Dave', status: 'present', sufficient: false, anchor_seconds: 2 },
+  ]
+  const strip = healthStrip({
+    health: { matcher: 'ready', chat: { room_mode: true, roster_count: 3 },
+              last_decision: null },
+    roster, people: remembered, ownerName: 'Alex',
+    sufficientSeconds: 6, sessionActive: true,
+  })
+  assert.equal(strip.mode.label, 'room on · 3')
+  assert.deepEqual(strip.chips.all.map((c) => c.label),
+                   ['Alex', 'Sam', 'Dave · learning 2s'])
+  assert.equal(collapsedVoiceSummary('Listening…', strip.chips.all),
+               'Listening · Alex ✓ +2')
+})
+
 test('the pulse says WHY a turn went unnamed, not just that it did', () => {
   // #28, thirteenth field test: "identity pending" hid two different
   // problems. The matcher already knows which; the strip now says it.

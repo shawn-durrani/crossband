@@ -763,8 +763,10 @@ export default function App() {
         people: voicePeople,
         // The roster feeds the per-person chips (#28, the dock refinement):
         // in a room the chips describe who is IN it; with no roster they
-        // fall back to the remembered voices. Rule in roomState.js.
+        // show the owner alone (#306), found by the user_name setting.
+        // Rule in roomState.js.
         roster: roomInfo?.roster,
+        ownerName: cfg?.user_name,
         sufficientSeconds: roomInfo?.sufficient_seconds,
         minShortClips: roomInfo?.min_short_clips,
         sessionActive: true,

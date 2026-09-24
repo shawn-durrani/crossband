@@ -242,14 +242,16 @@ model's published benchmarks plus the voices in one home.
 
 Change one knob at a time, and check the voice dock first. Its top
 row leads with the room state ("room on · N", "listening" or "solo").
-Next comes one chip per person, which shows a tick once their voice is
-remembered, or "learning 4s" while it's still being learnt, and the
-row ends with how fast the last turn was identified. The tick
-describes the stored voice and says nothing about the turn being
-spoken. Each turn's own label shows the live attribution, and a hard
-turn can stay uncertain under a green tick. The matcher's own state
-and any "sound close" warning sit behind the settings button beside
-the controls, along with the manual room switches.
+Next comes one chip per person seated in the room, which shows a tick
+once their voice is remembered, or "learning 4s" while it's still being
+learnt, and the row ends with how fast the last turn was identified.
+While the room is off, the only chip is yours, once the app has started
+learning your voice. Everyone it remembers is listed on the Voices
+page. The tick describes the stored voice and says nothing about the
+turn being spoken. Each turn's own label shows the live attribution,
+and a hard turn can stay uncertain under a green tick. The matcher's
+own state and any "sound close" warning sit behind the settings button
+beside the controls, along with the manual room switches.
 
 ## When two people sound alike
 
