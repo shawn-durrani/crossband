@@ -80,6 +80,45 @@ The app backs up its database and its learnt voices on its own, into
 folder are settings, and [docs/CONFIG.md](CONFIG.md#backups) lists
 them.
 
+## Keeping the Mac reachable while you're away
+
+When the Mac that runs the app goes to sleep, it drops off your
+[tailnet](REMOTE_ACCESS.md), the private network your phone reaches it
+over. Every app on the Mac disappears from your phone at once. Your
+phone can't wake it, and nothing tells you it's asleep rather than
+broken. If you'll use the app from your phone while you're away, turn
+sleep off before you go.
+
+```sh
+sudo pmset -a disablesleep 1
+```
+
+`pmset` is the macOS command for power settings, and this one stops
+the Mac sleeping at all, with the lid open or shut. Check it with
+`pmset -g`, which shows `SleepDisabled 1` while it's on. When you're
+back, turn it off again.
+
+```sh
+sudo pmset -a disablesleep 0
+```
+
+Leave the Mac plugged in while the setting is on. It runs warmer with
+the lid shut, and on battery it drains until it goes flat.
+
+Setting the sleep timer to never with `sudo pmset -c sleep 0` isn't
+enough on a laptop. It covers the idle timer on mains power, and a
+closed lid still sleeps the Mac. Unplugged, the Mac also sleeps on its
+battery timer.
+
+A sleeping Mac makes no backups. The backup timer counts only time the
+Mac is awake, so the hours in `backup_interval_hours` are waking hours.
+
+If every app goes quiet on your phone at once, look at the Mac on the
+[Machines page](https://login.tailscale.com/admin/machines) of the
+Tailscale admin console first. If it isn't connected there, the Mac is
+asleep or off, and the apps themselves are fine. Someone at home has
+to wake it.
+
 ## Empty chats
 
 A chat you opened and never used goes on its own two days later. The
