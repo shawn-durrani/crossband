@@ -23,7 +23,7 @@ from pathlib import Path
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -68,6 +68,21 @@ SCHEMA_VERSION = 28
 #   v28  chats.research_mode + research_set_by + research_set_at (spoken
 #        research mode, per chat: a bigger tool budget and the research
 #        routine until "back to normal", #253/#417)
+#   v29  chat_seat_state.model + model_from + model_label + model_from_label
+#        + model_set_by + model_set_at + model_source (a seat stepped up to a
+#        stronger model for one chat, #254)
+
+# v29's columns (#254), shared by the migration step and nothing else: the
+# CREATE TABLE in SCHEMA spells the same list out for a fresh database.
+_SEAT_MODEL_COLUMNS = (
+    ("model", "TEXT NOT NULL DEFAULT ''"),
+    ("model_from", "TEXT NOT NULL DEFAULT ''"),
+    ("model_label", "TEXT NOT NULL DEFAULT ''"),
+    ("model_from_label", "TEXT NOT NULL DEFAULT ''"),
+    ("model_set_by", "TEXT NOT NULL DEFAULT ''"),
+    ("model_set_at", "REAL NOT NULL DEFAULT 0"),
+    ("model_source", "TEXT NOT NULL DEFAULT ''"),
+)
 
 # Configurable at runtime (tests, custom data dirs) via configure().
 # Read DIRECTLY from the environment at import time, outside the Settings
@@ -319,6 +334,21 @@ CREATE TABLE IF NOT EXISTS chat_seat_state(
   -- one-reply override too, so a "since the escalation" figure anchored
   -- there would silently reset; this only moves when the depth does.
   set_at REAL NOT NULL DEFAULT 0,
+  -- #254: a stronger model for this seat in this chat only. model is the
+  -- id the seat runs instead of its configured one, '' for none. model_from
+  -- is the configured model it replaced: when the owner edits the seat's
+  -- model in settings the two stop matching and the step-up stops applying,
+  -- so an explicit choice always wins over a spoken one. The labels are the
+  -- provider's display names at switch time, for notices and the seat note;
+  -- model_source is the domain the ranking came from. A row stays alive
+  -- while any of reasoning_effort, once_effort or model is set.
+  model TEXT NOT NULL DEFAULT '',
+  model_from TEXT NOT NULL DEFAULT '',
+  model_label TEXT NOT NULL DEFAULT '',
+  model_from_label TEXT NOT NULL DEFAULT '',
+  model_set_by TEXT NOT NULL DEFAULT '',
+  model_set_at REAL NOT NULL DEFAULT 0,
+  model_source TEXT NOT NULL DEFAULT '',
   updated_at REAL NOT NULL,
   PRIMARY KEY (chat_id, slug)
 );
@@ -640,6 +670,16 @@ def init(settings=None):
         if mcols and "web_sources" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN web_sources "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 28:  # v29: a seat's per-chat model step-up (#254).
+        # Every column defaults blank or zero, so every existing row runs its
+        # configured model - exactly its pre-migration behaviour.
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='chat_seat_state'").fetchone():
+            cols = {r[1] for r in con.execute("PRAGMA table_info(chat_seat_state)")}
+            for col, decl in _SEAT_MODEL_COLUMNS:
+                if col not in cols:
+                    con.execute(f"ALTER TABLE chat_seat_state ADD COLUMN {col} "
+                                f"{decl}")
     if 1 <= version <= 27:  # v28: spoken research mode (#253/#417).
         # All three default off/blank/zero, so every existing chat simply
         # has research mode off - exactly its pre-migration behaviour.
@@ -1418,13 +1458,25 @@ def set_chat_seat_depth(con, chat_id, slug, effort, keep_once=False, set_by=""):
             "UPDATE chat_seat_state SET reasoning_effort='', set_by='', "
             "set_at=0, updated_at=? WHERE chat_id=? AND slug=?",
             (now(), chat_id, slug))
-        con.execute(
-            "DELETE FROM chat_seat_state WHERE chat_id=? AND slug=? "
-            "AND once_effort=''", (chat_id, slug))
+        _prune_seat_row(con, chat_id, slug)
     else:
-        con.execute("DELETE FROM chat_seat_state WHERE chat_id=? AND slug=?",
-                    (chat_id, slug))
+        con.execute(
+            "UPDATE chat_seat_state SET reasoning_effort='', set_by='', "
+            "set_at=0, once_effort='', once_by='', updated_at=? "
+            "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
+        _prune_seat_row(con, chat_id, slug)
     con.commit()
+
+
+def _prune_seat_row(con, chat_id, slug):
+    """Delete a seat's row once nothing in it is set. A row stays alive
+    while any of the standing depth, a parked one-reply override or a model
+    step-up (#254) holds, so clearing one never silently drops another.
+    Caller commits."""
+    con.execute(
+        "DELETE FROM chat_seat_state WHERE chat_id=? AND slug=? "
+        "AND reasoning_effort='' AND once_effort='' AND model=''",
+        (chat_id, slug))
 
 
 def set_chat_seat_once(con, chat_id, slug, effort, once_by=""):
@@ -1456,15 +1508,67 @@ def take_chat_seat_once_by(con, chat_id, slug) -> tuple:
         "WHERE chat_id=? AND slug=?", (chat_id, slug)).fetchone()
     if not row or not row["once_effort"]:
         return "", ""
-    if row["reasoning_effort"]:
-        con.execute(
-            "UPDATE chat_seat_state SET once_effort='', once_by='', updated_at=? "
-            "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
-    else:
-        con.execute("DELETE FROM chat_seat_state WHERE chat_id=? AND slug=?",
-                    (chat_id, slug))
+    con.execute(
+        "UPDATE chat_seat_state SET once_effort='', once_by='', updated_at=? "
+        "WHERE chat_id=? AND slug=?", (now(), chat_id, slug))
+    _prune_seat_row(con, chat_id, slug)
     con.commit()
     return row["once_effort"], row["once_by"] or ""
+
+
+def get_chat_seat_models(con, chat_id) -> dict:
+    """slug -> the seat's model step-up in this chat (#254), for seats that
+    have one: {"model", "from", "label", "from_label", "set_by", "set_at",
+    "source"}. Whether it still applies is the reader's call - the engine
+    runs it only while `from` matches the seat's configured model, so an
+    edit in settings wins (model_step.live_step)."""
+    return {r["slug"]: {"model": r["model"], "from": r["model_from"],
+                        "label": r["model_label"] or r["model"],
+                        "from_label": r["model_from_label"] or r["model_from"],
+                        "set_by": r["model_set_by"] or "",
+                        "set_at": r["model_set_at"] or 0.0,
+                        "source": r["model_source"] or ""}
+            for r in con.execute(
+                "SELECT slug, model, model_from, model_label, model_from_label, "
+                "model_set_by, model_set_at, model_source FROM chat_seat_state "
+                "WHERE chat_id=? AND model != ''", (chat_id,))}
+
+
+def set_chat_seat_model(con, chat_id, slug, model, *, model_from, label="",
+                        from_label="", set_by="", source=""):
+    """Step one seat up to `model` for this chat only (#254). `model_from`
+    is the configured model it replaces. Leaves the seat's depth and any
+    parked override exactly as they were."""
+    ts = now()
+    con.execute(
+        "INSERT INTO chat_seat_state(chat_id, slug, model, model_from, "
+        "model_label, model_from_label, model_set_by, model_set_at, "
+        "model_source, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(chat_id, slug) DO UPDATE SET "
+        "model=excluded.model, model_from=excluded.model_from, "
+        "model_label=excluded.model_label, "
+        "model_from_label=excluded.model_from_label, "
+        "model_set_by=excluded.model_set_by, "
+        "model_set_at=excluded.model_set_at, "
+        "model_source=excluded.model_source, updated_at=excluded.updated_at",
+        (chat_id, slug, model, model_from, label or "", from_label or "",
+         set_by or "", ts, source or "", ts))
+    con.commit()
+
+
+def clear_chat_seat_model(con, chat_id, slug) -> bool:
+    """Put one seat back on its configured model in this chat (#254).
+    True when a step-up was actually cleared. The row survives while the
+    seat still has a depth or a parked override."""
+    cur = con.execute(
+        "UPDATE chat_seat_state SET model='', model_from='', model_label='', "
+        "model_from_label='', model_set_by='', model_set_at=0, "
+        "model_source='', updated_at=? WHERE chat_id=? AND slug=? "
+        "AND model != ''", (now(), chat_id, slug))
+    if cur.rowcount:
+        _prune_seat_row(con, chat_id, slug)
+    con.commit()
+    return bool(cur.rowcount)
 
 
 def mark_room_person_left(con, chat_id, name):

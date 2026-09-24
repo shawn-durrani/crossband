@@ -7,7 +7,7 @@
 // backwards clocks are skipped; the payload is content-free; flush ships once.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { VoiceTrace } from './voiceTrace.js'
+import { VoiceTrace, traceMeta } from './voiceTrace.js'
 
 // A controllable clock so timings are deterministic.
 function fakeClock(start = 0) {
@@ -292,4 +292,22 @@ test('deferred flush of a captured turn is idempotent', () => {
   tr.flush(captured)
   tr.flush(captured)   // playChain reject+resolve handlers could both fire
   assert.equal(calls, 1)
+})
+
+// #254: a seat stepped up to a stronger model for one chat runs a model its
+// settings don't name. The trace must carry the model the turn really ran on.
+test('traceMeta labels a stepped-up turn with the model it ran on', () => {
+  const roster = [{ slug: 'claude', provider: 'anthropic', model: 'claude-sonnet-5' }]
+  assert.deepEqual(traceMeta(roster, 'claude', { claude: 'claude-opus-5' }), {
+    provider: 'anthropic', model: 'claude-opus-5', tts_provider: 'elevenlabs',
+  })
+})
+
+test('traceMeta falls back to the configured model, then to blanks', () => {
+  const roster = [{ slug: 'gpt', provider: 'openai', model: 'gpt-5.1' }]
+  assert.equal(traceMeta(roster, 'gpt', {}).model, 'gpt-5.1')
+  assert.equal(traceMeta(roster, 'gpt', undefined).model, 'gpt-5.1')
+  assert.deepEqual(traceMeta(roster, 'nobody', {}), {
+    provider: '', model: '', tts_provider: 'elevenlabs',
+  })
 })

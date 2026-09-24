@@ -14,16 +14,26 @@
 // Tone contract (drives visual weight, brightest → dimmest):
 //   'attention' - a change is set but the last reply predates it (needs the eye).
 //   'confirm'   - the last reply already ran on the live model (reassurance, muted).
-//   'muted'     - background context (stale config seed); never dominant.
+//   'muted'     - background context (stale config seed, a one-chat step-up);
+//                 never dominant.
 export function modelReadoutLines(status) {
   if (!status) return []
-  const { last_used, seed, seed_drift, pending } = status
+  const { last_used, seed, seed_drift, pending, stepped_up } = status
   const lines = []
   // Confirmation / pending state comes first: it answers "did my switch take?".
   if (pending) {
     lines.push({
       key: 'pending', tone: 'attention', icon: 'alert',
       label: 'last reply used', model: last_used, tail: '- change applies next turn',
+    })
+  } else if (stepped_up) {
+    // #254: one chat asked for a stronger model, so the last reply ran on it
+    // on purpose. The configured model above is still what every other chat
+    // uses - context, never an alarm.
+    lines.push({
+      key: 'stepped', tone: 'muted', icon: null,
+      label: 'last reply ran on', model: last_used,
+      tail: '- a stronger model one chat asked for',
     })
   } else if (last_used) {
     lines.push({

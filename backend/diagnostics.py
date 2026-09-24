@@ -112,14 +112,21 @@ def participants_status(pricing: dict, seeds: dict | None = None) -> list[dict]:
                 "ORDER BY created_at DESC, id DESC LIMIT 1",
                 (slug,),
             ).fetchone()
-            last_used = last_used_at = None
+            last_used = last_used_at = stepped_from = None
             if row:
                 try:
-                    last_used = (json.loads(row["usage_json"]) or {}).get("model")
+                    usage = json.loads(row["usage_json"]) or {}
+                    last_used = usage.get("model")
+                    stepped_from = usage.get("stepped_from")
                     last_used_at = row["created_at"]
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, AttributeError):
                     pass  # malformed usage row: treat as "no stamp", don't 500
             configured = p["model"]
+            # #254: a reply that ran on a per-chat step-up differs from the
+            # configured model on purpose. It is not a settings change
+            # waiting for its turn, so it must never read as pending.
+            stepped_up = bool(last_used and last_used != configured
+                              and stepped_from == configured)
             seed = seeds.get(slug) if slug in _SEED_SEAT else None
             lifecycle = p.get("lifecycle") or prov.TRIAL
             source = provenance_for(configured, pricing,
@@ -135,7 +142,9 @@ def participants_status(pricing: dict, seeds: dict | None = None) -> list[dict]:
                 "last_used_at": last_used_at,
                 "seed": seed,
                 "seed_drift": bool(seed and seed != configured),
-                "pending": bool(last_used and last_used != configured),
+                "pending": bool(last_used and last_used != configured
+                                and not stepped_up),
+                "stepped_up": stepped_up,
                 "lifecycle": lifecycle,
                 "cost_provenance": source,
                 "cost_provenance_label": prov.PROVENANCE_LABELS.get(source, source),

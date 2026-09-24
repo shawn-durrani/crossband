@@ -662,7 +662,8 @@ def test_cache_prefix_rides_usage_json(cfg, monkeypatch):
     providers._last_prefix.clear()
     u = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
     pref = u["cache_prefix"]
-    assert set(pref) == {"tools", "stable", "volatile", "transcript", "changed"}
+    assert set(pref) == {"model", "tools", "stable", "volatile", "transcript",
+                         "changed"}
     assert pref["changed"] == ["first-call"]
 
 
@@ -675,6 +676,22 @@ def test_changing_the_tool_list_is_reported_as_a_tools_change(cfg, monkeypatch):
     _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
     u2 = _usage_of(monkeypatch, cfg, tools=TOOL_B, chat_id=1)
     assert u2["cache_prefix"]["changed"] == ["tools"]
+
+
+def test_a_model_step_up_is_reported_as_a_model_change(cfg, monkeypatch):
+    """#254: a per-chat step-up moves a seat onto a model holding none of the
+    old model's cache. Same chat, same seat, same prompt: without the model
+    as a component, that whole-prefix re-write read as nothing changed."""
+    providers._last_prefix.clear()
+    _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
+    stepped = {**SONNET, "model": "claude-opus-5"}
+    u2 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1,
+                   participant=stepped)
+    assert u2["cache_prefix"]["changed"] == ["model"]
+    assert u2["cache_prefix"]["model"] == "claude-opus-5"
+    # and back again, on "back to normal": the same report the other way
+    u3 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
+    assert u3["cache_prefix"]["changed"] == ["model"]
 
 
 def test_an_identical_call_reports_nothing_changed(cfg, monkeypatch):

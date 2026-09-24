@@ -19,6 +19,7 @@ import time
 from . import attachments as att_mod
 from . import chat_memory, citations, db, echo, guest, passes, person_sync
 from . import depth as depth_mod
+from . import model_step
 from . import rounds as rounds_mod
 from . import seat_trace
 from . import spend_note
@@ -249,6 +250,10 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0,
                 # reaches this, so the override keeps for the next round.
                 "seat_state": db.get_chat_seat_state(con, chat_id),
                 "seat_setters": db.get_chat_seat_setters(con, chat_id),
+                # #254: each seat's per-chat model step-up, read per seat
+                # like the depth, so a step-up spoken mid-round applies from
+                # the next seat's boundary.
+                "seat_models": db.get_chat_seat_models(con, chat_id),
                 "once": (db.take_chat_seat_once_by(con, chat_id, slug)
                          if slug else ("", "")),
                 "shared_instructions": db.get_setting(con, "shared_instructions")}
@@ -498,6 +503,11 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         if live["usage"]:
             u = dict(live["usage"])
             u["model"] = p["model"]
+            if p.get("stepped_from"):
+                # #254: the turn ran on a per-chat step-up. The configured
+                # model rides along, so the Models page can tell a stepped-up
+                # reply from a settings change still waiting for its turn.
+                u["stepped_from"] = p["stepped_from"]
             # a guest turn reports its real cost itself; API speakers price
             # from the local table
             # The seat's endpoint is part of pricing it: a keyless loopback seat
@@ -669,6 +679,17 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         level = once_depth or spoken_depth
         if level:
             participant = {**participant, "reasoning_effort": level}
+        # #254: a per-chat model step-up replaces the model id and nothing
+        # else - slug, name, persona and voice stay the seat's own. Applied
+        # before anything reads participant["model"], so the call, its cost
+        # stamp, the seat trace and the latency trace all name the model the
+        # turn really ran on. `stepped_from` is the configured model.
+        step = model_step.live_step(
+            participant, state.get("seat_models", {}).get(participant["slug"]))
+        if step:
+            participant = {**participant, "model": step["model"],
+                           "stepped_from": step["from"]}
+        round_cfg["model_note"] = model_step.model_note(step, participant["name"])
         user_name = cfg.get("user_name", "User")
         # #305: every seat is told its effective depth and the one way it
         # changes, so none can claim a change it cannot make.
@@ -829,7 +850,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             live["usage"] = None
             live["attachments"] = []
             live["audit"] = []
-            yield sse({"type": "speaker_start", "speaker": participant["slug"]})
+            # #254: the model this turn runs on, so the client's latency
+            # traces carry it rather than the seat's configured model.
+            yield sse({"type": "speaker_start", "speaker": participant["slug"],
+                       "model": participant.get("model", "")})
             t_provider_call = time.monotonic() if t_iter_start is not None else None
             stream = providers.stream_reply(
                 participant, roster, transcript, names, round_cfg, project, summary,
@@ -940,6 +964,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 except Exception:
                     pass
                 yield sse({"type": "error", "speaker": participant["slug"], "message": str(e)})
+                if step and model_step.refused(e):
+                    # #254: the provider refused the stepped-up model (a chat
+                    # too long for it, an id this key can't reach). Every
+                    # later turn would fail the same way, so the seat goes
+                    # back to its configured model and the chat says so.
+                    await asyncio.to_thread(
+                        model_step.revert_after_refusal, chat_id,
+                        participant["slug"], participant["name"], step)
                 if not live["content"]:
                     live["participant"] = None
                     skip_speaker = True

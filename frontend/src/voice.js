@@ -11,7 +11,7 @@ import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs } from './turnPolicy.js'
 import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
 import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
-import { VoiceTrace } from './voiceTrace.js'
+import { VoiceTrace, traceMeta } from './voiceTrace.js'
 import { record as debugRecord } from './voiceDebug.js'
 
 // Hands-free voice session: open mic with VAD auto-send (no push-to-talk),
@@ -182,6 +182,9 @@ export default class VoiceController {
     // feeding TTS at the [written] token, so a reply's long-form body lands
     // in the transcript unspoken. Fresh per speaker_start.
     this._writtenFilters = new Map()
+    // slug -> the model the server named on that seat's latest speaker_start
+    // (#254), for the latency trace's labels.
+    this._runningModels = {}
     // Round liveness clock for the wedged-gate escape hatch (roundGuard.js):
     // stamped on EVERY incoming round event, read by the VAD's gated branch.
     this._lastRoundEventAt = 0
@@ -248,9 +251,9 @@ export default class VoiceController {
   }
 
   // Provider/model/voice labels for a speaker, for per-model trace segmentation.
+  // The model is the one the server named on this turn's speaker_start (#254).
   _traceMeta(slug) {
-    const p = this.getParticipants?.().find((x) => x.slug === slug)
-    return { provider: p?.provider || '', model: p?.model || '', tts_provider: 'elevenlabs' }
+    return traceMeta(this.getParticipants?.(), slug, this._runningModels)
   }
 
   _postTrace(payload) {
@@ -1125,6 +1128,7 @@ export default class VoiceController {
       this._state('working')
     }
     if (ev.type === 'speaker_start') {
+      this._runningModels[ev.speaker] = ev.model || '' // #254
       // Defer opening TTS until the reply has real content, so a benched model's
       // ellipsis-only "…" reply is never voiced (ElevenLabs otherwise breathes it).
       this._pendingSpeaker = { slug: ev.speaker, text: '', started: false }
