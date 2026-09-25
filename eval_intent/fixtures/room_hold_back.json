@@ -1,0 +1,143 @@
+[
+  {
+    "id": "hold_eavesdrop_until_asked",
+    "category": "room_hold_back",
+    "text": "You two don't need to respond to everything. Just eavesdrop on the conversation until one of us asks you a question.",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "expected": {},
+    "notes": "Asks the seats to hold back. Room mode is already on and stays as it is: never an arm, never a disarm."
+  },
+  {
+    "id": "hold_eavesdrop_mid_sentence",
+    "category": "room_hold_back",
+    "text": "so the council says the old fence has to come down before Friday, sorry, just go to eavesdropping mode, we're just talking, and Dave reckons we can reuse the posts",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "known": [
+      "Sam",
+      "Dave"
+    ],
+    "expected": {},
+    "notes": "The hold back request lands mid-sentence. 'Eavesdropping mode' is not room mode, and 'we're just talking' means people are here, not that the owner is alone. Dave is talked about, not introduced."
+  },
+  {
+    "id": "hold_just_listen",
+    "category": "room_hold_back",
+    "text": "Can you all just listen for a bit?",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "expected": {}
+  },
+  {
+    "id": "hold_stay_quiet_unless_asked",
+    "category": "room_hold_back",
+    "text": "Stay quiet unless we ask you something directly.",
+    "present": [
+      "Alex",
+      "Mateo"
+    ],
+    "expected": {}
+  },
+  {
+    "id": "hold_silent_mode",
+    "category": "room_hold_back",
+    "text": "Silent mode please, Sam and I are catching up.",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "expected": {},
+    "notes": "'Silent mode' is a hold back request. Sam is already present, so this is no introduction."
+  },
+  {
+    "id": "hold_listening_mode",
+    "category": "room_hold_back",
+    "text": "Listening mode for a while, you two.",
+    "expected": {}
+  },
+  {
+    "id": "hold_dont_respond_unless_asked",
+    "category": "room_hold_back",
+    "text": "Don't respond unless someone asks you a question, we're just chatting.",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "expected": {},
+    "notes": "Must not read as a quick depth change either: it's about whether to reply, not how hard to think."
+  },
+  {
+    "id": "hold_quiet_mode_on",
+    "category": "room_hold_back",
+    "text": "Quiet mode on.",
+    "expected": {},
+    "notes": "The app has no quiet mode. The words 'mode on' alone must not arm room mode."
+  },
+  {
+    "id": "hold_named_seats",
+    "category": "room_hold_back",
+    "text": "Claude, GPT, hold off replying for now, we're just talking between ourselves.",
+    "present": [
+      "Alex",
+      "Mateo"
+    ],
+    "expected": {}
+  },
+  {
+    "id": "hold_just_talking",
+    "category": "room_hold_back",
+    "text": "Don't mind us, we're just talking.",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "expected": {}
+  },
+  {
+    "id": "room_off_alone_after_departure",
+    "category": "room_command",
+    "text": "Sam's gone to bed, so it's just me now.",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "expected": {
+      "mode_command": "off",
+      "departures": [
+        "Sam"
+      ]
+    },
+    "notes": "The owner says plainly they are alone now, which is what the solo disarm needs."
+  },
+  {
+    "id": "room_off_named_mid_sentence",
+    "category": "room_command",
+    "text": "anyway that's the plan for Saturday, oh and room mode off please, Mateo's heading home",
+    "present": [
+      "Alex",
+      "Mateo"
+    ],
+    "expected": {
+      "mode_command": "off",
+      "departures": [
+        "Mateo"
+      ]
+    }
+  },
+  {
+    "id": "room_on_and_listen",
+    "category": "room_command",
+    "text": "Group mode on, and you can both just listen for now.",
+    "expected": {
+      "mode_command": "on"
+    },
+    "notes": "A named command still counts when the same message also asks the seats to hold back."
+  }
+]

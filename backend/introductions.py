@@ -750,7 +750,9 @@ SCAN_OUTCOMES = (
     "model_rejected",       # a prefilter hit, but the model found nothing
     "armed",                # room mode flipped ON by this scan
     "armed_by_command",     # room mode flipped ON by a mode command
-    "disarmed_by_command",  # room mode flipped OFF by a mode command
+    "disarmed_by_command",  # room mode flipped OFF by a mode command, or
+                            # the command stopped automatic re-arming in a
+                            # room that was already off
     "ask_raised",           # relationship-only, no remembered match: asking
     "roster_grew",          # already armed; people were added
     "roster_shrank",        # a departure freed roster slots
@@ -878,7 +880,10 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             if outcome is None or outcome == "no_change":
                 outcome = result
         if outcome is None:
-            outcome = "model_rejected"
+            # A confirmed instruction that changed nothing is "no_change",
+            # never "model_rejected": the 25 September log showed a heard
+            # mode command as rejected, which hid it from anyone reading.
+            outcome = "no_change" if outcomes else "model_rejected"
         line = intent.nothing_changed_line(verdict, outcomes)
         if line:
             await asyncio.to_thread(_insert_nothing_changed_line, chat_id, line)
@@ -1497,7 +1502,15 @@ def apply_command(chat_id, direction, cfg):
     left (the phrase says the room is back to one person; the cap frees and
     the roster chip disappears), and any open "who is speaking?" ask
     resolved - it is moot once solo. Mismatch flags stay: they doubt past
-    turns, and going solo answers nothing about those."""
+    turns, and going solo answers nothing about those.
+
+    Every change posts one system line saying what changed and the words
+    that undo it (intent.mode_changed_line; the 25 September field test,
+    where a misheard disarm emptied the room with nothing in the chat to
+    say so). A command that changes nothing returns "no_change", and the
+    scan posts its "nothing changed" line instead: that includes a disarm
+    in a chat that is already off with automatic re-arming already
+    stopped."""
     con = db.connect()
     try:
         chat = con.execute("SELECT * FROM chats WHERE id=?",
@@ -1513,15 +1526,28 @@ def apply_command(chat_id, direction, cfg):
                                      clear_ambient=True, seat_owner="on_arm",
                                      con=con)
             outcome = "armed_by_command" if flipped else "no_change"
+            if flipped:
+                db.insert_message(con, chat_id, "system",
+                                  intent.mode_changed_line("on"))
         elif direction == COMMAND_DISARM:
             # "Solo mode" is the SACRED disarm: ambient-off is set even when
             # room mode was already off (the owner is stating a preference
             # for privacy), everyone present is marked left (the cap frees)
             # and the open asks are moot once solo.
-            room_state.disarm(chat_id, source="command",
-                              set_ambient_off=True, clear_roster=True,
-                              resolve_asks=True, con=con)
-            outcome = "disarmed_by_command"
+            ambient_was_off = bool(chat["ambient_off"])
+            seated = db.get_room_roster(con, chat_id, present_only=True)
+            flipped = room_state.disarm(chat_id, source="command",
+                                        set_ambient_off=True,
+                                        clear_roster=True,
+                                        resolve_asks=True, con=con)
+            if flipped or not ambient_was_off:
+                outcome = "disarmed_by_command"
+                db.insert_message(con, chat_id, "system",
+                                  intent.mode_changed_line(
+                                      "off", was_on=flipped,
+                                      cleared_roster=bool(seated)))
+            else:
+                outcome = "no_change"  # already off, and already staying off
         else:
             return "no_change"
     finally:

@@ -28,7 +28,9 @@ the turn is plain chat, or only talks about one of these things.
 The corpus in `fixtures/` covers the wordings the phrase lists are
 known to drop, the negatives the depth rules guard against, research
 requests against tool requests, and turns that carry two instructions
-at once. All of it is made up. A set built from real turns belongs
+at once. It also covers requests for the seats to hold back, like
+"just eavesdrop until we ask", which must never switch room mode on or
+off. All of it is made up. A set built from real turns belongs
 outside the repository.
 
 ## What it compares

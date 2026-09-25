@@ -13,6 +13,12 @@ and "heard but changed nothing" wording, tested without a model.
    all, gets no line.
 4. schedule_scan's two cheap guards: an empty turn and a `/` command never
    reach the model.
+5. The 25 September field test: asking the seats to hold back ("just
+   eavesdrop", "go to eavesdropping mode, we're just talking") was read as
+   a room-mode command twice. The prompt now says a hold back request is no
+   instruction at all and that "off" needs a plain statement, and a spoken
+   room change posts mode_changed_line. Whether the model obeys is measured
+   by eval_intent's room_hold_back fixtures, not here.
 """
 
 import json
@@ -35,6 +41,33 @@ def test_merged_prompt_handles_empty_lists():
     p = intent.build_merged_prompt("hello", "Alex", [], [], [])
     assert "(none)" in p           # no seats
     assert "(nobody yet)" in p     # no present, no known
+
+
+def test_merged_prompt_says_a_hold_back_request_is_no_instruction():
+    """The regression surface for the two misreads: the wordings the owner
+    used are named as hold back requests, they count on no axis wherever
+    they sit in a turn, and a named command beside one still counts."""
+    p = intent.build_merged_prompt("hello", "Alex", ["Claude"], [], [])
+    assert "HOLD BACK" in p
+    for wording in ("eavesdrop", "just listen", "stay quiet",
+                    "you don't need to respond", "eavesdropping mode"):
+        assert wording in p, wording
+    assert "wherever it sits in the message" in p
+    assert "Anything else the same message asks still counts" in p
+
+
+def test_merged_prompt_makes_both_directions_need_a_plain_statement():
+    """"On" needs the mode named (#413's rule, now covering people talking
+    among themselves too). The sacred disarm empties the room and stops
+    automatic re-arming, so "off" needs solo or room mode off by name, or
+    the owner saying they are alone, and "we're just talking" is named as
+    the opposite."""
+    p = intent.build_merged_prompt("hello", "Alex", ["Claude"], [], [])
+    assert "return \"none\" unless the mode is named" in p
+    assert "\"off\" needs an unambiguous statement" in p
+    assert "alone now" in p
+    assert "we're just talking" in p and "the opposite of alone" in p
+    assert "When unsure, \"none\"" in p
 
 
 # ---------- parse_merged ----------
@@ -130,6 +163,42 @@ def test_line_names_the_first_no_op_axis_when_two_axes_are_both_no_ops():
     outcomes = {"mode_command": "no_change", "depth": "no_change"}
     line = intent.nothing_changed_line(verdict, outcomes)
     assert "room mode" in line and "thinking depth" not in line
+
+
+# ---------- mode_changed_line (the 25 September field test) ----------
+
+def test_changed_line_for_an_arm_names_the_undo():
+    line = intent.mode_changed_line("on")
+    assert "room mode on" in line and "it's on now" in line
+    assert 'Say "room mode off"' in line
+
+
+def test_changed_line_for_a_disarm_that_emptied_the_room():
+    line = intent.mode_changed_line("off", was_on=True, cleared_roster=True)
+    assert "it's off now" in line
+    assert "nobody is listed in the room" in line
+    assert "won't switch itself back on" in line
+    assert 'Say "room mode on"' in line
+
+
+def test_changed_line_for_a_disarm_with_nobody_seated_says_nothing_of_a_list():
+    line = intent.mode_changed_line("off", was_on=True, cleared_roster=False)
+    assert "it's off now" in line and "listed" not in line
+
+
+def test_changed_line_for_a_disarm_in_a_room_already_off():
+    line = intent.mode_changed_line("off", was_on=False)
+    assert "already off" in line and "won't switch itself back on" in line
+    assert 'Say "room mode on"' in line
+
+
+def test_changed_lines_are_plain_words():
+    """House style for a line the owner reads: no dashes, no semicolons."""
+    for line in (intent.mode_changed_line("on"),
+                 intent.mode_changed_line("off", was_on=True,
+                                          cleared_roster=True),
+                 intent.mode_changed_line("off", was_on=False)):
+        assert "\u2014" not in line and " - " not in line and ";" not in line
 
 
 # ---------- schedule_scan's two cheap guards ----------
