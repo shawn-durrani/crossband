@@ -175,18 +175,39 @@ export function voicePersonChip(person, sufficientSeconds, minShortClips) {
   }
 }
 
+// The owner's remembered voice, or null. `ownerName` is the user_name
+// setting (the bootstrap's config.user_name), and the match is the one the
+// backend's anchors find_by_name makes when it seats the owner: the identity
+// name first, then any name merged into it, both case-folded. The preferred
+// spelling is display only and never identifies anyone.
+export function ownerVoice(people, ownerName) {
+  const want = typeof ownerName === 'string' ? ownerName.trim().toLowerCase() : ''
+  if (!want) return null
+  const same = (n) => typeof n === 'string' && n.trim().toLowerCase() === want
+  const list = (people || []).filter((p) => p && typeof p === 'object')
+  return list.find((p) => same(p.name))
+    || list.find((p) => Array.isArray(p.merged_names) && p.merged_names.some(same))
+    || null
+}
+
 // The chips this session should show, ordered and de-duplicated.
 //
 // Source, and why: the people in the ROOM when there is a roster - those
 // are exactly who turns are being attributed between. With no roster (room
-// mode off) it falls back to the remembered voices, which is honest for a
-// different reason: with the mode off, every spoken turn is still checked
-// against precisely that set, so a chip there means "this voice would be
-// recognised", not "this person is here". Either way a chip only ever
-// describes what the app can do with a voice.
-export function voiceChips(roster, people, sufficientSeconds, minShortClips) {
+// mode off) it is the OWNER alone (#306). It used to fall back to every
+// remembered voice, and a row of ticked names read as "these people are in
+// this call" when a tick only ever meant "enough of this voice is learnt".
+// The full remembered list lives in the voice settings and on the Voices
+// page, where it reads as a list of learnt voices.
+//
+// The owner's chip keeps its state: a tick once their voice is remembered,
+// progress or a bare name while it is still being learnt. An owner with no
+// remembered voice at all gets no chip - the row describes voices the app
+// has learnt, and there is none to describe.
+export function voiceChips(roster, people, sufficientSeconds, minShortClips, ownerName) {
   const present = (roster || []).filter((p) => p && p.status !== 'left')
-  const source = present.length ? present : (people || [])
+  const owner = present.length ? null : ownerVoice(people, ownerName)
+  const source = present.length ? present : (owner ? [owner] : [])
   const out = []
   const seen = new Set()
   for (const p of source) {

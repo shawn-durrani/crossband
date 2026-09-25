@@ -13,7 +13,7 @@ import {
   auditionNotice, selfCollectedNotice,
   flagCopy, FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
   reassignOptions, rosterChipText, rosterTitle, sufficiencyProgress,
-  CHIP_CONFIRMED, CHIP_LEARNING, CHIP_PENDING, voiceChips, voicePersonChip,
+  CHIP_CONFIRMED, CHIP_LEARNING, CHIP_PENDING, ownerVoice, voiceChips, voicePersonChip,
 } from './roomState.js'
 
 const present = (name, sufficient = true) =>
@@ -346,8 +346,8 @@ test('no live session means nothing to adopt', () => {
 // What these pin: the three states are decided by what the app actually
 // knows about a voice (remembered, part-learned, nothing yet); the chip
 // text says the same thing on every surface; the order is best-known-first
-// and stable; and the source is the ROOM when there is one, the remembered
-// voices when there is not.
+// and stable; and the source is the ROOM when there is one, the owner alone
+// when there is not (#306).
 
 const chipPerson = (name, extra = {}) =>
   ({ person_id: name.toLowerCase(), name, status: 'present', ...extra })
@@ -422,19 +422,76 @@ test('chips read best-known-first and keep source order within a state', () => {
                    ['Alex', 'Mateo', 'Sam', 'Dave'])
 })
 
-test('chips describe the room when there is one, the remembered voices when there is not', () => {
-  const roster = [chipPerson('Sam', { sufficient: true, anchor_seconds: 9 })]
-  const people = [{ person_id: 'alex', name: 'Alex', sufficient: true, seconds: 9 }]
-  // A roster means a room: the chips are who is IN it.
-  assert.deepEqual(voiceChips(roster, people, 6, 3).map((c) => c.name), ['Sam'])
-  // No roster (room mode off): every spoken turn is still checked against
-  // the remembered voices, so those are what a chip can honestly describe.
-  assert.deepEqual(voiceChips([], people, 6, 3).map((c) => c.name), ['Alex'])
-  // Someone who has left the room is not in it.
+// #306: with room mode off the chips used to fall back to every remembered
+// voice, so a call with nobody else in it showed "Alex ✓ +7" and read as a
+// roster of who was there. The tick only ever meant "enough of this voice
+// is learnt". The owner decided the tray shows the owner alone when the
+// room is off; the remembered list stays in the voice settings.
+const household = [
+  { person_id: 'alex', name: 'Alex', sufficient: true, seconds: 9 },
+  { person_id: 'sam', name: 'Sam', sufficient: true, seconds: 8 },
+  { person_id: 'dave', name: 'Dave', sufficient: true, seconds: 7 },
+  { person_id: 'mateo', name: 'Mateo', sufficient: false, seconds: 3 },
+]
+
+test('room mode on: the chips are the people seated in the room, unchanged', () => {
+  const roster = [chipPerson('Sam', { sufficient: true, anchor_seconds: 9 }),
+                  chipPerson('Mateo', { sufficient: false, anchor_seconds: 3 })]
+  // Who is IN the room, whoever the owner is and whoever else is remembered.
+  assert.deepEqual(voiceChips(roster, household, 6, 3, 'Alex').map((c) => c.label),
+                   ['Sam', 'Mateo · learning 3s'])
+  assert.deepEqual(voiceChips(roster, household, 6, 3).map((c) => c.name),
+                   ['Sam', 'Mateo'])
+})
+
+test('room mode off: the chips show the owner alone, never every remembered voice (#306)', () => {
+  const chips = voiceChips([], household, 6, 3, 'Alex')
+  assert.deepEqual(chips.map((c) => c.name), ['Alex'])
+  assert.equal(chips[0].state, CHIP_CONFIRMED)
+  assert.equal(chips[0].short, 'Alex ✓')
+  // A roster whose people have all left is no room either.
   assert.deepEqual(
-    voiceChips([{ name: 'Sam', status: 'left', sufficient: true }], people, 6, 3)
+    voiceChips([{ name: 'Sam', status: 'left', sufficient: true }], household, 6, 3, 'Alex')
       .map((c) => c.name), ['Alex'])
+  // No roster at all behaves the same.
+  assert.deepEqual(voiceChips(null, household, 6, 3, 'Alex').map((c) => c.name), ['Alex'])
+})
+
+test('room mode off: an owner still being learnt shows without a tick', () => {
+  const part = voiceChips([], household, 6, 3, 'Mateo')
+  assert.deepEqual(part.map((c) => c.label), ['Mateo · learning 3s'])
+  assert.equal(part[0].state, CHIP_LEARNING)
+  assert.doesNotMatch(part[0].short, /✓/)
+  // Remembered, with nothing banked yet: the bare name, still no tick.
+  const bare = voiceChips([], [{ person_id: 'sam', name: 'Sam', sufficient: false,
+                                 seconds: 0 }], 6, 3, 'Sam')
+  assert.deepEqual(bare.map((c) => [c.label, c.state]), [['Sam', CHIP_PENDING]])
+})
+
+test('room mode off: an owner with no remembered voice gets no chip at all', () => {
+  // The row describes voices the app has learnt. With nothing learnt for
+  // the owner there is nothing to describe, and the other voices stay off.
+  assert.deepEqual(voiceChips([], household, 6, 3, 'User'), [])
+  assert.deepEqual(voiceChips([], [], 6, 3, 'Alex'), [])
+  assert.deepEqual(voiceChips([], household, 6, 3, ''), [])
+  assert.deepEqual(voiceChips([], household, 6, 3), [])
   assert.deepEqual(voiceChips(null, null, 6, 3), [])
+})
+
+test('the owner is found the way the backend seats them', () => {
+  // anchors.find_by_name: identity name first, then a merged-away name,
+  // case-folded. A preferred spelling shows on the chip but never matches.
+  const people = [
+    { person_id: 'sam', name: 'Sam', sufficient: true, seconds: 9 },
+    { person_id: 'dave', name: 'Dave', preferred_name: 'Mateo',
+      merged_names: ['Davey'], sufficient: true, seconds: 9 },
+  ]
+  assert.equal(ownerVoice(people, '  sAM ').person_id, 'sam')
+  assert.equal(ownerVoice(people, 'Davey').person_id, 'dave')
+  assert.equal(ownerVoice(people, 'Mateo'), null)
+  assert.deepEqual(voiceChips([], people, 6, 3, 'davey').map((c) => c.name), ['Mateo'])
+  assert.equal(ownerVoice([null, {}, 'junk'], 'Sam'), null)
+  assert.equal(ownerVoice(people, null), null)
 })
 
 test('the same person never chips twice', () => {
