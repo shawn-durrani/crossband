@@ -254,6 +254,8 @@ equals the key. Failing that, an entry that names your id in its
 `aliases` list wins, which is how one card covers a second id you're
 saying is priced the same. Failing that, a date-stamped or
 build-stamped reissue matches its base entry, so `gpt-5.5` prices
-`gpt-5.5-2026-01-15`. There's no broad family fallback. A model with a
+`gpt-5.5-2026-01-15`. The stamp is at least four digits. A point
+release like `claude-opus-5-5` is a new model, and it stays unpriced
+until you price it. There's no broad family fallback. A model with a
 new name stays unpriced until you price it, and it never inherits an
 unrelated family's card.

@@ -551,12 +551,14 @@ def load_settings(root: Path | None = None, environ=None) -> Settings:
 
 
 # A date/build-stamped reissue of the SAME model: the key, then a boundary
-# separator, then a DIGIT (a date or build number, e.g. `-2026-01-15`,
-# `-20260101`). This is the ONLY implicit prefix inheritance left - deliberately
-# narrow, so a differently-NAMED model (`gpt-5.6-terra`, `gpt-5-mini`, whose
-# suffix begins with `.` or a letter) never matches a shorter family key and is
-# never silently priced as an older family.
-_DATED_VARIANT = re.compile(r"^[-:@/_ ]\d")
+# separator, then a stamp of at least FOUR digits (a date or build number,
+# e.g. `-2026-01-15`, `-20260101`, `-0125`). This is the ONLY implicit prefix
+# inheritance left - deliberately narrow, so a differently-NAMED model
+# (`gpt-5.6-terra`, `gpt-5-mini`, whose suffix begins with `.` or a letter)
+# never matches a shorter family key and is never silently priced as an older
+# family. Four digits, not one (#254): a point release is a new model, and
+# `claude-opus-5-5` read as a reissue of `claude-opus-5` stamped "5".
+_DATED_VARIANT = re.compile(r"^[-:@/_ ]\d{4}")
 
 
 def _is_dated_variant(model, key) -> bool:

@@ -108,7 +108,20 @@ def test_price_for_exact_and_dated_variant_only():
     assert price_for("gpt-5", DEFAULT_PRICING) == DEFAULT_PRICING["gpt-5"]
     assert price_for("gpt-5.5-2026-01-15", DEFAULT_PRICING) == DEFAULT_PRICING["gpt-5.5"]
     assert price_for("claude-opus-4-8-20260101", DEFAULT_PRICING) == DEFAULT_PRICING["claude-opus-4-8"]
+    assert price_for("claude-haiku-4-5-20251001", DEFAULT_PRICING) == DEFAULT_PRICING["claude-haiku-4-5"]
     assert price_for("unknown-model", DEFAULT_PRICING) is None
+
+
+def test_a_point_release_is_a_new_model_not_a_reissue():
+    """#254: the live Anthropic list carries `claude-opus-5-5` and
+    `claude-fable-5-1`. A one-digit suffix read as a date stamp priced them
+    as Opus 5 and Fable 5. A stamp is four digits or more; a version number
+    is a new model and fails closed until someone prices it."""
+    from backend.config import provenance_for
+    for m in ("claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-1",
+              "gpt-5-1"):
+        assert price_for(m, DEFAULT_PRICING) is None
+        assert provenance_for(m, DEFAULT_PRICING)["source"] == "unknown"
 
 
 def test_price_for_fails_closed_on_new_named_model():
