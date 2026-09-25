@@ -48,6 +48,12 @@ left and closes any open question about who's speaking. From "solo",
 only an introduction, "group mode" or "switch on now" brings the room
 back.
 
+In solo the app still checks each spoken turn. Your voice gets your
+name, a voice the app remembers gets that person's name, and a clear
+voice it doesn't know is marked "voice not recognised". A turn it
+can't decide on stays unmarked, the same as in "listening". None of
+these switch the room on, seat anyone or ask who's joined.
+
 Once the room is on, each spoken turn lands in one of three states.
 If the voice matches a remembered person, the turn gets their name.
 If only one person in the room has no learnt voice, an unmatched turn
@@ -94,7 +100,7 @@ turns as well as spoken ones, whether or not room mode is on.
 - Recognising a voice needs no wording at all. Every spoken turn gets
   a quiet voice check on your own computer, so a person the app
   already knows is recognised however they were greeted. That holds
-  whether or not room mode is on. It holds when live
+  whether the room is on, off or solo. It holds when live
   transcription fails too. The app then sends each turn's recording to
   be transcribed, with a small copy of the turn's audio for the check,
   about 32 KB a second. With the room armed, the check compares

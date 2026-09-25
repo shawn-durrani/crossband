@@ -16,12 +16,15 @@ now gets a quiet LOCAL-ONLY check. What these tests prove, in order:
 3. AMBIENT IS LOCAL-ONLY: none of those decisions makes an ElevenLabs batch
    call.
 4. DISARM IS SACRED: "solo mode" sets a durable ambient-off (even with room
-   mode already off), sessions in a disarmed chat never schedule ambient
-   checks, a mid-session disarm is honoured at the next commit, and every
-   explicit re-enable (arm command, introduction, manual toggle) clears it.
+   mode already off), and every explicit re-enable (arm command,
+   introduction, manual toggle) clears it. #461: solo still checks every
+   turn, so the turn says who spoke, but in solo nothing arms, seats or
+   asks, and a mid-session disarm is honoured at the next commit.
 5. THE ASK FIRES WHEN /send CLAIMS THE LABEL (#461): labels ride the
    insert, so the check nearly always found its label already on the row
    and stopped before raising the ask.
+6. A SESSION THAT OPENED ARMED STILL CHECKS ONCE THE ROOM GOES SOLO
+   (#461): the room state is read per commit, never frozen at session open.
 
 (#28 PR-B: the bounded EL sniff that used to back ambient up is retired
 with the cloud identity path - ambient is the ONLY automatic arming door,
@@ -362,55 +365,6 @@ def test_solo_command_sets_ambient_off_even_when_room_already_off(app):
     assert diarize.ambient_off(chat["id"]) is True
 
 
-def test_disarmed_chat_never_schedules_ambient(app, relay, batch_calls,
-                                               matcher):
-    from backend import introductions
-    pid = _remember("Sam")
-    matcher["verdicts"] = [_verdict_match("Sam", pid)] * 3
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _new_chat(c)
-        cfg = app.state.settings.as_cfg()
-        introductions.apply_command(chat["id"], introductions.COMMAND_DISARM,
-                                    cfg)
-        with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"]})
-            assert ws.receive_json()["session"]  # #134 handshake
-            ws.send_json(_frame(loud_pcm(1.5), commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
-            ws.send_json(_frame(loud_pcm(1.5), commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
-            time.sleep(0.3)  # give a wrongly-scheduled task time to act
-            ws.send_json({"done": True})
-    assert matcher["calls"] == 0          # never even consulted
-    assert _chat_state(chat["id"]) == (False, True)
-    assert batch_calls["calls"] == 0
-
-
-def test_mid_session_disarm_is_honoured_at_the_next_commit(
-        app, relay, batch_calls, matcher):
-    from backend import introductions
-    pid = _remember("Sam")
-    matcher["verdicts"] = [_verdict_defer("ambiguous"),
-                           _verdict_match("Sam", pid)]
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _new_chat(c)
-        cfg = app.state.settings.as_cfg()
-        with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"]})
-            assert ws.receive_json()["session"]  # #134 handshake
-            ws.send_json(_frame(loud_pcm(1.5), commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
-            assert _wait_for(lambda: matcher["calls"] == 1)   # ran, deferred
-            introductions.apply_command(chat["id"],
-                                        introductions.COMMAND_DISARM, cfg)
-            ws.send_json(_frame(loud_pcm(1.5), commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
-            time.sleep(0.3)
-            ws.send_json({"done": True})
-    assert matcher["calls"] == 1          # the second commit never checked
-    assert _chat_state(chat["id"]) == (False, True)
-
-
 def _claim_insert(chat_id, turn_id, text="hello world"):
     """What /send does with a voice turn: the parked label rides the
     insert (#28, twelfth field test)."""
@@ -429,6 +383,82 @@ def _commit(ws, turn_id):
     ws.send_json(frame)
     got = ws.receive_json()
     assert got.get("final") == "hello world", got
+
+
+def test_solo_labels_but_never_arms_seats_or_asks(app, relay, batch_calls,
+                                                  matcher):
+    """#461 deliberately replaced test_disarmed_chat_never_schedules_ambient.
+    Solo used to skip the check outright, and 15 of one evening's 19
+    unlabelled turns came after a spoken "solo mode": a guest's words then
+    reached memory as the owner's. Now every turn in solo is checked. The
+    owner is labelled as in listening, a remembered guest is named, and a
+    clear stranger is marked "voice not recognised". None of them arms,
+    seats or asks, and an undecidable turn still writes nothing."""
+    from backend import introductions
+    owner = _remember("Alex")
+    guest = _remember("Sam")
+    matcher["verdicts"] = [_verdict_match("Alex", owner),
+                           _verdict_match("Sam", guest),
+                           _verdict_defer("below_threshold"),
+                           _verdict_defer("too_short")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _new_chat(c)
+        introductions.apply_command(chat["id"], introductions.COMMAND_DISARM,
+                                    app.state.settings.as_cfg())
+        msgs = []
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
+            for i, tid in enumerate(("tS1", "tS2", "tS3")):
+                _commit(ws, tid)
+                assert _wait_for(lambda: tid in diarize._PENDING_LABELS)
+                msgs.append(_claim_insert(chat["id"], tid))
+            _commit(ws, "tS4")
+            assert _wait_for(lambda: matcher["calls"] == 4)
+            msgs.append(_claim_insert(chat["id"], "tS4"))
+            time.sleep(0.3)  # give a wrong arm or ask time to land
+            ws.send_json({"done": True})
+    heads = [json.loads(m["voice_labels"]) for m in msgs[:3]]
+    assert heads[0]["labels"] == ["Alex"] and heads[0]["owner"] is True
+    assert heads[1]["labels"] == ["Sam"] and heads[1]["uncertain"] == []
+    assert heads[2]["labels"] == []
+    assert heads[2]["unresolved"] == "below_threshold"
+    assert msgs[3]["voice_labels"] == ""       # undecidable: as in listening
+    assert _chat_state(chat["id"]) == (False, True)
+    assert _roster(chat["id"]) == []
+    assert _flags(chat["id"]) == []
+    assert batch_calls["calls"] == 0
+
+
+def test_mid_session_disarm_is_honoured_at_the_next_commit(
+        app, relay, batch_calls, matcher):
+    """#461 updated this pin: the commit after a mid-session "solo mode"
+    is still checked (it used to be skipped), and the match that would
+    have armed a listening room only names the turn."""
+    from backend import introductions
+    pid = _remember("Sam")
+    matcher["verdicts"] = [_verdict_defer("ambiguous"),
+                           _verdict_match("Sam", pid)]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _new_chat(c)
+        cfg = app.state.settings.as_cfg()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
+            ws.send_json(_frame(loud_pcm(1.5), commit=True))
+            assert ws.receive_json() == {"final": "hello world"}
+            assert _wait_for(lambda: matcher["calls"] == 1)   # ran, deferred
+            introductions.apply_command(chat["id"],
+                                        introductions.COMMAND_DISARM, cfg)
+            _commit(ws, "tM2")
+            assert _wait_for(lambda: "tM2" in diarize._PENDING_LABELS)
+            msg = _claim_insert(chat["id"], "tM2")
+            time.sleep(0.3)
+            ws.send_json({"done": True})
+    assert matcher["calls"] == 2
+    assert json.loads(msg["voice_labels"])["labels"] == ["Sam"]
+    assert _chat_state(chat["id"]) == (False, True)
+    assert _roster(chat["id"]) == []
 
 
 def test_claimed_stranger_label_still_raises_the_ask(app, relay, batch_calls,
@@ -454,6 +484,31 @@ def test_claimed_stranger_label_still_raises_the_ask(app, relay, batch_calls,
     assert [(f["kind"], f["message_id"]) for f in flags] \
         == [("unknown_voice", msg["id"])]
     assert _chat_state(chat["id"])[0] is True
+
+
+def test_switch_off_mid_session_still_checks(app, relay, batch_calls,
+                                             matcher):
+    """#461: the switch in settings takes the chat to solo, as the spoken
+    command does. A session that opened with the room on also froze "no
+    room-off check" at open, so even with solo checking, its turns would
+    have gone unchecked until the microphone reconnected. The owner's
+    turn is labelled, and the room stays off."""
+    owner = _remember("Alex")
+    matcher["verdicts"] = [_verdict_match("Alex", owner)]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _new_chat(c)
+        c.patch(f"/api/chats/{chat['id']}", json={"room_mode": True})
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
+            c.patch(f"/api/chats/{chat['id']}", json={"room_mode": False})
+            _commit(ws, "tT1")
+            assert _wait_for(lambda: "tT1" in diarize._PENDING_LABELS)
+            msg = _claim_insert(chat["id"], "tT1")
+            ws.send_json({"done": True})
+    parsed = json.loads(msg["voice_labels"])
+    assert parsed["labels"] == ["Alex"] and parsed["owner"] is True
+    assert _chat_state(chat["id"]) == (False, True)
 
 
 def test_every_reenable_clears_ambient_off(app):

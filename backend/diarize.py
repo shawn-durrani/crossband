@@ -252,9 +252,12 @@ FAST_MISMATCH_MIN_SECONDS = 1.5
 #
 # DISARM IS SACRED: after the owner says "solo mode", chats.ambient_off is set
 # and ambient never re-arms that chat until an explicit re-enable (a command,
-# an introduction, or the manual toggle) clears it. This live mirror lets the
-# relay honour it without a DB read on the audio path, exactly like
-# _ROOM_ENABLED.
+# an introduction, or the manual toggle) clears it. Since #461 the check
+# itself still runs in solo, so each turn says who spoke, but it can only
+# label: solo_decision strips every arm, seat and ask. The durable flag is
+# read inside the check (_ambient_plan), so the relay no longer reads this
+# live mirror; room_state still keeps it in step, and retiring it is its
+# own change.
 _AMBIENT_OFF: dict = {}
 
 
@@ -320,6 +323,22 @@ def ambient_decision(verdict, owner, owner_ok) -> str:
         return "arm_unknown"
     return "defer"
 
+
+# Solo (#461): after "solo mode" the room-off check still runs, so a turn
+# still says who spoke, but nothing it finds may switch the room on, seat
+# anyone or ask who joined. It used to skip the check outright, which left
+# every turn after a spoken "solo mode" unlabelled, and memory filed a
+# guest's words as the owner's. The map is the whole difference, as a pure
+# rule over ambient_decision's answer: the owner is labelled exactly as
+# before, a remembered guest is named without arming, a clear stranger is
+# marked "voice not recognised" without arming or asking, and an
+# undecidable turn writes nothing, the same as in listening.
+SOLO_DECISIONS = {"noop_owner": "noop_owner", "arm_known": "name_known",
+                  "arm_unknown": "mark_unknown", "defer": "defer"}
+
+
+def solo_decision(decision) -> str:
+    return SOLO_DECISIONS.get(decision, "defer")
 
 
 # ---- cold-start enrolment (#28) -----------------------------------------
@@ -778,9 +797,10 @@ class RoomSession:
         self.prev_clusters = None   # None = no diarized utterance yet
         self.labelled_ids = set()
         # Ambient local check (#28): when true, every committed utterance runs
-        # the local-only matcher while room mode is off. Seeded at session
-        # open from ambient_eligible (matcher enabled + a sufficient remembered
-        # voice exists); a plain bool so the per-commit path does no I/O.
+        # the local-only matcher while room mode is off, solo included
+        # (#461). Seeded at session open from ambient_eligible (matcher
+        # enabled + a sufficient remembered voice exists); a plain bool so
+        # the per-commit path does no I/O.
         self.ambient_on = False
         # Speculative identity (#28 PR-B): the in-flight silence-start check
         # for the CURRENT utterance - {"len": buffered bytes at fire time,
@@ -855,7 +875,7 @@ class RoomSession:
 # to schedule a check for an id owns it, and the other stands down.
 
 ROUTE_ROOM = "room"        # the armed pass (run_pass)
-ROUTE_AMBIENT = "ambient"  # the room-off check (run_ambient)
+ROUTE_AMBIENT = "ambient"  # the room-off check (run_ambient), solo included
 ROUTE_NONE = "none"        # matcher off, or nobody remembered to compare
 
 _CHECKED_TURNS: dict = {}
@@ -871,9 +891,9 @@ _BATCH_SESSIONS_MAX = 8
 def check_route(room_on, ambient_ok) -> str:
     """Which identity check one voiced turn gets (pure). An armed room runs
     the armed pass. Otherwise the room-off check runs whenever the matcher
-    is on and somebody is remembered, and it reads the sacred disarm
-    itself, from the chat row, so a disarm that lands between the commit
-    and the check still holds."""
+    is on and somebody is remembered, and it decides listening or solo
+    itself, from the chat row. Solo is not a route of its own because a
+    disarm can land between the commit and the check."""
     if room_on:
         return ROUTE_ROOM
     return ROUTE_AMBIENT if ambient_ok else ROUTE_NONE
@@ -1783,20 +1803,29 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     stays off and only the introduction/command/toggle doors remain (#28
     PR-B - the bounded EL sniff retired, so ambient is the only automatic
     door and it NEVER makes an ElevenLabs call). Reuses the speculative
-    silence-start verdict when fresh. Every failure ends here."""
+    silence-start verdict when fresh. Every failure ends here.
+
+    In solo (#461) the same check runs through solo_decision: it labels,
+    and it never arms, seats or asks."""
     t0 = time.perf_counter()
     try:
         plan = await _in_voice_thread(_ambient_plan, chat_id, sample_rate, cfg)
         if plan is None:
             return
-        candidates, owner_ok = plan
+        candidates, owner_ok, solo = plan
         verdict = await _utterance_verdict(chat_id, pcm, sample_rate,
                                            candidates, cfg, speculative)
         if verdict is None:
             return
         decision = ambient_decision(verdict, cfg.get("user_name") or "User",
                                     owner_ok)
-        if decision != "defer":
+        if solo:
+            decision = solo_decision(decision)
+        if decision == "mark_unknown":
+            record_decision(chat_id, DECISION_UNRESOLVED,
+                            (time.perf_counter() - t0) * 1000,
+                            verdict.get("reason", ""), turn_id=turn_id)
+        elif decision != "defer":
             # A local decision was actually made (owner confirmed, known
             # voice named, or a clear stranger detected): the health strip's
             # pulse. A defer records nothing.
@@ -1820,6 +1849,23 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if decision == "arm_known":
             await _arm_known_pass(chat_id, pcm, sample_rate, commit_ts,
                                   session, cfg, verdict, t0, turn_id=turn_id)
+            return
+        if decision == "name_known":
+            # Solo (#461): a remembered guest is named, and their bank and
+            # the mismatch cross-check get the turn as on any named turn.
+            # No arm and no seat: roster_join stays False.
+            await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                                   session, cfg, verdict, turn_id=turn_id)
+            return
+        if decision == "mark_unknown":
+            # Solo (#461): a clear voice that isn't the owner's. The turn
+            # says so, the way an armed room's defer does, so memory never
+            # files it as the owner's. No arm and no ask.
+            await _deliver_label(
+                chat_id, pcm, sample_rate, commit_ts, session,
+                label_payload([], unresolved=verdict.get("reason")
+                              or "below_threshold"),
+                turn_id=turn_id)
             return
         if decision == "arm_unknown":
             await _in_voice_thread(_arm_ambient_unknown, chat_id, cfg)
@@ -1847,25 +1893,29 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
 def _ambient_plan(chat_id, sample_rate, cfg):
     """Ambient snapshot for one check (worker thread): None unless the check
     should still run - the chat's durable room mode must be OFF (another path
-    may have armed it since the utterance was scheduled), ambient must not be
-    disarmed, and at least one sufficient remembered voice must exist to match
-    against. Returns (candidates, owner_ok): the sufficient people as matcher
-    candidates, and whether the owner is among them (so a below-threshold
-    result can mean 'not the owner')."""
+    may have armed it since the utterance was scheduled), and at least one
+    sufficient remembered voice must exist to match against. Returns
+    (candidates, owner_ok, solo): the sufficient people as matcher
+    candidates, whether the owner is among them (so a below-threshold
+    result can mean 'not the owner'), and whether the owner said "solo
+    mode" (#461: the check then labels and never arms). Solo is read here,
+    from the chat row, so a disarm between the commit and the check still
+    holds."""
     con = db.connect()
     try:
         row = con.execute("SELECT room_mode, ambient_off FROM chats WHERE id=?",
                           (chat_id,)).fetchone()
     finally:
         con.close()
-    if not row or row["room_mode"] or row["ambient_off"]:
+    if not row or row["room_mode"]:
         return None
     from . import anchors
     people = anchors.store().people()
     candidates = remembered_candidates(people)
     if not candidates:
         return None
-    return candidates, owner_sufficient(people, cfg.get("user_name"))
+    return (candidates, owner_sufficient(people, cfg.get("user_name")),
+            bool(row["ambient_off"]))
 
 
 def _arm_ambient_unknown(chat_id, cfg):

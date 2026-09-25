@@ -22,8 +22,9 @@ the name with no re-embed. What these tests prove, in order:
    person is valid and seats them. The narrowing case (a match on someone
    no longer among the candidates re-runs fresh) is pinned at the unit
    seam in test_room_remembered_first.
-6. The hint respects the sacred disarm: a "solo mode" chat schedules no
-   speculative check at all.
+6. The hint respects the sacred disarm: in a "solo mode" chat the head
+   start runs (#461: solo labels turns too), and its match never arms or
+   seats anyone.
 """
 
 import base64
@@ -369,10 +370,16 @@ def test_cached_match_on_a_remembered_non_rostered_person_is_trusted(
 
 # ── 6. the sacred disarm ────────────────────────────────────────────────────
 
-def test_hint_in_a_disarmed_chat_schedules_nothing(app, relay, no_batch,
-                                                   matcher):
+def test_hint_in_a_disarmed_chat_labels_but_never_arms(app, relay, no_batch,
+                                                       matcher):
+    """#461 deliberately replaced test_hint_in_a_disarmed_chat_schedules_
+    nothing. Solo used to skip the check, hint and commit alike, so every
+    turn after a spoken "solo mode" went unlabelled. The check now runs in
+    solo, head start included, and the sacred half still holds: a
+    remembered guest's match names the turn and never arms or seats."""
     from backend import introductions
-    _remember("Sam")
+    pid = _remember("Sam")
+    matcher["verdicts"] = [_match("Sam", pid)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         introductions.apply_command(chat["id"], introductions.COMMAND_DISARM,
@@ -383,8 +390,19 @@ def test_hint_in_a_disarmed_chat_schedules_nothing(app, relay, no_batch,
             ws.send_json(_frame(loud_pcm(1.5)))
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json(_hint())
-            ws.send_json(_frame(loud_pcm(0.5), commit=True))
+            ws.send_json(_frame(quiet_pcm(0.5), commit=True))
             _expect_final(ws)
-            time.sleep(0.3)
+            msg = _insert_user_message(chat["id"])
+            labels = _wait_for(lambda: _message_labels(msg["id"]))
             ws.send_json({"done": True})
-    assert matcher["calls"] == []   # never consulted, hint or commit
+    assert json.loads(labels)["labels"] == ["Sam"]
+    assert len(matcher["calls"]) == 1   # the hint's verdict was reused
+    con = db.connect()
+    try:
+        row = con.execute("SELECT room_mode, ambient_off FROM chats "
+                          "WHERE id=?", (chat["id"],)).fetchone()
+        roster = db.get_room_roster(con, chat["id"], present_only=True)
+    finally:
+        con.close()
+    assert (row["room_mode"], row["ambient_off"]) == (0, 1)
+    assert roster == []

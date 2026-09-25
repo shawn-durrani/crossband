@@ -705,7 +705,9 @@ async def stt_stream_relay(ws: WebSocket):
                 # session-start sniff retired with the cloud identity path,
                 # so no arming decision ever costs a batch call. #461: this
                 # is eligibility only. Whether the room is on, off or solo
-                # is decided per commit, because it can change mid-session.
+                # is decided per commit, because it can change mid-session;
+                # folding the open-time state in here left a session that
+                # opened armed with no check at all once the room went solo.
                 ambient = diarize.ambient_eligible(people, cfg)
                 return on, names, disarmed, ambient
             enabled, roster_names, disarmed, ambient_ok = \
@@ -761,10 +763,11 @@ async def stt_stream_relay(ws: WebSocket):
                             # inside, never awaited; a failure to schedule must
                             # not break live transcription.
                             try:
-                                if chat_id and not diarize.ambient_off(chat_id) \
-                                        and (room.enabled
-                                             or diarize.room_enabled(chat_id)
-                                             or room.ambient_on):
+                                # #461: solo runs the check too (labelling
+                                # only), so its head start runs as well.
+                                if chat_id and (room.enabled
+                                                or diarize.room_enabled(chat_id)
+                                                or room.ambient_on):
                                     diarize.schedule_speculative(chat_id, room,
                                                                  cfg)
                             except Exception:
@@ -853,8 +856,9 @@ async def stt_stream_relay(ws: WebSocket):
                                 # the turn is stashed for an introduction to
                                 # claim, and the ambient local check runs -
                                 # the on-device matcher, which NEVER calls
-                                # ElevenLabs. It honours the sacred disarm
-                                # itself, reading the chat row. create_task
+                                # ElevenLabs. In solo that check labels and
+                                # never arms (the sacred disarm is read
+                                # inside it, from the chat row). create_task
                                 # only, NEVER awaited; the upstream byte
                                 # stream is untouched either way.
                                 diarize.schedule_turn_check(

@@ -1,8 +1,8 @@
 """Every voiced turn gets an identity check (#461).
 
 The field evidence: in a room with two people, about half of what was said
-carried no name and no reason, and a new voice was never asked about. Two
-of the gaps are pinned here:
+carried no name and no reason, and a new voice was never asked about. Three
+separate gaps, each pinned here or beside the pin it replaced:
 
 1. THE BATCH PATH: a turn transcribed by the batch /stt POST (the fallback
    once realtime fails, and the salvage for a turn realtime lost) was never
@@ -15,6 +15,8 @@ of the gaps are pinned here:
    keyed off that id went quiet: the who-joined ask, the mismatch
    cross-check and tap-to-correct's audio. The ask is pinned in
    test_room_ambient; the other two are pinned here, on the armed pass.
+3. SOLO: pinned in test_room_ambient and test_room_speculative, where the
+   old "solo skips the check" pins were replaced.
 """
 
 import json
@@ -140,6 +142,16 @@ def test_check_route_table():
     assert diarize.check_route(True, False) == diarize.ROUTE_ROOM
     assert diarize.check_route(False, True) == diarize.ROUTE_AMBIENT
     assert diarize.check_route(False, False) == diarize.ROUTE_NONE
+
+
+def test_solo_decision_never_arms_seats_or_asks():
+    assert diarize.solo_decision("noop_owner") == "noop_owner"
+    assert diarize.solo_decision("arm_known") == "name_known"
+    assert diarize.solo_decision("arm_unknown") == "mark_unknown"
+    assert diarize.solo_decision("defer") == "defer"
+    assert diarize.solo_decision("anything else") == "defer"
+    assert not any(d.startswith("arm") for d in
+                   diarize.SOLO_DECISIONS.values())
 
 
 def test_carries_payload_reads_only_this_passes_label():
