@@ -10,8 +10,7 @@ import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './vo
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs } from './turnPolicy.js'
 import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
-import { newLedger, onCommit, onFinal, onSalvage, rescuePlan, resetLedger,
-         takeInFlight } from './commitLedger.js'
+import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
 import { VoiceTrace, traceMeta } from './voiceTrace.js'
 import { record as debugRecord } from './voiceDebug.js'
 import { STAGE_EMPTY, STAGE_FAILED, STAGE_HELD, STAGE_SENT, handoffBegan,
@@ -402,10 +401,6 @@ export default class VoiceController {
       } catch { /* */ }
     }
     ws.onmessage = (e) => {
-      // #304: a socket we've already let go of has no say. Its turns were
-      // either rescued by the batch path or ended with the session, so a
-      // late final from it must not send them again or move the screen.
-      if (this.sttWs !== ws) return
       let msg; try { msg = JSON.parse(e.data) } catch { return }
       if (msg.session) {
         // #134: our capture-session id, so the every-surface mic banner
@@ -449,10 +444,7 @@ export default class VoiceController {
         if (win && !text && win.dispatch === 'send') {
           handoffStage(this._handoff, win.turnId, STAGE_EMPTY)
         }
-        // #304: an empty last piece still ends the turn. Parts of a long
-        // turn already buffered go now, instead of waiting for someone to
-        // speak again; with nothing buffered this sends nothing, as before.
-        if (win && (text || win.dispatch === 'send')) {
+        if (win && text) {
           this._deliverTranscript(text, win.turnId, win.dispatch)
         }
         // The turn is transcribed; if its round is already generating, say
@@ -559,32 +551,14 @@ export default class VoiceController {
   // A realtime failure must never break a live session - drop to the batch
   // recorder. #21: the cause travels with the fallback - the banner used to
   // say only that realtime was unavailable, leaving nothing to debug with.
-  //
-  // #304: a turn can be committed and still waiting on its transcript when
-  // the failure lands. Closing the socket resets the ledger and clears the
-  // salvage timer, which used to drop that turn unsent: red errors, then
-  // Listening, and someone had to speak again. The in-flight commits are
-  // taken first and handed to the batch recorder, which ran the whole
-  // time, so the turn is transcribed there and sent once (rescuePlan in
-  // commitLedger.js decides what to salvage).
   _fallbackToBatch(cause = 'unknown') {
     if (!this.sttRealtime) return
     this.sttRealtime = false
     this.sttFallbackCause = cause
     console.warn('[voice] realtime STT fell back to batch:', cause)
-    const inFlight = takeInFlight(this._ledger)
-    debugRecord('stt:batchFallback', { cause: String(cause).slice(0, 200),
-                                       inFlight: inFlight.length })
+    debugRecord('stt:batchFallback', { cause: String(cause).slice(0, 200) })
     this._closeSttStream()
-    const rescue = this.active
-      ? rescuePlan(inFlight, { speaking: !!this.speechStart }) : null
-    if (rescue) {
-      // Ids and a dispatch word only, never the words. The screen stays on
-      // Thinking until the batch transcript is back.
-      this._vlog('stt:rescue', { turnId: rescue.turnId, dispatch: rescue.dispatch,
-                                 commits: inFlight.length })
-      this._salvageUtterance(rescue.speechMs, rescue.turnId, rescue.dispatch)
-    } else if (this.active && this.state === 'transcribing') {
+    if (this.active && this.state === 'transcribing') {
       this._state(this.roundActive ? 'working' : 'listening')
     }
     this.onSttFallback?.(cause)
@@ -1051,7 +1025,7 @@ export default class VoiceController {
       // the old drop flag.
       this._sttSend({ commit: true, turn_id: turnId })
       if (!tooShort) {
-        onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send', speechMs)
+        onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send')
         // Only a real end of turn is a hand-off; a capped segment buffers.
         if (!continuation) this._watchHandoff(turnId)
         // A continuation commit is mid-speech: capture keeps flowing, so
@@ -1140,12 +1114,7 @@ export default class VoiceController {
       }
       if (res.ok && data.text) {
         this._deliverTranscript(data.text, turnId, dispatch)
-      } else {
-        if (!res.ok) this.onError?.(`Transcription failed (${data.detail || res.status})`)
-        // #304: an empty or refused last piece still ends the turn, so the
-        // parts already buffered go now rather than with the next turn.
-        if (dispatch === 'send') this._deliverTranscript('', turnId, 'send')
-      }
+      } else if (!res.ok) this.onError?.(`Transcription failed (${data.detail || res.status})`)
       return true
     } catch {
       if (dispatch === 'send') {
