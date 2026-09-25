@@ -140,6 +140,10 @@ time, add a passkey from the phone under Settings, then Passkeys. A
 passkey belongs to the address it was made at, so one you added on the
 Mac won't offer itself at the tailnet name.
 
+Your phone reaches the app only while the Mac is awake, and
+[Keeping the Mac reachable while you're away](OPERATIONS.md#keeping-the-mac-reachable-while-youre-away)
+says how to keep it that way.
+
 ## Where a request goes
 
 Tailscale serve takes each request at the HTTPS address and passes it
