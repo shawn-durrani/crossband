@@ -546,6 +546,12 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         raise
 
 
+# The echo guard's actions as the seat ledger words them (#162): what the
+# guard did with the reply, matching its warning line.
+_ECHO_LEDGER_ACTIONS = {"log_echo": "logged", "suppress_echo": "suppressed",
+                        "retry_echo": "retry"}
+
+
 def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
                  addressed, user_text, voice_mode, echo_guard, user_name):
     """Judge one completed reply against the pass and echo guards (#241).
@@ -981,13 +987,23 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 # refused: re-run this seat ONCE with the guard stated
                 pass_note = note
                 continue
-            if action == "log_echo":
-                # Voice: by completion the reply has already been spoken.
-                log.warning("echo_guard result=hit action=logged "
-                            "speaker=%s ref=%s", participant["slug"], echo_ref)
-            elif action == "suppress_echo":
-                log.warning("echo_guard result=hit action=suppressed "
-                            "speaker=%s ref=%s", participant["slug"], echo_ref)
+            if action in _ECHO_LEDGER_ACTIONS:
+                # #162: the hit goes into the seat ledger in its own terms,
+                # naming whose reply was restated and that reply's round, and
+                # the one warning line carries the same. The rescan runs on a
+                # hit only; the verdict itself is _judge_reply's.
+                src = echo.restated_reference(live["content"], echo_refs)
+                hit = seat_trace.echo_hit(
+                    trace, _ECHO_LEDGER_ACTIONS[action], echo_ref,
+                    seat=src[2] if src else None,
+                    source_text=src[1] if src else "")
+                log.warning("echo_guard result=hit action=%s speaker=%s "
+                            "ref=%s of_seat=%s of_round=%s of_seq=%s",
+                            hit["action"], participant["slug"], echo_ref,
+                            hit["seat"], hit["round_id"], hit["seq"])
+            # log_echo is voice: by completion the reply has already been
+            # spoken, so it posts as it is.
+            if action == "suppress_echo":
                 yield sse({"type": "passed", "speaker": participant["slug"]})
                 live["participant"] = None
                 live["content"] = ""
@@ -997,8 +1013,6 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             elif action == "retry_echo":
                 # Same client shape as a refused pass: the streamed
                 # bubble drops on "passed", the retry opens fresh.
-                log.warning("echo_guard result=hit action=retry "
-                            "speaker=%s ref=%s", participant["slug"], echo_ref)
                 yield sse({"type": "passed", "speaker": participant["slug"]})
                 echo_note = note
                 continue

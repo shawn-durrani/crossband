@@ -57,10 +57,16 @@ wrong.
   seat, the time to first token, the total time, chunk and character
   counts, the finish reason, how it ended, and a short hash of the
   reply. A reply that repeats an earlier one by the same seat in the
-  same chat is marked, and a doubled send of the same text within ten
-  seconds appears too. Never the text itself. Add `?chat_id=` to narrow
-  it, and the voice diagnostics dump carries the same list for its
-  chat.
+  same chat is marked `repeat_of`. A reply that matches one of the
+  chat's last 12 replies from any seat is marked `copy_of`, with that
+  seat, its round and how many replies back it was. The match ignores
+  case, spacing and a `[Name · time]:` label copied onto the front, and
+  nothing else. Both marks only record, and the reply still posts,
+  speaks and goes to memory. When the [echo guard](CONFIG.md) catches
+  a restatement, the entry says what the guard did and whose reply was
+  restated. A doubled send of the same text within ten seconds appears
+  too. Never the text itself. Add `?chat_id=` to narrow it, and the
+  voice diagnostics dump carries the same list for its chat.
 
 ## Two traps when reading the numbers
 

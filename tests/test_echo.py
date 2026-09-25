@@ -255,8 +255,13 @@ def test_references_are_own_last_message_plus_this_rounds_replies():
     ]
     refs = echo.references_for(transcript, "gpt", {"claude", "gpt"},
                                {"claude": "Claude", "gpt": "GPT"})
-    assert refs == [(echo.OWN_LABEL, "gpt round one"),
-                    ("Claude's reply just above", "claude round two")]
+    assert refs == [(echo.OWN_LABEL, "gpt round one", "gpt"),
+                    ("Claude's reply just above", "claude round two", "claude")]
+    # a hit hands back the whole reference, so the engine can name whose
+    # reply was restated in the seat ledger (#162)
+    refs = [(echo.OWN_LABEL, FRESH_B, "gpt"), ("Claude's reply", LONG_A, "claude")]
+    assert echo.restated_reference(LONG_A_REWORDED, refs) == refs[1]
+    assert echo.restated_reference(FRESH_C, refs) is None
     # no prior message and nobody spoken yet: nothing to judge against
     assert echo.references_for([{"id": 1, "speaker": "user", "content": "hi"}],
                                "gpt", {"claude", "gpt"}, {}) == []
