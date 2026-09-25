@@ -2,7 +2,7 @@ fastapi
 uvicorn
 pydantic>=2.13.5
 anthropic
-openai>=3.8.0
+openai>=3.16.2
 httpx
 python-dotenv
 python-multipart
@@ -17,7 +17,7 @@ claude-agent-sdk  # summon_claude_code guest (needs the Claude Code CLI at runti
 # choices. On the 2.x line since #198; capped at <3 because the last
 # major silently removed APIs this repo imports, so the next one is its
 # own reviewed change.
-mcp>=2.1.1,<3
+mcp>=2.2.0,<3
 # Passkey (WebAuthn) verification for the browser gate (#25): vetted parsing
 # and verification of authenticator responses; pulls in cryptography + cbor2.
 # Capped at <3: verification semantics are security-load-bearing, so a major
@@ -31,11 +31,11 @@ webauthn>=2.2,<3
 # runtime: backend/voiceid.py guards the import and falls back to the ElevenLabs
 # path if either is absent, so this never becomes a hard dependency of the app.
 # The 38MB model itself is fetched once at runtime and never committed.
-sherpa-onnx>=1.13.7,<2
+sherpa-onnx>=1.13.8,<2
 numpy
 pytest
 # Rendered page viewing (view_page, #138): the pip package is small; the
 # Chromium build it drives is an operator step (`.venv/bin/playwright
 # install chromium`, ~160MB). backend/browse.py gates the tool on both, so
 # absence just means models keep fetch_page.
-playwright>=1.62
+playwright>=1.63.0
