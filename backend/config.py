@@ -104,7 +104,7 @@ _PRICING_AS_OF = "2026-01-01"
 # for the same reason the OpenAI block below is: restamping figures nobody
 # checked is how a rate card starts lying.
 _ANTHROPIC_DOCS_PRICING_URL = "https://platform.claude.com/docs/en/about-claude/pricing"
-_ANTHROPIC_VERIFIED_AS_OF = "2026-08-28"
+_ANTHROPIC_VERIFIED_AS_OF = "2026-09-25"
 
 # Transcribed from OpenAI's developer pricing table rather than the marketing
 # page, because that is where the per-tier cache columns actually live. Stamped
@@ -113,13 +113,31 @@ _ANTHROPIC_VERIFIED_AS_OF = "2026-08-28"
 _OPENAI_DEV_PRICING_URL = "https://developers.openai.com/api/docs/pricing"
 _OPENAI_VERIFIED_AS_OF = "2026-07-31"
 
+# Point releases get their own rows. Without one, `claude-opus-5-5` reads as
+# a date-stamped reissue of `claude-opus-5` and is priced at Opus 5's $5/$25,
+# and `claude-fable-5-1` inherits Fable 5's 0.1x cache reads. Both cache-read
+# multipliers are their own on the pricing page: 0.05x on Opus 5.5 ($0.20/M)
+# and 0.025x on Fable 5.1 and Mythos 5.1 ($0.25/M). Writes stay 1.25x.
+OPUS_5_5_CACHE = {"read_mult": 0.05, "write_mult": 1.25}
+FABLE_5_1_CACHE = {"read_mult": 0.025, "write_mult": 1.25}
+
 DEFAULT_PRICING = {
+    "claude-fable-5-1": _rate_card(10.0, 50.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                   _ANTHROPIC_DOCS_PRICING_URL,
+                                   cache=FABLE_5_1_CACHE),
+    # Mythos 5.1 is limited-availability, priced like Fable 5.1.
+    "claude-mythos-5-1": _rate_card(10.0, 50.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                    _ANTHROPIC_DOCS_PRICING_URL,
+                                    cache=FABLE_5_1_CACHE),
     "claude-fable-5": _rate_card(10.0, 50.0, _ANTHROPIC_VERIFIED_AS_OF,
                                  _ANTHROPIC_DOCS_PRICING_URL),
     # Mythos 5 is limited-availability (Fable 5 pricing, approved orgs only);
     # priced so a seat on it can never silently record unknown cost.
     "claude-mythos-5": _rate_card(10.0, 50.0, _ANTHROPIC_VERIFIED_AS_OF,
                                   _ANTHROPIC_DOCS_PRICING_URL),
+    "claude-opus-5-5": _rate_card(4.0, 20.0, _ANTHROPIC_VERIFIED_AS_OF,
+                                  _ANTHROPIC_DOCS_PRICING_URL,
+                                  cache=OPUS_5_5_CACHE),
     "claude-opus-5": _rate_card(5.0, 25.0, _ANTHROPIC_VERIFIED_AS_OF,
                                 _ANTHROPIC_DOCS_PRICING_URL),
     "claude-opus-4-8": _rate_card(5.0, 25.0, _ANTHROPIC_VERIFIED_AS_OF,
