@@ -54,3 +54,23 @@ def test_unknown_kinds_and_text_payloads_never_reach_the_log(client, caplog):
     assert "also text" not in stall_lines[0]
     assert "speech_ms=None" in stall_lines[0]
     assert "chat=None" in stall_lines[0]
+
+
+def test_a_handoff_stall_logs_its_stage_from_the_allowlist(client, caplog):
+    # #304: a finished voice turn the server never saved as a message. The
+    # stage says where the hand-off stopped; anything off the list is None.
+    with caplog.at_level(logging.WARNING, logger="crossband.voice"):
+        r = client.post("/api/voice/stall",
+                        json={"kind": "handoff_stalled", "chat_id": 7,
+                              "stage": "empty", "idle_ms": 30012})
+        r2 = client.post("/api/voice/stall",
+                         json={"kind": "handoff_stalled",
+                               "stage": "the words the user said"})
+    assert r.json() == {"ok": True} and r2.json() == {"ok": True}
+    lines = [rec.getMessage() for rec in caplog.records
+             if "voice stall" in rec.message]
+    assert "kind=handoff_stalled" in lines[0]
+    assert "stage=empty" in lines[0]
+    assert "idle_ms=30012" in lines[0]
+    assert "stage=None" in lines[1]
+    assert "the words the user said" not in lines[1]

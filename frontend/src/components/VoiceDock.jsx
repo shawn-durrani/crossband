@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, ChevronDown, CornerDownLeft, Hand, Mic, MicOff, Settings2, Square, Timer, Users, X } from 'lucide-react'
 import { AMBIENT_EXPLAINER, CHIP_CONFIRMED, CHIP_LEARNING } from '../roomState'
+import { AUTO_SAVE_EXPLAINER } from '../voiceDebug'
 
 // The in-session voice controls, docked bottom-right of the thread.
 //
@@ -66,7 +67,7 @@ export default function VoiceDock({
   rosterText, rosterHint, onRoomModeOff, health,
   onPttModeChange, onSilenceSecsChange, onVoiceRateChange, onDockOpenChange,
   onRoomModeChange, onFinalizeNow, onInterrupt, onStop,
-  muted = false, onToggleMute, onSaveDiagnostics,
+  muted = false, onToggleMute, onSaveDiagnostics, notice = null,
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   if (voiceState === 'off') return null
@@ -133,6 +134,15 @@ export default function VoiceDock({
               </span>
             )}
           </div>
+        )}
+        {/* #304: after an automatic diagnostics save, one quiet line says it
+            happened and where the file is. Outside the disclosures, so it
+            shows whether or not the controls are open; the panel's fixed
+            width wraps it, so it can never shove the orb. */}
+        {notice && (
+          <p className="text-[11px] text-ink-faint break-words" role="status" title={AUTO_SAVE_EXPLAINER}>
+            {notice}
+          </p>
         )}
         {/* ---- Tier 2: controls. Collapsed, the capsule tucks into one small
             button, because during a call the orb and its status matter and

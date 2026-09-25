@@ -13,6 +13,9 @@ import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
 import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
 import { VoiceTrace } from './voiceTrace.js'
 import { record as debugRecord } from './voiceDebug.js'
+import { STAGE_EMPTY, STAGE_FAILED, STAGE_HELD, STAGE_SENT, handoffBegan,
+         handoffConfirmed, handoffStage, newHandoffWatch, resetHandoffWatch,
+         takeStalledHandoffs } from './handoffWatch.js'
 
 // Hands-free voice session: open mic with VAD auto-send (no push-to-talk),
 // streamed TTS playback per participant voice, and barge-in - speak over the
@@ -155,8 +158,12 @@ class StreamPlayer {
 const SILENT_WAV = 'data:audio/wav;base64,UklGRuQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YcADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 export default class VoiceController {
-  constructor({ getChatId, getParticipants, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onLevel, onSpeaker, onHeld }) {
+  constructor({ getChatId, getParticipants, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onLevel, onSpeaker, onHeld, onStall }) {
     this.getChatId = getChatId
+    // #304: told the stall kind whenever a stall beacon fires, so the app
+    // can save the diagnostics bundle automatically. Evidence only - it can
+    // never change what the session does next.
+    this.onStall = onStall
     this.getParticipants = getParticipants
     this.sendText = sendText
     this.onState = onState
@@ -212,6 +219,9 @@ export default class VoiceController {
     // instance drop boolean the next turn's commit could reset mid-race),
     // plus the buffered text of a capped-but-continuing logical turn.
     this._ledger = newLedger()
+    // #304: every finished turn's hand-off, watched until the server
+    // confirms it (handoffWatch.js). Observes only; sends nothing.
+    this._handoff = newHandoffWatch()
     this._turnBuffer = []
     this._logicalStart = 0    // when the LOGICAL turn began (survives caps)
     this.muted = false        // hard mute: mic track disabled, nothing detected/sent
@@ -281,6 +291,29 @@ export default class VoiceController {
         keepalive: true,
       }).catch(() => {})
     } catch { /* diagnostics are never load-bearing */ }
+    // #304: every beacon also asks the app to save the diagnostics bundle,
+    // so the stall's evidence exists without anyone pressing the button.
+    // The app rate-limits the saves (voiceDebug.js autoDump).
+    try { this.onStall?.(kind) } catch { /* never load-bearing */ }
+  }
+
+  // #304: a finished turn's hand-off is watched from the moment the app
+  // decides the turn ended until the server's user_saved names its turn
+  // id. Called from the VAD tick (before any of its early returns), so a
+  // stall is noticed whatever state the screen is in.
+  _watchHandoff(turnId) {
+    handoffBegan(this._handoff, turnId, Date.now())
+    this._vlog('handoff:begin', { turnId })
+  }
+
+  _checkHandoffs(now) {
+    for (const s of takeStalledHandoffs(this._handoff, now)) {
+      this._vlog('stall:handoff', { turnId: s.turnId, stage: s.stage,
+                                    waitedMs: s.waitedMs, state: this.state,
+                                    roundActive: this.roundActive,
+                                    playing: this.playing })
+      this._postStall('handoff_stalled', { stage: s.stage, idle_ms: s.waitedMs })
+    }
   }
 
   // Real mute: disable the mic track at the source (a disabled track emits
@@ -396,6 +429,18 @@ export default class VoiceController {
         // whose commit was already salvaged - or that names no commit we
         // know - drops here, which is exactly the doubled-turn case.
         const win = onFinal(this._ledger, msg.turn_id)
+        // #304: which commit this final was stamped for, which one it won,
+        // and whether it was empty - ids and booleans only, never the text.
+        // A final stamped for one turn arriving after another's commit is
+        // what a relay pairing slip looks like in the ring.
+        this._vlog('stt:final', { turnId: msg.turn_id || null,
+                                  won: win ? win.turnId : null,
+                                  dispatch: win ? win.dispatch : null,
+                                  empty: !text,
+                                  buffered: this._turnBuffer.length })
+        if (win && !text && win.dispatch === 'send') {
+          handoffStage(this._handoff, win.turnId, STAGE_EMPTY)
+        }
         if (win && text) {
           this._deliverTranscript(text, win.turnId, win.dispatch)
         }
@@ -580,6 +625,7 @@ export default class VoiceController {
     this.roundActive = false
     this.dropQueue = false
     this._lastRoundEventAt = 0
+    resetHandoffWatch(this._handoff)
     // Unlock audio while we still hold the start-button gesture, and on any
     // later click - so a session that auto-resumes on reload (no gesture) isn't
     // left permanently muted with no way to recover. Makes the "click anywhere"
@@ -668,6 +714,8 @@ export default class VoiceController {
   stop() {
     this._vlog('session:stop', { state: this.state, roundActive: this.roundActive, captureSid: this.captureSid })
     this.active = false
+    // A hand-off the owner ended is not a stall (#304).
+    resetHandoffWatch(this._handoff)
     if (this._unlockHandler) {
       window.removeEventListener('pointerdown', this._unlockHandler)
       this._unlockHandler = null
@@ -780,6 +828,9 @@ export default class VoiceController {
     const tick = () => {
       if (!this.active) return
       requestAnimationFrame(tick)
+      // #304: before the early returns below - a hand-off can stall while
+      // muted or while the screen says Thinking, and both still count.
+      this._checkHandoffs(Date.now())
       if (this.muted) { this.onLevel?.(0); return }  // hard mute: don't listen
       if (this.state === 'transcribing') {
         this.onLevel?.(0)
@@ -956,6 +1007,7 @@ export default class VoiceController {
         // the mic graph so the NEXT turn streams again.
         console.warn(`voice: 0 frames sent for a ${Math.round(speechMs)}ms utterance - salvaging via batch recorder, rebuilding capture`)
         debugRecord('stt:zeroFramesSalvage', { speechMs: Math.round(speechMs) })
+        this._watchHandoff(turnId)  // the salvage always sends
         this._rebuildSttProcessor()
         this._state('transcribing')
         await this._salvageUtterance(speechMs)
@@ -971,6 +1023,8 @@ export default class VoiceController {
       this._sttSend({ commit: true, turn_id: turnId })
       if (!tooShort) {
         onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send')
+        // Only a real end of turn is a hand-off; a capped segment buffers.
+        if (!continuation) this._watchHandoff(turnId)
         // A continuation commit is mid-speech: capture keeps flowing, so
         // the state stays 'listening' and the user sees nothing change.
         if (!continuation) this._state('transcribing')
@@ -991,6 +1045,7 @@ export default class VoiceController {
       } else if (cause === 'gap' && this._turnBuffer.length) {
         // The turn ended on a too-short tail with buffered segments behind
         // it: flush what the monologue already said.
+        this._watchHandoff(turnId)
         this._deliverTranscript('', turnId, 'send')
       }
       return
@@ -1001,10 +1056,12 @@ export default class VoiceController {
     this._startRecorder()
     if (speechMs < MIN_SPEECH_MS) {
       if (cause === 'gap' && this._turnBuffer.length) {
+        this._watchHandoff(turnId)
         this._deliverTranscript('', turnId, 'send')
       }
       return
     }
+    if (!continuation) this._watchHandoff(turnId)
     if (!continuation) this._state('transcribing')
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
     await this._transcribeOrHold(blob, speechMs,
@@ -1028,7 +1085,9 @@ export default class VoiceController {
     this._logicalStart = 0
     if (!parts.length) return
     this._trace.mark('transcript_final')
-    this.sendText(parts.join(' '), turnId || this._trace.current()?.turnId)
+    const sendId = turnId || this._trace.current()?.turnId
+    handoffStage(this._handoff, sendId, STAGE_SENT)  // #304: evidence only
+    this.sendText(parts.join(' '), sendId)
   }
 
   // POST one utterance to /stt; on a NETWORK failure hold the audio and retry
@@ -1041,11 +1100,23 @@ export default class VoiceController {
       fd.append('duration_ms', String(Math.round(speechMs)))
       const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body: fd })
       const data = await res.json().catch(() => ({}))
+      // #304: where the batch path left this hand-off - status and an
+      // empty flag, never the text.
+      const watchId = turnId || this._trace.current()?.turnId
+      this._vlog('stt:batch', { turnId: watchId || null, status: res.status,
+                                empty: !data.text, dispatch,
+                                buffered: this._turnBuffer.length })
+      if (dispatch === 'send' && !(res.ok && data.text)) {
+        handoffStage(this._handoff, watchId, res.ok ? STAGE_EMPTY : STAGE_FAILED)
+      }
       if (res.ok && data.text) {
         this._deliverTranscript(data.text, turnId, dispatch)
       } else if (!res.ok) this.onError?.(`Transcription failed (${data.detail || res.status})`)
       return true
     } catch {
+      if (dispatch === 'send') {
+        handoffStage(this._handoff, turnId || this._trace.current()?.turnId, STAGE_HELD)
+      }
       this.heldUtterances.push({ blob, speechMs })
       this.onHeld?.(this.heldUtterances.length)
       this._startHeldRetry()
@@ -1118,6 +1189,17 @@ export default class VoiceController {
       debugRecord('round:event', { evType: ev.type,
                                    roundActive: this.roundActive,
                                    playing: this.playing })
+    }
+    // #304: the server saved a voice turn as a message - its hand-off is
+    // done. The id rides the saved row (voice_turn_id); a text send has
+    // none and confirms nothing. A confirmation after a stall report is
+    // noted, since "it got there in the end" changes the diagnosis.
+    if (ev.type === 'user_saved') {
+      const closed = handoffConfirmed(this._handoff, ev.message?.voice_turn_id)
+      if (closed) {
+        this._vlog(closed.reported ? 'handoff:lateConfirmed' : 'handoff:confirmed',
+                   { turnId: closed.turnId, waitedMs: Date.now() - closed.since })
+      }
     }
     // A round generating with nothing audible is 'working', not 'listening':
     // the screen must not invite speech the gated mic would then discard.

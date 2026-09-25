@@ -3,6 +3,7 @@ import { Check, ChevronDown, Mic, MicOff, Users, X } from 'lucide-react'
 import { orbStateFor, statusFor, showInterruptHint, displayPartial } from '../voiceView'
 import { AMBIENT_EXPLAINER, CHIP_CONFIRMED, CHIP_LEARNING } from '../roomState'
 import { collapsedVoiceSummary } from '../voiceHealth'
+import { AUTO_SAVE_EXPLAINER } from '../voiceDebug'
 
 // Chip state -> colour. The states themselves, their labels and their order
 // are derived in roomState.js (pure, node --test); this maps one to a class.
@@ -41,7 +42,8 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                                           roomMode = false, onRoomModeChange,
                                           onRoomModeOff,
                                           rosterText = '', rosterHint = '',
-                                          askText = null, health = null }) {
+                                          askText = null, health = null,
+                                          notice = null }) {
   // #67: muted is lifted to App - one truth across the call screen, the
   // desktop dock and the page strip.
   // Voice identity: one line by default, the full picture on tap (#28).
@@ -240,6 +242,19 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
         <div className="px-4 pt-1 flex justify-center" role="status">
           <span className="text-xs text-sky-200 bg-sky-950/60 border border-sky-800 rounded-lg px-3 py-1.5 max-w-full">
             {askText}
+          </span>
+        </div>
+      )}
+
+      {/* #304: after an automatic diagnostics save, one quiet line says it
+          happened, that no speech is in it, and where the file is. The
+          line carries the whole message itself, since a phone can't hover
+          for the explainer. */}
+      {notice && (
+        <div className="px-4 pt-1 flex justify-center" role="status">
+          <span className="text-[11px] text-ink-faint text-center max-w-full break-words"
+                title={AUTO_SAVE_EXPLAINER}>
+            {notice}
           </span>
         </div>
       )}

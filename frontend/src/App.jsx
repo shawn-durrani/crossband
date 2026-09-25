@@ -30,7 +30,8 @@ import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
 import { adoptRoomMode, askFlag, flagCopy, mergeFlag, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
 import { healthStrip } from './voiceHealth'
-import { dump as voiceDebugDump, recordError as voiceDebugError } from './voiceDebug'
+import { autoDump as voiceDebugAutoDump, autoSaveNotice, dump as voiceDebugDump,
+         recordError as voiceDebugError } from './voiceDebug'
 import { mergeMessagesById } from './eventStream'
 import GuestStatusChip from './components/GuestStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
@@ -108,6 +109,12 @@ export default function App() {
   }, [banner])
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
   const [voiceState, setVoiceState] = useState('off')
+  // #304: the one quiet line after an automatic diagnostics save - that it
+  // happened and where the file is. Lasts the voice session.
+  const [voiceNotice, setVoiceNotice] = useState(null)
+  useEffect(() => {
+    if (voiceState === 'off') setVoiceNotice(null)
+  }, [voiceState])
   // Live partial transcript of what the user is SAYING right now -
   // realtime STT only; batch fallback never emits one. Cleared the moment the
   // final transcript dispatches (sendText below) and on session end.
@@ -416,6 +423,13 @@ export default function App() {
             + ' - using standard transcription this session.'),
           // orb tint follows the AUDIO: whoever's reply is currently playing
           onSpeaker: (slug) => setSpeakingSlug(slug),
+          // #304: a stall saves the diagnostics bundle on its own, rate-
+          // limited in voiceDebug.js, and says so in one quiet line.
+          onStall: (kind) => {
+            voiceDebugAutoDump(activeChatIdRef.current, kind).then((r) => {
+              if (r && r.ok) setVoiceNotice(autoSaveNotice(r.where || r.file))
+            })
+          },
         })
       }
       voiceRef.current.setManualMode(pttMode)
@@ -962,6 +976,7 @@ export default function App() {
                 onStop={stopVoice}
                 muted={voiceMuted}
                 onToggleMute={toggleMute}
+                notice={voiceNotice}
                 onSaveDiagnostics={async () => {
                   const r = await voiceDebugDump(activeChatIdRef.current)
                   setBanner(r && r.ok
@@ -1113,6 +1128,7 @@ export default function App() {
         <MobileVoiceCall
           banner={banner}
           onDismissBanner={() => setBanner(null)}
+          notice={voiceNotice}
           voiceState={voiceState}
           held={heldSends + heldVoice}
           participants={chatParticipants}

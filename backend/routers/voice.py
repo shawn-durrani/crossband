@@ -201,8 +201,12 @@ def voice_trace_ingest(payload: dict = Body(...)):
 
 # The stall beacon's vocabulary (#171). Allowlisted so the WARNING line is
 # content-free by construction, exactly like the trace's stage allowlist:
-# an unknown kind is dropped, never logged.
-STALL_KINDS = {"round_guard_forced", "gated_speech_stranded"}
+# an unknown kind is dropped, never logged. handoff_stalled (#304) is a
+# finished voice turn that the server still hadn't saved as a message 30 s
+# later (frontend/src/handoffWatch.js); its stage says which step it
+# stopped at, from the same kind of allowlist.
+STALL_KINDS = {"round_guard_forced", "gated_speech_stranded", "handoff_stalled"}
+STALL_STAGES = {"transcribing", "empty", "failed", "held", "sent"}
 
 
 @router.post("/api/voice/stall")
@@ -225,11 +229,13 @@ def voice_stall(payload: dict = Body(...)):
         return round(float(v), 1) if isinstance(v, (int, float)) else None
 
     chat_id = payload.get("chat_id")
+    stage = payload.get("stage")
     log.warning("voice stall: kind=%s chat=%s idle_ms=%s speech_ms=%s "
-                "round_active=%s playing=%s",
+                "round_active=%s playing=%s stage=%s",
                 kind, chat_id if isinstance(chat_id, int) else None,
                 _num("idle_ms"), _num("speech_ms"),
-                bool(payload.get("round_active")), _num("playing"))
+                bool(payload.get("round_active")), _num("playing"),
+                stage if stage in STALL_STAGES else None)
     return {"ok": True}
 
 
@@ -246,12 +252,23 @@ def voice_stall(payload: dict = Body(...)):
 # Privacy floor, same as the trace and the stall beacon: entries are
 # timestamps, short tags and bounded strings; the ring's sources never see
 # transcript text (each source states that at its own definition), and the
-# caps below hold whatever a client sends. Owner-initiated only - nothing
-# dumps automatically.
+# caps below hold whatever a client sends.
+#
+# Two ways in. The owner's tap is "manual". An automatic save (#304) names
+# the stall kind that asked for it - only a STALL_KINDS word counts, and
+# anything else is filed as manual. Automatic saves get a server-side floor
+# of one per DEBUG_DUMP_AUTO_MIN_GAP_S on top of the client's own ten-minute
+# limit, so two devices stalling on the same wedged round (or a client that
+# lost its limit to a reload) still write one file. The owner's tap is never
+# limited. Every file counts toward the same newest-20 retention.
 DEBUG_DUMP_MAX_ENTRIES = 500
 DEBUG_DUMP_TAG_CHARS = 64
 DEBUG_DUMP_DATA_CHARS = 2000
 DEBUG_DUMP_KEEP_FILES = 20
+DEBUG_DUMP_AUTO_MIN_GAP_S = 300
+# When the last automatic dump was written (time.monotonic()). A dict so
+# conftest's single reset list can clear it between tests.
+_auto_dumps: dict = {}
 
 
 def sanitize_debug_entries(entries) -> list:
@@ -275,6 +292,13 @@ def sanitize_debug_entries(entries) -> list:
 
 @router.post("/api/voice/debug-dump")
 def voice_debug_dump(payload: dict = Body(...)):
+    trigger = payload.get("trigger")
+    trigger = trigger if trigger in STALL_KINDS else "manual"
+    if trigger != "manual":
+        last = _auto_dumps.get("last")
+        if last is not None and time.monotonic() - last < DEBUG_DUMP_AUTO_MIN_GAP_S:
+            return {"ok": False, "reason": "rate_limited"}
+        _auto_dumps["last"] = time.monotonic()
     entries = sanitize_debug_entries(payload.get("entries"))
     chat_id = payload.get("chat_id")
     chat_id = chat_id if isinstance(chat_id, int) else None
@@ -284,6 +308,7 @@ def voice_debug_dump(payload: dict = Body(...)):
         summary = None  # the dump must not fail on a diagnostics read
     bundle = {
         "dumped_at": db.now(),
+        "trigger": trigger,
         "chat_id": chat_id,
         "client_entries": entries,
         "captures": capture_sessions(),
@@ -310,9 +335,16 @@ def voice_debug_dump(payload: dict = Body(...)):
             old.unlink()
         except OSError:
             pass
-    log.warning("voice debug dump: chat=%s entries=%d file=%s",
-                chat_id, len(entries), name)
-    return {"ok": True, "file": name, "entries": len(entries)}
+    log.warning("voice debug dump: chat=%s entries=%d file=%s trigger=%s",
+                chat_id, len(entries), name, trigger)
+    # Where the file sits, for the owner's one-line notice: relative to the
+    # repo in the usual layout (data/voice_debug/...), absolute otherwise.
+    try:
+        where = str((folder / name).relative_to(db.ROOT))
+    except ValueError:
+        where = str(folder / name)
+    return {"ok": True, "file": name, "entries": len(entries),
+            "trigger": trigger, "where": where}
 
 
 @router.get("/api/voice/trace/summary")
