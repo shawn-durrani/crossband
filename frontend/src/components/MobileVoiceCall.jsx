@@ -30,10 +30,10 @@ const MODE_CLASS = {
 // produces from the SSE event flow. It does not touch the voice pipeline; the
 // actions it takes are stopVoice() (End), the mic mute toggle, per-agent
 // sit-out via onToggleParticipant (the same roster toggle as the desktop
-// header chips - an agent tapped out skips rounds from the next turn), and
-// the two settings-tier room-mode switches in the expanded voice panel
+// header chips - an agent tapped out skips rounds from the next turn), the
+// two settings-tier room-mode switches in the expanded voice panel
 // (#28: the room button became an indicator - the top row only SHOWS the
-// room state).
+// room state), and the "save voice diagnostics" button beside them (#304).
 export default function MobileVoiceCall({ voiceState, held = 0, participants, roster = [],
                                           activeIds = [], onToggleParticipant, captions,
                                           captionHistory = [], speakingSlug, onEnd, voice,
@@ -43,7 +43,7 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                                           onRoomModeOff,
                                           rosterText = '', rosterHint = '',
                                           askText = null, health = null,
-                                          notice = null }) {
+                                          notice = null, onSaveDiagnostics = null }) {
   // #67: muted is lifted to App - one truth across the call screen, the
   // desktop dock and the page strip.
   // Voice identity: one line by default, the full picture on tap (#28).
@@ -232,6 +232,25 @@ export default function MobileVoiceCall({ voiceState, held = 0, participants, ro
                   switch off for this chat
                 </button>
               </span>
+              {/* #304: the one-tap stall report, in reach during a call. The
+                  dock has the same button, but on a phone this screen
+                  covers the dock. The line under it carries the explainer,
+                  since a phone can't hover for a title. The outcome shows
+                  in the banner at the top of this screen. */}
+              {onSaveDiagnostics && (
+                <span className="flex flex-col items-center gap-0.5 max-w-full">
+                  <button
+                    type="button"
+                    className="rounded-full px-2.5 py-1 border border-edge2 text-ink-dim text-xs"
+                    onClick={onSaveDiagnostics}
+                  >
+                    save voice diagnostics
+                  </button>
+                  <span className="text-[11px] text-ink-faint text-center">
+                    If voice gets stuck, tap this. It saves what the app was doing, never what anyone said.
+                  </span>
+                </span>
+              )}
             </div>
           )}
         </div>
