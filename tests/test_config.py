@@ -259,6 +259,31 @@ def test_current_anthropic_flagships_are_priced():
     assert DEFAULT_PRICING["claude-sonnet-5"]["output"] == 10.0
 
 
+def test_point_releases_have_their_own_rows():
+    """`claude-opus-5-5` used to read as a date-stamped reissue of
+    `claude-opus-5` and cost Opus 5's $5/$25, and `claude-fable-5-1` took
+    Fable 5's 0.1x cache reads. Figures from the pricing page, 25 Sep 2026."""
+    one_m = 1_000_000
+    assert compute_cost("claude-opus-5-5", {"input": one_m, "output": one_m},
+                        DEFAULT_PRICING) == pytest.approx(24.0)
+    assert compute_cost("claude-opus-5-5", {"cache_read": one_m},
+                        DEFAULT_PRICING) == pytest.approx(0.20)
+    assert compute_cost("claude-opus-5-5", {"cache_creation": one_m},
+                        DEFAULT_PRICING) == pytest.approx(5.0)
+    for m in ("claude-fable-5-1", "claude-mythos-5-1"):
+        assert compute_cost(m, {"input": one_m, "output": one_m},
+                            DEFAULT_PRICING) == pytest.approx(60.0)
+        assert compute_cost(m, {"cache_read": one_m},
+                            DEFAULT_PRICING) == pytest.approx(0.25)
+        assert compute_cost(m, {"cache_creation": one_m},
+                            DEFAULT_PRICING) == pytest.approx(12.5)
+    # the older rows keep the standard terms
+    assert compute_cost("claude-fable-5", {"cache_read": one_m},
+                        DEFAULT_PRICING) == pytest.approx(1.0)
+    assert compute_cost("claude-opus-5", {"cache_read": one_m},
+                        DEFAULT_PRICING) == pytest.approx(0.5)
+
+
 def test_provenance_for_known_and_unknown():
     from backend.config import provenance_for
     rec = provenance_for("gpt-5.1", DEFAULT_PRICING)
