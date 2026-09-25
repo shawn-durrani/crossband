@@ -230,6 +230,8 @@ export function useRoundStream({
           // the mic before a wedged round's REAL end, so a voice turn can
           // land mid-round; dropping it would lose words already spoken.
           // Hold it with the offline queue and retry when the round ends.
+          // The server refuses before it saves anything (#434), so the
+          // retry is the message's only copy, never a second one.
           pendingSends.current.push({ url, body })
           setHeldSends(pendingSends.current.length)
           cb.current.onBanner('A round is still finishing - holding your message; it sends when the round ends.')

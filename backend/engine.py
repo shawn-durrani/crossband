@@ -452,7 +452,7 @@ def make_handback(settings, memory, mcp):
     pause."""
     async def handback(chat_id, kind):
         from . import rounds
-        if rounds.active(chat_id) is not None:
+        if rounds.busy(chat_id):
             return  # the conversation resumed on its own - reply is already in view
         con = db.connect()
         chat = con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone()
