@@ -6,7 +6,7 @@ This file also pins the reasoning-POLICY fix: `thinking` is no longer
 forced on every Anthropic call. It must be omitted for every level except an
 explicit "adaptive" choice, and `thinking`/`output_config.effort` are never
 sent together (see backend/providers.py's _anthropic_thinking docstring for
-why, verified against anthropic==0.116.0's message_create_params)."""
+why, verified against message_create_params in anthropic 0.116.0 and 1.8.0)."""
 
 import pytest
 

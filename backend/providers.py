@@ -185,8 +185,8 @@ def _anthropic_thinking(participant):
     so a participant configured as Default or a fixed
     "medium" effort still got the model's own unbounded, variable-duration
     deliberation before any visible token - the leading explanation for the
-    voice-latency long tail. Per the current
-    Anthropic Python SDK (anthropic==0.116.0,
+    voice-latency long tail. Per the
+    Anthropic Python SDK (checked on anthropic 0.116.0 and again on 1.8.0,
     anthropic.types.message_create_params.MessageCreateParamsBase): `thinking`
     is an OPTIONAL field (total=False) independent of `output_config.effort`
     - omitting it entirely is a documented, supported request shape, not an
