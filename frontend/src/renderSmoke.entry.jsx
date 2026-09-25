@@ -21,7 +21,9 @@ const PARTICIPANTS = [
 // whose every turn is silent (a pass, one cut off mid-pass, one cut off
 // before it wrote anything), which must draw no bubble at all, and a
 // streaming reply that could still be a pass, which draws the thinking
-// dots and never the brackets.
+// dots and never the brackets. Then the #460 shapes: a quiet remark
+// before [pass], which is a pass and draws nothing, and a real reply with
+// [pass] stuck on the end, which draws its words without the token.
 const MESSAGES = [
   { id: 1, speaker: 'user', content: 'hello both of you', created_at: 1, attachments: [] },
   { id: 2, speaker: 'claude', content: 'A reply with **markdown**.', created_at: 2,
@@ -37,6 +39,10 @@ const MESSAGES = [
   { id: 'live-quiet-3', speaker: 'quiet', content: '', created_at: 8, attachments: [] },
   { id: 'live-claude-9', speaker: 'claude', content: '[pa', created_at: 9,
     streaming: true, attachments: [] },
+  { id: 10, speaker: 'quiet', content: 'Nothing to add from me.  [pass]', created_at: 10,
+    attachments: [] },
+  { id: 11, speaker: 'gpt', content: 'Oil it after sanding.  [pass]', created_at: 11,
+    attachments: [] },
 ]
 
 export function renderSmoke() {
@@ -65,13 +71,15 @@ export function renderSmoke() {
       onPickPrompt={() => {}}
     />,
   )
-  for (const needle of ['hello both of you', 'a captured voice turn', 'Claude is thinking']) {
+  for (const needle of ['hello both of you', 'a captured voice turn', 'Claude is thinking',
+                        'Oil it after sanding.']) {
     if (!html.includes(needle)) {
       throw new Error(`render smoke: expected ${JSON.stringify(needle)} in the markup`)
     }
   }
   // #456: a passed seat turn draws no bubble, and a pass never draws as text.
-  for (const needle of ['Quietseat', '[pa']) {
+  // #460: nor does a quiet remark in front of it.
+  for (const needle of ['Quietseat', '[pa', 'Nothing to add']) {
     if (html.includes(needle)) {
       throw new Error(`render smoke: ${JSON.stringify(needle)} must not be in the markup`)
     }

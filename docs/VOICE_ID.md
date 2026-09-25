@@ -129,6 +129,21 @@ the two switches in the voice settings drawer, "switch on now" and
 in the dock itself, which shows the state while the automation does
 the arming.
 
+## What the models are told about the room
+
+With every reply it writes, each model gets a short note about the
+room. The note says whether room mode is on, whether it can switch
+itself back on, and who's in the room. It also counts the names the
+voice check put on the last few spoken turns, like "Sam on 3, no name
+on 2". When the room switches off, names already on earlier turns
+stay, and the note says so.
+
+The models bring up the room only when you ask about it. They answer
+from that note and the names on the turns, never from what an earlier
+reply said. If you've just asked for room mode on or off, they don't
+confirm it or deny it. The app's own line in the chat says what
+changed.
+
 ## Starting from nothing
 
 Learning a voice from nothing is called a cold start, and it has one

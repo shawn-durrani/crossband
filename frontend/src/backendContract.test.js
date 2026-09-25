@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs'
 import { lifecycleBadge, isLocalEndpoint } from './lifecycle.js'
 import { reasoningOptions, effortSupport,
          normalizeReasoningEffort } from './reasoningEffort.js'
-import { PASS_TOKEN } from './passView.js'
+import { PASS_TOKEN, QUIET_PHRASE_PATTERN, CLAUSE_BREAK_PATTERN, QUIET_MAX_CHARS,
+         QUIET_CONTRAST, AFTER_TOKEN, isPassShaped, stripPassTail } from './passView.js'
 
 const fixture = JSON.parse(readFileSync(
   new URL('../../tests/fixtures/backend_contract.json', import.meta.url),
@@ -75,4 +76,24 @@ test('the transcript hides the same pass token the backend suppresses', () => {
   // #456: passView.js hides this token and every start of it, and
   // backend/passes.py is_cut_pass drops the same shapes on a cut-off reply.
   assert.equal(PASS_TOKEN, fixture.pass.token)
+})
+
+test('the quiet remark rule is the backend\'s rule', () => {
+  // #460: a short remark that says a seat has nothing to add, then [pass],
+  // is a pass. passView.js decides that for the screen and the voice, and
+  // backend/passes.py for what is stored, so the rule must be one rule.
+  assert.equal(QUIET_PHRASE_PATTERN, fixture.pass.quiet_phrase_pattern)
+  assert.equal(CLAUSE_BREAK_PATTERN, fixture.pass.clause_break_pattern)
+  assert.equal(QUIET_MAX_CHARS, fixture.pass.quiet_max_chars)
+  assert.deepEqual([...QUIET_CONTRAST].sort(), fixture.pass.quiet_contrast)
+  assert.equal(AFTER_TOKEN, fixture.pass.after_token)
+})
+
+test('the screen reads every example reply the way the engine does', () => {
+  for (const ex of fixture.pass.examples) {
+    assert.equal(isPassShaped(ex.text), ex.is_cut_pass,
+      `isPassShaped(${JSON.stringify(ex.text)}) disagrees with is_cut_pass`)
+    assert.equal(stripPassTail(ex.text), ex.kept,
+      `stripPassTail(${JSON.stringify(ex.text)}) disagrees with strip_pass`)
+  }
 })

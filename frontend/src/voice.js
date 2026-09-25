@@ -3,7 +3,7 @@ import { batchSttForm, clipWindow, identityWav } from './identityClip.js'
 import { sidToKill } from './micRegistry.js'
 import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
-import { couldBePass } from './voiceView.js'
+import { PassSpeechGate, couldBePass, isPassShaped } from './passView.js'
 import { WrittenFilter } from './writtenChannel.js'
 import { effectiveVolume } from './voiceGain.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
@@ -86,6 +86,14 @@ class StreamPlayer {
   end() {
     this.ended = true
     if (this.useMse) this._pump()
+  }
+
+  // #460: the reply was a pass and nothing was sent to TTS. The play chain
+  // skips an abandoned player, so it never claims the shared sink.
+  abandon() {
+    this.abandoned = true
+    this.end()
+    this.stopNow?.()
   }
 
   _pump() {
@@ -200,6 +208,10 @@ export default class VoiceController {
     // feeding TTS at the [written] token, so a reply's long-form body lands
     // in the transcript unspoken. Fresh per speaker_start.
     this._writtenFilters = new Map()
+    // #460: and ahead of it, a gate that holds a reply's text while it
+    // could still end as a pass and never lets the [pass] token reach TTS
+    // (passView.js PassSpeechGate). Fresh per speaker_start too.
+    this._passGates = new Map()
     // slug -> the model the server named on that seat's latest speaker_start
     // (#254), for the latency trace's labels.
     this._runningModels = {}
@@ -860,6 +872,13 @@ export default class VoiceController {
   interrupt() {
     this.dropQueue = true
     for (const p of this.players.values()) p.stopNow?.()
+    // #460: a reply its pass gate still holds has sent TTS nothing, and a
+    // reply waiting to start (it could still be a pass) has no speech yet.
+    // Neither is left behind to speak later.
+    this._pendingSpeaker = null
+    for (const [slug, gate] of this._passGates) {
+      if (!gate.released) this._abandonSpeaker(slug)
+    }
     this.onInterruptRound?.()
   }
 
@@ -1428,6 +1447,7 @@ export default class VoiceController {
       // ellipsis-only "…" reply is never voiced (ElevenLabs otherwise breathes it).
       this._pendingSpeaker = { slug: ev.speaker, text: '', started: false }
       this._writtenFilters.set(ev.speaker, new WrittenFilter()) // #80
+      this._passGates.set(ev.speaker, new PassSpeechGate()) // #460
     } else if (ev.type === 'delta') {
       // First streamed token of the round, and of this speaker: the model +
       // orchestration wait resolves here.
@@ -1436,21 +1456,31 @@ export default class VoiceController {
       this._feedSpeaker(ev.speaker, ev.text)
     } else if (ev.type === 'passed') {
       // #98: the seat passed - nothing is spoken. TTS never opened for a
-      // bare pass (couldBePass held it); just drop the pending speaker.
+      // bare pass or a remark of quiet words (couldBePass held it); just
+      // drop the pending speaker. #460: a quiet remark with other words in
+      // it did open TTS, but its gate sent nothing, so close it unheard.
       const p = this._pendingSpeaker
       if (p && p.slug === ev.speaker) this._pendingSpeaker = null
+      else this._abandonSpeaker(ev.speaker)
+      this._writtenFilters.delete(ev.speaker)
+      this._passGates.delete(ev.speaker)
     } else if (ev.type === 'speaker_end' || ev.type === 'error') {
       const p = this._pendingSpeaker
       if (p && p.slug === ev.speaker && !p.started) {
         this._pendingSpeaker = null // ellipsis/empty reply - never opened, nothing to flush
+        // #460: speech held because the words could still have been a
+        // pass ("Nothing to add."), and the server saved them as a real
+        // reply instead of sending `passed`. Speak them now.
+        if (ev.type === 'speaker_end' && /[^.…\s]/.test(p.text) && !isPassShaped(p.text)) {
+          this._beginSpeaker(ev.speaker)
+          this._sendSpeech(ev.speaker, p.text)
+          this._endSpeech(ev.speaker)
+        }
       } else {
-        // #80: release any held could-still-be-the-token tail before the
-        // final flush, so trailing words are spoken, never lost.
-        const rest = this._writtenFilters.get(ev.speaker)?.flush()
-        if (rest) this.sockets.get(ev.speaker)?.send({ text: rest })
-        this.sockets.get(ev.speaker)?.send({ flush: true, done: true })
+        this._endSpeech(ev.speaker)
       }
       this._writtenFilters.delete(ev.speaker)
+      this._passGates.delete(ev.speaker)
     }
     // 'work_status' deliberately has NO playback branch here: it's a
     // structured liveness signal for the text/UI chip only. Speaking it
@@ -1464,8 +1494,9 @@ export default class VoiceController {
     const p = this._pendingSpeaker
     if (p && p.slug === slug && !p.started) {
       p.text += text
-      // #98: also hold while the text could still be a bare [pass] - a
-      // passed turn is never spoken, and the 'passed' event clears it.
+      // #98: also hold while the text could still be a pass - a passed
+      // turn is never spoken, and the 'passed' event clears it. #460: that
+      // includes a quiet remark on its way to a trailing [pass].
       if (/[^.…\s]/.test(p.text) && !couldBePass(p.text)) { // real content arrived - start speaking now
         p.started = true
         this._pendingSpeaker = null
@@ -1481,9 +1512,40 @@ export default class VoiceController {
   // filter - text after a [written] token is transcript-only, never spoken.
   // Empty results (mid-token holdback, or post-token silence) send nothing.
   _sendSpeech(slug, text) {
+    // #460: the pass gate first, so a reply that could still end as a pass
+    // sends nothing yet and [pass] itself is never spoken.
+    const gate = this._passGates.get(slug)
+    const passed = gate ? gate.feed(text) : text
     const filter = this._writtenFilters.get(slug)
-    const speak = filter ? filter.feed(text) : text
+    const speak = filter ? filter.feed(passed) : passed
     if (speak) this.sockets.get(slug)?.send({ text: speak })
+  }
+
+  // The end of a spoken reply. #460: the pass gate releases what it held
+  // (nothing, if the reply was a pass). #80: then the written filter
+  // releases any held could-still-be-the-token tail before the final
+  // flush, so trailing words are spoken, never lost.
+  _endSpeech(slug) {
+    const gate = this._passGates.get(slug)
+    const rest = gate ? gate.flush() : ''
+    const filter = this._writtenFilters.get(slug)
+    const speak = filter ? filter.feed(rest) + filter.flush() : rest
+    if (speak) this.sockets.get(slug)?.send({ text: speak })
+    this.sockets.get(slug)?.send({ flush: true, done: true })
+  }
+
+  // #460: a reply that turned out to be a pass after its speech opened. Its
+  // gate held every word, so TTS has nothing: close the socket without a
+  // flush and let the player end unplayed. The maps forget it now, so a
+  // refused pass's retry opens a fresh speaker under the same slug.
+  _abandonSpeaker(slug) {
+    const s = this.sockets.get(slug)
+    if (!s) return
+    this.sockets.delete(slug)
+    const player = this.players.get(slug)
+    this.players.delete(slug)
+    player?.abandon()
+    try { s.ws.close() } catch { /* already closed */ }
   }
 
   onRoundDone() {
@@ -1569,7 +1631,7 @@ export default class VoiceController {
     this._state('speaking')
     this.playChain = this.playChain
       .then(() => {
-        if (this.dropQueue) return undefined
+        if (this.dropQueue || player.abandoned) return undefined
         // The shared sink is now handed to this speaker - its queued audio can
         // begin. This is play INVOKED, not yet audible: the gap between its
         // first_audio (ready) and here is time it spent queued behind the prior
@@ -1599,8 +1661,10 @@ export default class VoiceController {
       })
       .then(() => {
         this.playing -= 1
-        this.players.delete(slug)
-        this.sockets.delete(slug)
+        // Only this speaker's own entries: after an abandoned pass (#460)
+        // the slug may already belong to its retry.
+        if (this.players.get(slug) === player) this.players.delete(slug)
+        if (this.sockets.get(slug)?.ws === ws) this.sockets.delete(slug)
         if (this.playing === 0) this.onSpeaker?.(null) // nobody speaking now
         this._maybeResume()
       })

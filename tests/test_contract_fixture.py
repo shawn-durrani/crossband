@@ -17,10 +17,43 @@ clone without a pytest run first.
 import json
 from pathlib import Path
 
-from backend import passes, provenance, providers
+from backend import passes, provenance, providers, voice
 from backend.config import _LOOPBACK_HOSTS
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backend_contract.json"
+
+# Made up replies, each judged by backend/passes.py into the fixture, so
+# frontend/src/passView.js is held to the same verdicts (#460): what the
+# screen and the voice hide has to be what the engine never stores.
+PASS_EXAMPLES = [
+    "[pass]",
+    "  [PASS]\n",
+    "[pa",
+    "Nothing to add from me.  [pass]",
+    "The room asked us to stay quiet, so I'm passing.  [pass]",
+    "Staying quiet as asked.\n\n[PASS]",
+    "Holding back until someone asks me directly. [pass]",
+    "I don\u2019t have anything to add. [pass]",
+    "\u2026  [pass]",
+    "Nothing to add. [pa",
+    "You two carry on with the timber order, passing. [pass]",
+    "I'll let you two carry on. [pass]",
+    "(still listening) [pass].",
+    "The glue needs 24 hours to cure.  [pass]",
+    "Oil it after sanding. [PASS].",
+    "Pass the glue. [pass]",
+    "Nothing beats oak. [pass]",
+    "Staying quiet, want me to check the quotes? [pass]",
+    "For the record, room mode is still on.  [pass]",
+    "Nothing to add, but Sam's cut list is one leg short.  [pass]",
+    "Yes.  [pass]",
+    "Same here.  [pass]",
+    "Sand it first. [pa",
+    "[pass] and one more thing",
+    "Nothing to add.",
+    "Sand it first.",
+    "[note] something",
+]
 
 
 def current_contract():
@@ -40,8 +73,26 @@ def current_contract():
                 list(providers._ANTHROPIC_NO_EFFORT_MODEL),
         },
         # The transcript hides a seat's pass by this token and every start
-        # of it (frontend/src/passView.js, #456).
-        "pass": {"token": passes.PASS_TOKEN},
+        # of it (frontend/src/passView.js, #456), and a quiet remark in
+        # front of it by these words (#460).
+        "pass": {
+            "token": passes.PASS_TOKEN,
+            "quiet_phrase_pattern": passes.QUIET_PHRASE_PATTERN,
+            "clause_break_pattern": passes.CLAUSE_BREAK_PATTERN,
+            "quiet_max_chars": passes.QUIET_MAX_CHARS,
+            "quiet_contrast": sorted(passes.QUIET_CONTRAST),
+            "after_token": passes.AFTER_TOKEN,
+            # The voice's pass gate is measured against this (#460):
+            # TTS makes no audio until it holds this many characters.
+            "tts_first_chunk_chars": json.loads(voice.tts_init_message(
+                {"tts_speed": 1.0}))["generation_config"][
+                    "chunk_length_schedule"][0],
+            "examples": [{"text": t,
+                          "is_pass": bool(passes.is_pass(t)),
+                          "is_cut_pass": bool(passes.is_cut_pass(t)),
+                          "kept": passes.strip_pass(t, partial=True)}
+                         for t in PASS_EXAMPLES],
+        },
     }
 
 
