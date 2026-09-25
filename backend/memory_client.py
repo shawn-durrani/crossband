@@ -506,8 +506,8 @@ class MemoryClient:
                         event_date: str | None = None,
                         confidence: str = "medium",
                         web_sources: list[str] | None = None,
-                        guest_speakers: list[str] | None = None
-                        ) -> dict | None:
+                        guest_speakers: list[str] | None = None,
+                        chat_id=None) -> dict | None:
         """POST /facts. Returns the response dict, or None when the service is
         down / the write failed. Model-authored facts land quarantined when the
         service's trust gate says so - that's the service's call, not ours.
@@ -520,7 +520,14 @@ class MemoryClient:
         the speaker classes ingest uses (see round_guest_speakers), so a
         save made while a guest could have been the source is held for
         review under membro's guest-present group. Sent only when
-        non-empty; a 1.4 service ignores it."""
+        non-empty; a 1.4 service ignores it.
+
+        chat_id (contract 1.7, membro#115) names the chat the save was made
+        in, as the same (source_app, conversation_id) pair ingest and
+        recall use. Membro binds a guest-present save to that chat, so once
+        approved it is recalled only there. Sent with every save that has a
+        chat. An older membro ignores the field, so its guest-present saves
+        stay global as before."""
         if not await self.probe():
             return None
         body = {
@@ -530,6 +537,8 @@ class MemoryClient:
             "origin_agent": origin_agent,
             "source_app": SOURCE_APP,
         }
+        if chat_id is not None:
+            body["conversation_id"] = str(chat_id)
         if web_sources:
             body["web_sources"] = list(web_sources)[:20]
             self._warn_if_stamp_unsupported()

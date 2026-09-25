@@ -195,16 +195,21 @@ before.
 - 1.6: `source_app` and `conversation_id` on every recall, the same
   pair ingest uses. Membro binds the facts it draws from a guest's
   turns to the chat they came from and hands them back only to that
-  chat. A model's direct `save_memory` names no chat, because membro's
-  save route doesn't take one. A save made with guests present is still
-  held for review, and once you approve it, it's recalled in every chat.
+  chat.
+- 1.7: the same pair on every `save_memory`. Membro binds a save made
+  with guests present to the chat it was made in, so once you approve
+  it, it's recalled only in that chat. A save made with only you in the
+  room is recalled in every chat.
 
 On a 1.3 membro the marker never appears, the eraser link falls back to
 the browser's own host on port 8901, and the watermark route is never
 called. On a 1.4 membro the guest stamp is sent and ignored, so such a
 save goes straight to recall, and Crossband logs one warning per
 process. On a 1.5 membro the chat named on a recall is ignored, so a
-guest's facts surface in every chat as they did before.
+guest's facts surface in every chat as they did before. On a 1.6
+membro the chat named on a save is ignored. A save made with guests
+present is still held for review, and once you approve it, it's
+recalled in every chat.
 
 ## The coding guest and GitHub
 

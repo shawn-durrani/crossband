@@ -179,6 +179,42 @@ def test_save_fact_sends_guest_speakers_only_when_present():
     assert stamped["source_app"] == memory_client.SOURCE_APP
 
 
+# ---------- the chat on the wire (contract 1.7) ----------
+
+def test_save_fact_names_the_chat_beside_the_guests():
+    """membro#115: a save carries the chat it was made in as the same
+    (source_app, conversation_id) pair ingest uses, so membro binds a
+    guest-present save to that chat. A save with no chat, such as an
+    import, sends no conversation."""
+    mc, fake = _client(contract="1.7")
+    asyncio.run(mc.save_fact("a claim heard in the room", "claude-x",
+                             guest_speakers=["guest:Sam"], chat_id=42))
+    asyncio.run(mc.save_fact("the owner alone", "claude-x", chat_id=42))
+    asyncio.run(mc.save_fact("an imported line", "user"))
+    (_, guest), (_, alone), (_, imported) = fake.bodies
+    assert guest["source_app"] == memory_client.SOURCE_APP
+    assert guest["conversation_id"] == "42"
+    assert guest["guest_speakers"] == ["guest:Sam"]
+    assert alone["conversation_id"] == "42"
+    assert "conversation_id" not in imported
+
+
+def test_an_older_membro_gets_the_same_save(caplog):
+    """A 1.6 membro ignores fields it doesn't know, so the chat rides every
+    save regardless of version and the save goes through as it always did.
+    Nothing is gated or warned: the hold still happens there, and only the
+    binding is missing."""
+    mc, fake = _client(contract="1.6")
+    with caplog.at_level("WARNING"):
+        out = asyncio.run(mc.save_fact("a claim heard in the room",
+                                       "claude-x", guest_speakers=["guest:Sam"],
+                                       chat_id=42))
+    (_, body), = fake.bodies
+    assert body["conversation_id"] == "42"
+    assert out is not None
+    assert not [r for r in caplog.records if "predates" in r.message]
+
+
 def test_save_fact_caps_guest_speakers_at_twelve():
     mc, fake = _client(contract="1.5")
     many = [f"guest:G{i}" for i in range(20)]
