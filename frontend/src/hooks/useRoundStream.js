@@ -7,6 +7,7 @@ import { voiceReplaySpeakerEligible } from '../eventStream'
 import { createBatch, addFragment, cancelBatch, flipBatch, combineFragments } from '../textQueue'
 import { record as debugRecord, recordError } from '../voiceDebug'
 import { visibleMessages } from '../passView'
+import { createSendRetry } from '../sendRetry'
 
 // Diagnostics-only, content-free: timestamped console logging for the
 // turn-handoff investigation (issue: voice turn-handoff stuck in listening
@@ -78,7 +79,8 @@ export function useRoundStream({
   const tailedRounds = useRef(new Set())
   const voiceAttachInFlight = useRef(false)
   const pendingSends = useRef([])
-  const sendRetryTimer = useRef(null)
+  const sendRetry = useRef(null)
+  const runStreamRef = useRef(null)
 
   // Callbacks read through a ref refreshed every render, so the long-lived
   // stream loops always call today's handlers (same rule as useEventStream).
@@ -400,22 +402,21 @@ export function useRoundStream({
     }
   }
 
-  // Held sends (offline queue): retry in order whenever the tunnel returns.
+  // Held sends (offline queue): retry in order whenever the tunnel returns,
+  // one retry at a time (sendRetry.js). The retry outlives renders, so it
+  // sends through the latest runStream.
+  runStreamRef.current = runStream
   function ensureSendRetry() {
-    if (sendRetryTimer.current) return
-    const tick = async () => {
-      sendRetryTimer.current = null
-      if (!pendingSends.current.length) { setHeldSends(0); return }
-      if (await api.ping()) {
-        const item = pendingSends.current.shift()
-        setHeldSends(pendingSends.current.length)
-        if (!pendingSends.current.length) cb.current.onBanner('')
-        await runStream(item.url, item.body, { queueable: true })
-      }
-      if (pendingSends.current.length) sendRetryTimer.current = setTimeout(tick, 3000)
-      else setHeldSends(0)
+    if (!sendRetry.current) {
+      sendRetry.current = createSendRetry({
+        queue: pendingSends.current,
+        ping: () => api.ping(),
+        send: (item) => runStreamRef.current(item.url, item.body, { queueable: true }),
+        onCount: setHeldSends,
+        onEmptied: () => cb.current.onBanner(''),
+      })
     }
-    sendRetryTimer.current = setTimeout(tick, 3000)
+    sendRetry.current.ensure()
   }
 
   // ---- Per-chat text batching --------------------------------------------

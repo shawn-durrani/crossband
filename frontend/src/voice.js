@@ -8,9 +8,10 @@ import { effectiveVolume } from './voiceGain.js'
 import { gateEvent, gateRoundDone } from './voiceGate.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
-         sttCommitTimeoutMs } from './turnPolicy.js'
+         sttCommitTimeoutMs, turnOverAfterCut } from './turnPolicy.js'
 import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
-import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
+import { endTurn, newLedger, onCommit, onFinal, onSalvage, rescuePlan, resetLedger,
+         takeInFlight } from './commitLedger.js'
 import { VoiceTrace, traceMeta } from './voiceTrace.js'
 import { record as debugRecord } from './voiceDebug.js'
 import { STAGE_EMPTY, STAGE_FAILED, STAGE_HELD, STAGE_SENT, handoffBegan,
@@ -157,6 +158,15 @@ class StreamPlayer {
 // for the session (browsers block audio until the user interacts with the page).
 const SILENT_WAV = 'data:audio/wav;base64,UklGRuQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YcADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
+// The page's live voice session, if any. A page has one microphone and
+// one chat, so it runs one session: start() ends any other before it
+// opens the mic. On 25 September a restart signed the browser out, the
+// lock screen replaced the app mid-call, and the old session was never
+// ended. Its microphone and listening loop ran on unseen, and once the
+// owner started voice again two sessions heard every turn and each sent
+// it.
+let liveSession = null
+
 export default class VoiceController {
   constructor({ getChatId, getParticipants, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onLevel, onSpeaker, onHeld, onStall }) {
     this.getChatId = getChatId
@@ -227,6 +237,22 @@ export default class VoiceController {
     this._handoff = newHandoffWatch()
     this._turnBuffer = []
     this._logicalStart = 0    // when the LOGICAL turn began (survives caps)
+    // #453: a long turn waiting between pieces. Set when a segment is cut
+    // at the length limit, as { turnId, voiceAt }: the cut piece's turn id
+    // and when the speaker was last heard. The pause that follows can then
+    // end the turn the way it ends a short one. Null while a segment is
+    // open or no long turn is waiting.
+    this._cut = null
+    // #453: the batch call for a cut piece that is still out, so a turn
+    // that ends meanwhile can make that piece its last (see _endLongTurn).
+    this._batchPiece = null
+    // Which commit the salvage timer belongs to, so only that commit's
+    // transcript disarms it (#453).
+    this._sttCommitTurn = null
+    // The listening loop's handle: each _vadLoop() call takes a new one,
+    // and a tick holding an older one stops, so one loop reads the mic.
+    this._vadLoopId = 0
+    this._starting = false    // start() is waiting on the microphone
     this.muted = false        // hard mute: mic track disabled, nothing detected/sent
     // Hold-and-retry: utterances whose /stt POST failed on NETWORK (a dead
     // zone) wait here as audio blobs and retry until the tunnel returns -
@@ -325,12 +351,13 @@ export default class VoiceController {
   setMuted(on) {
     this.muted = !!on
     if (this.muted) {
-      if (this.speechStart) {
+      if (this.speechStart || this._cut) {
         // Muting right after speaking is phone-call muscle memory for "my
         // turn is done" - finalize and SEND the captured words before the
         // mic goes dark. (Road-tested the hard way: tapping mute inside the
         // 2s silence window silently killed the utterance. Words spoken are
         // never discarded; _finalizeUtterance still drops sub-500ms blips.)
+        // A long turn waiting after a cut counts too (#453).
         this.finalizeNow()
       } else {
         // nothing captured - just clear pre-onset state so unmute starts
@@ -401,6 +428,10 @@ export default class VoiceController {
       } catch { /* */ }
     }
     ws.onmessage = (e) => {
+      // #304: a socket we've already let go of has no say. Its turns were
+      // either rescued by the batch path or ended with the session, so a
+      // late final from it must not send them again or move the screen.
+      if (this.sttWs !== ws) return
       let msg; try { msg = JSON.parse(e.data) } catch { return }
       if (msg.session) {
         // #134: our capture-session id, so the every-surface mic banner
@@ -425,13 +456,19 @@ export default class VoiceController {
       if (msg.partial !== undefined) {
         this.onPartial?.(msg.partial)
       } else if (msg.final !== undefined) {
-        clearTimeout(this._sttCommitTimer)
         const text = (msg.final || '').trim()
         // #85: the relay stamps each final with its commit's turn id; the
         // ledger decides whether this final still owns its commit. A final
         // whose commit was already salvaged - or that names no commit we
         // know - drops here, which is exactly the doubled-turn case.
         const win = onFinal(this._ledger, msg.turn_id)
+        // #453: a transcript disarms only its own commit's salvage timer.
+        // Clearing it on every final let a long turn's earlier piece, whose
+        // words came in late, switch off the backup of the piece after it.
+        if (win && win.turnId === this._sttCommitTurn) {
+          clearTimeout(this._sttCommitTimer)
+          this._sttCommitTurn = null
+        }
         // #304: which commit this final was stamped for, which one it won,
         // and whether it was empty - ids and booleans only, never the text.
         // A final stamped for one turn arriving after another's commit is
@@ -444,13 +481,19 @@ export default class VoiceController {
         if (win && !text && win.dispatch === 'send') {
           handoffStage(this._handoff, win.turnId, STAGE_EMPTY)
         }
-        if (win && text) {
+        // #304: an empty last piece still ends the turn. Parts of a long
+        // turn already buffered go now, instead of waiting for someone to
+        // speak again; with nothing buffered this sends nothing, as before.
+        if (win && (text || win.dispatch === 'send')) {
           this._deliverTranscript(text, win.turnId, win.dispatch)
         }
         // The turn is transcribed; if its round is already generating, say
         // so. 'listening' here rendered the whole generation wait as
         // "Listening…", inviting speech the gated mic then discarded.
-        if (this.active && this.state === 'transcribing') {
+        // #453: only the turn's last piece moves the screen on. An earlier
+        // piece's words used to flip it to Listening while the last piece
+        // was still out, and the backup recording was then rotated away.
+        if (win && win.dispatch === 'send' && this.active && this.state === 'transcribing') {
           this._state(this.roundActive ? 'working' : 'listening')
         }
       } else if (msg.error) {
@@ -535,6 +578,7 @@ export default class VoiceController {
     this.captureSid = null
     resetLedger(this._ledger)
     clearTimeout(this._sttCommitTimer)
+    this._sttCommitTurn = null
     clearTimeout(this._sttReopenTimer)
     if (this.sttProc) { try { this.sttProc.disconnect() } catch { /* */ } this.sttProc = null }
     if (this.sttWs) {
@@ -551,14 +595,32 @@ export default class VoiceController {
   // A realtime failure must never break a live session - drop to the batch
   // recorder. #21: the cause travels with the fallback - the banner used to
   // say only that realtime was unavailable, leaving nothing to debug with.
+  //
+  // #304: a turn can be committed and still waiting on its transcript when
+  // the failure lands. Closing the socket resets the ledger and clears the
+  // salvage timer, which used to drop that turn unsent: red errors, then
+  // Listening, and someone had to speak again. The in-flight commits are
+  // taken first and handed to the batch recorder, which ran the whole
+  // time, so the turn is transcribed there and sent once (rescuePlan in
+  // commitLedger.js decides what to salvage).
   _fallbackToBatch(cause = 'unknown') {
     if (!this.sttRealtime) return
     this.sttRealtime = false
     this.sttFallbackCause = cause
     console.warn('[voice] realtime STT fell back to batch:', cause)
-    debugRecord('stt:batchFallback', { cause: String(cause).slice(0, 200) })
+    const inFlight = takeInFlight(this._ledger)
+    debugRecord('stt:batchFallback', { cause: String(cause).slice(0, 200),
+                                       inFlight: inFlight.length })
     this._closeSttStream()
-    if (this.active && this.state === 'transcribing') {
+    const rescue = this.active
+      ? rescuePlan(inFlight, { speaking: !!this.speechStart }) : null
+    if (rescue) {
+      // Ids and a dispatch word only, never the words. The screen stays on
+      // Thinking until the batch transcript is back.
+      this._vlog('stt:rescue', { turnId: rescue.turnId, dispatch: rescue.dispatch,
+                                 commits: inFlight.length })
+      this._salvageUtterance(rescue.speechMs, rescue.turnId, rescue.dispatch)
+    } else if (this.active && this.state === 'transcribing') {
       this._state(this.roundActive ? 'working' : 'listening')
     }
     this.onSttFallback?.(cause)
@@ -609,6 +671,10 @@ export default class VoiceController {
     if (this.speechStart) {
       this.lastVoice = Date.now() // count trailing speech toward the turn
       this._finalizeUtterance()
+    } else if (this._cut) {
+      // #453: a long turn waiting after a cut ends here too, with the
+      // pieces it already has.
+      this._endLongTurn(this._cut.turnId)
     }
   }
 
@@ -619,6 +685,26 @@ export default class VoiceController {
   }
 
   async start() {
+    // A second tap on start, while a session runs or is still waiting on
+    // the microphone, would open a second mic and a second listening loop.
+    if (this.active || this._starting) return
+    // One session per page (see liveSession): any other ends first, so its
+    // microphone is off before this one asks for it.
+    const other = liveSession
+    if (other && other !== this && (other.active || other._starting)) {
+      other._vlog('session:superseded', { state: other.state })
+      other.stop()
+    }
+    liveSession = this
+    this._starting = true
+    try {
+      await this._startSession()
+    } finally {
+      this._starting = false
+    }
+  }
+
+  async _startSession() {
     this._vlog('session:start', { roomMode: this.roomMode, staleRoundActive: this.roundActive })
     // A fresh session starts with a clean gate. The controller outlives
     // stop()/start() (App builds it once), so a gate wedged true by a dead
@@ -640,9 +726,17 @@ export default class VoiceController {
     // always did; a session starting IN room mode asks with noise
     // suppression and auto gain off, so single-voice tuning cannot muffle
     // the second speaker. The decision table lives in captureProfile.js.
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: captureConstraints(this.roomMode),
     })
+    if (liveSession !== this) {
+      // Stopped, or replaced by another session, while the browser was
+      // asking for the mic. Coming alive now would leave a session nobody
+      // can end.
+      stream.getTracks().forEach((t) => t.stop())
+      return
+    }
+    this.stream = stream
     this.audioCtx = new AudioContext()
     // Resume the context we just built. _primeAudio ran BEFORE it existed (it
     // has to - the sink unlock needs the start gesture), so without this the
@@ -717,8 +811,12 @@ export default class VoiceController {
   stop() {
     this._vlog('session:stop', { state: this.state, roundActive: this.roundActive, captureSid: this.captureSid })
     this.active = false
+    if (liveSession === this) liveSession = null
     // A hand-off the owner ended is not a stall (#304).
     resetHandoffWatch(this._handoff)
+    // Nor is a long turn left waiting between pieces (#453).
+    this._cut = null
+    this._batchPiece = null
     if (this._unlockHandler) {
       window.removeEventListener('pointerdown', this._unlockHandler)
       this._unlockHandler = null
@@ -825,11 +923,17 @@ export default class VoiceController {
     return voiced / frames.length >= 0.6
   }
 
+  // One listening loop per session. Each call takes a new handle and a
+  // tick holding an older one stops on its next frame, so calling this
+  // while a loop runs replaces that loop and never adds a second. A stop
+  // and a start inside one frame used to leave the old loop's queued tick
+  // running beside the new loop.
   _vadLoop() {
+    const loop = ++this._vadLoopId
     const timeBuf = new Float32Array(this.analyser.fftSize)
     const freqBuf = new Uint8Array(this.analyser.frequencyBinCount)
     const tick = () => {
-      if (!this.active) return
+      if (!this.active || loop !== this._vadLoopId) return
       requestAnimationFrame(tick)
       // #304: before the early returns below - a hand-off can stall while
       // muted or while the screen says Thinking, and both still count.
@@ -936,6 +1040,20 @@ export default class VoiceController {
           if (!this._turnBuffer.length) this._logicalStart = this.speechStart
           this.lastVoice = now
           this._sttStartStreaming()
+        } else if (this._cut && !this.manualMode) {
+          // #453: a long turn waiting after a cut. The pause that ends a
+          // short turn ends this one too: a voiced frame restarts it, as
+          // it does inside a segment, and sustained speech opens the next
+          // piece above instead. The backup recording still holds the cut
+          // piece's audio, so it isn't rotated away while the turn waits.
+          if (voiced) this._cut.voiceAt = now
+          if (turnOverAfterCut({ now, lastVoiceAt: this._cut.voiceAt,
+                                 silenceMs: this.silenceMs,
+                                 logicalStart: this._logicalStart })) {
+            this._vlog('vad:finalize', { cause: 'pauseAfterCut',
+                                         silenceMs: now - this._cut.voiceAt })
+            this._endLongTurn(this._cut.turnId)
+          }
         } else if (now - this.recStarted > RECORDER_ROTATE_MS) {
           this._startRecorder()
         }
@@ -990,6 +1108,7 @@ export default class VoiceController {
     // lastVoice at the tap, so the gap is ~0). Backdate speech_end by that
     // gap or every turn reads ~silenceMs faster than perceived.
     const endedAgoMs = Math.max(0, Date.now() - this.lastVoice)
+    const lastVoice = this.lastVoice
     this.speechStart = 0
     this.lastVoice = 0
     // End-of-speech: open a fresh latency trace (speech_end backdated above).
@@ -997,6 +1116,12 @@ export default class VoiceController {
     // stages, the /send that persists the message, and (via the commit frame
     // below) the diarization pass that labels who spoke it.
     const turnId = this._trace.begin(undefined, endedAgoMs)
+    // #453: a cut leaves the turn waiting between pieces, so the pause that
+    // follows can still end it (the listening loop and _endLongTurn). Any
+    // other end closes the wait; a too-short tail below hands the piece
+    // that was waiting to _endLongTurn.
+    const cut = this._cut
+    this._cut = continuation ? { turnId, voiceAt: lastVoice } : null
     if (this.sttRealtime && this.sttWs) {
       // Realtime path: close the utterance with a commit; the transcript comes
       // back asynchronously on the socket (onmessage -> sendText).
@@ -1010,6 +1135,7 @@ export default class VoiceController {
         // the mic graph so the NEXT turn streams again.
         console.warn(`voice: 0 frames sent for a ${Math.round(speechMs)}ms utterance - salvaging via batch recorder, rebuilding capture`)
         debugRecord('stt:zeroFramesSalvage', { speechMs: Math.round(speechMs) })
+        this._cut = null            // the salvage sends the turn now
         this._watchHandoff(turnId)  // the salvage always sends
         this._rebuildSttProcessor()
         this._state('transcribing')
@@ -1025,18 +1151,20 @@ export default class VoiceController {
       // the old drop flag.
       this._sttSend({ commit: true, turn_id: turnId })
       if (!tooShort) {
-        onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send')
+        onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send', speechMs)
         // Only a real end of turn is a hand-off; a capped segment buffers.
         if (!continuation) this._watchHandoff(turnId)
         // A continuation commit is mid-speech: capture keeps flowing, so
         // the state stays 'listening' and the user sees nothing change.
         if (!continuation) this._state('transcribing')
         clearTimeout(this._sttCommitTimer)
+        this._sttCommitTurn = turnId
         // #104: patience scales with the audio just committed - a capped
         // 20s segment finalizes slower than a 2s remark, and punting a
         // HEALTHY long finalization to the 60s batch path was half the
         // stall. The ledger makes the race safe in both directions.
         this._sttCommitTimer = setTimeout(() => {
+          if (this._sttCommitTurn === turnId) this._sttCommitTurn = null
           const dispatch = onSalvage(this._ledger, turnId)
           if (dispatch && this.active) {
             // Realtime never answered in time. The batch recorder ran the
@@ -1045,33 +1173,68 @@ export default class VoiceController {
             this._salvageUtterance(speechMs, turnId, dispatch)
           }
         }, sttCommitTimeoutMs(speechMs))
-      } else if (cause === 'gap' && this._turnBuffer.length) {
+      } else if (cause === 'gap') {
         // The turn ended on a too-short tail with buffered segments behind
-        // it: flush what the monologue already said.
-        this._watchHandoff(turnId)
-        this._deliverTranscript('', turnId, 'send')
+        // it: flush what the monologue already said, including a cut
+        // piece whose words are still on their way (#453).
+        this._endLongTurn(turnId, cut)
       }
       return
     }
+    // #453: a cut piece's batch call is tracked before the first await, so
+    // a pause that ends the turn while it's out makes it the last piece.
+    const tooShort = speechMs < MIN_SPEECH_MS
+    const piece = this._trackPiece(turnId, continuation && !tooShort ? 'buffer' : 'send')
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
     this._startRecorder()
-    if (speechMs < MIN_SPEECH_MS) {
-      if (cause === 'gap' && this._turnBuffer.length) {
-        this._watchHandoff(turnId)
-        this._deliverTranscript('', turnId, 'send')
-      }
+    if (tooShort) {
+      if (cause === 'gap') this._endLongTurn(turnId, cut)
       return
     }
     if (!continuation) this._watchHandoff(turnId)
     if (!continuation) this._state('transcribing')
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
-    await this._transcribeOrHold(blob, speechMs,
-                                 { turnId, dispatch: continuation ? 'buffer' : 'send' })
+    await this._transcribeOrHold(blob, speechMs, piece)
     if (this.active && this.state === 'transcribing') {
       this._state(this.roundActive ? 'working' : 'listening')
     }
+  }
+
+  // #453: end a long turn that has no audio of its own left to add: the
+  // pause after a cut, mute or the end-turn tap while it waits, or a tail
+  // too short to transcribe. Every piece goes as one turn, once. A cut
+  // piece still waiting on its words becomes the turn's last piece, so
+  // whichever copy of it wins - realtime, the salvage timer, a rescue or
+  // the batch call - sends the lot, and the screen says Thinking until
+  // then, as it does after a short turn. With every piece already in, the
+  // buffered words go now under `sendId`.
+  _endLongTurn(sendId, cut = this._cut) {
+    this._cut = null
+    let waiting = null
+    if (cut) {
+      waiting = endTurn(this._ledger, cut.turnId)
+      const b = this._batchPiece
+      if (!waiting && b && b.turnId === cut.turnId) {
+        b.dispatch = 'send'
+        waiting = b
+      }
+    }
+    if (cut || this._turnBuffer.length) {
+      // Ids and counts only, never the words.
+      this._vlog('turn:endAfterCut', { turnId: waiting ? waiting.turnId : sendId,
+                                       waiting: !!waiting,
+                                       buffered: this._turnBuffer.length })
+    }
+    if (waiting) {
+      this._watchHandoff(waiting.turnId)
+      this._state('transcribing')
+      return
+    }
+    if (!this._turnBuffer.length) return
+    this._watchHandoff(sendId)
+    this._deliverTranscript('', sendId, 'send')
   }
 
   // The single delivery door (#85/#104): every winning transcript - realtime
@@ -1096,13 +1259,20 @@ export default class VoiceController {
   // POST one utterance to /stt; on a NETWORK failure hold the audio and retry
   // until the tunnel returns. HTTP errors (bad audio) surface and drop -
   // retrying identical bytes can't fix those.
-  async _transcribeOrHold(blob, speechMs, { turnId = null, dispatch = 'send' } = {}) {
+  // `piece` is { turnId, dispatch } from _trackPiece. Its dispatch is read
+  // when the answer lands: a long turn that ended while a cut piece was out
+  // made that piece the turn's last ('send', #453).
+  async _transcribeOrHold(blob, speechMs, piece = { turnId: null, dispatch: 'send' }) {
+    const turnId = piece.turnId || null
+    let dispatch
     try {
       const fd = new FormData()
       fd.append('file', blob, 'utterance.webm')
       fd.append('duration_ms', String(Math.round(speechMs)))
       const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body: fd })
       const data = await res.json().catch(() => ({}))
+      if (this._batchPiece === piece) this._batchPiece = null
+      dispatch = piece.dispatch || 'send'
       // #304: where the batch path left this hand-off - status and an
       // empty flag, never the text.
       const watchId = turnId || this._trace.current()?.turnId
@@ -1114,9 +1284,16 @@ export default class VoiceController {
       }
       if (res.ok && data.text) {
         this._deliverTranscript(data.text, turnId, dispatch)
-      } else if (!res.ok) this.onError?.(`Transcription failed (${data.detail || res.status})`)
+      } else {
+        if (!res.ok) this.onError?.(`Transcription failed (${data.detail || res.status})`)
+        // #304: an empty or refused last piece still ends the turn, so the
+        // parts already buffered go now rather than with the next turn.
+        if (dispatch === 'send') this._deliverTranscript('', turnId, 'send')
+      }
       return true
     } catch {
+      if (this._batchPiece === piece) this._batchPiece = null
+      dispatch = piece.dispatch || 'send'
       if (dispatch === 'send') {
         handoffStage(this._handoff, turnId || this._trace.current()?.turnId, STAGE_HELD)
       }
@@ -1127,13 +1304,23 @@ export default class VoiceController {
     }
   }
 
+  // #453: what a batch call reads its dispatch from when its answer lands.
+  // A cut piece's call ('buffer') is remembered while it's out, so a long
+  // turn that ends meanwhile can make it the last piece (_endLongTurn).
+  _trackPiece(turnId, dispatch) {
+    const piece = { turnId, dispatch }
+    if (dispatch === 'buffer') this._batchPiece = piece
+    return piece
+  }
+
   async _salvageUtterance(speechMs, turnId = null, dispatch = 'send') {
+    const piece = this._trackPiece(turnId, dispatch)
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
     this._startRecorder()
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
-    await this._transcribeOrHold(blob, speechMs, { turnId, dispatch })
+    await this._transcribeOrHold(blob, speechMs, piece)
     if (this.active && this.state === 'transcribing') {
       this._state(this.roundActive ? 'working' : 'listening')
     }

@@ -39,7 +39,8 @@ Rounds survive the connection. A dropped connection doesn't cancel
 generation, a reconnect replays from a watermark, only a real abort
 marks a message as cut off, and two rounds for one chat can't
 interleave. A send that's turned away while a round runs leaves no
-message behind, so the app's retry lands one copy.
+message behind, so the app's retry lands one copy. Held messages go out
+in order, and one retry runs at a time.
 
 ## The prompt cache
 
@@ -64,6 +65,35 @@ dead mic or hide a live one. A kill from any surface closes that
 session's socket with its own code, and the owning client treats the
 code as a full stop. Two sessions in one chat are both shown, which is
 the doubled-turn case. The banner rules are pure and node-tested.
+
+A finished turn survives a transcription failure. The app records every
+turn a second time while it streams, and when realtime transcription
+fails with a turn still waiting for its words, that copy goes to
+standard transcription and the turn is sent once. A late realtime
+result can't send it again, whichever arrives first. A failure with no
+turn waiting changes nothing else. When the last piece of a long turn
+comes back empty, the pieces already heard are still sent. The suite
+drives the real voice client through each case.
+
+A long turn ends on the same pause as a short one. The app cuts speech
+into pieces about 12 seconds in and joins them into one message, and a
+cut can land on the pause at the end of a turn. After a cut, the usual
+pause still ends the turn, and every piece is sent once, whether its
+words come back from realtime transcription, from the backup copy, or
+after the pause has already ended the turn. Someone who carries on
+talking still gets one message, and a short turn keeps its timing. The
+suite runs the voice client's own listening loop through each case,
+with a scripted microphone and clock.
+
+One page runs one voice session. Starting a session ends any other the
+page still has, such as one left running when the lock screen replaced
+the app, so a turn is heard and sent once. A second tap on start opens
+no second microphone. The listening loop has one owner, so starting it
+again replaces the running loop and never adds a second. The suite
+starts the real voice client twice on one page, with one scripted
+microphone, and counts the loops reading it on every frame.
+
+### Identity and the live turn
 
 Identity work never starves a reply. Everything the identity pass runs
 on threads, which is clip banking, the hygiene audit and the crosstalk
