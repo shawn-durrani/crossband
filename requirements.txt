@@ -25,7 +25,7 @@ mcp>=2.2.0,<3
 # and verification of authenticator responses; pulls in cryptography + cbor2.
 # Capped at <3: verification semantics are security-load-bearing, so a major
 # bump is its own reviewed change. Same pin as the membro/spendglass siblings.
-webauthn>=2.2.0,<3
+webauthn>=2.8.0,<3
 # Local speaker identification for room mode (#28 part 2): offline voice-embed
 # matcher so a known voice is named locally in a fraction of a second, skipping
 # the ElevenLabs diarize batch call for the common single-speaker case. Small
