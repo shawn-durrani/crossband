@@ -72,3 +72,23 @@ test('seed drift while a change is still pending keeps drift last and muted', ()
   assert.equal(lines.at(-1).key, 'seed')
   assert.equal(lines.at(-1).tone, 'muted')
 })
+
+test('a one-chat step-up (#254) is quiet context, never a pending alarm', () => {
+  const lines = modelReadoutLines({
+    configured: 'claude-sonnet-5', last_used: 'claude-opus-5',
+    seed_drift: false, pending: false, stepped_up: true,
+  })
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0].key, 'stepped')
+  assert.equal(lines[0].tone, 'muted')
+  assert.equal(lines[0].model, 'claude-opus-5')
+  assert.ok(lines.every((l) => l.tone !== 'attention'))
+})
+
+test('pending still wins over a step-up flag', () => {
+  const [line] = modelReadoutLines({
+    configured: 'claude-sonnet-5', last_used: 'claude-opus-5',
+    pending: true, stepped_up: true,
+  })
+  assert.equal(line.key, 'pending')
+})

@@ -698,6 +698,11 @@ def _volatile_system_parts(cfg):
         # #105: the seat's own spoken depth, per seat per round - volatile
         # by nature (it flips on a spoken command), so it lives here.
         parts.append("\n" + note)
+    model_note = (cfg.get("model_note") or "").strip()
+    if model_note:
+        # #254: the seat's per-chat model step-up, beside its depth and for
+        # the same reason: a spoken cue flips it.
+        parts.append("\n" + model_note)
     research_note = (cfg.get("research_note") or "").strip()
     if research_note:
         # #253/#417: spoken research mode, per chat - volatile by the same
@@ -1829,8 +1834,12 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     # diagnosed twice, and wrongly the second time (a chat switch and a TTL
     # expiry both look identical to a real prefix break without it).
     tools_hash = _content_hash(json.dumps(anth_tools, sort_keys=True))
-    prefix_now = {"tools": tools_hash, "stable": stable_hash,
-                  "volatile": volatile_hash, "transcript": transcript_hash}
+    # The model is a prefix component too (#254): a per-chat step-up moves a
+    # seat onto a model that holds none of the old one's cache, and without
+    # it here that whole-prefix re-write read as "nothing changed".
+    prefix_now = {"model": p.get("model") or "", "tools": tools_hash,
+                  "stable": stable_hash, "volatile": volatile_hash,
+                  "transcript": transcript_hash}
     seat_key = (cfg.get("chat_id"), p.get("slug") or p.get("name"))
     _prev = _last_prefix.get(seat_key)
     changed = ([k for k, v in prefix_now.items() if _prev.get(k) != v]

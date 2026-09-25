@@ -39,6 +39,9 @@ def models_status(request: Request):
       • last_used  - the model stamped on that participant's most recent
         completed message (usage_json.model). This is what actually produced
         their last reply; it lags `configured` until the next turn runs.
+      • stepped_up - that last reply ran on a stronger model one chat asked
+        for (#254), so a `last_used` that differs from `configured` is on
+        purpose and `pending` stays false.
       • seed       - the config.json first-run seed for the two default seats
         (null for others). `seed_drift` flags when it disagrees with live.
 

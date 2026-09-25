@@ -173,4 +173,16 @@ export class VoiceTrace {
   }
 }
 
+// Provider/model/voice labels for one speaker's trace segment. `running` maps
+// slug -> the model the server said this turn runs on (the speaker_start
+// event's `model`, #254). A seat stepped up to a stronger model for one chat
+// runs a different model from the one its settings name, and a trace
+// labelled with the configured model would file its latency under the wrong
+// model. The configured model is the fallback for a server that sends none.
+export function traceMeta(participants, slug, running) {
+  const p = (participants || []).find((x) => x.slug === slug)
+  const model = (running && running[slug]) || p?.model || ''
+  return { provider: p?.provider || '', model, tts_provider: 'elevenlabs' }
+}
+
 export { STAGE_ORDER }

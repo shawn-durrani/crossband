@@ -143,3 +143,40 @@ def test_malformed_usage_json_does_not_500(client):
     r = client.get("/api/models/status")
     assert r.status_code == 200
     assert _by_slug(r)["gpt"]["last_used"] is None
+
+
+def _stamp_stepped(chat_id, speaker, model, stepped_from, created_at):
+    """A reply that ran on a per-chat model step-up (#254)."""
+    con = db.connect()
+    con.execute(
+        "INSERT INTO messages(chat_id, speaker, content, usage_json, created_at) "
+        "VALUES(?,?,?,?,?)",
+        (chat_id, speaker, "hi",
+         json.dumps({"model": model, "stepped_from": stepped_from}), created_at),
+    )
+    con.commit()
+    con.close()
+
+
+def test_a_stepped_up_reply_is_not_a_pending_change(client):
+    """#254: one chat asked for a stronger model, so the seat's last reply
+    ran on it. That differs from the configured model on purpose, and must
+    not read as a settings change waiting for its turn forever."""
+    chat = client.post("/api/chats", json={}).json()
+    _stamp_stepped(chat["id"], "claude", "claude-opus-5", "claude-opus-4-8",
+                   created_at=1751600000.0)
+    claude = _by_slug(client.get("/api/models/status"))["claude"]
+    assert claude["last_used"] == "claude-opus-5"
+    assert claude["stepped_up"] is True
+    assert claude["pending"] is False
+
+
+def test_a_step_up_from_an_older_setting_still_reads_pending(client):
+    """The step-up replaced a model the seat no longer has: the owner has
+    changed the seat since, so the next turn really will be different."""
+    chat = client.post("/api/chats", json={}).json()
+    _stamp_stepped(chat["id"], "claude", "claude-opus-5", "claude-sonnet-5",
+                   created_at=1751600000.0)
+    claude = _by_slug(client.get("/api/models/status"))["claude"]
+    assert claude["stepped_up"] is False
+    assert claude["pending"] is True
