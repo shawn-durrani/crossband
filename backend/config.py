@@ -32,6 +32,14 @@ DEPRECATED_ENV_PREFIX = "MMC_"
 
 DEFAULT_VOICE_PRICING = {"tts_per_1m_chars": 110.0, "stt_per_hour": 0.40}
 
+# The fleet's other apps, each at the health route it answers on loopback
+# without a session. The ports are the fleet's allocation.
+DEFAULT_SIBLING_APPS = {
+    "membro": "http://127.0.0.1:8901/v1/health",
+    "spendglass": "http://127.0.0.1:8903/api/session",
+    "threadfold": "http://127.0.0.1:8904/health",
+}
+
 # ---- provider-specific cache pricing terms ----
 # Cached-token billing is NOT a universal ratio, so each rate card carries its
 # OWN cache terms; a card that omits them inherits Anthropic's (the historical
@@ -184,6 +192,16 @@ class Settings(BaseModel):
     # DNS-rebinding guard would otherwise 403. Set
     # CROSSBAND_TRUSTED_HOSTS=my-mac.my-tailnet.ts.net. Empty = loopback only (default).
     trusted_hosts: str = ""
+    # Where a browser opens this app, reported on /api/auth/session so the
+    # fleet's other apps can link here. Empty derives it: https at the first
+    # trusted host, where Tailscale serve puts the app at the root of the
+    # tailnet name, else loopback on `port`. Set it when the serve differs.
+    browser_origin: str = ""
+    # The owner's other apps, linked from the header: name -> the health
+    # route each answers on loopback without a session. Each one is asked
+    # for its `browser_origin`, and one that doesn't answer isn't shown.
+    # Loopback addresses only. {} turns the row off.
+    sibling_apps: dict = Field(default_factory=lambda: dict(DEFAULT_SIBLING_APPS))
     # The Tailscale Funnel guard (#363). Every `funnel_check_s` seconds the
     # app asks `tailscale serve status --json` whether Funnel has its port on
     # the public internet, and serves nothing but a page that says so while

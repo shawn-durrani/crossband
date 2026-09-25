@@ -28,7 +28,7 @@ from webauthn.helpers.structs import (AuthenticatorAttachment,
                                       ResidentKeyRequirement,
                                       UserVerificationRequirement)
 
-from .. import auth, db, passkeys
+from .. import app_links, auth, db, passkeys
 
 log = logging.getLogger("crossband.auth")
 
@@ -111,6 +111,12 @@ def session_state(request: Request) -> dict:
         # additive (#87): [] means no passkey exists anywhere; entries name
         # the addresses that hold one when THIS address does not.
         "passkey_elsewhere": passkey_elsewhere,
+        # additive: this route doubles as the app's health probe, and the
+        # fleet's other apps read these two to link here from their headers.
+        # The origin is the address a browser uses, already known to anyone
+        # the host allowlist admits.
+        "app": "crossband",
+        "browser_origin": app_links.own_origin(request.app.state.settings),
     }
 
 

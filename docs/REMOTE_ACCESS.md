@@ -199,12 +199,18 @@ providers you've set up.
 
 Crossband is one of a family of apps that all run on your computer,
 and each of them answers only on that computer out of the box. Membro,
-the memory, and Spendglass, the spending view, go on the tailnet the
-same way as Crossband: `tailscale serve` on a port of their own, never
-Funnel, with their own lock screen behind it. Each app's own docs say
-how, and its settings are its own. Start with
-[Membro's front page](https://github.com/shawn-durrani/membro#readme) and
-[Spendglass's front page](https://github.com/shawn-durrani/spendglass#readme).
+the memory, goes on the tailnet the same way as Crossband:
+`tailscale serve` on a port of its own, never Funnel, with its own lock
+screen behind it. [Membro's front page](https://github.com/shawn-durrani/membro#readme)
+says how, and its settings are its own. Spendglass, the spending view,
+answers only on the computer it runs on.
+
+A row at the top of every page links the others. Crossband asks each
+app on this computer where a browser can open it, and shows the ones
+that answer. On the Mac that's every app that's running. From your
+phone it's only the apps Tailscale serves, so an app that answers only
+on the Mac stays out of the row. The list is the `sibling_apps`
+setting in [CONFIG.md](CONFIG.md#server).
 
 None of it is needed for memory to work from your phone. Crossband
 talks to Membro over the computer's own address, so recall, the profile
