@@ -73,6 +73,9 @@ def _reset_room_state():
         # in the NEXT file fails on another machine's event-loop timing -
         # the deploy gate caught exactly that (#307's dump test).
         (voice_router, "_captures"),
+        # The automatic-dump floor (#304): one test's automatic dump must
+        # not rate-limit the next test's.
+        (voice_router, "_auto_dumps"),
         (introductions, "_TASKS"),
         (mismatch, "_TASKS"),
     ):

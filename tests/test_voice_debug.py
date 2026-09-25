@@ -13,6 +13,9 @@ What these tests pin:
 4. The dump endpoint holds every cap: entry count, tag and data lengths,
    malformed entries dropped, bounded file retention. The written file
    bundles the client ring with the server's own correlated state.
+5. An automatic dump (the client saw a stall) records its trigger and
+   says where it went, is held to one per gap across every client while
+   the owner's tap never is, and carries nothing that was said.
 """
 
 import json
@@ -20,7 +23,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import db, diarize
+from backend import db, diarize, seat_trace
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
@@ -196,3 +199,79 @@ def test_debug_dump_prunes_old_files(app):
         assert len(files) == voice_router.DEBUG_DUMP_KEEP_FILES
         # The newest dump - the one just written - survived the prune.
         assert any(f.name == r["file"] for f in files)
+
+
+# ── automatic dumps (#304) ──────────────────────────────────────────────────
+
+def test_an_automatic_dump_records_its_trigger_and_where(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        r = c.post("/api/voice/debug-dump", json={
+            "trigger": "handoff_stalled",
+            "entries": [{"t": 1.0, "tag": "stall:handoff", "data": "{}"}],
+        }).json()
+        assert r["ok"] is True and r["trigger"] == "handoff_stalled"
+        path = db.DATA_DIR / "voice_debug" / r["file"]
+        assert r["where"].endswith("voice_debug/" + r["file"])
+        assert json.loads(path.read_text())["trigger"] == "handoff_stalled"
+        # The button's dump is filed as manual, as it always was.
+        manual = c.post("/api/voice/debug-dump", json={"entries": []}).json()
+        bundle = json.loads((db.DATA_DIR / "voice_debug" / manual["file"])
+                            .read_text())
+        assert bundle["trigger"] == "manual"
+
+
+def test_automatic_dumps_are_held_to_one_per_gap_and_the_button_never_is(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        folder = db.DATA_DIR / "voice_debug"
+        auto = {"trigger": "round_guard_forced", "entries": []}
+        assert c.post("/api/voice/debug-dump", json=auto).json()["ok"] is True
+        # A second device stalling on the same round: refused, no file.
+        again = c.post("/api/voice/debug-dump",
+                       json={**auto, "trigger": "handoff_stalled"}).json()
+        assert again == {"ok": False, "reason": "rate_limited"}
+        assert len(list(folder.glob("voice_debug_*.json"))) == 1
+        # The owner's tap in the same minute still saves.
+        assert c.post("/api/voice/debug-dump",
+                      json={"entries": []}).json()["ok"] is True
+        assert len(list(folder.glob("voice_debug_*.json"))) == 2
+        # Once the gap has passed, the next stall saves again.
+        voice_router._auto_dumps["last"] -= voice_router.DEBUG_DUMP_AUTO_MIN_GAP_S
+        assert c.post("/api/voice/debug-dump", json=auto).json()["ok"] is True
+
+
+def test_an_unknown_trigger_is_filed_as_manual(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        r = c.post("/api/voice/debug-dump",
+                   json={"trigger": "words the user said", "entries": []}).json()
+        assert r["trigger"] == "manual"
+        text = (db.DATA_DIR / "voice_debug" / r["file"]).read_text()
+        assert "words the user said" not in text
+        # A manual filing never arms the automatic floor.
+        assert voice_router._auto_dumps == {}
+
+
+def test_nothing_said_reaches_an_automatic_dump(app):
+    said = "Dave keeps the spare key under the blue flowerpot"
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        # Everything the server holds about a real voice turn, with the
+        # words in the transcript row and a person's name parked for it.
+        con = db.connect()
+        db.insert_message(con, chat["id"], "user", said,
+                          voice_turn_id="turn-said")
+        con.close()
+        seat_trace.note_send(chat["id"], said)
+        diarize.record_decision(chat["id"], "local", 40.0, turn_id="turn-said")
+        diarize.park_label("turn-said", {"name": "Mateo", "kind": "user"})
+        r = c.post("/api/voice/debug-dump", json={
+            "chat_id": chat["id"], "trigger": "handoff_stalled",
+            "entries": [{"t": 5.0, "tag": "stall:handoff",
+                         "data": '{"turnId":"turn-said","stage":"sent"}'}],
+        }).json()
+        assert r["ok"] is True
+        text = (db.DATA_DIR / "voice_debug" / r["file"]).read_text()
+        # The turn is correlatable by id ...
+        assert "turn-said" in text
+        # ... and none of what was said, or who was named, is there.
+        for word in (said, "Dave", "flowerpot", "spare key", "Mateo"):
+            assert word not in text, word

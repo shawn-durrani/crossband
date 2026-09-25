@@ -138,6 +138,15 @@ per-chat decision history, the parked-label outcomes and the one-tap
 diagnostics dump carry turn ids, outcome words, timings and capped
 error text, never speech.
 
+The app saves that dump by itself when voice looks stuck: a finished
+turn the server still hasn't saved 30 seconds later, a round that goes
+quiet without ending, or speech stranded behind a round that won't
+finish. It saves at most once every ten minutes and three times per
+page load, and the server takes at most one automatic dump every five
+minutes whichever device asks. The suite runs a spoken turn through the
+real voice client and checks that none of its words reach the saved
+file or the server log.
+
 ## Guests, cost, boundaries
 
 A guest is isolated. Its permissions come from this process and never
