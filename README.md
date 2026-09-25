@@ -112,7 +112,10 @@ sequenceDiagram
 app removes it before anyone sees or hears it, so a model with nothing
 to add doesn't have to invent an angle. If you talk over a model
 halfway through its `[pass]`, that still counts as a pass and leaves
-nothing behind. The first model to answer a direct question can't pass.
+nothing behind. A short reply that says the model has nothing to add,
+or that it's staying quiet, and then ends in `[pass]` counts as a pass
+too. Any other reply that ends in `[pass]` keeps its words and loses the
+token. The first model to answer a direct question can't pass.
 
 **Talk, and hear the answers.** Voice works from your phone too, once
 the app is on your own Tailscale network. Every voice the app has

@@ -501,12 +501,16 @@ async def run_round(chat_id, responders, next_first, settings, memory,
             # #456: cut off mid-[pass]. The seat was passing, and a pass
             # is invisible (#98), so nothing is saved - otherwise "[pass"
             # plus the cut-off marker lands as a real turn that models
-            # read back and memory keeps.
+            # read back and memory keeps. #460: the same when a quiet
+            # remark came first ("Nothing to add. [pa").
             live["participant"] = None
             live["content"] = ""
             return None
         content = live["content"]
         if interrupted:
+            # #460: a real reply cut off while it was writing a trailing
+            # [pass] keeps its words, never the half-written token.
+            content = passes.strip_pass(content, partial=True)
             content += f"\n\n[cut off by {cfg['user_name']}]"
         usage_json = None
         if live["usage"]:
@@ -598,6 +602,9 @@ def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
                                                      user_text):
             return "suppress_pass", "", ""
         return "retry_pass", passes.GUARD_NOTE.format(user=user_name), ""
+    # #460: a real reply with a stray [pass] on the end is judged, and
+    # kept, without the token.
+    content = passes.strip_pass(content)
     if echo_guard and not tools and not echo.requested_repeat(user_text):
         restated = echo.find_restated(content, echo_refs)
         if restated:
@@ -739,6 +746,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # on?" from.
         round_cfg["room_mode"] = bool(chat["room_mode"])
         round_cfg["room_roster_names"] = state["room_names"]
+        # #460: whether the room can switch itself back on (the sacred
+        # ambient-off flag), for the same note. Same fresh per-seat row.
+        round_cfg["room_ambient_off"] = bool(chat["ambient_off"])
         # #253/#417: spoken research mode is per CHAT, not per seat - a
         # bigger tool budget for every seat's call this round, and the
         # research routine told to each in the volatile block (cache layout
@@ -750,6 +760,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # Naming is law (#28): the projection resolves voice-label identity
         # names to preferred display names through this per-round map.
         round_cfg["preferred_names"] = state.get("preferred_names") or {}
+        # #460: whose voices the recent spoken turns were matched to, read
+        # from the transcript this seat is about to see (labels folded in
+        # per seat above) with the rules that write its turn heads, so the
+        # room note and the heads can't disagree.
+        round_cfg["room_voices_note"] = providers.room_voices_note(
+            transcript, round_cfg)
         memory_on = bool(chat["memory_enabled"])
         web_on = bool(chat["web_enabled"])
         code_on = bool(chat["code_enabled"])
@@ -994,6 +1010,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                         and passes.is_cut_pass(live["content"])):
                     live["participant"] = None
                     skip_speaker = True
+                else:
+                    # #460: the words stay, a half-written trailing token
+                    # does not.
+                    live["content"] = passes.strip_pass(live["content"],
+                                                        partial=True)
             else:
                 seat_trace.finish(trace, live["content"], "ok")
             if not skip_speaker and not live["content"] and not live["tools"]:
@@ -1064,6 +1085,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             break
         if skip_speaker:
             continue
+        # #460: a seat that wrote a real reply and then [pass] spoke, so
+        # the reply is kept and the token goes: the chat, the voice
+        # caption and memory all read the reply without it. A reply that
+        # was only a quiet remark and the token never gets here, because
+        # _judge_reply read it as the pass it announced.
+        live["content"] = passes.strip_pass(live["content"])
         # #213: a citation-shaped claim in a reply that fetched nothing gets
         # the same quiet chip as a misquote - the #172 dispatch-claims class
         # on the citation side. Informational only, never a retry; any tool

@@ -50,11 +50,14 @@ lands in, because a volatile field in the stable block rewrites the
 whole cached prefix every turn. That costs money and changes nothing
 you can see.
 
-Room state rides the volatile tail. The engine hands every seat the
-chat's room mode and the names present as one short line. The
+Room state rides the volatile tail. The engine hands every seat a
+short note built from that seat's own read of the chat. It holds the
+room mode, whether the room can switch itself back on, the names
+present, and the names the voice check put on recent spoken turns. The
 cache-split pins prove that flipping the mode or the roster moves no
 byte of the cached prefix, and that roster names stay out of the
-transcript turns.
+transcript turns. A room switch or a late name that lands while one
+seat replies reaches the next seat's note.
 
 ## Voice and room mode
 

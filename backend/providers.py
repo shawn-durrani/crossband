@@ -570,7 +570,8 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "- If you're asked to stay silent, hold back, just listen, eavesdrop, or stop replying "
         "for a while - by name, or all of you at once (\"you don't need to respond\", \"just "
         "eavesdrop until we ask\") - then on each of your turns reply with exactly [pass] - nothing "
-        "else, no explanation, no \"I'll stay quiet\". The app removes a pass entirely, so "
+        "before it or after it, no explanation, no \"I'll stay quiet\", no \"nothing to add\", "
+        "no status update. The app removes a pass entirely, so "
         "your silence is truly silent. Keep doing exactly that every turn until someone "
         "invites you back in or asks you something, then resume normally. A request like "
         "that changes nothing about room mode: never tell anyone it switched a mode on or off.",
@@ -609,6 +610,21 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         f"conversation topic: never bring one up unprompted (\"that turn shows Identity "
         f"pending\") unless {user} asks about attribution, and if {user} tells you to "
         "drop the subject, drop it and do not raise it again.",
+        # The room-state rule (#460). Constant text, so it lives beside the
+        # labels explainer in the STABLE block; the state itself rides the
+        # volatile room note. The 25 September field test: after the owner
+        # asked the seats to stay quiet, a seat kept adding unasked lines
+        # about whether room mode was on, one of them wrong, and seats
+        # answered room questions from what an earlier reply had said.
+        "- The room - whether room mode is on, who is in the room, whose voice was "
+        "recognised on which turn - is something you talk about ONLY when someone asks "
+        "about it. Then answer from this round's room state note and the turn heads alone, "
+        "never from an earlier reply (yours or another member's): the room can change "
+        "between rounds, so an earlier answer may be out of date. Never add a room status "
+        "line nobody asked for (\"for the record, room mode is still on\"), least of all "
+        "while you're holding back. If the newest turn asks to switch room mode on or off, "
+        "don't confirm or deny the switch: it can land a moment after the note was "
+        "written, and the app posts its own line saying what changed.",
         f"- HIGH-STAKES personal facts about {user} - their current location, employer or "
         "job status, family, health, money/finances, and legal situation - are trust-"
         "critical and must NEVER be invented. State any of these as current fact ONLY when "
@@ -651,8 +667,9 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
     parts.append(
         "\n## Passing\nIf, when your turn comes, you truly have nothing to "
         "add beyond what has already been said, reply with exactly [pass] "
-        "and nothing else. The app removes a pass entirely - nothing is "
-        "shown, spoken, or remembered - so passing is honourable and free, "
+        "and nothing else - no \"nothing to add\" in front of it. The app "
+        "removes a pass entirely - nothing is shown, spoken, or remembered - "
+        "so passing is honourable and free, "
         "and ALWAYS better than restating another seat's point in different "
         "words. Two exceptions, enforced by the app: never pass when you "
         "were addressed by name, and never pass as the first responder to a "
@@ -795,37 +812,73 @@ def _volatile_system_parts(cfg):
             "and never announce that you're staying brief - either earn your place or "
             "reply [pass]."
         )
-    # The room-mode state line (#28, chat 198): seats verbally "confirmed" a
+    # The room-mode state note (#28, chat 198): seats verbally "confirmed" a
     # mode switch that never happened, and could answer "is group mode on?"
     # only by guessing - the stable-block explainer describes what labels
-    # MEAN, not what is on right now. One short line of ground truth fixes
-    # both. It is PER-ROUND state (a spoken command or introduction can flip
-    # it between rounds, and the roster moves), so it must ride HERE in the
+    # MEAN, not what is on right now. The note is ground truth for that.
+    # It is PER-ROUND state (a spoken command or introduction can flip it
+    # between rounds, and the roster moves), so it must ride HERE in the
     # uncached volatile tail - never the stable block, whose byte-stability
-    # the cache pins in tests/test_cache_split.py enforce. Rendered only when
-    # the engine supplied the chat's mode (live rounds always do), so a bare
-    # cfg still yields an empty volatile block.
+    # the cache pins in tests/test_cache_split.py enforce. Rendered only
+    # when the engine supplied the chat's mode (live rounds always do), so a
+    # bare cfg still yields an empty volatile block. #460 widened it: see
+    # room_state_note.
     if "room_mode" in cfg:
-        if cfg.get("room_mode"):
-            names = [n for n in (cfg.get("room_roster_names") or [])
-                     if isinstance(n, str) and n.strip()]
-            roster_note = (f"in the room: {', '.join(names)}" if names
-                           else "nobody is named on the roster yet")
-            parts.append(
-                f"\n(Room state this round: room mode is ON; {roster_note}. "
-                "This line is ground truth when someone asks whether room/"
-                "group mode is on. Names on spoken turns come from the "
-                "on-device voice check alone: a person saying who they are "
-                "seats them on the roster but never names a turn, and an "
-                "unnamed turn's head says why it went unnamed. When someone "
-                "asks who is speaking, repeat that reason plainly; never "
-                "treat their own name as a claim to doubt.)")
-        else:
-            parts.append(
-                "\n(Room state this round: room mode is OFF - spoken turns "
-                "are not being attributed by voice. This line is ground "
-                "truth when someone asks whether room/group mode is on.)")
+        parts.append("\n" + room_state_note(cfg))
     return parts
+
+
+def room_state_note(cfg) -> str:
+    """The room note every seat gets every round: room mode on or off,
+    whether it can switch itself back on, who is in the room, and whose
+    voices the recent spoken turns were matched to (#460).
+
+    The engine reads its inputs fresh for each seat (engine._load_round_state
+    reads the chat row per seat), so the note cannot go stale between
+    rounds. What it lacked in the 25 September field test was content: the
+    room had just been switched off, the note said off, named nobody, and
+    said spoken turns weren't being attributed by voice, while the transcript
+    held a guest's named turns among several unnamed ones. The seat read
+    the note as "nobody is named" and told the owner the guest was
+    unidentified. The off note now says names on earlier turns still stand,
+    and both notes carry the recent-voices summary (room_voices_note)."""
+    user = cfg["user_name"]
+    voices = (cfg.get("room_voices_note") or "").strip()
+    if cfg.get("room_mode"):
+        names = [n for n in (cfg.get("room_roster_names") or [])
+                 if isinstance(n, str) and n.strip()]
+        roster_note = (f"in the room: {', '.join(names)}" if names
+                       else "nobody is named on the roster yet")
+        lines = [f"Room state this round: room mode is ON; {roster_note}."]
+        if voices:
+            lines.append(voices)
+        lines.append(
+            "Names on spoken turns come from the on-device voice check "
+            "alone: a person saying who they are seats them on the roster "
+            "but never names a turn, and an unnamed turn's head says why it "
+            "went unnamed. When someone asks who is speaking, repeat that "
+            "reason plainly; never treat their own name as a claim to doubt.")
+    else:
+        lines = ["Room state this round: room mode is OFF, so the app "
+                 "isn't keeping track of who is in the room."]
+        if cfg.get("room_ambient_off"):
+            lines.append("It won't switch itself back on when it hears "
+                         "another voice: someone has to say \"room mode "
+                         "on\".")
+        else:
+            lines.append("It can switch itself back on when the voice "
+                         f"check hears someone other than {user}.")
+        lines.append(
+            f"A new spoken turn the voice check didn't name is headed {user}, "
+            "whoever spoke it. Names already on earlier turns still stand: "
+            "each was checked when that turn was spoken, and switching the "
+            "room off doesn't undo it.")
+        if voices:
+            lines.append(voices)
+    lines.append("This note and the turn heads are the ground truth about "
+                 "the room. Bring the room up only when someone asks about "
+                 "it, and then answer from them alone.")
+    return "(" + " ".join(lines) + ")"
 
 
 def group_chat_system(participant, roster, cfg, project, chat_summary, voice_mode):
@@ -1035,12 +1088,25 @@ def _user_turn_head(msg, cfg, now=None):
     or is a room-mode turn whose identity is still being worked out - that
     projects the pending head, never the owner's name. Malformed label data
     degrades to the owner - exactly what an unlabelled turn means today."""
+    return _turn_attribution(msg, cfg, now=now)[0]
+
+
+def _turn_attribution(msg, cfg, now=None):
+    """(head, state, names) for a user turn: the head _user_turn_head
+    projects, plus what the voice check said about it, for the room note's
+    summary of recent spoken turns (#460). One reading of the labels, so
+    the note can never disagree with the heads the seat reads beside it.
+
+    state is "named" (names holds who the head names, the owner included
+    when the head says so), "unnamed" (the check looked and named nobody),
+    "pending" (the check is still running) or "plain" (no voice verdict:
+    the turn renders as the owner, the way every unchecked turn does)."""
     owner = cfg["user_name"]
     data = _voice_meta(msg)
     if data is None:
         if _identity_pending(msg, cfg, now=now):
-            return PENDING_IDENTITY_HEAD
-        return owner
+            return PENDING_IDENTITY_HEAD, "pending", []
+        return owner, "plain", []
     labels = [l for l in (data.get("labels") if isinstance(data.get("labels"), list) else [])
               if isinstance(l, str) and _clean_head(l)]
     if not labels:
@@ -1049,8 +1115,8 @@ def _user_turn_head(msg, cfg, now=None):
             # #411: the matcher looked and could not name the voice. Never
             # the owner, and never a bare "pending": the head says why.
             return (UNIDENTIFIED_SPEAKER[0].upper() + UNIDENTIFIED_SPEAKER[1:]
-                    + f" (in the room, {why})")
-        return owner
+                    + f" (in the room, {why})"), "unnamed", []
+        return owner, "plain", []
     if data.get("learning") is True and len(labels) == 1:
         # Cold start (#28): named by elimination, still being learned. Read
         # before the uncertain rules below on purpose - the label also rides
@@ -1061,7 +1127,7 @@ def _user_turn_head(msg, cfg, now=None):
         shown = _clean_head(_display_name(labels[0], cfg)) \
             or _clean_head(labels[0])
         if shown:
-            return shown + LEARNING_SUFFIX
+            return shown + LEARNING_SUFFIX, "named", [shown]
     uncertain = {u for u in (data.get("uncertain") if isinstance(data.get("uncertain"), list) else [])
                  if isinstance(u, str)}
     named, any_unidentified = [], False
@@ -1082,8 +1148,8 @@ def _user_turn_head(msg, cfg, now=None):
         # recognised the owner, and a human correction is not that - it is
         # ground truth of a different kind, already rendered as the owner.
         if data.get("corrected") is True:
-            return owner
-        return owner + VOICE_CONFIRMED_SUFFIX
+            return owner, "named", [owner]
+        return owner + VOICE_CONFIRMED_SUFFIX, "named", [owner]
     # Named guests project under their PREFERRED display name (#28: naming
     # is law) - resolved after the owner check above, which keeps the
     # owner's rendering independent of the preferred map.
@@ -1093,7 +1159,65 @@ def _user_turn_head(msg, cfg, now=None):
     head = " + ".join(parts)
     if head == UNIDENTIFIED_SPEAKER:
         head = head[0].upper() + head[1:]
-    return head + IN_ROOM_SUFFIX
+    return head + IN_ROOM_SUFFIX, ("named" if named else "unnamed"), named
+
+
+# The room note's summary of recent spoken turns (#460). The 25 September
+# field test: the room had just been switched off, the note said room mode
+# was off and named nobody, and a seat asked about the guest said she
+# hadn't been identified - while her own turns a few lines up carried
+# her name. Nothing in the note said who the voice check had recognised,
+# so the seat generalised from the unnamed heads around hers. The summary
+# counts the last ROOM_VOICE_TURNS spoken turns the seat can see, read by
+# _turn_attribution, the same rules that write the heads.
+ROOM_VOICE_TURNS = 12
+
+
+def _hhmm(ts):
+    """Local HH:MM for an epoch, the time the transcript heads carry."""
+    try:
+        return datetime.fromtimestamp(ts).strftime("%H:%M")
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
+def room_voices_note(transcript, cfg, now=None) -> str:
+    """One sentence on whose voices the recent spoken turns were matched
+    to, or "" when none of them was ever looked at (a solo chat with no
+    voice check, or a typed chat). A spoken turn is a user turn with a
+    voice turn id or labels; typed turns never count."""
+    spoken = [m for m in transcript or ()
+              if m.get("speaker") == "user"
+              and (m.get("voice_turn_id") or m.get("voice_labels"))]
+    spoken = spoken[-ROOM_VOICE_TURNS:]
+    people = {}
+    counts = {"unnamed": 0, "pending": 0, "plain": 0}
+    for m in spoken:
+        _, state, names = _turn_attribution(m, cfg, now=now)
+        if state == "named":
+            for name in names:
+                seen = people.setdefault(name, [0, 0.0])
+                seen[0] += 1
+                seen[1] = max(seen[1], m.get("created_at") or 0.0)
+        else:
+            counts[state] += 1
+    if not people and not counts["unnamed"] and not counts["pending"]:
+        return ""
+    parts = []
+    for name, (n, latest) in sorted(people.items(),
+                                    key=lambda kv: -kv[1][1]):
+        when = _hhmm(latest)
+        parts.append(f"{name} on {n}" + (f" (latest {when})" if when else ""))
+    if counts["unnamed"]:
+        parts.append(f"no name on {counts['unnamed']}")
+    if counts["pending"]:
+        parts.append(f"still being checked on {counts['pending']}")
+    if counts["plain"]:
+        parts.append(f"not checked on {counts['plain']}")
+    window = ("the last spoken turn" if len(spoken) == 1
+              else f"the last {len(spoken)} spoken turns")
+    return (f"Names the voice check put on {window}: "
+            + ", ".join(parts) + ".")
 
 
 def _crosstalk_tail(msg, cfg):

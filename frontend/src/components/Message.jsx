@@ -237,8 +237,10 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
   const info = participantInfo(msg.speaker, participants)
   const isUser = info.isUser
   // #456: a seat's pass-shaped text ("[", "[pa" ... "[pass]") shows as
-  // nothing, so a pass never draws as brackets while it streams. Rule in
-  // passView.js; the user's own turns come back unchanged.
+  // nothing, so a pass never draws as brackets while it streams. #460: the
+  // same for a quiet remark before the token, and a real reply shows
+  // without a trailing [pass]. Rule in passView.js; the user's own turns
+  // come back unchanged.
   const text = shownText(msg)
   const [discardConfirm, setDiscardConfirm] = useState(null)
   // Tap-to-correct menu on a labelled user turn (#28 phase 2).

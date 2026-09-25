@@ -17,7 +17,12 @@ prompt tension that needs a structural outlet. The contract under test:
 - a reply cut short while it could still become [pass] (a barge-in, a
   stall, a provider error) is judged as that pass and leaves nothing
   behind, while a cut-off reply that merely starts with "[" is kept as
-  before (#456).
+  before (#456);
+- a reply that ENDS with [pass] is judged by what comes before it (#460):
+  a remark that only says the seat has nothing to add or is staying quiet
+  makes it a pass (not stored, not shown, not spoken, not sent to
+  memory, and refused like any pass where the guard applies), and a real
+  reply is kept without the token, cut off or not.
 """
 
 import asyncio
@@ -31,7 +36,8 @@ from backend import db, engine, rounds
 from backend.app import create_app
 from backend.config import Settings
 from backend.engine import explicitly_addressed
-from backend.passes import is_cut_pass, is_pass, may_pass
+from backend.passes import (is_cut_pass, is_pass, is_quiet_remark,
+                             may_pass, strip_pass)
 
 
 @pytest.fixture
@@ -310,3 +316,142 @@ def test_is_cut_pass():
     for text in ("", "   ", None, "[note]", "[passed", "[pass] and more",
                  "pass", "[ pass"):
         assert not is_cut_pass(text), text
+
+
+# ---------- a pass with words in front of it (#460) ----------
+#
+# The 25 September field test stored seat replies shaped like "<a remark
+# that it had nothing to add>  [pass]" and "<a note that the room asked it
+# to stay quiet>, passing.  [pass]", token and all. The wording below is
+# made up.
+
+QUIET_PASSES = [
+    "Nothing to add from me.  [pass]",
+    "You two carry on with the timber order, passing.  [pass]",
+    "The room asked us to stay quiet, so I'm passing.  [pass]",
+    "Staying quiet as asked.\n\n[PASS]",
+    "I don\u2019t have anything to add. [pass]",
+    "(still listening) [pass]",
+    "\u2026 [pass]",
+]
+REAL_WITH_TOKEN = [
+    ("The glue needs 24 hours to cure.  [pass]",
+     "The glue needs 24 hours to cure."),
+    ("For the record, room mode is still on.  [pass]",
+     "For the record, room mode is still on."),
+    ("Nothing to add, but Sam's cut list is one leg short. [pass]",
+     "Nothing to add, but Sam's cut list is one leg short."),
+    ("Yes.  [pass]", "Yes."),
+]
+
+
+def test_the_quiet_remark_rules():
+    for text in QUIET_PASSES:
+        assert is_pass(text), text
+        assert is_cut_pass(text), text
+    for text, kept in REAL_WITH_TOKEN:
+        assert not is_pass(text), text
+        assert strip_pass(text) == kept
+    # the token only counts at the very end, and a remark needs the token
+    assert not is_pass("[pass] and one more thing")
+    assert not is_pass("Nothing to add.")
+    assert strip_pass("Nothing to add.") == "Nothing to add."
+    # a quiet remark says so, briefly, and asks, counts and turns nothing
+    assert is_quiet_remark("Holding back until someone asks me directly.")
+    assert is_quiet_remark("You two carry on with the timber order, passing.")
+    assert is_quiet_remark("Nothing to add, Mateo covered it.")
+    assert not is_quiet_remark("Okay.")
+    assert not is_quiet_remark("Same here.")
+    assert not is_quiet_remark("Pass the glue.")
+    assert not is_quiet_remark("Nothing beats oak.")
+    assert not is_quiet_remark("Staying quiet, want me to check the quotes?")
+    assert not is_quiet_remark("Staying quiet for 2 minutes.")
+    assert not is_quiet_remark("Staying quiet. "
+                               + "The plan still stands for the bench. " * 4)
+    # trailing punctuation after the token doesn't hide it
+    assert is_pass("Still listening. [pass].")
+    assert strip_pass("Oil it after sanding. [PASS].") == \
+        "Oil it after sanding."
+    # a bare token with a tool turn keeps its text, as before
+    assert strip_pass("[pass]") == "[pass]"
+    # a start of the token counts only on a reply that was cut off
+    assert strip_pass("Sand it first. [pa") == "Sand it first. [pa"
+    assert strip_pass("Sand it first. [pa", partial=True) == "Sand it first."
+
+
+@pytest.mark.parametrize("quiet", QUIET_PASSES)
+def test_a_quiet_remark_before_pass_is_a_pass(app, monkeypatch, quiet):
+    calls = []
+    monkeypatch.setattr(engine.providers, "stream_reply", scripted(
+        lambda i, cfg: "I have something real to add." if i == 0
+        else quiet, calls))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        events, msgs = _round(c, chat_id, "a note for the room, no question")
+        assert [m["content"] for m in msgs[1:]] == [
+            "I have something real to add."]
+        passed = [e for e in events if e["type"] == "passed"]
+        assert len(passed) == 1 and passed[0]["speaker"] == calls[1]["slug"]
+        # memory reads the stored rows, and none carries the token
+        con = db.connect()
+        rows = engine.ingest_rows(con, chat_id, 0)
+        con.close()
+        assert not any("[pass" in r["content"].lower() for r in rows)
+
+
+@pytest.mark.parametrize("text,kept", REAL_WITH_TOKEN)
+def test_a_real_reply_keeps_its_words_without_the_token(app, monkeypatch,
+                                                        text, kept):
+    calls = []
+    monkeypatch.setattr(engine.providers, "stream_reply", scripted(
+        lambda i, cfg: "I have something real to add." if i == 0
+        else text, calls))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        events, msgs = _round(c, chat_id, "a note for the room, no question")
+        assert [m["content"] for m in msgs[1:]] == [
+            "I have something real to add.", kept]
+        assert not [e for e in events if e["type"] == "passed"]
+        ends = [e for e in events if e["type"] == "speaker_end"]
+        assert ends[-1]["message"]["content"] == kept
+
+
+def test_a_quiet_remark_pass_is_refused_where_a_pass_is(app, monkeypatch):
+    """The guard reads the widened pass the same way: the first responder
+    to a direct question can't pass, with or without words in front."""
+    calls = []
+    monkeypatch.setattr(engine.providers, "stream_reply", scripted(
+        lambda i, cfg: "Fine, the answer is 42."
+        if cfg.get("pass_refused") else "Nothing to add from me. [pass]",
+        calls))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        _, msgs = _round(c, chat_id, "what is the answer?")
+        assert [m["content"] for m in msgs[1:]] == ["Fine, the answer is 42."]
+        assert calls[0]["refused"] == "" and calls[1]["refused"] != ""
+
+
+def test_a_quiet_remark_cut_off_mid_token_is_not_stored(app, monkeypatch):
+    assert _barge_in_after(app, monkeypatch, "Nothing to add. [pa") == []
+
+
+def test_a_real_reply_cut_off_mid_token_keeps_its_words(app, monkeypatch):
+    assert _barge_in_after(app, monkeypatch, "Sand it first. [pa") == [
+        "Sand it first.\n\n[cut off by User]"]
+
+
+def test_a_real_reply_that_errors_mid_token_keeps_its_words(app,
+                                                            monkeypatch):
+    _, stored = _error_after(app, monkeypatch, "Sand it first. [pa")
+    assert stored == ["Sand it first."]
+
+
+def test_a_quiet_remark_fits_inside_the_first_tts_chunk():
+    """The voice holds a reply's text while it could still end as a pass
+    (frontend/src/passView.js PassSpeechGate). That hold costs no time to
+    first audio only while a quiet remark is no longer than the text TTS
+    waits for before it makes any audio."""
+    from backend import passes, voice
+    init = json.loads(voice.tts_init_message({"tts_speed": 1.0}))
+    first_chunk = init["generation_config"]["chunk_length_schedule"][0]
+    assert passes.QUIET_MAX_CHARS <= first_chunk
