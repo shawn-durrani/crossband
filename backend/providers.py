@@ -215,6 +215,17 @@ def _openai_effort(participant):
     return level
 
 
+def sends_effort(provider, model, level) -> bool:
+    """Would a seat on `model` at `level` actually send a reasoning effort?
+    The same translation the request path uses, so a model that would
+    silently drop a raised depth reads as not taking one (#254: a seat moved
+    up while its depth is raised must land on a model that honours it)."""
+    p = {"model": model, "reasoning_effort": level}
+    if provider == "anthropic":
+        return _anthropic_effort(p) is not None
+    return _openai_effort(p) is not None
+
+
 # ---------- thinking control on OpenAI-compatible endpoints (#159) ----------
 #
 # `reasoning_effort` above speaks two vendor dialects only: Anthropic's

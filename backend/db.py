@@ -280,8 +280,9 @@ CREATE TABLE IF NOT EXISTS utility_usage(
   -- and llm_util.utility_complete_logged for the room and voice scans.
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
-  -- 'summarize' | 'title' | 'distill' (chat_memory), and 'intent_scan' |
-  -- 'mismatch_check' (the room and voice scans).
+  -- 'summarize' | 'title' | 'distill' (chat_memory), 'intent_scan' |
+  -- 'mismatch_check' (the room and voice scans), and 'model_step_up' (the
+  -- ranking behind a stronger model for one chat, #254).
   kind TEXT NOT NULL,
   model TEXT NOT NULL DEFAULT '',
   input_tokens INTEGER NOT NULL DEFAULT 0,

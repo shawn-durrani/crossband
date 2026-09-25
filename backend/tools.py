@@ -991,6 +991,40 @@ def web_search(args, cfg):
     return "\n\n".join(sections)[:cfg["max_tool_output"]]
 
 
+def search_results(query, cfg, *, recency=None):
+    """The app's own search, for research the app does itself rather than a
+    model (#254: ranking a stronger model). Same engines and keys as
+    web_search, returning structured results instead of a formatted block:
+    [{title, url, content}], de-duplicated by URL, engine order kept. The
+    query is the caller's own text, never a model's, and nothing here
+    fetches a page. An engine that errors is skipped; no engine configured
+    at all raises, so the caller can say that plainly. Blocking - call it
+    from a worker thread."""
+    backends = available_backends()
+    engines = [_tavily] if backends["tavily"] else []
+    if backends["brave"]:
+        engines.append(_brave)
+    if not engines:
+        raise RuntimeError("no search backend configured")
+    args = {"recency": recency} if recency else {}
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futures = [ex.submit(fn, query, args, cfg) for fn in engines]
+    out, seen = [], set()
+    for fut in futures:
+        try:
+            results = fut.result()
+        except Exception:
+            log.info("an app-side search engine failed", exc_info=True)
+            continue
+        for x in results:
+            url = x.get("url") or ""
+            if url and url not in seen:
+                seen.add(url)
+                out.append({"title": x.get("title") or "", "url": url,
+                            "content": x.get("content") or ""})
+    return out
+
+
 # ---------- fetch_page (with SSRF guard) ----------
 
 def _assert_public_url(url):
