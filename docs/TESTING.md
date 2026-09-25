@@ -39,7 +39,8 @@ Rounds survive the connection. A dropped connection doesn't cancel
 generation, a reconnect replays from a watermark, only a real abort
 marks a message as cut off, and two rounds for one chat can't
 interleave. A send that's turned away while a round runs leaves no
-message behind, so the app's retry lands one copy.
+message behind, so the app's retry lands one copy. Held messages go out
+in order, and one retry runs at a time.
 
 ## The prompt cache
 
