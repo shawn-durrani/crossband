@@ -19,6 +19,9 @@ now gets a quiet LOCAL-ONLY check. What these tests prove, in order:
    mode already off), sessions in a disarmed chat never schedule ambient
    checks, a mid-session disarm is honoured at the next commit, and every
    explicit re-enable (arm command, introduction, manual toggle) clears it.
+5. THE ASK FIRES WHEN /send CLAIMS THE LABEL (#461): labels ride the
+   insert, so the check nearly always found its label already on the row
+   and stopped before raising the ask.
 
 (#28 PR-B: the bounded EL sniff that used to back ambient up is retired
 with the cloud identity path - ambient is the ONLY automatic arming door,
@@ -406,6 +409,51 @@ def test_mid_session_disarm_is_honoured_at_the_next_commit(
             ws.send_json({"done": True})
     assert matcher["calls"] == 1          # the second commit never checked
     assert _chat_state(chat["id"]) == (False, True)
+
+
+def _claim_insert(chat_id, turn_id, text="hello world"):
+    """What /send does with a voice turn: the parked label rides the
+    insert (#28, twelfth field test)."""
+    con = db.connect()
+    try:
+        return db.insert_message(con, chat_id, "user", text,
+                                 voice_turn_id=turn_id,
+                                 voice_labels=diarize.claim_label(turn_id))
+    finally:
+        con.close()
+
+
+def _commit(ws, turn_id):
+    frame = _frame(loud_pcm(1.5), commit=True)
+    frame["turn_id"] = turn_id
+    ws.send_json(frame)
+    got = ws.receive_json()
+    assert got.get("final") == "hello world", got
+
+
+def test_claimed_stranger_label_still_raises_the_ask(app, relay, batch_calls,
+                                                     matcher):
+    """#461: the who-joined ask waited for the check to write its label,
+    and since labels ride the insert the check nearly always found the
+    label already there and stopped. No ask was raised from 14 Aug on.
+    Here the label is claimed by the insert, as /send does, and the ask
+    must still come up, pointing at the turn."""
+    _remember("Alex")
+    matcher["verdicts"] = [_verdict_defer("below_threshold")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _new_chat(c)
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]  # #134 handshake
+            _commit(ws, "tU1")
+            assert _wait_for(lambda: "tU1" in diarize._PENDING_LABELS)
+            msg = _claim_insert(chat["id"], "tU1")
+            assert json.loads(msg["voice_labels"])["labels"] == ["Voice 1"]
+            flags = _wait_for(lambda: _flags(chat["id"]))
+            ws.send_json({"done": True})
+    assert [(f["kind"], f["message_id"]) for f in flags] \
+        == [("unknown_voice", msg["id"])]
+    assert _chat_state(chat["id"])[0] is True
 
 
 def test_every_reenable_clears_ambient_off(app):

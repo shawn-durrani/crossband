@@ -1,6 +1,7 @@
 """Voice endpoints: ElevenLabs proxying with the key held server-side.
 
-- batch STT POST (+ per-chat usage metering)
+- batch STT POST (+ per-chat usage metering, and the identity check for a
+  turn the realtime relay never heard, #461)
 - realtime STT websocket relay to Scribe v2 Realtime (fallback semantics: the
   batch POST remains the default path; this relay is the opt-in parallel one)
 - TTS websocket relay with the init message + adaptive chunk scheduling
@@ -147,25 +148,79 @@ def voice_assign(request: Request):
     return {"participants": out}
 
 
+# The largest identity copy the batch path reads: MAX_UTTERANCE_SECONDS at
+# the highest rate wav_pcm16 accepts, plus room for the header.
+_BATCH_PCM_MAX_BYTES = diarize.MAX_UTTERANCE_SECONDS * 48000 * 2 + 4096
+
+
 @router.post("/api/chats/{chat_id}/stt")
-def stt(chat_id: int, request: Request, file: UploadFile = File(...),
-        duration_ms: int = Form(0)):
+async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
+              duration_ms: int = Form(0), turn_id: str = Form(""),
+              pcm: UploadFile | None = File(None)):
+    """Batch speech-to-text: the fallback once realtime transcription
+    fails, and the salvage for a turn realtime lost.
+
+    #461: the client may also send `pcm`, a PCM-16 mono WAV copy of the
+    same turn, with the turn's id. The turn then gets the identity check
+    the realtime relay gives a committed turn, started before the
+    transcription call so the label is usually parked before /send
+    claims it. A turn the relay already checked is left alone. Async
+    because the check is a task on the running loop; the transcription
+    and the metering are blocking and run on worker threads."""
     cfg = request.app.state.settings.as_cfg()
     if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
         raise HTTPException(400, voice.disabled_reason(cfg))
-    data = file.file.read()
+    data = await file.read()
     if not data:
         raise HTTPException(400, "Empty audio")
+    turn_id = (turn_id or "").strip()[:64]
+    if pcm is not None and turn_id and chat_id:
+        try:
+            await _batch_turn_check(chat_id, turn_id,
+                                    await pcm.read(_BATCH_PCM_MAX_BYTES), cfg)
+        except Exception:
+            log.warning("batch identity check not started; transcription "
+                        "continues", exc_info=True)
     try:
-        text, model_used = voice.transcribe(data, file.content_type, cfg)
+        text, model_used = await asyncio.to_thread(
+            voice.transcribe, data, file.content_type, cfg)
     except RuntimeError as e:
         raise HTTPException(502, str(e))
     seconds = max(duration_ms, 0) / 1000
-    con = db.connect()
-    db.log_voice_usage(con, chat_id, "stt", seconds, voice.voice_cost("stt", seconds, cfg))
-    con.commit()
-    con.close()
+    await asyncio.to_thread(_meter_batch_stt, chat_id, seconds, cfg)
     return {"text": text, "model": model_used}
+
+
+def _meter_batch_stt(chat_id, seconds, cfg):
+    con = db.connect()
+    try:
+        db.log_voice_usage(con, chat_id, "stt", seconds,
+                           voice.voice_cost("stt", seconds, cfg))
+        con.commit()
+    finally:
+        con.close()
+
+
+async def _batch_turn_check(chat_id, turn_id, wav, cfg):
+    """Schedule the identity check for one batch-transcribed turn (#461),
+    through the same routing rule as the relay's commits. Returns the
+    route, or None when there was nothing to do: the relay already
+    checked this turn, or the copy was not a PCM-16 mono WAV. Content-free
+    log line: a route word and a duration."""
+    if diarize.turn_checked(turn_id):
+        return None
+    audio = diarize.wav_pcm16(wav)
+    if audio is None:
+        return None
+    pcm, rate = audio
+    room_on, ambient_ok = await asyncio.to_thread(
+        diarize.turn_check_state, chat_id, cfg)
+    route = diarize.schedule_turn_check(
+        chat_id, pcm, rate, diarize.batch_session(chat_id), cfg,
+        room_on=room_on, ambient_ok=ambient_ok, turn_id=turn_id)
+    log.info("batch turn check: chat=%s route=%s seconds=%.1f", chat_id,
+             route, len(pcm) / 2 / rate)
+    return route
 
 
 @router.post("/api/voice/trace")
@@ -644,14 +699,14 @@ async def stt_stream_relay(ws: WebSocket):
                     names.extend(p["merged_names"])
                 on = bool(row and row["room_mode"])
                 disarmed = bool(row and row["ambient_off"])
-                # Ambient local check (#28): room off, not disarmed, matcher
-                # enabled, and some sufficient remembered voice to match.
-                # Since PR-B this is the ONLY automatic arming door - the
-                # bounded EL session-start sniff retired with the cloud
-                # identity path, so no arming decision ever costs a batch
-                # call.
-                ambient = (not on) and (not disarmed) and \
-                    diarize.ambient_eligible(people, cfg)
+                # Ambient local check (#28): matcher enabled, and some
+                # sufficient remembered voice to match. Since PR-B this is
+                # the ONLY automatic arming door - the bounded EL
+                # session-start sniff retired with the cloud identity path,
+                # so no arming decision ever costs a batch call. #461: this
+                # is eligibility only. Whether the room is on, off or solo
+                # is decided per commit, because it can change mid-session.
+                ambient = diarize.ambient_eligible(people, cfg)
                 return on, names, disarmed, ambient
             enabled, roster_names, disarmed, ambient_ok = \
                 await asyncio.to_thread(_session_open_reads)
@@ -792,31 +847,22 @@ async def stt_stream_relay(ws: WebSocket):
                                 commit_turn_id = (str(msg.get("turn_id") or "")
                                                   .strip()[:64] or None)
                                 commit_turn_fifo.append(commit_turn_id)
-                                if room.enabled or diarize.room_enabled(chat_id):
-                                    diarize.schedule_pass(chat_id, pcm, pcm_sr,
-                                                          db.now(), room, cfg,
-                                                          turn_id=commit_turn_id,
-                                                          speculative=spec)
-                                else:
-                                    diarize.stash_utterance(chat_id, pcm, pcm_sr)
-                                    # Automatic arming while room mode is off
-                                    # (#28), unless the owner has said "solo
-                                    # mode" (the sacred disarm, honoured cheaply
-                                    # via the live mirror here and re-checked
-                                    # inside each pass). ONE door since PR-B:
-                                    # the ambient local check - the on-device
-                                    # matcher, which NEVER calls ElevenLabs (the
-                                    # bounded EL session-start sniff retired
-                                    # with the cloud identity path). create_task
-                                    # only, NEVER awaited; the upstream byte
-                                    # stream is untouched either way.
-                                    if diarize.ambient_off(chat_id):
-                                        pass
-                                    elif room.ambient_on:
-                                        diarize.schedule_ambient(
-                                            chat_id, pcm, pcm_sr, db.now(),
-                                            room, cfg, turn_id=commit_turn_id,
-                                            speculative=spec)
+                                # One routing rule for every voiced turn
+                                # (#461), shared with the batch /stt path: an
+                                # armed room runs the armed pass; otherwise
+                                # the turn is stashed for an introduction to
+                                # claim, and the ambient local check runs -
+                                # the on-device matcher, which NEVER calls
+                                # ElevenLabs. It honours the sacred disarm
+                                # itself, reading the chat row. create_task
+                                # only, NEVER awaited; the upstream byte
+                                # stream is untouched either way.
+                                diarize.schedule_turn_check(
+                                    chat_id, pcm, pcm_sr, room, cfg,
+                                    room_on=(room.enabled
+                                             or diarize.room_enabled(chat_id)),
+                                    ambient_ok=room.ambient_on,
+                                    turn_id=commit_turn_id, speculative=spec)
                             except Exception:
                                 log.warning("diarize scheduling failed; live "
                                             "transcription continues", exc_info=True)

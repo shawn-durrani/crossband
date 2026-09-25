@@ -68,6 +68,10 @@ def _reset_room_state():
         (diarize, "_LAST_DECISION"),
         (diarize, "_LABEL_EVENTS"),
         (diarize, "_DECISION_HISTORY"),
+        # #461: which turn ids already had a check, and the batch path's
+        # per-chat sessions.
+        (diarize, "_CHECKED_TURNS"),
+        (diarize, "_BATCH_SESSIONS"),
         # The capture registry (#134): a websocket handler that loses the
         # TestClient shutdown race leaves its entry behind, and the reader
         # in the NEXT file fails on another machine's event-loop timing -
