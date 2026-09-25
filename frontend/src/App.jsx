@@ -499,6 +499,16 @@ export default function App() {
     voiceRef.current?.stop()
   }
 
+  // A voice session ends with the app that started it. The lock screen
+  // replaces the whole app when a request comes back unauthorised, which
+  // every server restart causes, since sign-ins live in the server's
+  // memory. The session used to live on unseen: its mic stayed open
+  // behind the lock screen, and once voice was started again every turn
+  // was sent twice (25 Sep). A session still asking for the mic stops
+  // too. voice.js also ends any older session when a new one starts, so
+  // this is the first of two locks.
+  useEffect(() => () => { voiceRef.current?.stop() }, [])
+
   // #304: the one-tap stall report, shared by the desktop dock and the
   // phone's call screen (the call screen covers the dock, so it needs its
   // own button). The outcome lands in the banner, which both surfaces show.

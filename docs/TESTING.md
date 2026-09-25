@@ -84,6 +84,14 @@ talking still gets one message, and a short turn keeps its timing. The
 suite runs the voice client's own listening loop through each case,
 with a scripted microphone and clock.
 
+One page runs one voice session. Starting a session ends any other the
+page still has, such as one left running when the lock screen replaced
+the app, so a turn is heard and sent once. A second tap on start opens
+no second microphone. The listening loop has one owner, so starting it
+again replaces the running loop and never adds a second. The suite
+starts the real voice client twice on one page, with one scripted
+microphone, and counts the loops reading it on every frame.
+
 ### Identity and the live turn
 
 Identity work never starves a reply. Everything the identity pass runs

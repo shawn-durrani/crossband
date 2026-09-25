@@ -158,6 +158,15 @@ class StreamPlayer {
 // for the session (browsers block audio until the user interacts with the page).
 const SILENT_WAV = 'data:audio/wav;base64,UklGRuQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YcADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
+// The page's live voice session, if any. A page has one microphone and
+// one chat, so it runs one session: start() ends any other before it
+// opens the mic. On 25 September a restart signed the browser out, the
+// lock screen replaced the app mid-call, and the old session was never
+// ended. Its microphone and listening loop ran on unseen, and once the
+// owner started voice again two sessions heard every turn and each sent
+// it.
+let liveSession = null
+
 export default class VoiceController {
   constructor({ getChatId, getParticipants, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onLevel, onSpeaker, onHeld, onStall }) {
     this.getChatId = getChatId
@@ -240,6 +249,10 @@ export default class VoiceController {
     // Which commit the salvage timer belongs to, so only that commit's
     // transcript disarms it (#453).
     this._sttCommitTurn = null
+    // The listening loop's handle: each _vadLoop() call takes a new one,
+    // and a tick holding an older one stops, so one loop reads the mic.
+    this._vadLoopId = 0
+    this._starting = false    // start() is waiting on the microphone
     this.muted = false        // hard mute: mic track disabled, nothing detected/sent
     // Hold-and-retry: utterances whose /stt POST failed on NETWORK (a dead
     // zone) wait here as audio blobs and retry until the tunnel returns -
@@ -672,6 +685,26 @@ export default class VoiceController {
   }
 
   async start() {
+    // A second tap on start, while a session runs or is still waiting on
+    // the microphone, would open a second mic and a second listening loop.
+    if (this.active || this._starting) return
+    // One session per page (see liveSession): any other ends first, so its
+    // microphone is off before this one asks for it.
+    const other = liveSession
+    if (other && other !== this && (other.active || other._starting)) {
+      other._vlog('session:superseded', { state: other.state })
+      other.stop()
+    }
+    liveSession = this
+    this._starting = true
+    try {
+      await this._startSession()
+    } finally {
+      this._starting = false
+    }
+  }
+
+  async _startSession() {
     this._vlog('session:start', { roomMode: this.roomMode, staleRoundActive: this.roundActive })
     // A fresh session starts with a clean gate. The controller outlives
     // stop()/start() (App builds it once), so a gate wedged true by a dead
@@ -693,9 +726,17 @@ export default class VoiceController {
     // always did; a session starting IN room mode asks with noise
     // suppression and auto gain off, so single-voice tuning cannot muffle
     // the second speaker. The decision table lives in captureProfile.js.
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: captureConstraints(this.roomMode),
     })
+    if (liveSession !== this) {
+      // Stopped, or replaced by another session, while the browser was
+      // asking for the mic. Coming alive now would leave a session nobody
+      // can end.
+      stream.getTracks().forEach((t) => t.stop())
+      return
+    }
+    this.stream = stream
     this.audioCtx = new AudioContext()
     // Resume the context we just built. _primeAudio ran BEFORE it existed (it
     // has to - the sink unlock needs the start gesture), so without this the
@@ -770,6 +811,7 @@ export default class VoiceController {
   stop() {
     this._vlog('session:stop', { state: this.state, roundActive: this.roundActive, captureSid: this.captureSid })
     this.active = false
+    if (liveSession === this) liveSession = null
     // A hand-off the owner ended is not a stall (#304).
     resetHandoffWatch(this._handoff)
     // Nor is a long turn left waiting between pieces (#453).
@@ -881,11 +923,17 @@ export default class VoiceController {
     return voiced / frames.length >= 0.6
   }
 
+  // One listening loop per session. Each call takes a new handle and a
+  // tick holding an older one stops on its next frame, so calling this
+  // while a loop runs replaces that loop and never adds a second. A stop
+  // and a start inside one frame used to leave the old loop's queued tick
+  // running beside the new loop.
   _vadLoop() {
+    const loop = ++this._vadLoopId
     const timeBuf = new Float32Array(this.analyser.fftSize)
     const freqBuf = new Uint8Array(this.analyser.frequencyBinCount)
     const tick = () => {
-      if (!this.active) return
+      if (!this.active || loop !== this._vadLoopId) return
       requestAnimationFrame(tick)
       // #304: before the early returns below - a hand-off can stall while
       // muted or while the screen says Thinking, and both still count.
