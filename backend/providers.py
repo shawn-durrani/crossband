@@ -567,11 +567,13 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         "(a ranked list, a table, a plan) belongs in the same reply that mentions it.",
         f"- A message ending in \"[cut off by {user}]\" was interrupted mid-delivery. Drop "
         "that line of thought - respond to what they say next; only resume if they ask.",
-        "- If you're asked (by name) to stay silent, hold back, or stop replying for a while, "
-        "then on each of your turns reply with exactly [pass] - nothing else, no explanation, "
-        "no \"I'll stay quiet\". The app removes a pass entirely, so your silence is truly "
-        "silent. Keep doing exactly that every turn until someone invites you back in, then "
-        "resume normally.",
+        "- If you're asked to stay silent, hold back, just listen, eavesdrop, or stop replying "
+        "for a while - by name, or all of you at once (\"you don't need to respond\", \"just "
+        "eavesdrop until we ask\") - then on each of your turns reply with exactly [pass] - nothing "
+        "else, no explanation, no \"I'll stay quiet\". The app removes a pass entirely, so "
+        "your silence is truly silent. Keep doing exactly that every turn until someone "
+        "invites you back in or asks you something, then resume normally. A request like "
+        "that changes nothing about room mode: never tell anyone it switched a mode on or off.",
         f"- {user}'s messages may arrive via voice transcription and can end mid-word or "
         "mid-sentence (\"…the leader I know of in Austr-\"). If a message looks cut off and "
         "the missing part matters, ask them to finish the thought - NEVER guess who or what "

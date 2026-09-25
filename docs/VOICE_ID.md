@@ -101,8 +101,18 @@ turns as well as spoken ones, whether or not room mode is on.
   nothing on record explains it, the app asks who's speaking. It
   doesn't guess.
 
-When the model hears an instruction and the room stays as it was, one
-system line says so, naming what it heard and that nothing changed.
+When a spoken command switches the room on or off, one system line
+says what changed and what to say to undo it. When the model hears an
+instruction and the room stays as it was, one system line says so,
+naming what it heard and that nothing changed.
+
+Asking the seats to hold back leaves room mode alone. "You don't need
+to respond", "just listen" and "go to eavesdropping mode" aren't mode
+commands, so the room stays as it was. Each seat answers with `[pass]`
+until someone asks it something, and the app hides a pass. A turn with
+a question mark in it still gets one reply, because the first seat to
+answer a question can't pass. For "solo mode" to be heard, say it by
+name, or say you're on your own now, like "it's just me now".
 
 If a turn is never heard as anything, the manual doors always work:
 the two switches in the voice settings drawer, "switch on now" and

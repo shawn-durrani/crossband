@@ -255,6 +255,108 @@ def test_just_me_now_disarms_even_though_it_is_also_a_departure_shape(
                 for m in _verdict_lines(caplog)))
 
 
+# ── 2b. a spoken room change is never silent (25 September field test) ─────
+#
+# The scan read "just eavesdrop" as the solo-mode disarm: room mode went off,
+# everyone left the roster, automatic re-arming stopped, and nothing in the
+# chat said so. Every spoken change now posts one line with what changed and
+# the words that undo it, and a heard command that changed nothing keeps its
+# own "nothing changed" line.
+
+def _system_lines(chat_id):
+    con = db.connect()
+    try:
+        return [m["content"] for m in db.get_chat_messages(con, chat_id)
+                if m["speaker"] == "system"]
+    finally:
+        con.close()
+
+
+def test_spoken_disarm_says_what_changed_and_how_to_undo_it(app, utility):
+    utility["reply"] = {"mode_command": "off"}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _make_chat(c)
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Sam"], "departures": []}, CFG)
+        _send(c, chat["id"], "sorry, go to listening mode, we're chatting")
+        lines = _wait_for(lambda: _system_lines(chat["id"]))
+    assert len(lines) == 1, lines
+    line = lines[0]
+    assert "room mode off" in line and "it's off now" in line
+    assert "nobody is listed in the room" in line
+    assert "won't switch itself back on" in line
+    assert 'Say "room mode on"' in line
+    # built from what changed, never from the turn's words
+    for leak in ("Sam", "listening", "chatting", "sorry"):
+        assert leak not in line
+
+
+def test_spoken_arm_says_what_changed_and_how_to_undo_it(app, utility):
+    utility["reply"] = {"mode_command": "on"}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _make_chat(c)
+        _send(c, chat["id"], "group mode please")
+        lines = _wait_for(lambda: _system_lines(chat["id"]))
+    assert len(lines) == 1, lines
+    assert "room mode on" in lines[0] and "it's on now" in lines[0]
+    assert 'Say "room mode off"' in lines[0]
+
+
+def test_disarm_in_a_room_already_off_still_says_re_arming_stopped(app):
+    """Off but still re-arming by itself ("listening"): the command stops
+    the automatic re-arm, which is a change, so the line says exactly
+    that and nothing about a room list."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        chat_id = _bare_chat()
+        assert introductions.apply_command(chat_id, "disarm", CFG) \
+            == "disarmed_by_command"
+        lines = _system_lines(chat_id)
+    assert len(lines) == 1
+    assert "already off" in lines[0]
+    assert "won't switch itself back on" in lines[0]
+    assert "listed in the room" not in lines[0]
+
+
+def test_a_disarm_that_changes_nothing_keeps_the_nothing_changed_line(
+        app, utility, caplog):
+    utility["reply"] = {"mode_command": "off"}
+    with caplog.at_level(logging.INFO, logger="crossband.introductions"):
+        with TestClient(app, base_url="http://127.0.0.1") as c:
+            chat = _make_chat(c)
+            introductions.apply_command(chat["id"], "disarm", CFG)
+            before = _system_lines(chat["id"])
+            _send(c, chat["id"], "solo mode")
+            lines = _wait_for(lambda: len(_system_lines(chat["id"]))
+                              > len(before) and _system_lines(chat["id"]))
+            assert _wait_for(lambda: any(
+                f"chat={chat['id']} outcome=no_change" in m
+                for m in _verdict_lines(caplog)))
+    assert len(lines) == len(before) + 1
+    assert "nothing changed" in lines[-1] and "already off" in lines[-1]
+
+
+def test_an_arm_that_changes_nothing_logs_no_change_not_rejected(
+        app, utility, caplog):
+    """The 25 September log showed a heard "turn room mode on" in a room
+    already on as model_rejected, which read as "nothing heard". It is
+    no_change, beside its "nothing changed" line."""
+    utility["reply"] = {"mode_command": "on"}
+    with caplog.at_level(logging.INFO, logger="crossband.introductions"):
+        with TestClient(app, base_url="http://127.0.0.1") as c:
+            chat = _make_chat(c)
+            introductions.apply_command(chat["id"], "arm", CFG)
+            _send(c, chat["id"], "turn room mode on")
+            assert _wait_for(lambda: any(
+                f"chat={chat['id']} outcome=no_change" in m
+                for m in _verdict_lines(caplog)))
+            lines = _wait_for(lambda: len(_system_lines(chat["id"])) == 2
+                              and _system_lines(chat["id"]))
+    assert "it's on now" in lines[0]
+    assert "nothing changed" in lines[1] and "already on" in lines[1]
+    assert not any(f"chat={chat['id']} outcome=model_rejected" in m
+                   for m in _verdict_lines(caplog))
+
+
 # ── 3. apply_command, the seam ──────────────────────────────────────────────
 
 def _bare_chat():
@@ -339,16 +441,17 @@ def test_disarm_marks_everyone_left_and_resolves_the_ask(app):
         assert sorted(p["name"] for p in gone) == ["Alex", "Dave"]
         assert all(p["status"] == "left" and p["left_at"] for p in gone)
         assert [f["kind"] for f in _flags(chat_id)] == ["mismatch"]
-        # Disarm while already off is no longer a no_change: since ambient
-        # detection (#28) it records the sacred solo preference, a real state
-        # change (test_room_ambient.py owns the ambient-off transitions).
-        assert introductions.apply_command(chat_id, "disarm", CFG) \
-            == "disarmed_by_command"
         con = db.connect()
         try:
             assert db.get_chat_ambient_off(con, chat_id) is True
         finally:
             con.close()
+        # A second disarm finds the room off AND automatic re-arming already
+        # stopped: nothing changes, so it reports no_change and the scan's
+        # "nothing changed" line speaks for it. (A disarm in a room that is
+        # off but still re-arming IS a change - see the already-off test.)
+        assert introductions.apply_command(chat_id, "disarm", CFG) \
+            == "no_change"
 
 
 def test_a_departure_left_person_can_rejoin_by_introduction(app):

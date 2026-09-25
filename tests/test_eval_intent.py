@@ -35,6 +35,25 @@ def test_builtin_corpus_loads_and_covers_the_named_cases():
     assert any(ch["once"] for f in fixtures for ch in f.expected["depth"])
 
 
+def test_corpus_grades_hold_back_requests_as_no_instruction():
+    """The 25 September field test: "just eavesdrop until asked" was heard as
+    room mode on, and "go to eavesdropping mode, we're just talking",
+    mid-sentence, as the solo disarm. The corpus carries those shapes in
+    made-up words, each graded as no instruction at all, plus the plain
+    statements the disarm still has to hear."""
+    hold = [f for f in load_fixtures() if f.category == "room_hold_back"]
+    assert len(hold) >= 8
+    assert all(not f.has_intent for f in hold)
+    texts = " ".join(f.text.lower() for f in hold)
+    for wording in ("eavesdrop", "just listen", "stay quiet", "silent mode",
+                    "don't respond unless"):
+        assert wording in texts, wording
+    mid = _fx("hold_eavesdrop_mid_sentence")
+    assert not mid.text[0].isupper()  # lands mid-sentence, as spoken
+    assert _fx("room_off_alone_after_departure").expected["mode_command"] == "off"
+    assert _fx("room_on_and_listen").expected["mode_command"] == "on"
+
+
 def test_fixture_validation_rejects_bad_shapes():
     base = {"id": "x", "category": "c", "text": "hi", "expected": {}}
     Fixture.from_dict(base)

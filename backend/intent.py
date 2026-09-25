@@ -42,16 +42,30 @@ def build_merged_prompt(text: str, user_name: str, seat_names: list,
         f"{known}.\n"
         "Decide, all at once, which of these the message does. Merely "
         "talking ABOUT any of them (a question, praise, a recollection, a "
-        "mention in passing) counts for none of them.\n"
+        "mention in passing) counts for none of them. Asking the "
+        "assistants to HOLD BACK counts for none of them either, wherever "
+        "it sits in the message: 'you don't need to respond', 'just "
+        "listen', 'eavesdrop', 'stay quiet', 'silent mode', 'listening "
+        "mode', 'don't answer unless we ask' are about whether the "
+        "assistants reply, which they handle themselves. Anything else "
+        "the same message asks still counts.\n"
         "1. mode_command: does it ask BY NAME to switch ROOM MODE (group, "
         "multi-user or multi-person mode: several people sharing one "
         "microphone) on or off? Requests and announcements both count "
-        "('group mode please', 'we're in group mode now' mean on; 'solo "
-        "mode', 'it's just me now' mean off). Introducing a person or "
-        "saying someone is here is NOT a mode command, even though it "
-        "implies company: the app switches the room on by itself when "
-        "someone is introduced, so return \"none\" unless the mode is "
-        "named. Otherwise \"none\".\n"
+        "('group mode please', 'we're in group mode now' mean on). \"off\" "
+        "needs an unambiguous statement: solo mode or room mode off by "
+        "name, or the owner saying they are alone now ('it's just me "
+        "now', 'everyone's gone home'). Any other kind of 'mode' "
+        "('eavesdropping mode', 'quiet mode', 'listening mode') is a hold "
+        "back request, not room mode. Introducing a person, saying "
+        "someone is here, or people talking among themselves ('we're "
+        "just talking', 'we're chatting between ourselves') is NOT a mode "
+        "command, even though it implies company: the app switches the "
+        "room on by itself when someone is introduced, so return "
+        "\"none\" unless the mode is named. Talking among themselves "
+        "also says people ARE here, the opposite of alone. When unsure, "
+        "\"none\": a wrong \"off\" empties the room and stops the app "
+        "noticing new voices. Otherwise \"none\".\n"
         "2. introductions and departures: does it INTRODUCE another human "
         "who is physically present and may speak, or ANNOUNCE that a "
         "present person has left? The owner introducing someone, a guest "
@@ -155,6 +169,37 @@ def _mode_line(direction) -> str:
     state = "on" if direction == "on" else "off"
     return (f"Heard an instruction to turn room mode {state}, and nothing "
             f"changed: the room was already {state}.")
+
+
+# ---------- the "heard and changed" line for room mode ----------
+#
+# The 25 September field test: the scan read "just eavesdrop" as the
+# solo-mode disarm, room mode went off, everyone left the roster and
+# automatic re-arming stopped, and nothing in the chat said so. The owner
+# found out only when a seat told them the room was off. A spoken room-mode
+# change now always posts one line: what changed, and the words that undo
+# it. Depth and research changes already post theirs (depth._notice,
+# research._on_notice); room mode was the one silent axis. Built from what
+# the apply call changed, never from the turn's words, so no transcript text
+# reaches a persisted row.
+
+def mode_changed_line(direction, *, was_on=False, cleared_roster=False) -> str:
+    """The line for a spoken room-mode command that changed something.
+    `direction` is "on" or "off". For "off", `was_on` says whether the room
+    itself flipped (False: it was already off and only the automatic
+    re-arming stopped) and `cleared_roster` whether anyone was taken off the
+    room list."""
+    if direction == "on":
+        return ("Heard an instruction to turn room mode on, so it's on now. "
+                'Say "room mode off" to turn it off.')
+    if was_on:
+        gone = " and nobody is listed in the room" if cleared_roster else ""
+        return ("Heard an instruction to turn room mode off, so it's off "
+                f"now{gone}. It won't switch itself back on when it hears "
+                'another voice. Say "room mode on" to turn it back on.')
+    return ("Heard an instruction to turn room mode off. It was already off, "
+            "and now it won't switch itself back on when it hears another "
+            'voice. Say "room mode on" to undo that.')
 
 
 def _intro_line(verdict) -> str:
