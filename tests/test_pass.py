@@ -449,9 +449,10 @@ def test_a_real_reply_that_errors_mid_token_keeps_its_words(app,
 def test_a_quiet_remark_fits_inside_the_first_tts_chunk():
     """The voice holds a reply's text while it could still end as a pass
     (frontend/src/passView.js PassSpeechGate). That hold costs no time to
-    first audio only while a quiet remark is no longer than the text TTS
-    waits for before it makes any audio."""
+    first audio only while a quiet remark is shorter than the text TTS
+    waits for before it makes any audio: the gate lets a reply go once it
+    is longer than QUIET_MAX_CHARS, before TTS could have started."""
     from backend import passes, voice
     init = json.loads(voice.tts_init_message({"tts_speed": 1.0}))
     first_chunk = init["generation_config"]["chunk_length_schedule"][0]
-    assert passes.QUIET_MAX_CHARS <= first_chunk
+    assert passes.QUIET_MAX_CHARS < first_chunk

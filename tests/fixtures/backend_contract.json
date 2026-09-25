@@ -174,9 +174,10 @@
       "however",
       "though"
     ],
-    "quiet_max_chars": 120,
+    "quiet_max_chars": 100,
     "quiet_phrase_pattern": "\\b(?:nothing (?:(?:new|more|further|else|much|useful|really) )*(?:to (?:add|say|contribute)|from me|from my end|on my end|on my side|here)|nothing(?: (?:new|more|further|else))?$|(?:don't|do not|didn't|haven't|have not|not) (?:have |got |see )?(?:anything|much|a lot)(?: (?:new|more|further|else))? to (?:add|say|contribute)|no (?:(?:further|more|new) )?(?:input|comments?|thoughts|additions)|(?:stay|stays|staying|stayed|keep|keeps|keeping|remain|remaining|be|being|go|going) (?:quiet|quietly|silent)|(?:quiet|silent|listening|eavesdropping|lurking) mode|(?:hold|holds|holding|held) (?:back|off|fire)|(?:sit|sits|sitting) (?:this|that) (?:one )?out|stay(?:ing)? out of (?:it|this|the way)|passing|pass(?=$| for now| on this| this (?:one|time|round|turn))|listening(?=$| in| quietly| for now| along)|eavesdropping|lurking|standing by|(?:leave|let) (?:you|you two|you both|you all|the two of you|y'all) (?:to it|carry on|chat|talk|continue|get on with it))\\b",
-    "token": "[pass]"
+    "token": "[pass]",
+    "tts_first_chunk_chars": 120
   },
   "reasoning_effort": {
     "anthropic_no_effort_models": [

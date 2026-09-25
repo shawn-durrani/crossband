@@ -17,7 +17,7 @@ clone without a pytest run first.
 import json
 from pathlib import Path
 
-from backend import passes, provenance, providers
+from backend import passes, provenance, providers, voice
 from backend.config import _LOOPBACK_HOSTS
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backend_contract.json"
@@ -82,6 +82,11 @@ def current_contract():
             "quiet_max_chars": passes.QUIET_MAX_CHARS,
             "quiet_contrast": sorted(passes.QUIET_CONTRAST),
             "after_token": passes.AFTER_TOKEN,
+            # The voice's pass gate is measured against this (#460):
+            # TTS makes no audio until it holds this many characters.
+            "tts_first_chunk_chars": json.loads(voice.tts_init_message(
+                {"tts_speed": 1.0}))["generation_config"][
+                    "chunk_length_schedule"][0],
             "examples": [{"text": t,
                           "is_pass": bool(passes.is_pass(t)),
                           "is_cut_pass": bool(passes.is_cut_pass(t)),

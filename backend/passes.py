@@ -28,11 +28,13 @@ had something to say). The field remarks mixed the quiet phrase with
 other words ("you two carry on with the plan, passing"), so the rule
 does not ask every word to be a quiet one.
 
-The length cap is the ElevenLabs first chunk (backend/voice.py
+The length cap sits under the ElevenLabs first chunk (backend/voice.py
 tts_init_message): TTS makes no audio until it holds that many
 characters or is flushed. The voice holds a reply's text while it could
-still become a pass, which therefore costs no time to first audio, and a
-reply that turns out to be one never reached TTS at all.
+still become a pass, and lets it go once it is longer than a quiet remark
+can be, which is before TTS could have started on it. So the hold costs
+no time to first audio, and a reply that turns out to be a pass never
+reached TTS at all. frontend/src/voicePassGate.test.js measures that.
 frontend/src/passView.js applies the same rule, pinned through
 tests/fixtures/backend_contract.json, so the screen and the voice agree
 with what the engine stores.
@@ -80,8 +82,9 @@ QUIET_PHRASE_PATTERN = (
 )
 QUIET_PHRASE = re.compile(QUIET_PHRASE_PATTERN)
 
-# A quiet remark is short: at most the TTS first chunk (see above).
-QUIET_MAX_CHARS = 120
+# A quiet remark is short, and shorter than the TTS first chunk (see
+# above), with room for whitespace the TTS buffer counts.
+QUIET_MAX_CHARS = 100
 # A remark that turns ("but") had something to say.
 QUIET_CONTRAST = frozenset({"but", "though", "although", "however",
                             "except"})

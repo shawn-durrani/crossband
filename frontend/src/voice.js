@@ -871,6 +871,13 @@ export default class VoiceController {
   interrupt() {
     this.dropQueue = true
     for (const p of this.players.values()) p.stopNow?.()
+    // #460: a reply its pass gate still holds has sent TTS nothing, and a
+    // reply waiting to start (it could still be a pass) has no speech yet.
+    // Neither is left behind to speak later.
+    this._pendingSpeaker = null
+    for (const [slug, gate] of this._passGates) {
+      if (!gate.released) this._abandonSpeaker(slug)
+    }
     this.onInterruptRound?.()
   }
 

@@ -50,7 +50,7 @@ export const QUIET_PHRASE_PATTERN = String.raw`\b(?:`
 // backend/passes.py CLAUSE_BREAK_PATTERN, QUIET_MAX_CHARS, QUIET_CONTRAST
 // and AFTER_TOKEN.
 export const CLAUSE_BREAK_PATTERN = String.raw`[.,;:!\u2026\n]+|\s[-\u2013\u2014]\s|[\u2013\u2014]`
-export const QUIET_MAX_CHARS = 120
+export const QUIET_MAX_CHARS = 100
 export const QUIET_CONTRAST = new Set(['but', 'though', 'although', 'however', 'except'])
 export const AFTER_TOKEN = '.!*_~`"\')\u2026'
 
@@ -168,8 +168,9 @@ export function couldBePass(text) {
 // True while it is no longer than a quiet remark can be and holds no
 // question, number or turn, or when it already reads as a quiet remark
 // and a start of the token. The voice holds a reply's text while this is
-// true. That costs no time to first audio: TTS makes no audio until it
-// has QUIET_MAX_CHARS characters or is flushed.
+// true. That costs no time to first audio: QUIET_MAX_CHARS is under the
+// TTS first chunk, and TTS makes no audio until it holds a first chunk or
+// is flushed (voicePassGate.test.js measures it against today's path).
 export function couldStillBePass(text) {
   const t = text || ''
   const { before, tail } = splitPassTail(t, true)
