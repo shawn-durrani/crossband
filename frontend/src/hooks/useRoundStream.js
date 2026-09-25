@@ -6,6 +6,7 @@ import { eventBelongsToActiveChat } from '../streamGuard'
 import { voiceReplaySpeakerEligible } from '../eventStream'
 import { createBatch, addFragment, cancelBatch, flipBatch, combineFragments } from '../textQueue'
 import { record as debugRecord, recordError } from '../voiceDebug'
+import { visibleMessages } from '../passView'
 
 // Diagnostics-only, content-free: timestamped console logging for the
 // turn-handoff investigation (issue: voice turn-handoff stuck in listening
@@ -255,7 +256,11 @@ export function useRoundStream({
       streamingRef.current = false
       setStreaming(false)
       setRoundProgress(null)
-      setMessages((m) => m.map((msg) => ({ ...msg, streaming: false })))
+      // #456: a barge-in aborts the reader, so a `passed` still on the wire
+      // never lands. The placeholders it would have removed, and any cut off
+      // before they wrote a word, leave with the round; the server saved
+      // none of them.
+      setMessages((m) => visibleMessages(m.map((msg) => ({ ...msg, streaming: false }))))
       // Surface any out-of-band notices (deploy narration, hand-back rounds)
       // that arrived while this round was streaming and were held back so the
       // watermark wouldn't skip them. Runs even on abort, since those notices

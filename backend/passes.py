@@ -34,6 +34,17 @@ def is_pass(text: str) -> bool:
     return (text or "").strip().lower() == PASS_TOKEN
 
 
+def is_cut_pass(text: str) -> bool:
+    """A reply that stopped early - a barge-in, a stall, a provider error -
+    while its text could still have become a bare [pass]: "[", "[p" ...
+    "[pass]", whitespace and case aside (#456). It is judged as the pass it
+    was on its way to being: nothing persisted, shown, spoken or ingested.
+    Only a reply that did NOT finish asks this; a finished reply is judged
+    by is_pass alone, so a whole reply of "[p" still speaks."""
+    t = (text or "").strip().lower()
+    return bool(t) and PASS_TOKEN.startswith(t)
+
+
 def is_direct_question(text: str) -> bool:
     """The guard trigger: the user's turn asks something."""
     return "?" in (text or "")

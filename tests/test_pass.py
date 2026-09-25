@@ -13,20 +13,25 @@ prompt tension that needs a structural outlet. The contract under test:
 - a seat that insists after refusal is suppressed anyway (it has
   nothing); the round survives with zero crashes;
 - the pure rules (is_pass, may_pass, addressed_slugs) hold their truth
-  tables.
+  tables;
+- a reply cut short while it could still become [pass] (a barge-in, a
+  stall, a provider error) is judged as that pass and leaves nothing
+  behind, while a cut-off reply that merely starts with "[" is kept as
+  before (#456).
 """
 
+import asyncio
 import json
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import engine, rounds
+from backend import db, engine, rounds
 from backend.app import create_app
 from backend.config import Settings
 from backend.engine import explicitly_addressed
-from backend.passes import is_pass, may_pass
+from backend.passes import is_cut_pass, is_pass, may_pass
 
 
 @pytest.fixture
@@ -208,3 +213,100 @@ def test_judge_reply_accepts_an_ordinary_reply():
         echo_refs={}, idx=0, addressed=False, user_text="hi",
         voice_mode=False, echo_guard=True, user_name="Alex")
     assert (action, note, ref) == ("accept", "", "")
+
+
+# ---------- a pass cut short (#456) ----------
+
+def _one_seat(app):
+    """A fresh chat and its first seat, for driving run_round directly."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+    con = db.connect()
+    roster = db.get_chat_participants(con, chat_id)
+    con.close()
+    return chat_id, roster[:1]
+
+
+def _stored(chat_id):
+    con = db.connect()
+    msgs = db.get_chat_messages(con, chat_id)
+    con.close()
+    return [m["content"] for m in msgs]
+
+
+def _barge_in_after(app, monkeypatch, partial):
+    """Stream `partial`, then hang until the client walks away: the
+    barge-in shape the abort endpoint produces."""
+    async def hanging(participant, roster, transcript, names, cfg, project,
+                      chat_summary, voice_mode, tools=None, memory=None):
+        yield ("text", partial)
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(engine.providers, "stream_reply", hanging)
+    chat_id, seats = _one_seat(app)
+
+    async def go():
+        gen = engine.run_round(chat_id, seats, "gpt", app.state.settings,
+                               memory=None)
+        async for chunk in gen:
+            if '"delta"' in chunk:
+                break
+        await gen.aclose()
+
+    asyncio.run(go())
+    return _stored(chat_id)
+
+
+@pytest.mark.parametrize("partial", [
+    "[", "[p", "[pa", "[pas", "[pass", "[pass]", "  [PASS", "[pass\n"])
+def test_a_pass_cut_off_by_a_barge_in_is_not_stored(app, monkeypatch,
+                                                     partial):
+    """The field shape: a seat began its [pass], the owner talked over it,
+    and "[pass" plus the cut-off marker landed as a real turn."""
+    assert _barge_in_after(app, monkeypatch, partial) == []
+
+
+def test_a_cut_off_reply_that_only_starts_with_a_bracket_is_stored(
+        app, monkeypatch):
+    assert _barge_in_after(app, monkeypatch, "[note] something") == [
+        "[note] something\n\n[cut off by User]"]
+
+
+def _error_after(app, monkeypatch, partial):
+    """Stream `partial`, then fail the way a provider or a stall does."""
+    async def failing(participant, roster, transcript, names, cfg, project,
+                      chat_summary, voice_mode, tools=None, memory=None):
+        yield ("text", partial)
+        raise RuntimeError("upstream went away")
+
+    monkeypatch.setattr(engine.providers, "stream_reply", failing)
+    chat_id, seats = _one_seat(app)
+
+    async def go():
+        return [chunk async for chunk in engine.run_round(
+            chat_id, seats, "gpt", app.state.settings, memory=None)]
+
+    events = [json.loads(ch[6:]) for ch in asyncio.run(go())
+              if ch.startswith("data: ")]
+    return events, _stored(chat_id)
+
+
+def test_a_pass_cut_off_by_an_error_is_not_stored(app, monkeypatch):
+    events, stored = _error_after(app, monkeypatch, "[pa")
+    assert stored == []
+    assert [e["type"] for e in events if e["type"] == "error"] == ["error"]
+
+
+def test_a_real_reply_cut_off_by_an_error_is_stored_as_before(app,
+                                                              monkeypatch):
+    _, stored = _error_after(app, monkeypatch, "[note] half a thought")
+    assert stored == ["[note] half a thought"]
+
+
+def test_is_cut_pass():
+    for text in ("[", "[p", "[pa", "[pas", "[pass", "[pass]", " [PaSs ",
+                 "\n[pass]\n"):
+        assert is_cut_pass(text), text
+    for text in ("", "   ", None, "[note]", "[passed", "[pass] and more",
+                 "pass", "[ pass"):
+        assert not is_cut_pass(text), text

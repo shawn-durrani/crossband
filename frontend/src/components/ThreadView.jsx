@@ -1,5 +1,6 @@
 import { MessagesSquare, RotateCw, ArrowDown } from 'lucide-react'
 import Message from './Message'
+import { visibleMessages } from '../passView'
 
 // The conversation itself: the scrolling transcript, what an empty chat says,
 // the round-progress line, the continue control, and the jump-to-latest pill
@@ -22,17 +23,21 @@ export default function ThreadView({
   children,
 }) {
   const showJump = !atBottom && (newCount > 0 || streaming)
+  // #456: a seat turn with nothing to show (a pass, or a turn cut off
+  // before it wrote anything) draws no bubble. Filtered here, not inside
+  // Message, so the row after it groups against what is actually on screen.
+  const rows = visibleMessages(messages)
   // The id of the last model reply, computed once: the per-row
   // hasLaterReplies test used to scan the whole list inside the map, which
   // was quadratic and defeated Message's memo. Ids are unique and
   // monotonic, so id < lastReplyId is the same predicate.
-  const lastReplyId = messages.reduce(
+  const lastReplyId = rows.reduce(
     (last, m) => (m.speaker !== 'user' && m.speaker !== 'system' ? m.id : last), 0)
   return (
     <div className="relative flex-1 min-h-0">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 sm:px-6 py-6">
         <div className="mx-auto w-full max-w-[768px]" aria-live="polite">
-          {messages.length === 0 && (
+          {rows.length === 0 && (
             <div className="mx-auto max-w-md text-center mt-14 space-y-6">
               {/* An empty chat has to teach the one thing that makes this app
                   different - everyone answers - before you type anything. */}
@@ -79,11 +84,11 @@ export default function ThreadView({
               </div>
             </div>
           )}
-          {messages.map((m, i) => (
+          {rows.map((m, i) => (
             <Message
               key={m.id}
               msg={m}
-              prev={messages[i - 1]}
+              prev={rows[i - 1]}
               participants={participants}
               mismatchFlag={mismatchFlags[m.id]}
               roomRoster={roomRoster}
