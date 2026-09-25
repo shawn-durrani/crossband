@@ -8,9 +8,10 @@ router = APIRouter(prefix="/api/models", tags=["models"])
 @router.get("/seat_trace")
 def seat_trace_entries(chat_id: int | None = None, limit: int = 100):
     """What each seat's recent completions did (#162): timings, sizes,
-    finish reasons, outcomes, a hash of each reply and whether it repeats
-    an earlier one, plus any doubled send. Never the text. In memory only,
-    newest last; `chat_id` narrows it to one chat."""
+    finish reasons, outcomes, hashes of each reply, whether it repeats the
+    seat's own earlier reply or copies any seat's recent one, and what the
+    echo guard did with it, plus any doubled send. Never the text. In
+    memory only, newest last; `chat_id` narrows it to one chat."""
     return {"entries": seat_trace.entries(chat_id, limit)}
 
 

@@ -74,11 +74,12 @@ def _shingles(text):
     return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
 
 
-def find_restated(reply, references):
-    """The label of the first reference `reply` mostly restates, else None.
+def restated_reference(reply, references):
+    """The first reference `reply` mostly restates, as given, else None.
 
-    `references` is a list of (label, text) pairs. Each reference is judged
-    on its own: overlap against a concatenation would let two half-matches
+    `references` is a list of (label, text) pairs, or the (label, text,
+    speaker) triples `references_for` builds. Each reference is judged on
+    its own: overlap against a concatenation would let two half-matches
     fake one restatement."""
     judged = _strip_quoted(reply or "")
     if len(judged.strip()) < MIN_REPLY_CHARS:
@@ -86,25 +87,33 @@ def find_restated(reply, references):
     reply_shingles = _shingles(judged)
     if len(reply_shingles) < MIN_SHINGLES:
         return None
-    for label, text in references:
-        ref = _shingles(text)
+    for reference in references:
+        ref = _shingles(reference[1])
         if not ref:
             continue
         contained = len(reply_shingles & ref) / len(reply_shingles)
         if contained >= CONTAINMENT_THRESHOLD:
-            return label
+            return reference
     return None
 
 
+def find_restated(reply, references):
+    """The label of the first reference `reply` mostly restates, else None."""
+    reference = restated_reference(reply, references)
+    return reference[0] if reference else None
+
+
 def references_for(transcript, self_slug, roster_slugs, names):
-    """(label, text) pairs to judge a completed reply against: the seat's
-    own most recent visible message, and each roster reply that followed the
-    newest user turn (the replies this round has already collected).
-    Metadata rows (system notices, external feeds) are never references."""
+    """(label, text, speaker) triples to judge a completed reply against:
+    the seat's own most recent visible message, and each roster reply that
+    followed the newest user turn (the replies this round has already
+    collected). The speaker is the seat slug, so a hit can name whose reply
+    was restated (#162). Metadata rows (system notices, external feeds) are
+    never references."""
     refs = []
     own = [m for m in transcript if m.get("speaker") == self_slug]
     if own:
-        refs.append((OWN_LABEL, own[-1].get("content") or ""))
+        refs.append((OWN_LABEL, own[-1].get("content") or "", self_slug))
     user_ids = [m["id"] for m in transcript if m.get("speaker") == "user"]
     if user_ids:
         last_user = user_ids[-1]
@@ -112,5 +121,6 @@ def references_for(transcript, self_slug, roster_slugs, names):
             if (m["id"] > last_user and m.get("speaker") != self_slug
                     and m.get("speaker") in roster_slugs):
                 who = names.get(m["speaker"], m["speaker"])
-                refs.append((f"{who}'s reply just above", m.get("content") or ""))
+                refs.append((f"{who}'s reply just above",
+                             m.get("content") or "", m["speaker"]))
     return refs
