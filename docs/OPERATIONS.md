@@ -110,8 +110,8 @@ enough on a laptop. It covers the idle timer on mains power, and a
 closed lid still sleeps the Mac. Unplugged, the Mac also sleeps on its
 battery timer.
 
-A sleeping Mac makes no backups. The backup timer counts only time the
-Mac is awake, so the hours in `backup_interval_hours` are waking hours.
+A sleeping Mac makes no backups. When it wakes, the app takes any
+snapshot that fell due while it slept, within five minutes.
 
 If every app goes quiet on your phone at once, look at the Mac on the
 [Machines page](https://login.tailscale.com/admin/machines) of the

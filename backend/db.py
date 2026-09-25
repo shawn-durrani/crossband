@@ -12,7 +12,9 @@ an older database opens and fills in rather than being rewritten. init()
 refuses a database stamped newer than this build.
 """
 
+import asyncio
 import hashlib
+import logging
 import os
 import shutil
 import sqlite3
@@ -22,6 +24,8 @@ from pathlib import Path
 
 from . import provenance
 from .config import DEFAULT_PRICING, ROOT, provenance_for
+
+log = logging.getLogger("crossband.db")
 
 SCHEMA_VERSION = 29
 
@@ -578,6 +582,56 @@ def _backup_database():
     _mirror_snapshot(dest)
     _backup_voice_anchors(dest.name.replace("chat-", "").replace(".db", ""))
     return str(dest)
+
+
+# How often the backup timer wakes to ask whether a snapshot is due. The
+# wait itself runs on the monotonic clock, which stops while macOS sleeps,
+# so the interval is judged by the wall clock on each tick instead: a
+# snapshot that fell due during sleep is taken within one tick of waking.
+# A tick costs a directory listing and one stat call.
+BACKUP_TICK_S = 300.0
+
+
+def snapshot_due(now: float, interval_s: float, last_try: float | None) -> bool:
+    """True when the newest snapshot, and the timer's last try, are both at
+    least `interval_s` old by the wall clock. The last try counts because a
+    content-deduped copy leaves the old snapshot standing, and without it a
+    quiet database would be copied in full every tick. A time ahead of
+    `now` means the clock was set back, and is ignored so backups never
+    stall until the clock catches up."""
+    snaps = sorted(BACKUP_DIR.glob("chat-*.db"))
+    newest = snaps[-1].stat().st_mtime if snaps else None
+    marks = [t for t in (newest, last_try) if t is not None and t <= now]
+    return not marks or now - max(marks) >= interval_s
+
+
+def backup_tick(now: float, interval_s: float,
+                last_try: float | None) -> float | None:
+    """One wake of the backup timer; returns the new last-try time. A due
+    cycle is still content-deduped by `backup_database`."""
+    try:
+        if not snapshot_due(now, interval_s, last_try):
+            return last_try
+        backup_database()
+    except Exception:
+        log.exception("periodic backup failed")
+    return now
+
+
+async def backup_loop(interval_hours: float, *, clock=time.time,
+                      tick_s: float = BACKUP_TICK_S) -> None:
+    """The periodic snapshot, until cancelled. `init()` took the startup
+    snapshot just before this starts, so that counts as the first try and
+    the next is one interval out. An interval of 0 or less turns the timer
+    off. `clock` is the wall clock, injectable for tests."""
+    interval_s = interval_hours * 3600
+    if interval_s <= 0:
+        return
+    last_try = clock()
+    while True:
+        await asyncio.sleep(min(tick_s, interval_s))
+        last_try = await asyncio.to_thread(
+            backup_tick, clock(), interval_s, last_try)
 
 
 def _backup_voice_anchors(stamp: str):
