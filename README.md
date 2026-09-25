@@ -166,7 +166,7 @@ Anything a guest said, or a model read on a web page, waits in Membro's
 review queue for your approval before it counts. What a guest said in
 one chat is recalled only in that chat. A fact a model saves itself
 while a guest is in the room waits for review too, and once you approve
-it, it's recalled in every chat.
+it, it stays in that chat.
 
 ```mermaid
 flowchart LR

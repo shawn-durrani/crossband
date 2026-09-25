@@ -1478,6 +1478,9 @@ async def save_memory(args, cfg, memory, origin_agent=None):
         # Contract 1.5: the guests present in the round, so a save made
         # while a guest could have been the source is held for review.
         guest_speakers=list(cfg.get("_round_guest_speakers") or ()),
+        # Contract 1.7 (membro#115): the chat the save was made in, the
+        # pair ingest uses, so membro keeps a guest-present save in it.
+        chat_id=cfg.get("chat_id"),
     )
     if result is None:
         return "Error: memory service unavailable - fact NOT saved"

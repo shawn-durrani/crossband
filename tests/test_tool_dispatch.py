@@ -24,13 +24,14 @@ class FakeMemory:
 
     async def save_fact(self, content, origin_agent, event_date=None,
                         confidence="medium", web_sources=None,
-                        guest_speakers=None):
+                        guest_speakers=None, chat_id=None):
         if self.fail:
             return None
         self.saved.append({"content": content, "origin_agent": origin_agent,
                            "event_date": event_date, "confidence": confidence,
                            "web_sources": web_sources,
-                           "guest_speakers": guest_speakers})
+                           "guest_speakers": guest_speakers,
+                           "chat_id": chat_id})
         return {"id": 1, "quarantined": self.quarantined}
 
     async def recall(self, query, limit=10, include_superseded=False,
@@ -105,6 +106,17 @@ def test_save_memory_sends_no_guest_stamp_when_nobody_is_present(cfg):
         run(run_tool("save_memory", {"content": "A fact from the owner alone"},
                      dict(cfg, **absent), origin_agent="claude", memory=mem))
         assert mem.saved[0]["guest_speakers"] == []
+
+
+def test_save_memory_names_the_chat_it_runs_in(cfg):
+    """Contract 1.7 (membro#115): the save carries the chat, the same pair
+    ingest uses, so membro keeps a guest-present save in that chat."""
+    mem = FakeMemory(quarantined=True)
+    cfg = dict(cfg, chat_id=7, _round_guest_speakers=["guest:Sam"])
+    run(run_tool("save_memory", {"content": "Sam is allergic to nuts"},
+                 cfg, origin_agent="claude", memory=mem))
+    assert mem.saved[0]["chat_id"] == 7
+    assert mem.saved[0]["guest_speakers"] == ["guest:Sam"]
 
 
 def test_clean_event_date():
