@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { lifecycleBadge, isLocalEndpoint } from './lifecycle.js'
 import { reasoningOptions, effortSupport,
          normalizeReasoningEffort } from './reasoningEffort.js'
+import { PASS_TOKEN } from './passView.js'
 
 const fixture = JSON.parse(readFileSync(
   new URL('../../tests/fixtures/backend_contract.json', import.meta.url),
@@ -68,4 +69,10 @@ test('normalize keeps the backend vocabulary and resets anything outside it', ()
     }
   }
   assert.equal(normalizeReasoningEffort('openai', 'adaptive'), '')
+})
+
+test('the transcript hides the same pass token the backend suppresses', () => {
+  // #456: passView.js hides this token and every start of it, and
+  // backend/passes.py is_cut_pass drops the same shapes on a cut-off reply.
+  assert.equal(PASS_TOKEN, fixture.pass.token)
 })

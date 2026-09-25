@@ -34,6 +34,7 @@ import { healthStrip } from './voiceHealth'
 import { autoDump as voiceDebugAutoDump, autoSaveNotice, dump as voiceDebugDump,
          recordError as voiceDebugError } from './voiceDebug'
 import { mergeMessagesById } from './eventStream'
+import { chatTranscript } from './passView'
 import GuestStatusChip from './components/GuestStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
 
@@ -751,12 +752,11 @@ export default function App() {
     : []
   function copyWholeChat() {
     if (!activeChat) return
-    const lines = [`# ${activeChat.title}`, '']
-    for (const m of messages) {
-      const { label } = participantInfo(m.speaker, state.participants)
-      lines.push(`**${label}:** ${(m.content || '').trim() || '(no text)'}`, '')
-    }
-    navigator.clipboard.writeText(lines.join('\n').trim() + '\n')
+    // #456: seat turns with no words (a pass, or one cut off before it
+    // wrote anything) are left out. Rule in passView.js.
+    navigator.clipboard.writeText(chatTranscript(
+      activeChat.title, messages,
+      (speaker) => participantInfo(speaker, state.participants).label))
     setCopiedChat(true)
     setTimeout(() => setCopiedChat(false), 1500)
   }

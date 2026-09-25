@@ -496,6 +496,15 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         p = live["participant"]
         if not p or not live["content"]:
             return None
+        if interrupted and not live["tools"] \
+                and passes.is_cut_pass(live["content"]):
+            # #456: cut off mid-[pass]. The seat was passing, and a pass
+            # is invisible (#98), so nothing is saved - otherwise "[pass"
+            # plus the cut-off marker lands as a real turn that models
+            # read back and memory keeps.
+            live["participant"] = None
+            live["content"] = ""
+            return None
         content = live["content"]
         if interrupted:
             content += f"\n\n[cut off by {cfg['user_name']}]"
@@ -978,7 +987,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                     await asyncio.to_thread(
                         model_step.revert_after_refusal, chat_id,
                         participant["slug"], participant["name"], step)
-                if not live["content"]:
+                # #456: a reply that failed mid-[pass] was passing, so it
+                # goes the way an empty one does - nothing saved.
+                if not live["content"] or (
+                        not live["tools"]
+                        and passes.is_cut_pass(live["content"])):
                     live["participant"] = None
                     skip_speaker = True
             else:

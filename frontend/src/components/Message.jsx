@@ -11,6 +11,7 @@ import { fmtTokens } from '../format'
 import { chipData, chipSuffix, chipTitle, crosstalkNote, crosstalkSegments } from '../voiceChips'
 import { flagCopy, reassignOptions } from '../roomState'
 import { auditChips } from '../auditChips'
+import { shownText } from '../passView'
 
 // Same-speaker messages closer than this group into one visual run
 // (header suppressed, tight 4px rhythm - Discord cozy mode).
@@ -235,6 +236,10 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                    voicePeople, onReassign, onDiscard, hasLaterReplies }) {
   const info = participantInfo(msg.speaker, participants)
   const isUser = info.isUser
+  // #456: a seat's pass-shaped text ("[", "[pa" ... "[pass]") shows as
+  // nothing, so a pass never draws as brackets while it streams. Rule in
+  // passView.js; the user's own turns come back unchanged.
+  const text = shownText(msg)
   const [discardConfirm, setDiscardConfirm] = useState(null)
   // Tap-to-correct menu on a labelled user turn (#28 phase 2).
   const [chipMenuOpen, setChipMenuOpen] = useState(false)
@@ -242,7 +247,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
   // fadeWords animates only beyond this, so re-parses can't re-flash old text.
   const seenChars = useRef(0)
   useEffect(() => {
-    seenChars.current = msg.streaming ? (msg.content || '').length : 0
+    seenChars.current = msg.streaming ? text.length : 0
   })
   // Model that actually produced this message (recorded in usage at send time);
   // fall back to the participant's currently configured model for older messages.
@@ -268,8 +273,8 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
   // so a half-streamed block still renders as code, never as runaway text.
   // renderWritten (#80): a [written] token becomes a labelled divider - the
   // body below it is the reply's written deliverable, transcript-only.
-  const fenceOpen = msg.streaming && ((msg.content?.match(/```/g) || []).length % 2 === 1)
-  const displayContent = renderWritten(fenceOpen ? `${msg.content}\n\`\`\`` : msg.content)
+  const fenceOpen = msg.streaming && ((text.match(/```/g) || []).length % 2 === 1)
+  const displayContent = renderWritten(fenceOpen ? `${text}\n\`\`\`` : text)
 
   const mdComponents = { pre: Pre }
   if (msg.streaming) {
@@ -439,18 +444,18 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
           </span>
           {model && <span className="text-xs text-ink-dim truncate">{model}</span>}
           <Stamp ts={msg.created_at} className="opacity-0 group-hover:opacity-100" />
-          {!msg.streaming && msg.content && (
-            <CopyButton text={msg.content} className="opacity-0 group-hover:opacity-100" />
+          {!msg.streaming && text && (
+            <CopyButton text={text} className="opacity-0 group-hover:opacity-100" />
           )}
         </div>
       ) : (
         // grouped run: header suppressed; timestamp + copy surface on hover
         <div className="absolute right-0 top-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-app/80 rounded px-1">
           <Stamp ts={msg.created_at} />
-          {!msg.streaming && msg.content && <CopyButton text={msg.content} />}
+          {!msg.streaming && text && <CopyButton text={text} />}
         </div>
       )}
-      {msg.streaming && !msg.content && (
+      {msg.streaming && !text && (
         msg.workStatus ? (
           // A trusted activity label (never the model's own words, never
           // persisted) beats a generic "thinking" placeholder while a tool
@@ -476,7 +481,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
           ))}
         </div>
       )}
-      {msg.content && (
+      {text && (
         <div className={`md-body break-words ${msg.streaming ? 'md-streaming' : ''}`}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
             {displayContent}

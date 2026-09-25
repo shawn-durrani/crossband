@@ -17,7 +17,7 @@ clone without a pytest run first.
 import json
 from pathlib import Path
 
-from backend import provenance, providers
+from backend import passes, provenance, providers
 from backend.config import _LOOPBACK_HOSTS
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backend_contract.json"
@@ -39,6 +39,9 @@ def current_contract():
             "anthropic_no_effort_models":
                 list(providers._ANTHROPIC_NO_EFFORT_MODEL),
         },
+        # The transcript hides a seat's pass by this token and every start
+        # of it (frontend/src/passView.js, #456).
+        "pass": {"token": passes.PASS_TOKEN},
     }
 
 
