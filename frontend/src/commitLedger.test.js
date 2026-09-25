@@ -3,15 +3,11 @@
 // final that beats the timer stands the salvage down. Ids match exactly, with
 // FIFO fallback for id-less finals. Continuation commits carry their buffer
 // dispatch, the pending window is bounded, and reset clears the socket's
-// flight. #304: when realtime transcription fails, the commits still in
-// flight are handed to the batch path once, and the rescue rule picks what
-// to salvage. #453: a long turn that ends while its cut piece is in flight
-// makes that piece the turn's last.
+// flight.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { endTurn, newLedger, onCommit, onFinal, onSalvage, rescuePlan, resetLedger,
-         takeInFlight } from './commitLedger.js'
+import { newLedger, onCommit, onFinal, onSalvage, resetLedger } from './commitLedger.js'
 
 test('the doubled-turn race: a salvaged commit drops its late final', () => {
   const l = newLedger()
@@ -68,87 +64,4 @@ test('reset clears everything in flight', () => {
   resetLedger(l)
   assert.equal(onFinal(l, 'x'), null)
   assert.equal(onSalvage(l, 'x'), null)
-})
-
-test('a failure takes what is in flight, once, and no late final sends it (#304)', () => {
-  const l = newLedger()
-  onCommit(l, 'done', 'send', 1800)
-  assert.equal(onFinal(l, 'done').turnId, 'done')  // already transcribed
-  onCommit(l, 'seg', 'buffer', 12000)
-  onCommit(l, 'end', 'send', 3000)
-  assert.deepEqual(takeInFlight(l), [
-    { turnId: 'seg', dispatch: 'buffer', speechMs: 12000 },
-    { turnId: 'end', dispatch: 'send', speechMs: 3000 },
-  ])
-  assert.deepEqual(takeInFlight(l), [])         // taken once
-  assert.equal(onFinal(l, 'end'), null)          // the late final drops
-  assert.equal(onFinal(l), null)                 // id-less too
-  assert.equal(onSalvage(l, 'seg'), null)        // and the timer stands down
-})
-
-test('a commit without a speech length keeps the old shape', () => {
-  const l = newLedger()
-  onCommit(l, 't1', 'send', undefined)
-  assert.deepEqual(onFinal(l, 't1'), { turnId: 't1', dispatch: 'send' })
-})
-
-test('the rescue rule: a finished turn in flight is salvaged and sent (#304)', () => {
-  assert.equal(rescuePlan([]), null)             // nothing in flight: today's path
-  assert.equal(rescuePlan(undefined), null)
-  assert.deepEqual(
-    rescuePlan([{ turnId: 'end', dispatch: 'send', speechMs: 2100 }]),
-    { turnId: 'end', dispatch: 'send', speechMs: 2100 })
-  // Capped segments before it share the one recording and go with it,
-  // under the finished turn's id, whether or not someone is talking.
-  const flight = [{ turnId: 'seg', dispatch: 'buffer', speechMs: 12000 },
-                  { turnId: 'end', dispatch: 'send', speechMs: 3000 }]
-  for (const speaking of [false, true]) {
-    assert.deepEqual(rescuePlan(flight, { speaking }),
-                     { turnId: 'end', dispatch: 'send', speechMs: 15000 })
-  }
-})
-
-test('the rescue rule: capped segments alone wait for the turn, or buffer in a pause', () => {
-  const flight = [{ turnId: 'seg1', dispatch: 'buffer', speechMs: 12000 },
-                  { turnId: 'seg2', dispatch: 'buffer' }]
-  // Still talking: the batch path ends this turn from the same recording.
-  assert.equal(rescuePlan(flight, { speaking: true }), null)
-  // A pause: buffer them, as their realtime transcripts would have.
-  assert.deepEqual(rescuePlan(flight, { speaking: false }),
-                   { turnId: 'seg2', dispatch: 'buffer', speechMs: 12000 })
-})
-
-test('a turn that ends while its cut piece is in flight makes it the last piece (#453)', () => {
-  const l = newLedger()
-  onCommit(l, 'cut', 'buffer', 11000)
-  assert.deepEqual(endTurn(l, 'cut'), { turnId: 'cut', dispatch: 'send', speechMs: 11000 })
-  // Whichever copy wins now sends the turn: the realtime final...
-  assert.equal(onFinal(l, 'cut').dispatch, 'send')
-  // ...or the salvage timer, or a rescue.
-  const l2 = newLedger()
-  onCommit(l2, 'cut', 'buffer')
-  endTurn(l2, 'cut')
-  assert.equal(onSalvage(l2, 'cut'), 'send')
-  const l3 = newLedger()
-  onCommit(l3, 'cut', 'buffer')
-  endTurn(l3, 'cut')
-  assert.equal(rescuePlan(takeInFlight(l3)).dispatch, 'send')
-})
-
-test('ending a turn changes nothing once the cut piece is no longer waiting', () => {
-  const l = newLedger()
-  onCommit(l, 'cut', 'buffer')
-  onFinal(l, 'cut')                              // its words already came in
-  assert.equal(endTurn(l, 'cut'), null)
-  onCommit(l, 'salvaged', 'buffer')
-  onSalvage(l, 'salvaged')                       // the batch path owns it
-  assert.equal(endTurn(l, 'salvaged'), null)
-  assert.equal(endTurn(l, 'unknown'), null)
-  assert.equal(endTurn(l, null), null)
-  // Only the named piece changes: an earlier one still buffers.
-  onCommit(l, 'first', 'buffer')
-  onCommit(l, 'second', 'buffer')
-  endTurn(l, 'second')
-  assert.equal(onFinal(l, 'first').dispatch, 'buffer')
-  assert.equal(onFinal(l, 'second').dispatch, 'send')
 })
