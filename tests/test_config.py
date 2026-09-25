@@ -113,15 +113,17 @@ def test_price_for_exact_and_dated_variant_only():
 
 
 def test_a_point_release_is_a_new_model_not_a_reissue():
-    """#254: the live Anthropic list carries `claude-opus-5-5` and
-    `claude-fable-5-1`. A one-digit suffix read as a date stamp priced them
-    as Opus 5 and Fable 5. A stamp is four digits or more; a version number
-    is a new model and fails closed until someone prices it."""
+    """#254: a one-digit suffix read as a date stamp priced `claude-opus-5-5`
+    as Opus 5. A stamp is four digits or more; a version number is a new
+    model and fails closed until someone prices it. Opus 5.5 and Fable 5.1
+    now have rows of their own, and they must price from those."""
     from backend.config import provenance_for
-    for m in ("claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-1",
-              "gpt-5-1"):
+    for m in ("claude-sonnet-5-1", "claude-opus-4-9", "gpt-5-1"):
         assert price_for(m, DEFAULT_PRICING) is None
         assert provenance_for(m, DEFAULT_PRICING)["source"] == "unknown"
+    assert price_for("claude-opus-5-5", DEFAULT_PRICING)["input"] == 4.0
+    assert price_for("claude-fable-5-1", DEFAULT_PRICING)["cache"]["read_mult"] \
+        == 0.025
 
 
 def test_price_for_fails_closed_on_new_named_model():

@@ -255,7 +255,7 @@ equals the key. Failing that, an entry that names your id in its
 saying is priced the same. Failing that, a date-stamped or
 build-stamped reissue matches its base entry, so `gpt-5.5` prices
 `gpt-5.5-2026-01-15`. The stamp is at least four digits. A point
-release like `claude-opus-5-5` is a new model, and it stays unpriced
-until you price it. There's no broad family fallback. A model with a
+release like `claude-sonnet-5-1` is a new model, and it stays unpriced
+until it has a row of its own or you price it. There's no broad family fallback. A model with a
 new name stays unpriced until you price it, and it never inherits an
 unrelated family's card.

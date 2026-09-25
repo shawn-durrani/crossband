@@ -453,8 +453,10 @@ def test_parse_ranking_keeps_listed_ids_once_in_order():
 def test_priced_fails_closed():
     assert model_step.priced("claude-opus-5", DEFAULT_PRICING)
     assert not model_step.priced("claude-opus-6", DEFAULT_PRICING)
-    # a point release is a new model, never a dated reissue of the old one
-    assert not model_step.priced("claude-opus-5-5", DEFAULT_PRICING)
+    # a point release is a new model, never a dated reissue of the old one:
+    # unpriced until it has a row of its own, as Opus 5.5 now does
+    assert not model_step.priced("claude-sonnet-5-1", DEFAULT_PRICING)
+    assert model_step.priced("claude-opus-5-5", DEFAULT_PRICING)
     assert not model_step.priced("gpt-oss:20b", DEFAULT_PRICING)  # self-hosted $0
 
 
