@@ -271,7 +271,7 @@ lists only together with that page.
 | key | default | what it does |
 |---|---|---|
 | `backup_keep` | `14` | Snapshots kept in `data/backups/`. Each cycle writes the database, as `chat-<stamp>.db`, and the learnt voices, as `voices-<stamp>.tar` of `voice_anchors/`. Restore the voices by untarring into `data/`. |
-| `backup_interval_hours` | `6` | How often a snapshot is written, plus one at every startup before anything touches the database. |
+| `backup_interval_hours` | `6` | Hours between snapshots by the clock, so time the Mac spends asleep counts. There's one more at every startup, before anything touches the database. `0` turns the timer off. |
 | `backup_mirror_dir` | `""` | An optional second folder that receives completed snapshots only, never the live database, because a sync daemon watching a live WAL file causes lock hangs. |
 | `backup_mirror_keep` | `7` | Snapshots kept in the mirror. |
 

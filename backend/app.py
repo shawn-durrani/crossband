@@ -273,15 +273,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             funnel_task = asyncio.create_task(
                 funnel.loop(app, settings.funnel_check_s))
 
-        async def backup_loop():
-            while True:
-                await asyncio.sleep(settings.backup_interval_hours * 3600)
-                try:
-                    await asyncio.to_thread(db.backup_database)
-                except Exception:
-                    log.exception("periodic backup failed")
-
-        backup_task = asyncio.create_task(backup_loop())
+        backup_task = asyncio.create_task(
+            db.backup_loop(settings.backup_interval_hours))
         # #33 slice 2: reconcile the local voice store with membro's person
         # records. Off the startup critical path (a worker thread); the
         # first pass after a deploy is the backfill of the installed base,
