@@ -49,7 +49,7 @@ import re
 import struct
 import time
 
-from . import db, voice, voiceid
+from . import db, voice, voice_shadow, voiceid
 
 log = logging.getLogger("crossband.diarize")
 
@@ -849,6 +849,31 @@ def schedule_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
 
 async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                    turn_id=None, speculative=None):
+    """One utterance's identity pass in an ARMED room: the live pass
+    (_live_pass, below), then the shadow test's hand-off (#465 stage 1).
+
+    The shadow is told what the live pass decided only AFTER that pass has
+    written its label, and it runs as its own fire-and-forget task
+    (backend/voice_shadow.py), so it can neither delay nor change the
+    label, the seats, the room or memory. With both shadow settings empty,
+    schedule() returns at its first check."""
+    today = {}
+    try:
+        await _live_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                         turn_id=turn_id, speculative=speculative,
+                         today=today)
+    finally:
+        if today.get("path"):
+            # End of speech (the commit) to the label written, the live
+            # number the shadow's timings sit beside.
+            if isinstance(commit_ts, (int, float)):
+                today["ms"] = round((time.time() - commit_ts) * 1000, 1)
+            voice_shadow.schedule(chat_id, pcm, sample_rate, cfg, turn_id,
+                                  today)
+
+
+async def _live_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
+                     turn_id=None, speculative=None, today=None):
     """One utterance's identity pass in an ARMED room (#28 PR-B shape).
 
     Identity is local or honestly uncertain (owner decision, eighth field
@@ -880,7 +905,12 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     `speculative` is the silence-start head start's claimed entry (#28
     PR-B): when fresh, its cached verdict is used and nothing re-embeds.
     Every blocking step runs on a worker thread; every failure ends here
-    (log only - the live path must never notice)."""
+    (log only - the live path must never notice).
+
+    `today` (#465) collects what this pass decided, content-free, for the
+    shadow hand-off in run_pass: the candidates, the path taken and the
+    labels written. Writing to it changes nothing here."""
+    today = {} if today is None else today
     t0 = time.perf_counter()
     plan = None
     try:
@@ -907,10 +937,13 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # again). The roster-scoped `segments` survive only as the EL crosstalk
     # prefix, which is about who is PRESENT.
     candidates = remembered
+    today.update(candidates=candidates, pending=bool(pending))
     verdict = await _utterance_verdict(chat_id, pcm, sample_rate, candidates,
                                        cfg, speculative,
                                        pending_present=bool(pending))
     if voiceid.matched(verdict):
+        today.update(path="local", labels=[verdict["name"]],
+                     score=verdict.get("score"))
         record_decision(chat_id, DECISION_LOCAL,
                         (time.perf_counter() - t0) * 1000, turn_id=turn_id)
         log.info("diarize pass (voiceid): chat=%s ms=%.0f score=%.3f",
@@ -942,6 +975,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             # the seats a name marked as still being learned. Still NO
             # ElevenLabs call: elimination is free.
             ms = (time.perf_counter() - t0) * 1000
+            today.update(path="cold_start", labels=[cold], uncertain=[cold])
             record_decision(chat_id, DECISION_LOCAL, ms, turn_id=turn_id)
             # Content-free, like every log on this path: no name, no words.
             log.info("diarize pass (cold-start): chat=%s ms=%.0f reason=%s",
@@ -957,6 +991,7 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         # unresolved, full stop. The projection's pending head ages out into
         # today's unlabelled rendering; no ElevenLabs call fires.
         reason = (verdict or {}).get("reason", "error")
+        today.update(path="unresolved", reason=reason)
         # Carry WHY into the pulse (#28, thirteenth field test): the reason is
         # already computed, so this costs a dict write inside a background
         # task and turns "identity pending" from a dead end into something
@@ -982,12 +1017,14 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         return
     log.info("diarize pass (crosstalk trigger): chat=%s score=%.3f",
              chat_id, verdict.get("score", 0.0))
+    today.update(path="cloud", reason="multi")
     request_pcm = prefix_pcm + pcm
     try:
         result = await _in_voice_thread(
             voice.transcribe_diarized, pcm16_wav(request_pcm, sample_rate),
             "audio/wav", cfg, num_speakers=num_speakers)
     except Exception:
+        today["reason"] = "error"
         # Content-free by design, like every log on the voice path.
         log.info("diarize pass failed: chat=%s ms=%.0f", chat_id,
                  (time.perf_counter() - t0) * 1000)
@@ -1004,10 +1041,13 @@ async def run_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     # the spend became real when the batch call returned, so a labelling
     # failure still meters it, just no longer ahead of the labels.
     try:
-        await _room_label_pass(chat_id, pcm, sample_rate, commit_ts,
-                               session, cfg, result, segments, pending,
-                               len(prefix_pcm) / 2 / (sample_rate or 16000),
-                               duration_ms, turn_id=turn_id)
+        resolved = await _room_label_pass(
+            chat_id, pcm, sample_rate, commit_ts, session, cfg, result,
+            segments, pending, len(prefix_pcm) / 2 / (sample_rate or 16000),
+            duration_ms, turn_id=turn_id)
+        if resolved:
+            today.update(labels=list(resolved["labels"]),
+                         uncertain=list(resolved["uncertain"]))
     except Exception:
         log.info("diarize labelling failed: chat=%s", chat_id)
         log.debug("diarize labelling failure detail", exc_info=True)
@@ -1229,7 +1269,8 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                            duration_ms, turn_id=None):
     """Roster-mode labelling for one utterance: prefix clusters -> names,
     utterance clusters -> labels via resolve_room_labels, anchor
-    accumulation, the ask-fallback flag, and the mismatch cross-check."""
+    accumulation, the ask-fallback flag, and the mismatch cross-check.
+    Returns the resolved labels, which run_pass hands to the shadow."""
     prefix_words, utter_words = split_words_at(result.get("words"),
                                                prefix_seconds)
     cmap = prefix_cluster_map(prefix_words, segments)
@@ -1268,7 +1309,7 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         await _in_voice_thread(_accumulate_anchor, chat_id, pcm, sample_rate,
                                 clusters[0], resolved, cfg)
     if not resolved["labels"]:
-        return
+        return resolved
     if resolved["ask"]:
         # Someone the anchors don't know and elimination can't name: surface
         # the ask-fallback. The turn keeps its uncertain ordinal meanwhile.
@@ -1278,6 +1319,7 @@ async def _room_label_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         if primary and len(utter_words) >= MISMATCH_MIN_WORDS:
             from . import mismatch
             mismatch.schedule_check(chat_id, target_id, primary, cfg)
+    return resolved
 
 
 def _primary_named_label(resolved) -> str | None:

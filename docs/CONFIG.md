@@ -132,6 +132,8 @@ a default install records it.
 | `voice_id_min_short_clips` | `2` | The second half of the sufficiency bar: how many short clips, of one to two seconds, the stored voice must include, so a quick interjection can be recognised as well as a full sentence. |
 | `voice_id_model_url` | `""` | Overrides the local speaker model's download URL. Empty uses the built-in pinned URL. Pin the hash too, because a URL override checked against the default hash fails verification and the matcher stays unavailable. |
 | `voice_id_model_sha256` | `""` | Overrides the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched once to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
+| `diarize_shadow_url` | `""` | The address of a diariser on this computer that the shadow test splits each voice turn with, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty turns that part off. [The shadow test](#the-shadow-test). |
+| `voice_shadow_model` | `""` | A second speaker model the shadow test scores beside the live one. It knows `titanet_large`, about 100MB, downloaded once and checked against a pinned hash, and only while this is set. Empty turns that part off. [The shadow test](#the-shadow-test). |
 
 ### When the matcher is off or missing
 
@@ -143,6 +145,57 @@ With `voice_id_enabled` false, or the `sherpa-onnx` wheel or the model
 file absent, turns are not named and the room never arms on its own.
 Introductions, spoken commands and the switch in the voice settings
 still arm it by hand.
+
+### The shadow test
+
+The shadow test measures two possible changes to how room mode names
+people, on your own voice turns, and changes nothing. One splits each
+turn into who spoke when before naming each piece. The other scores each
+turn with a second, larger speaker model beside the live one. Either part
+runs on its own, and both are off until you set them.
+
+For every voice turn while room mode is on, the test writes one line to
+`data/voice_shadow.jsonl`. The line holds the turn id, the message the
+turn became, today's label, what each method would have named, the scores
+and the timings. It holds no words and no audio. Past 5,000 lines the
+file keeps the newest 4,000.
+
+To split turns, run a diariser on this computer and set
+`diarize_shadow_url` to its address. The diariser takes raw 16 kHz mono
+16-bit audio at `POST /diarize` and answers with a list of segments, each
+a `start`, an `end` and a `speaker_slot`. One that fits is
+[Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)
+run through [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp),
+served on `http://127.0.0.1:8910`. To add the second model, set
+`voice_shadow_model` to `titanet_large`. Restart the app after either
+change.
+
+The test stays out of the live path. It starts after today's label is
+written, runs on its own worker, and never labels a turn, seats anyone,
+changes the room, stores a voice clip or reaches memory. A diariser
+that's slow or down costs the turn nothing. The call gives up after three
+seconds, the line records the error, and the log says so once. The
+address has to be on this computer, the call follows no redirects and
+ignores proxy settings, so the audio stays here.
+
+`GET /api/voice/shadow` shows the comparison, newest turn first. Each
+line puts today's label beside what each method named. The methods are
+the live model on the whole turn and on the split pieces (`small` and
+`small_split`), the second model (`large` and `large_split`), both models
+agreeing (`consensus` and `consensus_split`), and the blended score
+(`fused` and `fused_split`). A tally counts, for each method, the turns it
+named, the turns it left unnamed, and the turns it named differently from
+today. Add `chat_id` for one chat, or `rows=true` for every score.
+
+The two models score on different scales, so the blend first measures
+each score against that model's impostors in your household. Those are
+every remembered person's clips scored against everyone else's voice. The
+blended score is the average of the two, in those units. The second
+model's naming bar sits where the live bar sits on the live model's
+scale, and the agreement rule names a person only when both models name
+them. With one remembered person there are no impostors to measure. Then
+there's no blend, and the second model uses a fixed bar nobody has tuned.
+Each line keeps the raw scores, so any bar can be tried again later.
 
 ## Memory, the companion service
 

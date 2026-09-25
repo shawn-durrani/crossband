@@ -56,7 +56,7 @@ def _room_state_clean():
 
 
 def _reset_room_state():
-    from backend import anchors, diarize, introductions, mismatch
+    from backend import anchors, diarize, introductions, mismatch, voice_shadow
     from backend.routers import voice as voice_router
 
     for mod, name in (
@@ -78,6 +78,11 @@ def _reset_room_state():
         (voice_router, "_auto_dumps"),
         (introductions, "_TASKS"),
         (mismatch, "_TASKS"),
+        # The shadow test (#465): its queue, its warn-once memory and its
+        # in-memory second-model anchors must not leak between tests.
+        (voice_shadow, "_TASKS"),
+        (voice_shadow, "_warned"),
+        (voice_shadow, "_anchor_cache"),
     ):
         container = getattr(mod, name, None)
         if container is not None:
@@ -113,11 +118,17 @@ def _voiceid_offline(monkeypatch):
     automatically (there is no cloud fallback). Tests that exercise the
     matcher seed a fake (or the real) extractor explicitly; this fixture
     just guarantees the default is 'absent'."""
-    from backend import voiceid
+    from backend import voice_shadow, voiceid
     voiceid._reset_for_tests()
+    voice_shadow._reset_for_tests()
     monkeypatch.setattr(voiceid, "_spawn_fetch", lambda cfg: None)
+    # The shadow's second model (#465) is fetched the same way, and is kept
+    # offline the same way.
+    monkeypatch.setattr(voice_shadow, "_spawn_large_fetch",
+                        lambda cfg, key: None)
     yield
     voiceid._reset_for_tests()
+    voice_shadow._reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

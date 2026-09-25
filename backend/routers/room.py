@@ -145,6 +145,27 @@ def voice_health(request: Request, chat_id: int | None = None):
     return out
 
 
+@router.get("/api/voice/shadow")
+def voice_shadow_rows(request: Request, chat_id: int | None = None,
+                      limit: int = 100, rows: bool = False):
+    """The shadow test's comparison (#465 stage 1): for each recent armed
+    voice turn, today's live label beside what every shadow method would
+    have named (whole turn and split, TitaNet-Small, TitaNet-Large, the
+    strict-agreement consensus and the fused score), a tally per method,
+    and the shadow's own state. `rows=true` adds the full rows, with every
+    score. Names, scores, counts and timings only: no transcript text and no
+    audio exist in a shadow row. Session-gated like every /api route."""
+    from .. import voice_shadow
+    cfg = request.app.state.settings.as_cfg()
+    limit = max(1, min(int(limit), 2000))
+    recent = voice_shadow.read_rows(limit=limit, chat_id=chat_id)
+    out = {"status": voice_shadow.status(cfg),
+           **voice_shadow.compare(recent)}
+    if rows:
+        out["rows"] = recent
+    return out
+
+
 @router.post("/api/voice/people/{person_id}/name")
 def rename_person(person_id: str, body: dict = Body(...)):
     """Set a remembered person's preferred display name (#28 phase 3) - the
