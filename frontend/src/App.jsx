@@ -497,6 +497,16 @@ export default function App() {
     voiceRef.current?.stop()
   }
 
+  // #304: the one-tap stall report, shared by the desktop dock and the
+  // phone's call screen (the call screen covers the dock, so it needs its
+  // own button). The outcome lands in the banner, which both surfaces show.
+  async function saveVoiceDiagnostics() {
+    const r = await voiceDebugDump(activeChatIdRef.current)
+    setBanner(r && r.ok
+      ? `Voice diagnostics saved (${r.entries} events, no speech content) - mention "${r.file}" in the bug report.`
+      : 'Could not save voice diagnostics - the server did not answer.')
+  }
+
   // One handler for both voice surfaces (dock and mobile call screen): keep
   // the UI state and the controller's session flag in step.
   function changeRoomMode(on) {
@@ -979,12 +989,7 @@ export default function App() {
                 muted={voiceMuted}
                 onToggleMute={toggleMute}
                 notice={voiceNotice}
-                onSaveDiagnostics={async () => {
-                  const r = await voiceDebugDump(activeChatIdRef.current)
-                  setBanner(r && r.ok
-                    ? `Voice diagnostics saved (${r.entries} events, no speech content) - mention "${r.file}" in the bug report.`
-                    : 'Could not save voice diagnostics - the server did not answer.')
-                }}
+                onSaveDiagnostics={saveVoiceDiagnostics}
               />
             </ThreadView>
             {/* Global context indicator: thin bar atop the composer. Same
@@ -1152,6 +1157,7 @@ export default function App() {
           rosterHint={rosterHint}
           askText={openAsk ? flagCopy(openAsk) : null}
           health={health}
+          onSaveDiagnostics={saveVoiceDiagnostics}
         />
       )}
       {projectModal !== null && (
