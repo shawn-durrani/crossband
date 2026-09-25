@@ -46,6 +46,12 @@ HTTP response tails that buffer. Closing the tab doesn't cancel a reply.
 Reconnecting replays from the client's watermark. Stopping is a separate
 abort, and only a real abort earns the "cut off" marker on a message.
 
+A chat runs one round at a time. When you send a message while a round
+is running, the server turns it away before it saves anything, and the
+app holds it and sends it again when the round ends. Slash commands are
+the exception. They start no round, so they're saved straight away,
+even mid-round.
+
 ## The prompt cache splits on independence
 
 A provider's prompt cache only helps when the start of the prompt is the

@@ -38,7 +38,8 @@ live insert has to ring the notify bell after it commits, never before.
 Rounds survive the connection. A dropped connection doesn't cancel
 generation, a reconnect replays from a watermark, only a real abort
 marks a message as cut off, and two rounds for one chat can't
-interleave.
+interleave. A send that's turned away while a round runs leaves no
+message behind, so the app's retry lands one copy.
 
 ## The prompt cache
 

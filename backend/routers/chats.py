@@ -443,6 +443,31 @@ class SendIn(BaseModel):
 
 @router.post("/api/chats/{chat_id}/send")
 async def send_message(chat_id: int, body: SendIn, request: Request):
+    # #434: a send that would start a round is refused BEFORE anything is
+    # saved. The client holds a refused send and retries it when the round
+    # ends (useRoundStream's 409 path), so a refusal that came after the
+    # save left an unanswered first copy - read by the seats, ingested by
+    # membro - and the retry saved a second. Refusing first also leaves a
+    # voice turn's parked diarization label for the retry to claim.
+    #
+    # Slash commands never start a round and are allowed mid-round, so
+    # they skip the check and the claim. Every other send claims the chat
+    # until its own round has started: the save below runs on a worker
+    # thread, and a round started by anything else in that gap would
+    # otherwise refuse this send after its message was saved.
+    if body.text.lstrip().startswith("/"):
+        return await _send(chat_id, body, request)
+    if not rounds.claim(chat_id):
+        raise HTTPException(409, "a round is already running - abort it first")
+    try:
+        # _send starts the round (rounds.start, via _tail_new_round) before
+        # it returns, so the claim hands straight over to the round.
+        return await _send(chat_id, body, request)
+    finally:
+        rounds.release(chat_id)
+
+
+async def _send(chat_id: int, body: SendIn, request: Request):
     # Bound/clean the client-supplied correlation id the same way the
     # voice-trace ingest path does (backend/voice_trace._clean_str) - it's
     # only ever used as an opaque DB key, never rendered or interpreted.
@@ -523,8 +548,6 @@ async def send_message(chat_id: int, body: SendIn, request: Request):
     responders, next_first = engine.pick_responders(body.text, dict(chat), roster)
     settings = request.app.state.settings
     memory = request.app.state.memory
-    if rounds.active(chat_id):
-        raise HTTPException(409, "a round is already running - abort it first")
 
     async def gen():
         yield engine.sse({"type": "user_saved", "message": user_msg})
@@ -622,7 +645,7 @@ async def continue_round(chat_id: int, request: Request, body: ContinueIn = Cont
     con.close()
     settings = request.app.state.settings
     memory = request.app.state.memory
-    if rounds.active(chat_id):
+    if rounds.busy(chat_id):
         raise HTTPException(409, "a round is already running - abort it first")
 
     async def gen():

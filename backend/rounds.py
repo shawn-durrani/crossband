@@ -17,6 +17,12 @@ log = logging.getLogger("crossband.rounds")
 
 _ids = itertools.count(1)
 _rounds: dict[int, "Round"] = {}  # chat_id -> latest round (kept after done for catch-up)
+# Chats a /send has claimed: it found no round running and is saving the
+# message its own round will answer (#434). The save runs on a worker
+# thread, so without the claim another round could start in that gap and
+# the send would be refused with its message already saved - the client
+# retries a refused send, and the chat got the message twice.
+_claims: set[int] = set()
 
 
 class Round:
@@ -58,6 +64,27 @@ def active(chat_id: int) -> Round | None:
     return r if r and not r.done else None
 
 
+def busy(chat_id: int) -> bool:
+    """True while a round runs, or while a send has claimed the chat and is
+    saving the message that starts the next one. Every round starter checks
+    this before start(), so a claimed chat never gets a second round."""
+    return active(chat_id) is not None or chat_id in _claims
+
+
+def claim(chat_id: int) -> bool:
+    """Reserve the chat for a send that is about to start a round (#434).
+    False when the chat is busy, and the caller refuses the send before it
+    saves anything. A True claim must be released, in a finally."""
+    if busy(chat_id):
+        return False
+    _claims.add(chat_id)
+    return True
+
+
+def release(chat_id: int) -> None:
+    _claims.discard(chat_id)
+
+
 def latest(chat_id: int) -> Round | None:
     """The chat's most recent round, DONE OR NOT - its buffer lives until
     the next round starts (#64). This is what lets a voice client speak a
@@ -84,7 +111,7 @@ def get(chat_id: int, round_id: int) -> Round | None:
 def start(chat_id: int, agen) -> Round:
     """Run `agen` (an SSE-string async generator) to completion in the
     background, buffering every event. One active round per chat - callers
-    check active() first (the API returns 409)."""
+    check busy() first (the API returns 409), or hold the chat's claim."""
     r = Round(chat_id)
 
     async def _run():
