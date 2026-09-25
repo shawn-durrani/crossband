@@ -60,3 +60,35 @@ test('#104: the total-turn bound outlasts the per-segment caps', async () => {
   assert.ok(MAX_TURN_TOTAL_MS >= 2 * HARD_MAX_TURN_MS)
   assert.ok(SOFT_MAX_TURN_MS < HARD_MAX_TURN_MS)
 })
+
+test('#453: after a cut, the ordinary pause ends the turn', async () => {
+  const { turnOverAfterCut } = await import('./turnPolicy.js')
+  const base = { lastVoiceAt: 100000, silenceMs: 2000, logicalStart: 89000 }
+  // The same rule a short turn ends on: strictly more than silenceMs.
+  assert.equal(turnOverAfterCut({ ...base, now: 101000 }), false)
+  assert.equal(turnOverAfterCut({ ...base, now: 102000 }), false)
+  assert.equal(turnOverAfterCut({ ...base, now: 102001 }), true)
+  // It follows the owner's pause setting.
+  assert.equal(turnOverAfterCut({ ...base, silenceMs: 3500, now: 103000 }), false)
+  assert.equal(turnOverAfterCut({ ...base, silenceMs: 3500, now: 103501 }), true)
+})
+
+test('#453: a sound that keeps resetting the pause still ends at the total bound', async () => {
+  const { MAX_TURN_TOTAL_MS, turnOverAfterCut } = await import('./turnPolicy.js')
+  const start = 50000
+  const now = start + MAX_TURN_TOTAL_MS
+  assert.equal(turnOverAfterCut({ now: now - 1, lastVoiceAt: now - 100, silenceMs: 2000,
+                                  logicalStart: start }), false)
+  assert.equal(turnOverAfterCut({ now, lastVoiceAt: now - 100, silenceMs: 2000,
+                                  logicalStart: start }), true)
+  // No turn start known: only the pause can end it.
+  assert.equal(turnOverAfterCut({ now, lastVoiceAt: now - 100, silenceMs: 2000,
+                                  logicalStart: 0 }), false)
+})
+
+test('#453: with no voice to measure from, nothing ends', async () => {
+  const { turnOverAfterCut } = await import('./turnPolicy.js')
+  assert.equal(turnOverAfterCut({ now: 99999, lastVoiceAt: 0, silenceMs: 2000 }), false)
+  assert.equal(turnOverAfterCut({ now: 99999, silenceMs: 2000 }), false)
+  assert.equal(turnOverAfterCut({ now: undefined, lastVoiceAt: 1, silenceMs: 2000 }), false)
+})
