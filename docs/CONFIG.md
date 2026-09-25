@@ -55,7 +55,7 @@ supervisor as [OPERATIONS.md](OPERATIONS.md) describes.
 |---|---|---|
 | `anthropic_model` | `claude-opus-4-8` | The model for the default Claude seat. It seeds the seat on first run, and after that you edit seats on the Models page. |
 | `openai_model` | `gpt-5.1` | The model for the default GPT seat, with the same seed rule. |
-| `utility_model` | `claude-haiku-4-5` | The cheap model behind rolling summaries, auto-titles, project distillation, and the one-call read of every spoken instruction in room mode. A `gpt-*` value routes to OpenAI. |
+| `utility_model` | `claude-haiku-4-5` | The cheap model behind rolling summaries, auto-titles, project distillation, and the one call that reads every message you send for an instruction. That covers typed and spoken turns, with room mode on or off, and skips a `/` message. A `gpt-*` value routes to OpenAI. |
 | `pricing` | the built-in rate card | Per-model `{input, output}` prices per million tokens, with provenance. Matched by exact model id, then an entry's `aliases`, then a date-stamped reissue of the same model. There's no family fallback, so an unknown model stays unpriced. |
 
 ### Pricing a model
@@ -87,21 +87,28 @@ procedure, including the local `$0` case.
 | `summary_threshold_chars` | `60000` | The conversation weight that triggers the rolling summary, counted in character equivalents. It counts message text and attachments, with images weighed at the resolution providers tokenise and files by length. |
 | `keep_recent_messages` | `12` | Messages always kept word for word after the summary. |
 | `max_attachment_mb` | `20` | The upload size cap, applied to the file as you send it. A photo is scaled down to about 1568 pixels on arrival, so what's stored and sent again on every turn is far smaller. |
-| `attribution_audit` | `true` | Flags a model's "you said…" or "Claude said…" claim that has no word-for-word match in that speaker's turns. It shows a quiet chip on the reply and writes one content-free log line, and never blocks or edits a reply. |
+| `attribution_audit` | `true` | Flags a reply's claim about who said what, like "you said…", "I said…" or "only Claude said…", when the transcript doesn't match it. It shows a quiet chip on the reply and writes one content-free log line, and never blocks or edits a reply. |
 | `echo_guard` | `true` | Drops a text reply that mostly restates the seat's own previous message or a reply already given this round: one retry with the reason stated, then suppression. Quotes, short agreements, repeat requests, tool replies and paraphrase are exempt, and voice rounds only log. |
 | `citation_check` | `true` | Flags a "the docs say…" claim in a reply that ran no tools, on the same chip. The claim may still be right from memory, so the chip says unverified. Never a retry and never a block. |
 
 ### Reading an attribution-audit flag
 
-A "no verbatim match" is a signal for you to check, and never a verdict
-that the model made something up. It also fires when the moment was
-summarised or paraphrased. A claim is checked against the named
-speaker's own turns, so "you said…" against yours and "GPT said…"
-against GPT's. A flagged claim renders as an amber chip under the reply
-quoting the claim, since your own transcript already holds the text.
-The log line holds no content, only a one-way fingerprint of the claim
-with lengths and offsets, at warning level so a default install records
-it.
+The audit checks each claim in a reply about who said what against the
+turns the model could see. "You said…" is checked against your turns,
+"GPT said…" against GPT's, and a seat's own "I said…" or "I meant…"
+against that seat's. Each of those is flagged when there's no
+word-for-word match. An "only Claude said…" claim is checked the other
+way round, against everyone else's turns, and it's flagged when someone
+else used the same words.
+
+A flag is a signal for you to check, and never a verdict that the model
+made something up. A missing match also shows up when the moment was
+summarised or paraphrased, and an "only" flag shows up when two people
+used the same stock phrase. A flagged claim renders as an amber chip
+under the reply quoting the claim, since your own transcript already
+holds the text. The log line holds no content, only a one-way
+fingerprint of the claim with lengths and offsets, at warning level so
+a default install records it.
 
 ## Voice
 
@@ -185,8 +192,11 @@ before.
   holds the save for review under its guest-present group. Outside
   room mode, or with you alone, the field isn't sent.
 - 1.6: `source_app` and `conversation_id` on every recall, the same
-  pair ingest uses. Membro binds a guest's facts to the chat they came
-  from and hands them back only to that chat.
+  pair ingest uses. Membro binds the facts it draws from a guest's
+  turns to the chat they came from and hands them back only to that
+  chat. A model's direct `save_memory` names no chat, because membro's
+  save route doesn't take one. A save made with guests present is still
+  held for review, and once you approve it, it's recalled in every chat.
 
 On a 1.3 membro the marker never appears, the eraser link falls back to
 the browser's own host on port 8901, and the watermark route is never
@@ -199,14 +209,14 @@ guest's facts surface in every chat as they did before.
 
 The short description is in
 [What you can do, in README.md](../README.md#what-you-can-do), and the
-security bounds in both modes are in
+security bounds in every mode are in
 [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md). Change the allow and deny
 lists only together with that page.
 
 | key | default | what it does |
 |---|---|---|
 | `code_repos` | `{}` | Each short name maps to a local path a guest may open. Empty means the whole feature is dark. |
-| `code_mcp` | `{}` | MCP servers mounted into the guest, each name mapping to `{command, args, env}`. Mounted in both modes and allowed whole, every tool the server exposes. [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md) has a worked example with the `PYTHONPATH` Membro needs. |
+| `code_mcp` | `{}` | MCP servers mounted into the guest, each name mapping to `{command, args, env}`. Mounted in every mode and allowed whole, every tool the server exposes. [GUEST_PERMISSIONS.md](GUEST_PERMISSIONS.md) has a worked example with the `PYTHONPATH` Membro needs. |
 | `github_repos` | `{}` | Each name maps to an `owner/repo` the models may read and file issues against. It signs in with `GITHUB_TOKEN` from the environment, or else the computer's logged-in `gh` command. |
 | `code_use_api_key` | `false` | `false` means guest turns ride the computer's Claude Code login, the subscription. `true` bills `ANTHROPIC_API_KEY` per token. Either way the turn records which one paid. |
 | `code_model` | `default` | The guest's model tier, one of `default`, `opus`, `sonnet` or `haiku`. A summon may override it. It changes the rate and never the account that pays. |
@@ -225,7 +235,7 @@ lists only together with that page.
 | `mcp_servers` | `{}` | MCP servers the seats may call over stdio, each name mapping to `{command, args, label?}`. Set it in `config.local.json`. The optional `label` shows in the work-status chip while that server is in flight, and a server without one shows a plain "Working on it". |
 | `ingest_token` | `""` | The bearer for the machine side-channel, `POST /api/ingest` and `POST /api/chats/{id}/notice`, set as `CROSSBAND_INGEST_TOKEN`. Once a password is enrolled it's the only way a producer reaches either route. [PRODUCERS.md](PRODUCERS.md). |
 | `slash_commands` | `[]` | Suggestion chips in the composer for `/` messages, each `{insert, label, hint}`. Crossband gives no command a meaning, so a `/` message goes to your tooling and no model replies. [PRODUCERS.md](PRODUCERS.md) has the contract. |
-| `spend_note_every` | `30` | While a seat sits at a spoken depth above its default, the chat gets one short system line every this many messages saying what that seat has spent since it was raised. A rate-card estimate, never a bill. `0` turns the line off. |
+| `spend_note_every` | `30` | While a seat sits above its default depth, or [research mode](WEB_RESEARCH.md#research-mode) is on, the chat gets a system line every this many messages saying what that seat, or the chat, has spent since then. A rate-card estimate, never a bill. `0` turns it off. |
 | `slash_ack_timeout_s` | `120` | The dead-man for `/` messages. If nothing acknowledges a slash command within this window, one system line says nothing picked it up, so a stopped watcher stops looking like a queued deploy. `0` turns it off. [PRODUCERS.md](PRODUCERS.md). |
 
 ## Research tool caps
