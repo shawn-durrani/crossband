@@ -3,7 +3,9 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule: { interval: weekly }
-    # A major bump is a reviewed change, never a rebase side effect (#319).
+    # Skip major bumps: a major is a reviewed change, never a rebase side
+    # effect (#319). Dependabot only applies this to a requirement whose
+    # floor has three parts, like >=2.2.0, so write every floor that way.
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
