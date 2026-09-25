@@ -37,25 +37,6 @@ export const HARD_MAX_TURN_MS = 20000
 // ally, buffered segments and all.
 export const MAX_TURN_TOTAL_MS = 60000
 
-// #453: a cut can land on the pause that ends the turn. The soft cap fires
-// on the first quiet frame past SOFT_MAX_TURN_MS, so a remark that stops
-// 10 to 12 seconds in is cut before its pause has run silenceMs, and the
-// pause check above it only runs while a segment is open. After a cut no
-// segment is open until the speaker starts again, so this is the same
-// check for the gap between pieces: the turn is over once silenceMs has
-// passed since the speaker was last heard, which is the rule a short turn
-// ends on. MAX_TURN_TOTAL_MS still bounds the whole turn, so a sound that
-// keeps resetting the pause can't hold the turn open for ever. Manual mode
-// never gets here: the caller only asks in auto mode.
-export function turnOverAfterCut({ now, lastVoiceAt, silenceMs, logicalStart }) {
-  const t = Number(now)
-  const v = Number(lastVoiceAt)
-  if (!Number.isFinite(t) || !Number.isFinite(v) || v <= 0) return false
-  if (t - v > Number(silenceMs)) return true
-  const start = Number(logicalStart)
-  return Number.isFinite(start) && start > 0 && t - start >= MAX_TURN_TOTAL_MS
-}
-
 // #104's other half: the realtime STT gets a flat 5s to finalize a commit
 // before the batch fallback takes over - but a capped segment commits the
 // largest audio the client ever produces, and healthy finalization of ~20s

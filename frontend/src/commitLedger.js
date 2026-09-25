@@ -105,20 +105,6 @@ export function rescuePlan(inFlight, { speaking = false } = {}) {
   return { turnId: inFlight[inFlight.length - 1].turnId, dispatch: 'buffer', speechMs }
 }
 
-// #453: a long turn ended while its last cut piece (`turnId`, committed
-// with 'buffer') was still waiting on its transcript. That piece becomes
-// the turn's last, so whichever copy of it wins - the realtime final, the
-// salvage timer or a rescue - sends the whole turn with it, once. Returns
-// the piece, or null when it isn't waiting (its words already arrived, or
-// the batch path owns it).
-export function endTurn(ledger, turnId) {
-  if (!turnId || ledger.consumed.has(turnId)) return null
-  const c = ledger.pending.find((x) => x.turnId === turnId)
-  if (!c) return null
-  c.dispatch = 'send'
-  return c
-}
-
 // Session teardown or STT reconnect: nothing in flight survives the socket.
 export function resetLedger(ledger) {
   ledger.pending.length = 0

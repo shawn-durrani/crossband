@@ -5,12 +5,11 @@
 // dispatch, the pending window is bounded, and reset clears the socket's
 // flight. #304: when realtime transcription fails, the commits still in
 // flight are handed to the batch path once, and the rescue rule picks what
-// to salvage. #453: a long turn that ends while its cut piece is in flight
-// makes that piece the turn's last.
+// to salvage.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { endTurn, newLedger, onCommit, onFinal, onSalvage, rescuePlan, resetLedger,
+import { newLedger, onCommit, onFinal, onSalvage, rescuePlan, resetLedger,
          takeInFlight } from './commitLedger.js'
 
 test('the doubled-turn race: a salvaged commit drops its late final', () => {
@@ -116,39 +115,4 @@ test('the rescue rule: capped segments alone wait for the turn, or buffer in a p
   // A pause: buffer them, as their realtime transcripts would have.
   assert.deepEqual(rescuePlan(flight, { speaking: false }),
                    { turnId: 'seg2', dispatch: 'buffer', speechMs: 12000 })
-})
-
-test('a turn that ends while its cut piece is in flight makes it the last piece (#453)', () => {
-  const l = newLedger()
-  onCommit(l, 'cut', 'buffer', 11000)
-  assert.deepEqual(endTurn(l, 'cut'), { turnId: 'cut', dispatch: 'send', speechMs: 11000 })
-  // Whichever copy wins now sends the turn: the realtime final...
-  assert.equal(onFinal(l, 'cut').dispatch, 'send')
-  // ...or the salvage timer, or a rescue.
-  const l2 = newLedger()
-  onCommit(l2, 'cut', 'buffer')
-  endTurn(l2, 'cut')
-  assert.equal(onSalvage(l2, 'cut'), 'send')
-  const l3 = newLedger()
-  onCommit(l3, 'cut', 'buffer')
-  endTurn(l3, 'cut')
-  assert.equal(rescuePlan(takeInFlight(l3)).dispatch, 'send')
-})
-
-test('ending a turn changes nothing once the cut piece is no longer waiting', () => {
-  const l = newLedger()
-  onCommit(l, 'cut', 'buffer')
-  onFinal(l, 'cut')                              // its words already came in
-  assert.equal(endTurn(l, 'cut'), null)
-  onCommit(l, 'salvaged', 'buffer')
-  onSalvage(l, 'salvaged')                       // the batch path owns it
-  assert.equal(endTurn(l, 'salvaged'), null)
-  assert.equal(endTurn(l, 'unknown'), null)
-  assert.equal(endTurn(l, null), null)
-  // Only the named piece changes: an earlier one still buffers.
-  onCommit(l, 'first', 'buffer')
-  onCommit(l, 'second', 'buffer')
-  endTurn(l, 'second')
-  assert.equal(onFinal(l, 'first').dispatch, 'buffer')
-  assert.equal(onFinal(l, 'second').dispatch, 'send')
 })

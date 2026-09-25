@@ -74,18 +74,6 @@ turn waiting changes nothing else. When the last piece of a long turn
 comes back empty, the pieces already heard are still sent. The suite
 drives the real voice client through each case.
 
-A long turn ends on the same pause as a short one. The app cuts speech
-into pieces about 12 seconds in and joins them into one message, and a
-cut can land on the pause at the end of a turn. After a cut, the usual
-pause still ends the turn, and every piece is sent once, whether its
-words come back from realtime transcription, from the backup copy, or
-after the pause has already ended the turn. Someone who carries on
-talking still gets one message, and a short turn keeps its timing. The
-suite runs the voice client's own listening loop through each case,
-with a scripted microphone and clock.
-
-### Identity and the live turn
-
 Identity work never starves a reply. Everything the identity pass runs
 on threads, which is clip banking, the hygiene audit and the crosstalk
 call, uses its own bounded executor and never the default pool the
