@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, person_sync
+from . import app_links
 from . import auth
 from . import db
 from . import egress
@@ -30,6 +31,7 @@ from . import voice
 from .config import (ROOT, Settings, mmc_migration_state, key_status,
                      load_settings, report_missing_keys)
 from .memory_client import MemoryClient
+from .routers import app_links as app_links_router
 from .routers import attachments as attachments_router
 from .routers import auth as auth_router
 from .routers import benchmark as benchmark_router
@@ -431,6 +433,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.memory = memory
+    app.state.sibling_probe = app_links.SiblingProbe(settings.sibling_apps)
     from .mcp_client import McpManager
     app.state.mcp = McpManager(settings.mcp_servers)
 
@@ -487,6 +490,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth_router.router)
     app.include_router(busy_router.router)
+    app.include_router(app_links_router.router)
     app.include_router(participants_router.router)
     app.include_router(projects_router.router)
     app.include_router(chats_router.router)

@@ -50,6 +50,8 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
   }).then(json),
   state: () => fetch('/api/state').then(json),
+  // The owner's other apps that answered on this machine (appLinks.js).
+  appLinks: () => fetch('/api/app-links').then(json),
   createProject: (body) => fetch('/api/projects', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   }).then(json),
