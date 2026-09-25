@@ -344,6 +344,18 @@ class Settings(BaseModel):
     # <data_dir>/voice_models/ and never committed.
     voice_id_model_url: str = ""
     voice_id_model_sha256: str = ""
+    # The shadow test (#465 stage 1, backend/voice_shadow.py). It measures
+    # two possible changes to room mode on real turns and changes nothing:
+    # every armed voice turn gets one content-free row beside today's label.
+    # Both parts default off and either runs alone.
+    # diarize_shadow_url: a loopback diariser (workbench's diarserve, e.g.
+    # http://127.0.0.1:8910) to split each turn before naming the pieces.
+    # A URL that isn't this machine is refused and that part stays off.
+    diarize_shadow_url: str = ""
+    # voice_shadow_model: a second speaker model scored beside TitaNet-Small.
+    # "titanet_large" is the one known name; it is fetched once, pinned and
+    # SHA-256-verified like the primary, only while this is set.
+    voice_shadow_model: str = ""
 
     # memory companion service (Membro)
     memory_url: str = "http://127.0.0.1:8901"

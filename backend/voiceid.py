@@ -670,8 +670,15 @@ def ensure_model(cfg) -> Path | None:
     verified before the file is put in place AND on every reuse. Returns None on
     any failure - the matcher then reports unavailable and the pass falls back.
     Blocking (hashes/downloads 38MB); ALWAYS called on a worker thread."""
-    sha = _model_sha(cfg)
-    path = model_path()
+    return fetch_verified(_model_url(cfg), _model_sha(cfg), model_path())
+
+
+def fetch_verified(url, sha, path: Path) -> Path | None:
+    """The fetch-and-verify behind ensure_model, for any pinned model file
+    in the models dir: the shadow test's second model (#465) arrives by
+    exactly this path. Present and matching -> returned with no network;
+    otherwise downloaded once, SHA-256 checked, installed atomically at
+    0o600. None on any failure. Blocking; worker threads only."""
     if file_valid(path, sha):
         return path
     try:
@@ -681,8 +688,7 @@ def ensure_model(cfg) -> Path | None:
         log.warning("voiceid: cannot create the model dir; matcher unavailable",
                     exc_info=True)
         return None
-    tmp = path.with_suffix(f".onnx.{os.getpid()}.tmp")
-    url = _model_url(cfg)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         import httpx
         h = hashlib.sha256()
@@ -697,17 +703,19 @@ def ensure_model(cfg) -> Path | None:
                     size += len(chunk)
         digest = h.hexdigest()
         if digest != sha:
-            log.warning("voiceid: fetched model failed SHA-256 pin "
-                        "(got %s, %d bytes); refusing it", digest, size)
+            log.warning("voiceid: fetched %s failed its SHA-256 pin "
+                        "(got %s, %d bytes); refusing it", path.name, digest,
+                        size)
             _quiet_unlink(tmp)
             return None
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
-        log.info("voiceid: model fetched and verified (%d bytes)", size)
+        log.info("voiceid: %s fetched and verified (%d bytes)", path.name,
+                 size)
         return path
     except Exception:
-        log.warning("voiceid: model fetch failed; matcher stays on the EL path",
-                    exc_info=True)
+        log.warning("voiceid: fetching %s failed; it stays unavailable",
+                    path.name, exc_info=True)
         _quiet_unlink(tmp)
         return None
 
