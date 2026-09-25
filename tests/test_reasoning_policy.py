@@ -106,7 +106,7 @@ def test_default_sends_no_effort_or_thinking_override_at_all(cfg, monkeypatch):
 def test_adaptive_sends_thinking_and_never_output_config_effort(cfg, monkeypatch):
     """"adaptive" is the ONLY route to {"type": "adaptive"} - and it's an
     alternative to output_config.effort, never stacked with it (verified
-    against anthropic==0.116.0: `thinking` is fully optional/independent)."""
+    against anthropic 0.116.0 and 1.8.0: `thinking` is fully optional/independent)."""
     part = dict(PARTICIPANT, reasoning_effort="adaptive")
     kwargs = _drive(monkeypatch, dict(cfg), part)
     assert kwargs["thinking"] == {"type": "adaptive"}

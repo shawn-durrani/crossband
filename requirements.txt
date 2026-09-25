@@ -1,7 +1,10 @@
 fastapi
 uvicorn
 pydantic>=2.13.5
-anthropic
+# The Claude SDK. Pinned to the 1.x line, which runs on httpx2 (the
+# maintained fork of httpx) and needs Python 3.10 or newer. Capped at <2
+# because a major removes APIs, so the next one is its own reviewed change.
+anthropic>=1.8.0,<2
 openai>=3.16.2
 httpx
 python-dotenv
