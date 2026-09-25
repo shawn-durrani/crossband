@@ -148,6 +148,61 @@ Ollama's own five-minute unload applies. Point it at a non-Ollama
 endpoint and the seat keeps speaking as it did, and the log names the
 setting and says it didn't apply.
 
+## A stronger model for one chat
+
+Say "think harder" or "research more" in a chat, and each seat it moves
+can also switch to a stronger model for the rest of that chat. "Think
+harder" moves the seats it names, or every seat when it names none.
+"Research more" moves every seat. A new chat starts back on the model
+each seat's settings name.
+
+The app finds the stronger model at the moment you ask, in four steps.
+
+1. It asks the seat's own provider for the models your key can use,
+   the same list the Models page shows.
+2. It keeps the models the price card prices that fit the chat. The
+   chat has to fit the model's context window. A chat carrying images
+   or PDF files needs a model the provider says takes them. A seat
+   thinking harder needs a model that takes a thinking level.
+3. It runs one web search through your search engines, Tavily or
+   Brave, and reads the results without opening a page. The utility
+   model ranks the models from those results alone, and any model no
+   result names is left out. Price never decides the order.
+4. The seat moves only to a model ranked higher than the one it's on.
+
+Before the switch takes effect, a line in the chat says what moved,
+where the ranking came from, and what a turn costs each way. For
+example:
+
+> Claude moves from Claude Sonnet 5 to Claude Opus 5 for this chat, set
+> by Alex. A web search ranked it the strongest Claude model the app
+> can use here (example.org). A turn like Claude's last few here is
+> about $0.02 now and about $0.06 on Claude Opus 5, rate-card
+> estimates. Back to normal returns Claude to Claude Sonnet 5.
+
+The figures price the seat's last few turns in this chat at both
+rates. With no turns yet, the line gives both models' prices per
+million tokens. A long chat also pays once to store its history on the
+new model, and the line says what that costs each way. The running-cost
+line names the model as well. The seat is told which model it's on and
+who asked, and its name, persona and voice stay the same.
+
+When the app can't find a stronger model, the seat stays where it is
+and a line says why. That happens with no search engine set up, a
+model list the app couldn't read, a model the price card can't price,
+nothing that fits the chat, or a search that didn't settle it. A model
+that ranks higher but has no price is named and never chosen.
+
+Say "back to normal" and every seat returns to its configured model,
+along with its thinking depth and research mode. Name one seat and
+only that seat returns. If you change a seat's model in its settings,
+your choice wins in every chat. If the provider refuses the stronger
+model, the seat goes back by itself and the chat says so.
+
+Local seats and seats on a custom endpoint never switch.
+`model_step_up` in [CONFIG.md](CONFIG.md#models) turns the whole thing
+off.
+
 ## Trial seats: why your new model stays quiet
 
 Every model you add yourself starts as a Trial seat, and a trial seat

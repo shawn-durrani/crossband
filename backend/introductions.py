@@ -33,7 +33,8 @@ import logging
 import re
 import unicodedata
 
-from . import anchors, db, depth, diarize, intent, llm_util, research, room_state
+from . import anchors, db, depth, diarize, intent, llm_util, model_step
+from . import research, room_state
 
 log = logging.getLogger("crossband.introductions")
 
@@ -762,6 +763,9 @@ SCAN_OUTCOMES = (
     "depth_cleared",        # spoken reasoning depth back to default (#105)
     "depth_once",           # a one-reply depth override parked (#105 slice 2)
     "research_set",         # spoken research mode turned on for the chat (#253/#417)
+    "model_stepped",        # a seat moved to a stronger model for the chat (#254)
+    "model_kept",           # a step-up was asked for and every seat stayed,
+                            # each with its reason (#254)
     "no_change",            # a confirmed verdict that changed nothing
     "scan_error",           # the scan itself failed (detail logged below it)
 )
@@ -862,6 +866,15 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             result = await asyncio.to_thread(research.apply_research,
                                              chat_id, cfg, message_id)
             outcomes["research"] = result
+            if outcome is None or outcome == "no_change":
+                outcome = result
+        # #254: a standing "think harder" or "research more" also moves the
+        # seats it asked for onto a stronger model for this chat, found live
+        # (model_step.find_step_ups). After depth and research, so the chat
+        # reads the depth or research line first, then what the model costs.
+        result = await model_step.step_up(chat_id, verdict, cfg, message_id)
+        if result:
+            outcomes["model"] = result
             if outcome is None or outcome == "no_change":
                 outcome = result
         if outcome is None:

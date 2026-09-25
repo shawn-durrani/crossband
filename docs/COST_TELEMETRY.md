@@ -292,9 +292,10 @@ project distillation folds a chat's new messages into the project's
 memory notes.
 
 `llm_util.utility_complete_logged` covers the scans that read what you
-say, with `kind` set to `intent_scan` or `mismatch_check`. A scan has a
-chat id but no open database connection, so that writer opens its own
-on a worker thread.
+say, with `kind` set to `intent_scan` or `mismatch_check`. It also covers
+the ranking behind a stronger model for one chat, with `kind` set to
+`model_step_up`. Each has a chat id but no open database connection, so
+that writer opens its own on a worker thread.
 
 Each real call writes one row to `utility_usage` and commits it at
 once. The row holds `chat_id`, `kind`, `model`, `input_tokens`,

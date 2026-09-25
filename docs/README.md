@@ -11,8 +11,9 @@ you, or an AI assistant you paste it to, can do the task it covers.
    does the key setup with you.
 2. [docs/MODELS.md](MODELS.md): every model you can run. The built-in
    seats, the one-click presets (Ollama, LM Studio, Groq, Together,
-   OpenRouter, Fireworks), the path that needs no key, and how to price
-   a model so it can join every round.
+   OpenRouter, Fireworks), the path that needs no key, how to price a
+   model so it can join every round, and the stronger model a chat can
+   ask for.
 3. [docs/CONFIG.md](CONFIG.md): every setting, in one place. The four
    config layers, all keys with defaults, and
    `config.local.json.example` to copy from. You only need it once

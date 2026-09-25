@@ -3,9 +3,10 @@
 A spoken depth change tells the chat replies will be slower and never that
 they cost more, and anyone in the room may raise a seat; research mode
 (#253/#417) is the chat-wide version of the same raise, a bigger tool budget
-that spends more per reply. So while a seat sits above its configured depth,
-OR research mode is on, the chat gets one short system line now and then
-saying what has been spent since it was raised. Watermark gated like the
+that spends more per reply, and a seat stepped up to a stronger model for the
+chat (#254) is a third. So while a seat sits above its configured depth or on
+a stronger model, OR research mode is on, the chat gets one short system line
+now and then saying what has been spent since it was raised. Watermark gated like the
 rolling summary and the auto title: it fires on a message count, never on a
 clock, and `spend_note_every` sets the count.
 
@@ -20,7 +21,7 @@ the ingest filter."""
 
 import time
 
-from . import accounting, db
+from . import accounting, db, model_step
 from .depth import LEVEL_WORDS
 
 SPEND_NOTE_HEAD = "Running cost:"
@@ -41,9 +42,13 @@ def _since(ts: float) -> str:
     return time.strftime("%H:%M", time.localtime(ts)) if ts else "it was set"
 
 
-def seat_line(name, effort, set_at, group) -> str:
-    """One seat's clause: how it is set, since when, and what it has used."""
-    word = LEVEL_WORDS.get(effort, effort)
+def seat_line(name, effort, set_at, group, model_label="") -> str:
+    """One seat's clause: how it is set, since when, and what it has used.
+    `effort` is '' for a seat raised only by a model step-up (#254), and
+    `model_label` names the stronger model a seat runs in this chat."""
+    on = f" on {model_label}" if model_label else ""
+    how = (f"at {LEVEL_WORDS.get(effort, effort)} thinking{on}" if effort
+           else on.strip())
     metered = float((group or {}).get(accounting.CAT_METERED, 0.0))
     subs = float((group or {}).get(accounting.CAT_SUBSCRIPTION, 0.0))
     unknown = float((group or {}).get(accounting.CAT_UNKNOWN, 0.0))
@@ -52,7 +57,7 @@ def seat_line(name, effort, set_at, group) -> str:
         parts.append("subscription-covered use apart")
     if unknown:
         parts.append("some unpriced use apart")
-    return (f"{name} at {word} thinking since {_since(set_at)}, "
+    return (f"{name} {how} since {_since(set_at)}, "
             + ", ".join(parts) + " since then")
 
 
@@ -66,7 +71,7 @@ def research_line(set_at, totals) -> str:
 
 
 def compose(seats: list, research_clause: str = "") -> str:
-    """seats: [(name, effort, set_at, group)]. `research_clause`
+    """seats: [(name, effort, set_at, group[, model_label])]. `research_clause`
     (spend_note.research_line, or "") leads the seat clauses - it is
     chat-wide, not one seat's raise."""
     clauses = ([research_clause] if research_clause else []) + \
@@ -86,12 +91,27 @@ def maybe_spend_note(con, chat, messages, cfg) -> bool:
     if every <= 0 or not messages:
         return False
     chat_id = chat["id"]
-    raised = db.get_chat_seat_escalations(con, chat_id)
+    raised = {r["slug"]: r for r in db.get_chat_seat_escalations(con, chat_id)}
+    # #254: a seat on a stronger model for this chat is raised too, while
+    # the step-up still applies - an edit in settings ends it (live_step).
+    steps = db.get_chat_seat_models(con, chat_id)
+    roster = db.get_chat_participants(con, chat_id) if (raised or steps) else []
+    by_slug = {p["slug"]: p for p in roster}
+    steps = {slug: row for slug, row in steps.items()
+             if slug in by_slug and model_step.live_step(by_slug[slug], row)}
     research_on = bool(chat.get("research_mode"))
-    if not raised and not research_on:
+    if not raised and not steps and not research_on:
         return False
     upto = int(chat.get("spend_note_upto") or 0)
-    anchors = [r["set_at"] for r in raised]
+    seats = []
+    for slug in sorted(set(raised) | set(steps)):
+        r, step = raised.get(slug), steps.get(slug)
+        anchor = min([t for t in ((r or {}).get("set_at"),
+                                  (step or {}).get("set_at")) if t] or [0.0])
+        seats.append((slug, (r or {}).get("effort", ""), anchor,
+                      (step or {}).get("label", "")))
+    seats.sort(key=lambda s: (s[2], s[0]))
+    anchors = [s[2] for s in seats]
     research_set_at = chat.get("research_set_at") or 0.0
     if research_on:
         anchors.append(research_set_at)
@@ -101,20 +121,19 @@ def maybe_spend_note(con, chat, messages, cfg) -> bool:
     if len(fresh) < every:
         return False
     names = {p["slug"]: (p["name"] or p["slug"])
-             for p in db.get_chat_participants(con, chat_id)}
+             for p in (roster or db.get_chat_participants(con, chat_id))}
     events = list(accounting.iter_cost_events(
         con, pricing=cfg.get("pricing") or None, chat_id=chat_id))
-    seats = []
-    for r in raised:
-        since = r["set_at"] or None
-        summary = accounting.summarize(events, since=since)
-        group = next((g for g in summary["by_party"] if g["key"] == r["slug"]), None)
-        seats.append((names.get(r["slug"], r["slug"]), r["effort"], r["set_at"], group))
+    clauses = []
+    for slug, effort, anchor, label in seats:
+        summary = accounting.summarize(events, since=anchor or None)
+        group = next((g for g in summary["by_party"] if g["key"] == slug), None)
+        clauses.append((names.get(slug, slug), effort, anchor, group, label))
     research_clause = ""
     if research_on:
         summary = accounting.summarize(events, since=research_set_at or None)
         research_clause = research_line(research_set_at, summary["totals"])
-    row = db.insert_message(con, chat_id, "system", compose(seats, research_clause))
+    row = db.insert_message(con, chat_id, "system", compose(clauses, research_clause))
     con.execute("UPDATE chats SET spend_note_upto=? WHERE id=?",
                 (row["id"], chat_id))
     con.commit()

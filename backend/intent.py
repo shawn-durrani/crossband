@@ -204,6 +204,8 @@ def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
         ("depth", bool(verdict.get("depth")), _depth_line),
         ("research", verdict.get("research") == RESEARCH_MORE, _research_line),
     )
+    if outcomes.get("model") == "model_stepped":
+        return ""  # #254: the depth or research cue moved a model - a change
     first_no_op = None
     for key, instructed, line_fn in axes:
         if not instructed:

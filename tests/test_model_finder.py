@@ -238,11 +238,22 @@ def test_a_raised_depth_needs_a_model_that_takes_an_effort(app, world):
     assert "claude-haiku-4-5" not in calls["utility"][0][1]
 
 
-def test_images_need_a_stated_yes(app, world):
+@pytest.mark.parametrize("image_input,key,reason", [
+    (None, "unknown_media",
+     "this chat carries images or PDF files, and Anthropic doesn't say which "
+     "of its models take them"),
+    ({"supported": False}, "none_fit",
+     "no other Claude model the app can price fits this chat"),
+])
+def test_images_need_a_stated_yes(app, world, image_input, key, reason):
+    """A model the provider says nothing about is a no for a chat with an
+    image, and the line names that (slice 3) apart from a stated no."""
     _, state = world
-    unknown = {k: v for k, v in CAPS.items() if k != "image_input"}
+    caps = {k: v for k, v in CAPS.items() if k != "image_input"}
+    if image_input is not None:
+        caps["image_input"] = image_input
     state["models"] = [_m("claude-sonnet-5", "Claude Sonnet 5"),
-                       _m("claude-opus-5", "Claude Opus 5", caps=unknown)]
+                       _m("claude-opus-5", "Claude Opus 5", caps=caps)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat_id = _chat(c)
         con = db.connect()
@@ -256,10 +267,9 @@ def test_images_need_a_stated_yes(app, world):
         finally:
             con.close()
         d = _one(_find(chat_id, [SONNET_SEAT]))
-    assert d["outcome"] == "stay" and d["key"] == "none_fit"
+    assert d["outcome"] == "stay" and d["key"] == key
     assert model_step.stay_lines([d]) == [
-        "Claude stays on Claude Sonnet 5: no other Claude model the app can "
-        "price fits this chat."]
+        f"Claude stays on Claude Sonnet 5: {reason}."]
 
 
 def test_a_window_too_small_for_the_chat_is_out(app, world):
