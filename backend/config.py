@@ -384,6 +384,12 @@ class Settings(BaseModel):
     # the line off. Sparse on purpose: the line is re-sent to every seat on
     # every later turn, so it must never become the spend it reports.
     spend_note_every: int = 30
+    # #254: a standing "think harder" or "research more" also moves each seat
+    # it names onto a stronger model for that chat, found live from the
+    # provider's model list, the price card and one web search
+    # (backend/model_step.py). False keeps both cues to depth and research
+    # alone.
+    model_step_up: bool = True
     code_max_turns: int = 50       # SDK turn cap for one guest visit
     code_timeout_s: float = 600.0  # wall-clock cap for one guest visit
     # Guest auth: false (default) = the machine's own Claude Code login

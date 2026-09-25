@@ -56,6 +56,7 @@ supervisor as [OPERATIONS.md](OPERATIONS.md) describes.
 | `anthropic_model` | `claude-opus-4-8` | The model for the default Claude seat. It seeds the seat on first run, and after that you edit seats on the Models page. |
 | `openai_model` | `gpt-5.1` | The model for the default GPT seat, with the same seed rule. |
 | `utility_model` | `claude-haiku-4-5` | The cheap model behind rolling summaries, auto-titles, project distillation, and the one call that reads every message you send for an instruction. That covers typed and spoken turns, with room mode on or off, and skips a `/` message. A `gpt-*` value routes to OpenAI. |
+| `model_step_up` | `true` | A standing "think harder" or "research more" also moves each seat it names to a stronger model for that chat, found from the provider's model list, the price card and one web search. `false` keeps both to depth and research. [MODELS.md](MODELS.md#a-stronger-model-for-one-chat). |
 | `pricing` | the built-in rate card | Per-model `{input, output}` prices per million tokens, with provenance. Matched by exact model id, then an entry's `aliases`, then a date-stamped reissue of the same model. There's no family fallback, so an unknown model stays unpriced. |
 
 ### Pricing a model
@@ -235,7 +236,7 @@ lists only together with that page.
 | `mcp_servers` | `{}` | MCP servers the seats may call over stdio, each name mapping to `{command, args, label?}`. Set it in `config.local.json`. The optional `label` shows in the work-status chip while that server is in flight, and a server without one shows a plain "Working on it". |
 | `ingest_token` | `""` | The bearer for the machine side-channel, `POST /api/ingest` and `POST /api/chats/{id}/notice`, set as `CROSSBAND_INGEST_TOKEN`. Once a password is enrolled it's the only way a producer reaches either route. [PRODUCERS.md](PRODUCERS.md). |
 | `slash_commands` | `[]` | Suggestion chips in the composer for `/` messages, each `{insert, label, hint}`. Crossband gives no command a meaning, so a `/` message goes to your tooling and no model replies. [PRODUCERS.md](PRODUCERS.md) has the contract. |
-| `spend_note_every` | `30` | While a seat sits above its default depth, or [research mode](WEB_RESEARCH.md#research-mode) is on, the chat gets a system line every this many messages saying what that seat, or the chat, has spent since then. A rate-card estimate, never a bill. `0` turns it off. |
+| `spend_note_every` | `30` | While a seat runs above its default depth or on a stronger model, or [research mode](WEB_RESEARCH.md#research-mode) is on, the chat gets a system line every this many messages saying what's been spent since. A rate-card estimate, never a bill. `0` turns it off. |
 | `slash_ack_timeout_s` | `120` | The dead-man for `/` messages. If nothing acknowledges a slash command within this window, one system line says nothing picked it up, so a stopped watcher stops looking like a queued deploy. `0` turns it off. [PRODUCERS.md](PRODUCERS.md). |
 
 ## Research tool caps

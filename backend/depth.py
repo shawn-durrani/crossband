@@ -204,9 +204,16 @@ def apply_depth(chat_id, changes, cfg, message_id=None) -> str:
     must not move a different seat. Returns the scan outcome word.
 
     `message_id` is the user turn that carried the cue; the notice and the
-    stored setter name whoever spoke it, or nobody (#255)."""
+    stored setter name whoever spoke it, or nobody (#255).
+
+    "Normal" also returns a seat stepped up to a stronger model for this
+    chat to its configured model (#254), with its own line; that counts as
+    a clear even when the seat had no spoken depth. Moving a model UP is
+    not done here - it needs a live search, so the scan runs it afterwards
+    (model_step.step_up)."""
     if not changes:
         return "no_change"
+    from . import model_step  # lazy: model_step reads depth's speaker rule
     changed = cleared = 0
     con = db.connect()
     try:
@@ -271,16 +278,22 @@ def apply_depth(chat_id, changes, cfg, message_id=None) -> str:
                     continue
                 keep = slug in once_targets
                 dropped = "" if keep else parked.get(slug, "")
-                if slug not in current and not dropped:
-                    continue  # clearing a seat already at default, nothing parked
-                db.set_chat_seat_depth(con, chat_id, slug, "", keep_once=keep)
-                current.pop(slug, None)
-                if dropped:
-                    parked.pop(slug, None)
-                db.insert_message(con, chat_id, "system",
-                                  _notice(p["name"] or p["slug"], "normal",
-                                          user, dropped_once=dropped))
-                cleared += 1
+                if slug in current or dropped:
+                    db.set_chat_seat_depth(con, chat_id, slug, "",
+                                           keep_once=keep)
+                    current.pop(slug, None)
+                    if dropped:
+                        parked.pop(slug, None)
+                    db.insert_message(con, chat_id, "system",
+                                      _notice(p["name"] or p["slug"], "normal",
+                                              user, dropped_once=dropped))
+                    cleared += 1
+                # #254: back to normal means the model too. A seat stepped
+                # up to a stronger model for this chat returns to its
+                # configured one, with its own line; a seat already there
+                # gets nothing.
+                if model_step.clear_for_reset(con, chat_id, p):
+                    cleared += 1
         if reset_all:
             from . import research  # lazy: research.py imports this module
             if research.clear_research(con, chat_id):

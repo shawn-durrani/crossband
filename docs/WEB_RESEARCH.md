@@ -147,6 +147,9 @@ month gets the same care as one that needs the web.
 A system line names who turned it on. The tool budget for a reply grows
 for the rest of that chat, the cap set by `research_tool_rounds` in
 [CONFIG.md](CONFIG.md#research-tool-caps), and the running-cost line
-starts naming what the chat has spent since. Say "back to normal" and
+starts naming what the chat has spent since. Each seat also moves to a
+stronger model for the chat when the app can find one, as
+[MODELS.md](MODELS.md#a-stronger-model-for-one-chat) describes. Say
+"back to normal" and
 the next reply is back to the ordinary budget and the ordinary answer. A
 fresh chat always starts at the defaults.

@@ -376,6 +376,20 @@ def unfit(seat, rec, facts):
     return None
 
 
+def _none_fit_key(seat, models, facts, pricing) -> str:
+    """Why nothing fits, when the reason is worth naming: a chat carrying
+    images or PDF files, and a provider that doesn't say which of its priced
+    models take them (OpenAI's list says nothing about any model)."""
+    others = [m for m in models
+              if m["id"] != seat["model"] and priced(m["id"], pricing)]
+    needs = [n for n, on in (("image_input", facts["images"]),
+                             ("pdf_input", facts["pdfs"])) if on]
+    if others and needs and all(
+            any(capability(m, n) is None for n in needs) for m in others):
+        return "unknown_media"
+    return "none_fit"
+
+
 def _skip(seat, facts):
     """Seats the finder leaves alone without a word: nothing to research,
     or nothing a line would help with."""
@@ -516,8 +530,9 @@ async def find_step_ups(chat_id, seats, cfg, today=None) -> list:
             fit = [m for m in models if unfit(seat, m, facts) is None]
             priced_fit = [m for m in fit if priced(m["id"], pricing)]
             if not priced_fit:
-                decisions.append(_decision(seat, STAY, "none_fit",
-                                           from_label=from_label))
+                decisions.append(_decision(
+                    seat, STAY, _none_fit_key(seat, models, facts, pricing),
+                    from_label=from_label))
                 continue
             pool[current["id"]] = current
             pool.update({m["id"]: m for m in fit})
@@ -568,6 +583,11 @@ def step_line(d, set_by="") -> str:
         parts.append(f"A turn like {name}'s last few here is "
                      f"{_money(cost['now'])} now and {_money(cost['new'])} on "
                      f"{label}, rate-card estimates.")
+    elif cost and cost["rates_new"] == cost["rates_now"]:
+        ni, no = cost["rates_new"]
+        parts.append(f"{label} costs the same per token as {was}, "
+                     f"{_rate(ni)} in and {_rate(no)} out per million "
+                     "tokens, rate-card prices.")
     elif cost:
         (ni, no), (wi, wo) = cost["rates_new"], cost["rates_now"]
         parts.append(f"{label} is {_rate(ni)} in and {_rate(no)} out per "
@@ -599,6 +619,9 @@ def _reason(d) -> str:
                 "what a stronger model would cost")
     if key == "none_fit":
         return f"no other {family} model the app can price fits this chat"
+    if key == "unknown_media":
+        return (f"this chat carries images or PDF files, and {vendor} doesn't "
+                "say which of its models take them")
     if key == "search_failed":
         return f"the web search to rank {family} models failed"
     if key == "strongest":
@@ -638,3 +661,113 @@ def stay_lines(decisions) -> list:
             lines.append(f"{_join(d['name'] for d in group)} stay on their "
                          f"models: {_reason(group[0])}.")
     return lines
+
+
+# ---------- the cues (slice 3) ----------
+#
+# Two spoken cues ask for a stronger model: a standing "think harder" or
+# "maximum thinking" moves the seats it names, and "research more" moves
+# every seat in the chat (the owner's decision of 4 September on #253). A
+# one-off, "quick answers" and "normal" never move a model up. "Back to
+# normal" is the one way down, through depth.apply_depth.
+
+STEPPED, KEPT = "model_stepped", "model_kept"
+
+
+def targets(verdict, roster) -> list:
+    """The seats a verdict asks to step up, in roster order, once each.
+    Names resolve against the chat's own seats by name or slug, the way
+    depth.apply_depth resolves them, so a misheard name moves nobody."""
+    by_key = {}
+    for p in roster:
+        by_key[p["slug"].casefold()] = p
+        by_key[(p["name"] or "").casefold()] = p
+    wanted = set()
+    if verdict.get("research") == "more":
+        wanted = {p["slug"] for p in roster}
+    for ch in verdict.get("depth") or []:
+        if ch.get("once") or ch.get("depth") not in ("deep", "max"):
+            continue
+        key = (ch.get("seat") or "").casefold()
+        if key == "all":
+            wanted |= {p["slug"] for p in roster}
+        elif key in by_key:
+            wanted.add(by_key[key]["slug"])
+    return [p for p in roster if p["slug"] in wanted]
+
+
+def _roster(chat_id) -> list:
+    con = db.connect()
+    try:
+        return db.get_chat_participants(con, chat_id)
+    finally:
+        con.close()
+
+
+def apply_decisions(chat_id, decisions, cfg, message_id=None) -> str:
+    """Post and write what the finder decided (synchronous; worker thread).
+    A step posts its cost line FIRST and only then writes the step-up, so
+    the chat says what it costs before any reply runs on the new model. A
+    seat stepped up by another cue while this one was researching is left
+    as it is. Returns the scan outcome word."""
+    from .depth import resolve_speaker  # lazy: depth imports this module
+    con = db.connect()
+    stepped = kept = 0
+    try:
+        user = resolve_speaker(con, chat_id, message_id, cfg)
+        steps = db.get_chat_seat_models(con, chat_id)
+        for d in decisions:
+            if d["outcome"] != STEP or steps.get(d["slug"]):
+                continue
+            db.insert_message(con, chat_id, "system", step_line(d, user))
+            db.set_chat_seat_model(con, chat_id, d["slug"], d["model"],
+                                   model_from=d["from"], label=d["label"],
+                                   from_label=d["from_label"], set_by=user,
+                                   source=d["source"])
+            stepped += 1
+        for line in stay_lines(decisions):
+            db.insert_message(con, chat_id, "system", line)
+            kept += 1
+    finally:
+        con.close()
+    if stepped:
+        return STEPPED
+    return KEPT if kept else "no_change"
+
+
+async def step_up(chat_id, verdict, cfg, message_id=None):
+    """The scan's step-up axis: find and apply a stronger model for every
+    seat the verdict asks for. None when nothing asked, or when the
+    `model_step_up` setting is off. A failure anywhere is logged and
+    changes nothing - it must never cost the scan its other axes."""
+    if not cfg.get("model_step_up", True):
+        return None
+    try:
+        seats = targets(verdict, await asyncio.to_thread(_roster, chat_id))
+        if not seats:
+            return None
+        decisions = await find_step_ups(chat_id, seats, cfg)
+        return await asyncio.to_thread(apply_decisions, chat_id, decisions,
+                                       cfg, message_id)
+    except Exception:
+        log.info("model step-up failed: chat=%s", chat_id, exc_info=True)
+        return None
+
+
+def back_notice(seat_name, row) -> str:
+    return f"{seat_name} is back on its configured model, {row['from_label']}."
+
+
+def clear_for_reset(con, chat_id, participant) -> bool:
+    """"Back to normal" for one seat's model (depth.apply_depth calls this
+    on its own connection and worker thread). Posts one line when a step-up
+    was actually cleared; a seat already on its configured model gets
+    nothing. The line names the model the seat returns to."""
+    row = db.get_chat_seat_models(con, chat_id).get(participant["slug"])
+    if not row or not db.clear_chat_seat_model(con, chat_id, participant["slug"]):
+        return False
+    live = live_step(participant, row)
+    name = participant.get("name") or participant["slug"]
+    back = row if live else {**row, "from_label": participant.get("model") or ""}
+    db.insert_message(con, chat_id, "system", back_notice(name, back))
+    return True
