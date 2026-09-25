@@ -1,4 +1,5 @@
 import { captureConstraints, captureProfileName } from './captureProfile.js'
+import { batchSttForm, clipWindow, identityWav } from './identityClip.js'
 import { sidToKill } from './micRegistry.js'
 import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
@@ -1139,7 +1140,9 @@ export default class VoiceController {
         this._watchHandoff(turnId)  // the salvage always sends
         this._rebuildSttProcessor()
         this._state('transcribing')
-        await this._salvageUtterance(speechMs)
+        // #461: the relay never heard this turn, so the batch copy carries
+        // its id and its end of speech for the identity check.
+        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice)
         return
       }
       const tooShort = speechMs < MIN_SPEECH_MS
@@ -1170,7 +1173,7 @@ export default class VoiceController {
             // Realtime never answered in time. The batch recorder ran the
             // whole time - salvage its copy; the ledger has already
             // consumed the commit, so a late realtime final drops.
-            this._salvageUtterance(speechMs, turnId, dispatch)
+            this._salvageUtterance(speechMs, turnId, dispatch, lastVoice)
           }
         }, sttCommitTimeoutMs(speechMs))
       } else if (cause === 'gap') {
@@ -1184,10 +1187,12 @@ export default class VoiceController {
     // #453: a cut piece's batch call is tracked before the first await, so
     // a pause that ends the turn while it's out makes it the last piece.
     const tooShort = speechMs < MIN_SPEECH_MS
-    const piece = this._trackPiece(turnId, continuation && !tooShort ? 'buffer' : 'send')
+    const piece = this._trackPiece(turnId, continuation && !tooShort ? 'buffer' : 'send',
+                                   { speechMs, endedAt: lastVoice })
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
+    piece.stoppedAt = Date.now()
     this._startRecorder()
     if (tooShort) {
       if (cause === 'gap') this._endLongTurn(turnId, cut)
@@ -1264,12 +1269,14 @@ export default class VoiceController {
   // made that piece the turn's last ('send', #453).
   async _transcribeOrHold(blob, speechMs, piece = { turnId: null, dispatch: 'send' }) {
     const turnId = piece.turnId || null
+    // #461: the identity copy goes with the upload, so this turn gets the
+    // same voice check a streamed turn gets. Null leaves the upload as it
+    // always was.
+    const copy = turnId ? await this._identityCopy(blob, piece) : null
     let dispatch
     try {
-      const fd = new FormData()
-      fd.append('file', blob, 'utterance.webm')
-      fd.append('duration_ms', String(Math.round(speechMs)))
-      const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body: fd })
+      const res = await fetch(`/api/chats/${this.getChatId()}/stt`,
+                              { method: 'POST', body: batchSttForm(blob, speechMs, turnId, copy) })
       const data = await res.json().catch(() => ({}))
       if (this._batchPiece === piece) this._batchPiece = null
       dispatch = piece.dispatch || 'send'
@@ -1297,7 +1304,7 @@ export default class VoiceController {
       if (dispatch === 'send') {
         handoffStage(this._handoff, turnId || this._trace.current()?.turnId, STAGE_HELD)
       }
-      this.heldUtterances.push({ blob, speechMs })
+      this.heldUtterances.push({ blob, speechMs, turnId, copy })
       this.onHeld?.(this.heldUtterances.length)
       this._startHeldRetry()
       return false
@@ -1307,17 +1314,36 @@ export default class VoiceController {
   // #453: what a batch call reads its dispatch from when its answer lands.
   // A cut piece's call ('buffer') is remembered while it's out, so a long
   // turn that ends meanwhile can make it the last piece (_endLongTurn).
-  _trackPiece(turnId, dispatch) {
-    const piece = { turnId, dispatch }
+  // #461: `speech` is { speechMs, endedAt } when the turn's place in the
+  // recording is known, which is what lets it send an identity copy.
+  _trackPiece(turnId, dispatch, speech = {}) {
+    const piece = { turnId, dispatch, ...speech }
     if (dispatch === 'buffer') this._batchPiece = piece
     return piece
   }
 
-  async _salvageUtterance(speechMs, turnId = null, dispatch = 'send') {
-    const piece = this._trackPiece(turnId, dispatch)
+  // #461: the identity copy of a batch turn, cut from the recording to the
+  // turn itself (identityClip.js). Null when the turn can't be placed, as
+  // a rescued turn can't, or when this browser can't decode its own
+  // recording. The turn is then transcribed as before, with no voice check.
+  async _identityCopy(blob, piece) {
+    const win = clipWindow(piece)
+    if (!win || !blob?.size || !this.audioCtx?.decodeAudioData) return null
+    try {
+      const audio = await this.audioCtx.decodeAudioData(await blob.arrayBuffer())
+      const wav = identityWav(audio.getChannelData(0), audio.sampleRate, win)
+      return wav ? new Blob([wav], { type: 'audio/wav' }) : null
+    } catch {
+      return null
+    }
+  }
+
+  async _salvageUtterance(speechMs, turnId = null, dispatch = 'send', endedAt = null) {
+    const piece = this._trackPiece(turnId, dispatch, { speechMs, endedAt })
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
+    piece.stoppedAt = Date.now()
     this._startRecorder()
     const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' })
     await this._transcribeOrHold(blob, speechMs, piece)
@@ -1333,16 +1359,16 @@ export default class VoiceController {
       const item = this.heldUtterances[0]
       if (!item) { this.onHeld?.(0); return }
       try {
-        const fd = new FormData()
-        fd.append('file', item.blob, 'utterance.webm')
-        fd.append('duration_ms', String(Math.round(item.speechMs)))
-        const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body: fd })
+        const body = batchSttForm(item.blob, item.speechMs, item.turnId, item.copy)
+        const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body })
         const data = await res.json().catch(() => ({}))
         // Reached the server: this item is done either way (HTTP errors
         // won't improve by resending the same bytes).
         this.heldUtterances.shift()
         this.onHeld?.(this.heldUtterances.length)
-        if (res.ok && data.text) this._deliverTranscript(data.text, null, 'send')
+        // #461: under its own turn id, so the label its copy parked is the
+        // one its send claims.
+        if (res.ok && data.text) this._deliverTranscript(data.text, item.turnId || null, 'send')
         else if (!res.ok) this.onError?.(`Held message failed to transcribe (${data.detail || res.status})`)
         this._heldTimer = setTimeout(tick, this.heldUtterances.length ? 500 : 0)
       } catch {

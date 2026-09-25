@@ -44,6 +44,7 @@ arriving without an id for any reason, not a co-equal strategy.
 import asyncio
 import concurrent.futures
 import functools
+import json
 import logging
 import re
 import struct
@@ -251,9 +252,12 @@ FAST_MISMATCH_MIN_SECONDS = 1.5
 #
 # DISARM IS SACRED: after the owner says "solo mode", chats.ambient_off is set
 # and ambient never re-arms that chat until an explicit re-enable (a command,
-# an introduction, or the manual toggle) clears it. This live mirror lets the
-# relay honour it without a DB read on the audio path, exactly like
-# _ROOM_ENABLED.
+# an introduction, or the manual toggle) clears it. Since #461 the check
+# itself still runs in solo, so each turn says who spoke, but it can only
+# label: solo_decision strips every arm, seat and ask. The durable flag is
+# read inside the check (_ambient_plan), so the relay no longer reads this
+# live mirror; room_state still keeps it in step, and retiring it is its
+# own change.
 _AMBIENT_OFF: dict = {}
 
 
@@ -318,6 +322,23 @@ def ambient_decision(verdict, owner, owner_ok) -> str:
     if owner_ok and verdict and verdict.get("reason") == "below_threshold":
         return "arm_unknown"
     return "defer"
+
+
+# Solo (#461): after "solo mode" the room-off check still runs, so a turn
+# still says who spoke, but nothing it finds may switch the room on, seat
+# anyone or ask who joined. It used to skip the check outright, which left
+# every turn after a spoken "solo mode" unlabelled, and memory filed a
+# guest's words as the owner's. The map is the whole difference, as a pure
+# rule over ambient_decision's answer: the owner is labelled exactly as
+# before, a remembered guest is named without arming, a clear stranger is
+# marked "voice not recognised" without arming or asking, and an
+# undecidable turn writes nothing, the same as in listening.
+SOLO_DECISIONS = {"noop_owner": "noop_owner", "arm_known": "name_known",
+                  "arm_unknown": "mark_unknown", "defer": "defer"}
+
+
+def solo_decision(decision) -> str:
+    return SOLO_DECISIONS.get(decision, "defer")
 
 
 # ---- cold-start enrolment (#28) -----------------------------------------
@@ -648,6 +669,22 @@ def segments_align(segments, content) -> bool:
     return bool(joined) and joined == _norm_text(content)
 
 
+def carries_payload(raw, payload) -> bool:
+    """Does a row's stored voice_labels JSON hold exactly this payload?
+    (#461, pure.) True means /send claimed this very label at insert, so
+    the pass that parked it still owns the row's follow-up work. Compared
+    after a JSON round trip, so a tuple and a list read the same. Anything
+    malformed reads as someone else's label."""
+    if not raw or not isinstance(raw, str) or not payload:
+        return False
+    try:
+        stored = json.loads(raw)
+        wanted = json.loads(json.dumps(payload))
+    except (TypeError, ValueError):
+        return False
+    return stored == wanted
+
+
 def pick_target(rows, already_labelled) -> dict | None:
     """The user message this utterance's labels belong to: the OLDEST
     still-unlabelled user row created after the commit (rows arrive id-
@@ -760,9 +797,10 @@ class RoomSession:
         self.prev_clusters = None   # None = no diarized utterance yet
         self.labelled_ids = set()
         # Ambient local check (#28): when true, every committed utterance runs
-        # the local-only matcher while room mode is off. Seeded at session
-        # open from ambient_eligible (matcher enabled + a sufficient remembered
-        # voice exists); a plain bool so the per-commit path does no I/O.
+        # the local-only matcher while room mode is off, solo included
+        # (#461). Seeded at session open from ambient_eligible (matcher
+        # enabled + a sufficient remembered voice exists); a plain bool so
+        # the per-commit path does no I/O.
         self.ambient_on = False
         # Speculative identity (#28 PR-B): the in-flight silence-start check
         # for the CURRENT utterance - {"len": buffered bytes at fire time,
@@ -823,6 +861,142 @@ class RoomSession:
                 self.ordinals[c] = f"Voice {len(self.ordinals) + 1}"
             labels.append(self.ordinals[c])
         return labels
+
+
+# ---------- one check per turn, whichever path heard it (#461) ----------
+#
+# A voiced turn reaches the server one of two ways: the realtime relay
+# (routers/voice.py's stt-stream, which tees the audio as it streams) or
+# the batch /stt POST (the fallback once realtime fails, and the salvage
+# for a turn realtime lost). The identity check used to hang off the relay
+# alone, so every batch-transcribed turn went unchecked: no name, no
+# reason, and memory read it as the owner's. Both paths now route through
+# schedule_turn_check, and the turn id decides which one checks: the first
+# to schedule a check for an id owns it, and the other stands down.
+
+ROUTE_ROOM = "room"        # the armed pass (run_pass)
+ROUTE_AMBIENT = "ambient"  # the room-off check (run_ambient), solo included
+ROUTE_NONE = "none"        # matcher off, or nobody remembered to compare
+
+_CHECKED_TURNS: dict = {}
+_CHECKED_TURNS_MAX = 256
+
+# The batch path has no websocket session to hold its label bookkeeping, so
+# each chat gets one RoomSession for its batch turns. Bounded like the
+# stash; a chat that falls out simply starts fresh ordinals.
+_BATCH_SESSIONS: dict = {}
+_BATCH_SESSIONS_MAX = 8
+
+
+def check_route(room_on, ambient_ok) -> str:
+    """Which identity check one voiced turn gets (pure). An armed room runs
+    the armed pass. Otherwise the room-off check runs whenever the matcher
+    is on and somebody is remembered, and it decides listening or solo
+    itself, from the chat row. Solo is not a route of its own because a
+    disarm can land between the commit and the check."""
+    if room_on:
+        return ROUTE_ROOM
+    return ROUTE_AMBIENT if ambient_ok else ROUTE_NONE
+
+
+def turn_checked(turn_id) -> bool:
+    """Has a check already been scheduled for this turn id?"""
+    return bool(turn_id) and turn_id in _CHECKED_TURNS
+
+
+def _note_turn_checked(turn_id):
+    if not turn_id:
+        return
+    _CHECKED_TURNS.pop(turn_id, None)  # re-insert = newest
+    _CHECKED_TURNS[turn_id] = time.monotonic()
+    while len(_CHECKED_TURNS) > _CHECKED_TURNS_MAX:
+        _CHECKED_TURNS.pop(next(iter(_CHECKED_TURNS)))
+
+
+def batch_session(chat_id) -> "RoomSession":
+    """The RoomSession a chat's batch-transcribed turns share."""
+    session = _BATCH_SESSIONS.pop(chat_id, None) or RoomSession()
+    _BATCH_SESSIONS[chat_id] = session  # re-insert = newest
+    while len(_BATCH_SESSIONS) > _BATCH_SESSIONS_MAX:
+        _BATCH_SESSIONS.pop(next(iter(_BATCH_SESSIONS)))
+    return session
+
+
+def turn_check_state(chat_id, cfg):
+    """(room_on, ambient_ok) for a batch turn, read from the durable chat
+    row and the anchor store (worker thread). The relay reads the same two
+    facts from its session: the live room mirror, and ambient_eligible at
+    session open."""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT room_mode FROM chats WHERE id=?",
+                          (chat_id,)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return False, False
+    from . import anchors
+    return bool(row["room_mode"]), ambient_eligible(anchors.store().people(),
+                                                    cfg)
+
+
+def schedule_turn_check(chat_id, pcm, sample_rate, session, cfg, *, room_on,
+                        ambient_ok, turn_id=None, speculative=None,
+                        commit_ts=None):
+    """Route one voiced turn to its identity check and return the route,
+    IMMEDIATELY: every check is a never-awaited task, exactly as before.
+    A room-off turn is also stashed, so a confirmed introduction can claim
+    its audio as the owner's first anchor. A turn id is noted only when a
+    check was really scheduled, so a relay commit that carried no audio
+    leaves the batch copy free to check the turn."""
+    commit_ts = db.now() if commit_ts is None else commit_ts
+    route = check_route(room_on, ambient_ok)
+    task = None
+    if route == ROUTE_ROOM:
+        task = schedule_pass(chat_id, pcm, sample_rate, commit_ts, session,
+                             cfg, turn_id=turn_id, speculative=speculative)
+    else:
+        stash_utterance(chat_id, pcm, sample_rate)
+        if route == ROUTE_AMBIENT:
+            task = schedule_ambient(chat_id, pcm, sample_rate, commit_ts,
+                                    session, cfg, turn_id=turn_id,
+                                    speculative=speculative)
+    if task is not None:
+        _note_turn_checked(turn_id)
+    return route
+
+
+def wav_pcm16(data: bytes):
+    """(pcm, sample_rate) out of a PCM-16 mono WAV, or None (pure; the
+    inverse of pcm16_wav). The batch path's audio copy arrives in this
+    shape, built by the browser from its own recording. Anything else, or
+    anything malformed, is None: the turn then goes unchecked, the same as
+    before #461, and never breaks the transcription beside it. Keeps the
+    newest MAX_UTTERANCE_SECONDS, like the relay's buffer."""
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 44 \
+            or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    pos, fmt, pcm = 12, None, None
+    while pos + 8 <= len(data):
+        cid = data[pos:pos + 4]
+        size = struct.unpack("<I", data[pos + 4:pos + 8])[0]
+        body = data[pos + 8:pos + 8 + size]
+        if cid == b"fmt " and len(body) >= 16:
+            fmt = struct.unpack("<HHIIHH", body[:16])
+        elif cid == b"data":
+            pcm = bytes(body)
+            break
+        pos += 8 + size + (size & 1)
+    if fmt is None or pcm is None:
+        return None
+    audio_format, channels, rate, _, _, bits = fmt
+    if audio_format != 1 or channels != 1 or bits != 16 \
+            or not 8000 <= rate <= 48000:
+        return None
+    pcm = pcm[:len(pcm) - (len(pcm) % 2)]
+    cap = MAX_UTTERANCE_SECONDS * rate * 2
+    pcm = pcm[-cap:]
+    return (pcm, rate) if pcm else None
 
 
 # ---------- the fire-and-forget pass ----------
@@ -1629,20 +1803,29 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
     stays off and only the introduction/command/toggle doors remain (#28
     PR-B - the bounded EL sniff retired, so ambient is the only automatic
     door and it NEVER makes an ElevenLabs call). Reuses the speculative
-    silence-start verdict when fresh. Every failure ends here."""
+    silence-start verdict when fresh. Every failure ends here.
+
+    In solo (#461) the same check runs through solo_decision: it labels,
+    and it never arms, seats or asks."""
     t0 = time.perf_counter()
     try:
         plan = await _in_voice_thread(_ambient_plan, chat_id, sample_rate, cfg)
         if plan is None:
             return
-        candidates, owner_ok = plan
+        candidates, owner_ok, solo = plan
         verdict = await _utterance_verdict(chat_id, pcm, sample_rate,
                                            candidates, cfg, speculative)
         if verdict is None:
             return
         decision = ambient_decision(verdict, cfg.get("user_name") or "User",
                                     owner_ok)
-        if decision != "defer":
+        if solo:
+            decision = solo_decision(decision)
+        if decision == "mark_unknown":
+            record_decision(chat_id, DECISION_UNRESOLVED,
+                            (time.perf_counter() - t0) * 1000,
+                            verdict.get("reason", ""), turn_id=turn_id)
+        elif decision != "defer":
             # A local decision was actually made (owner confirmed, known
             # voice named, or a clear stranger detected): the health strip's
             # pulse. A defer records nothing.
@@ -1667,6 +1850,23 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
             await _arm_known_pass(chat_id, pcm, sample_rate, commit_ts,
                                   session, cfg, verdict, t0, turn_id=turn_id)
             return
+        if decision == "name_known":
+            # Solo (#461): a remembered guest is named, and their bank and
+            # the mismatch cross-check get the turn as on any named turn.
+            # No arm and no seat: roster_join stays False.
+            await _fast_label_pass(chat_id, pcm, sample_rate, commit_ts,
+                                   session, cfg, verdict, turn_id=turn_id)
+            return
+        if decision == "mark_unknown":
+            # Solo (#461): a clear voice that isn't the owner's. The turn
+            # says so, the way an armed room's defer does, so memory never
+            # files it as the owner's. No arm and no ask.
+            await _deliver_label(
+                chat_id, pcm, sample_rate, commit_ts, session,
+                label_payload([], unresolved=verdict.get("reason")
+                              or "below_threshold"),
+                turn_id=turn_id)
+            return
         if decision == "arm_unknown":
             await _in_voice_thread(_arm_ambient_unknown, chat_id, cfg)
             ordinal = session.assign(["ambient_unknown"])
@@ -1678,8 +1878,11 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                 label_payload(ordinal, clusters=["ambient_unknown"],
                               uncertain=list(ordinal), source=None),
                 session, turn_id=turn_id)
-            if target_id:
-                await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
+            # #461: the ask no longer waits on the label write. The room
+            # has just armed on a voice nobody knows, so the question
+            # stands whether or not a row came back; the id, when there is
+            # one, lets the ask point at the turn.
+            await _in_voice_thread(_raise_unknown_voice, chat_id, target_id)
         # decision == "defer": nothing here; the introduction/command/toggle
         # doors still cover what the matcher could not (#28 PR-B).
     except Exception:
@@ -1690,25 +1893,29 @@ async def run_ambient(chat_id, pcm, sample_rate, commit_ts, session, cfg,
 def _ambient_plan(chat_id, sample_rate, cfg):
     """Ambient snapshot for one check (worker thread): None unless the check
     should still run - the chat's durable room mode must be OFF (another path
-    may have armed it since the utterance was scheduled), ambient must not be
-    disarmed, and at least one sufficient remembered voice must exist to match
-    against. Returns (candidates, owner_ok): the sufficient people as matcher
-    candidates, and whether the owner is among them (so a below-threshold
-    result can mean 'not the owner')."""
+    may have armed it since the utterance was scheduled), and at least one
+    sufficient remembered voice must exist to match against. Returns
+    (candidates, owner_ok, solo): the sufficient people as matcher
+    candidates, whether the owner is among them (so a below-threshold
+    result can mean 'not the owner'), and whether the owner said "solo
+    mode" (#461: the check then labels and never arms). Solo is read here,
+    from the chat row, so a disarm between the commit and the check still
+    holds."""
     con = db.connect()
     try:
         row = con.execute("SELECT room_mode, ambient_off FROM chats WHERE id=?",
                           (chat_id,)).fetchone()
     finally:
         con.close()
-    if not row or row["room_mode"] or row["ambient_off"]:
+    if not row or row["room_mode"]:
         return None
     from . import anchors
     people = anchors.store().people()
     candidates = remembered_candidates(people)
     if not candidates:
         return None
-    return candidates, owner_sufficient(people, cfg.get("user_name"))
+    return (candidates, owner_sufficient(people, cfg.get("user_name")),
+            bool(row["ambient_off"]))
 
 
 def _arm_ambient_unknown(chat_id, cfg):
@@ -1882,9 +2089,20 @@ def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
             target = db.get_message_by_voice_turn(con, chat_id, turn_id)
             if not target:
                 return _NO_ROW_YET  # the /send race - worth a fast retry
-            if target["id"] in session.labelled_ids \
-                    or target.get("voice_labels"):
-                return None  # exists but already labelled: nothing to do
+            if target["id"] in session.labelled_ids:
+                return None  # this session already labelled it
+            if target.get("voice_labels"):
+                if carries_payload(target["voice_labels"], payload):
+                    # #461: /send claimed THIS pass's parked label inside
+                    # the insert, which is the common case since labels
+                    # ride the insert. The label is on the row, so the
+                    # work that keys off the row (the who-joined ask, the
+                    # mismatch cross-check, tap-to-correct's audio) still
+                    # needs its id. Returning None here silenced all three
+                    # for nearly every turn.
+                    session.labelled_ids.add(target["id"])
+                    return target["id"]
+                return None  # someone else's label: nothing to do
         else:
             rows = db.get_voice_label_candidates(con, chat_id, commit_ts)
             target = pick_target(rows, session.labelled_ids)
