@@ -246,6 +246,30 @@ def test_batch_turn_with_the_room_off_gets_the_room_off_check(app, batch,
     assert diarize.peek_stashed_utterance(chat["id"]) is not None
 
 
+def test_the_shadow_scores_each_checked_turn_once(app, batch, matcher,
+                                                  monkeypatch):
+    """The room-mode shadow test (#465) reads each armed turn after its
+    identity check. A backup-path turn is one checked turn, so it hands the
+    shadow one turn, and a second copy of the same turn hands it none."""
+    from backend import voice_shadow
+    handed = []
+    monkeypatch.setattr(voice_shadow, "schedule",
+                        lambda chat_id, pcm, rate, cfg, turn_id, today:
+                        handed.append((turn_id, today.get("path"))))
+    pid = _remember("Sam")
+    matcher["verdicts"] = [_match("Sam", pid)]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _armed_chat(c, ("Sam", pid))
+        assert _post_stt(c, chat["id"], turn_id="tS1",
+                         wav=_wav()).status_code == 200
+        assert _wait_for(lambda: handed)
+        assert _post_stt(c, chat["id"], turn_id="tS1",
+                         wav=_wav()).status_code == 200
+        time.sleep(0.3)
+    assert handed == [("tS1", "local")]
+    assert matcher["calls"] == 1
+
+
 def test_batch_skips_a_turn_the_relay_already_checked(app, batch, matcher):
     pid = _remember("Sam")
     with TestClient(app, base_url="http://127.0.0.1") as c:
