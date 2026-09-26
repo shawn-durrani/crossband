@@ -70,6 +70,11 @@ it appears.
 5. [docs/LATENCY.md](LATENCY.md): where the wait before a reply goes,
    how to measure it on your own install, and the two ways the numbers
    mislead.
+6. [docs/VOICE_ID_REDESIGN.md](VOICE_ID_REDESIGN.md): the plan to
+   replace how the app names voices. It follows each voice through a
+   session and names the voice once, with a score calibrated to your
+   household. Read it beside docs/VOICE_ID.md, which covers what runs
+   today.
 
 ### The eval harnesses, by kind
 
