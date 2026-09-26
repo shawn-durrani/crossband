@@ -53,7 +53,7 @@ INDEX_NAME = "index.json"
 
 # ---- clip acceptance / sufficiency (the tuning knobs, in one place) ----
 MIN_CLIP_SECONDS = 1.0     # shorter than this carries too little voice to help
-MAX_CLIP_SECONDS = 10.0    # longer clips are trimmed to their first 10s
+MAX_CLIP_SECONDS = 10.0    # longer clips keep their best 10s of speech (#477)
 MIN_CLIP_RMS = 120         # int16 RMS floor - near-silence is not an anchor
 # Clip LENGTH CLASSES (#28 PR-B, eighth field test): the banks were built
 # from long utterances only, so a second-long interjection had nothing like
@@ -393,10 +393,19 @@ def identification_paused(person: dict) -> bool:
 
 
 def trim_clip(pcm: bytes, sample_rate: int) -> bytes:
-    """Cap a clip at MAX_CLIP_SECONDS (keep the head - utterance starts are
-    where the cleanest single-speaker audio usually is)."""
+    """Cap a clip at MAX_CLIP_SECONDS. A longer turn keeps the stretch that
+    holds the most speech (#477, voiceid.best_speech_window), so a long
+    monologue banks its best ten seconds and not whatever came first. The
+    result is still one contiguous slice of the turn, which is what
+    retract_utterance_clips relies on. A window can start or end in a
+    pause, so its dead air is trimmed again."""
+    from . import voiceid
     cap = int(MAX_CLIP_SECONDS * (sample_rate or 16000)) * 2
-    return pcm[:cap]
+    if len(pcm) <= cap:
+        return pcm
+    return voiceid.trim_dead_air(
+        voiceid.best_speech_window(pcm, sample_rate, MAX_CLIP_SECONDS),
+        sample_rate)
 
 
 def person_id_for(name: str) -> str:
@@ -915,7 +924,7 @@ class AnchorStore:
 
     def add_clip(self, person_id: str, pcm: bytes, sample_rate: int,
                  source: str, score=None, membro_sha=None,
-                 added_at=None) -> bool:
+                 added_at=None, dedupe=False) -> bool:
         """Offer one utterance's audio as an anchor clip. Trims the dead
         air off both ends (#310), applies the quality gate, the 10s cap
         and the keep-best-N refresh; evicted clips have their files
@@ -934,7 +943,11 @@ class AnchorStore:
         local file. `added_at` (#477): for a clip restored from membro,
         when it was first captured, so rotation's sessions place it on
         the day it was spoken. Missing, unparseable or in the future
-        means now."""
+        means now. `dedupe` (#477): for a human confirming a turn the bank
+        may already hold. When the same bytes are already in this person's
+        bank, nothing new is written and True comes back, and a clip an
+        automated path banked takes this source, so a human now stands
+        behind it."""
         from . import voiceid
         pcm = trim_clip(voiceid.trim_dead_air(pcm or b"", sample_rate),
                         sample_rate)
@@ -947,6 +960,17 @@ class AnchorStore:
             person = data["people"].get(person_id)
             if person is None:
                 return False
+            held = self._held_copy(person, pcm, sample_rate) if dedupe \
+                else None
+            if held is not None:
+                if source in VOUCH_SOURCES and not clip_protected(held):
+                    held["upgraded_from"] = held.get("source", "")
+                    held["source"] = source
+                    if not person.get("vouched_at"):
+                        person["vouched_at"] = time.time()
+                        person["vouched_by"] = source
+                    self._save(data)
+                return True
             fname = self._write_clip(pcm, sample_rate, person_id)
             clips = person.get("clips", [])
             was_sufficient = is_sufficient(clips)
@@ -993,6 +1017,22 @@ class AnchorStore:
                 if c["file"] not in kept_files:
                     self._delete_file(c["file"])
         return True
+
+    def _held_copy(self, person: dict, pcm: bytes, sample_rate: int):
+        """The clip in this person's bank holding exactly these bytes, or
+        None (#477). Only files of the same size are read."""
+        size = len(pcm) + 44
+        for c in person.get("clips", []):
+            if c.get("sample_rate") != sample_rate:
+                continue
+            try:
+                if os.path.getsize(self.root / c["file"]) != size:
+                    continue
+                if self._read_clip_pcm(c["file"]) == pcm:
+                    return c
+            except OSError:
+                continue
+        return None
 
     def _record_refusal(self, person_id, source, q):
         """A refused clip is not silent (#312). The failing measure lands

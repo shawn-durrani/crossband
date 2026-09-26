@@ -216,8 +216,10 @@ as a final guard.
 
 A bank holds up to 10 clips longer than two seconds and 5 shorter
 ones. The short clips give a one-word remark something like itself to
-match. Once a bank is full, a new clip has to win a place, and the clip
-that loses is deleted. That's rotation.
+match. A clip is at most 10 seconds long, and a longer turn keeps the
+10 seconds that hold the most speech. Once a bank is full, a new clip
+has to win a place, and the clip that loses is deleted. That's
+rotation.
 
 Rotation keeps clips from as many sittings as it can. The app groups a
 person's clips into sessions, where a session is a run of clips with
@@ -238,6 +240,30 @@ out, and the gaps between words stay in. The stored clip keeps its
 pauses, so a clip you play back on the Voices page sounds as it was
 recorded. A clip with less than a second of speech in it is used
 whole.
+
+## Teaching it a voice yourself
+
+A named turn adds to its person's bank only when the match clears the
+banking bar, which sits a little higher than the naming bar. A voice that
+always scores just under it gets named but never learns. You can teach
+it yourself. Tap the name on the turn and pick "Yes, that's Sam: learn
+from this". The name stays, and the app learns from that turn whatever
+it scored. The bank counts as vouched, and the clip is kept through
+rotation, the same as a clip from a correction.
+
+The app keeps the audio of the last 24 turns in memory, up to the last
+30 seconds of each, so confirm soon after the turn. When the recording
+has gone, the turn says so and nothing is learnt. A turn with two
+voices in it is never learnt from. If the voice on the turn matches
+yours, the turn is labelled with your name, and the line under it says
+so.
+
+A remembered voice that says its own name teaches the app the same
+way. When someone the app has just named Sam says "this is Sam" or "my
+name is Samuel", the turn's audio goes into Sam's bank as an
+introduction. A rename in the same breath still happens. The words and
+the voice have to agree, so Sam saying Dave's name feeds nobody's
+bank.
 
 ## English bias
 

@@ -872,6 +872,12 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             outcomes["corrections"] = result
             if outcome is None or outcome == "no_change":
                 outcome = result
+        if verdict["introductions"] or verdict["corrections"]:
+            # #477: a remembered voice that names itself vouches its own
+            # bank with this turn's audio. Additive to the paths above and
+            # silent in the verdict line: it changes no label and no name.
+            await asyncio.to_thread(vouch_self_named_turn, chat_id,
+                                    message_id, verdict, cfg)
         if verdict["depth"]:
             # Spoken reasoning depth (#105).
             result = await asyncio.to_thread(depth.apply_depth, chat_id,
@@ -908,6 +914,58 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
         _log_verdict(chat_id, "scan_error")
         log.info("introduction scan failed: chat=%s", chat_id)
         log.debug("introduction scan failure detail", exc_info=True)
+
+
+def vouch_self_named_turn(chat_id, message_id, verdict, cfg) -> bool:
+    """A remembered voice introduced itself by name (#477): "this is Sam",
+    "my name is Samuel". When the turn's own voice label confidently names
+    that same person, the words and the voice agree, which is as sure as
+    the app gets without the owner. The turn's audio banks for them as an
+    introduction: no banking bar, the bank vouched, the clip protected from
+    rotation. Before this, such a turn only renamed the person, and a voice
+    scoring just under the #222 bar gained nothing from saying who it was.
+
+    The guard is the voice. A name only counts when it is a spelling of one
+    of the labelled person's names (identity, preferred or merged, read
+    after this scan's own corrections landed), so Sam saying "this is Dave"
+    feeds nobody's bank, and neither does the owner introducing someone
+    else. A doubtful, owner-corrected, crosstalk or two-voice turn is left
+    alone, and so is a turn whose audio the recent cache no longer holds.
+    The audio is peeked, never taken, so a later tap-to-correct still has
+    it, and a turn the live path already banked is not stored twice.
+    Returns True when the bank learnt from the turn. Worker thread.
+    Content-free logging."""
+    if not message_id:
+        return False
+    spoken = list(verdict.get("introductions") or [])
+    for corr in verdict.get("corrections") or []:
+        spoken += [corr.get("name"), corr.get("also"), corr.get("who")]
+    spoken = [n for n in spoken if isinstance(n, str) and n.strip()]
+    if not spoken:
+        return False
+    con = db.connect()
+    try:
+        label = _turn_confident_label(con, message_id)
+    finally:
+        con.close()
+    if not label:
+        return False
+    store = anchors.store()
+    person = store.find_by_name(label)
+    if person is None or not any(voice_match_name_compatible(n, person)
+                                 for n in spoken):
+        return False
+    entry = anchors.peek_audio(message_id)
+    if not entry or entry[2] != 1:
+        return False
+    learned = store.add_clip(person["person_id"], entry[0], entry[1],
+                             source="introduction", dedupe=True)
+    log.info("remembered voice introduced itself: chat=%s learned=%s",
+             chat_id, learned)
+    if learned:
+        from . import voiceid
+        voiceid.audit_banks_if_changed(cfg)
+    return learned
 
 
 def _present_names(chat_id) -> list:

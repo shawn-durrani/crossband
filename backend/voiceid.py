@@ -586,13 +586,13 @@ def _frame_levels(samples, starts, n, np):
     return [_frame_rms(samples, s0, n, np) for s0 in starts]
 
 
-def speech_spans(pcm, sample_rate) -> list:
+def speech_spans(pcm, sample_rate, pad_seconds=None) -> list:
     """Where the speech is in one PCM-16 clip (#477), as (start, end)
     sample offsets, merged and in order. A frame counts when it clears
     both the gate's absolute floor and SPEECH_ONLY_FLOOR_RATIO of the
-    loudest frame, and each counted frame is widened by
-    SPEECH_ONLY_PAD_SECONDS on both sides. Empty for silence, and the
-    whole clip when it is too short to frame. Pure."""
+    loudest frame, and each counted frame is widened by `pad_seconds`
+    (SPEECH_ONLY_PAD_SECONDS unless given) on both sides. Empty for
+    silence, and the whole clip when it is too short to frame. Pure."""
     sr = sample_rate or 16000
     n = int(SPEECH_FRAME_SECONDS * sr)
     hop = max(1, int(SPEECH_FRAME_HOP_SECONDS * sr))
@@ -606,7 +606,8 @@ def speech_spans(pcm, sample_rate) -> list:
     levels = _frame_levels(samples, starts, n, np)
     floor = max(SPEECH_FRAME_MIN_RMS,
                 max(levels) * SPEECH_ONLY_FLOOR_RATIO)
-    pad = int(SPEECH_ONLY_PAD_SECONDS * sr)
+    pad = int((SPEECH_ONLY_PAD_SECONDS if pad_seconds is None
+               else pad_seconds) * sr)
     spans = []
     for s0, level in zip(starts, levels):
         if level < floor:
@@ -617,6 +618,32 @@ def speech_spans(pcm, sample_rate) -> list:
         else:
             spans.append((lo, hi))
     return spans
+
+
+def best_speech_window(pcm, sample_rate, seconds) -> bytes:
+    """The `seconds` of one PCM-16 recording that hold the most speech
+    (#477), as a contiguous slice, so a long turn banks its best stretch
+    and not whatever came first. Speech is speech_spans with no pad. The
+    amount of speech inside a window changes in straight lines as the
+    window slides, so the best one starts where one of its edges meets
+    the edge of a stretch of speech, and only those starts are tried.
+    Ties go to the earliest. Shorter audio comes back whole. Pure."""
+    sr = sample_rate or 16000
+    usable = (len(pcm) - (len(pcm) % 2)) // 2
+    win = int(seconds * sr)
+    if usable <= win:
+        return pcm[:usable * 2]
+    spans = speech_spans(pcm, sr, pad_seconds=0.0)
+    last = usable - win
+    starts = {0, last}
+    for lo, hi in spans:
+        starts.update((lo, hi, lo - win, hi - win))
+
+    def speech_in(s0):
+        return sum(max(0, min(hi, s0 + win) - max(lo, s0)) for lo, hi in spans)
+
+    best = max(sorted(min(max(0, x), last) for x in starts), key=speech_in)
+    return pcm[best * 2:(best + win) * 2]
 
 
 def speech_only(pcm, sample_rate, spans=None) -> bytes:

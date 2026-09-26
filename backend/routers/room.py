@@ -455,7 +455,19 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
        single-speaker utterance, it feeds the person's anchor set as ground
        truth (source='correction'). A two-voice utterance is never fed - it
        is not clean evidence of anyone's voice - and after a restart there is
-       simply no audio left to learn from; the label still corrects."""
+       simply no audio left to learn from; the label still corrects.
+
+    CONFIRM AND LEARN (#477): the same call with the turn's OWN label is the
+    owner saying "yes, that's them". The label stays (now owner-corrected),
+    and the audio banks exactly as a correction's does: no banking bar, the
+    bank vouched, the clip protected from rotation. That is the rescue for a
+    clean turn named just under the #222 bar, which fed nothing. A turn the
+    live path already banked is not stored twice: the held clip takes the
+    correction source instead. The answer says what happened, so the menu
+    can say it: `learned`, and when nothing was learnt, `reason` is
+    audio_gone (the recent cache no longer holds it), two_voices, or
+    refused (the clip gate turned it away). `name` is the name the turn now
+    carries, which the owner-voice guard below can change."""
     name = (body.get("name") or "").strip()[:40]
     if not name:
         raise HTTPException(400, "name required")
@@ -472,6 +484,9 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
             old = json.loads(row["voice_labels"] or "{}")
         except json.JSONDecodeError:
             old = {}
+        if not isinstance(old, dict):
+            old = {}
+        before = [l for l in (old.get("labels") or []) if isinstance(l, str)]
         # Resolve an owner alias BEFORE the label is written, so the turn
         # carries the canonical owner name rather than the spelling that was
         # typed or heard (#28, tenth field test - see the anchor note below).
@@ -519,13 +534,20 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
         # tenth field test. owner_alias covers spelling variants of the
         # configured name, so the phantom cannot be minted by ear either.
         pid = store.ensure_person(name)
-        learned = False
+        confirmed = len(before) == 1 \
+            and before[0].strip().casefold() == name.casefold()
+        learned, reason = False, ""
         cached = anchors.take_audio(message_id)
-        if cached:
-            pcm, sample_rate, n_clusters = cached
-            if n_clusters == 1:
-                learned = store.add_clip(pid, pcm, sample_rate,
-                                         source="correction")
+        if not cached:
+            reason = "audio_gone"
+        elif cached[2] != 1:
+            reason = "two_voices"
+        else:
+            pcm, sample_rate, _ = cached
+            learned = store.add_clip(pid, pcm, sample_rate,
+                                     source="correction", dedupe=confirmed)
+            if not learned:
+                reason = "refused"
         # The corrected person is evidently in the room: put them on the
         # roster (or re-mark them present) and link their anchors. The seat
         # trigger (#84) is the corrected message, by the owner's hand.
@@ -541,6 +563,8 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
         # audit (#28 PR-B). No-op when the matcher is unavailable.
         from .. import voiceid
         voiceid.audit_banks_if_changed(request.app.state.settings.as_cfg())
-    log.info("speaker corrected: chat=%s msg=%s learned=%s",
-             chat_id, message_id, learned)
-    return {"ok": True, "learned": learned}
+    log.info("speaker corrected: chat=%s msg=%s confirmed=%s learned=%s "
+             "reason=%s", chat_id, message_id, confirmed, learned,
+             reason or "-")
+    return {"ok": True, "learned": learned, "reason": reason, "name": name,
+            "confirmed": confirmed}

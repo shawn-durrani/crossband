@@ -20,17 +20,33 @@ embedding model, no ONNX:
 4. The pairwise hygiene rule with bigger banks. Two recording setups of
    one person disagree with each other and stay; a clip that sits closer
    to another person's voice than its own is still set aside.
+5. Confirm and learn. Picking the turn's own name in "Who spoke this?"
+   keeps the label, banks the turn for that person whatever the banking
+   bar said, vouches the bank and protects the clip; says audio_gone,
+   two_voices or refused when nothing was learnt; stores a turn the live
+   path already banked once; and keeps the owner-voice guard.
+6. A remembered voice introducing itself. When the words name the person
+   the turn's own voice label names, the turn banks as an introduction
+   and vouches the bank, beside the rename. Another person's name, a
+   doubtful label or a turn with no audio left banks nothing.
+7. A long turn banks its best ten seconds of speech, not its first.
 """
 
+import asyncio
+import json
 import math
 import os
 import struct
 import time
 
 import pytest
+from fastapi.testclient import TestClient
 
-from backend import anchors, db, voiceid
+from backend import anchors, db, introductions, voiceid
+from backend.app import create_app
 from backend.config import Settings
+from roomkit import _insert_user_message, _message_labels, as_utility_completion
+from tests.conftest import speech_pcm
 
 SR = 16000
 _ALEX, _SAM = 1200, 6000          # identity codes, read back by the stubs
@@ -407,3 +423,232 @@ def test_a_setup_clip_closer_to_someone_else_is_judged_as_before():
     sam = [(f"sam{i}", _emb(_SPK_SAM, _LAPTOP, 2.0)) for i in range(5)]
     assert voiceid.quarantine_verdicts({"alex": alex, "sam": sam}) \
         == {"alex": ["laptop"]}
+
+
+# ── 5. confirm and learn ───────────────────────────────────────────────────
+
+@pytest.fixture
+def app(tmp_path):
+    return create_app(Settings(data_dir=str(tmp_path / "data"),
+                               memory_url="http://127.0.0.1:1",
+                               user_name="Alex"))
+
+
+def _labelled_turn(chat_id, name, uncertain=False, score=0.546):
+    """A user turn the live check named, just under the banking bar."""
+    msg = _insert_user_message(chat_id, "a long clean remark")
+    con = db.connect()
+    db.set_message_voice_labels(con, msg["id"], {
+        "clusters": ["local"], "labels": [name],
+        "uncertain": [name] if uncertain else [], "source": "local",
+        "score": score})
+    con.close()
+    return msg
+
+
+def _speaker(c, chat_id, msg_id, name):
+    r = c.post(f"/api/chats/{chat_id}/messages/{msg_id}/speaker",
+               json={"name": name})
+    assert r.status_code == 200
+    return r.json()
+
+
+def _bank(name):
+    person = anchors.store().find_by_name(name)
+    return anchors.store()._load()["people"][person["person_id"]]
+
+
+def test_confirming_a_turn_keeps_the_label_and_learns_from_it(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        anchors.store().ensure_person("Sam")
+        msg = _labelled_turn(chat["id"], "Sam")
+        # 0.546 is under the banking bar (0.5 + 0.1): the live path fed nothing
+        assert not voiceid.score_banks(0.546, app.state.settings.as_cfg())
+        anchors.remember_audio(msg["id"], speech_pcm(6.0), SR, 1)
+        out = _speaker(c, chat["id"], msg["id"], "Sam")
+        assert out == {"ok": True, "learned": True, "reason": "",
+                       "name": "Sam", "confirmed": True}
+        label = json.loads(_message_labels(msg["id"]))
+        assert label["labels"] == ["Sam"] and label["corrected"] is True
+        bank = _bank("Sam")
+        assert [c_["source"] for c_ in bank["clips"]] == ["correction"]
+        assert bank["vouched_at"] and bank["vouched_by"] == "correction"
+        assert anchors.clip_protected(bank["clips"][0])
+
+
+def test_a_confirm_says_why_nothing_was_learnt(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        anchors.store().ensure_person("Sam")
+        gone = _labelled_turn(chat["id"], "Sam")
+        out = _speaker(c, chat["id"], gone["id"], "Sam")
+        assert (out["learned"], out["reason"]) == (False, "audio_gone")
+        assert json.loads(_message_labels(gone["id"]))["labels"] == ["Sam"]
+        two = _labelled_turn(chat["id"], "Sam")
+        anchors.remember_audio(two["id"], speech_pcm(4.0), SR, 2)
+        assert _speaker(c, chat["id"], two["id"], "Sam")["reason"] \
+            == "two_voices"
+        faint = _labelled_turn(chat["id"], "Sam")
+        anchors.remember_audio(faint["id"], speech_pcm(0.6), SR, 1)
+        assert _speaker(c, chat["id"], faint["id"], "Sam")["reason"] \
+            == "refused"
+        assert _bank("Sam")["clips"] == []
+
+
+def test_a_confirm_never_stores_a_turn_twice(app):
+    """The live path banked this turn already (it cleared the bar). The
+    confirm adds nothing, and the held clip becomes one a human stood
+    behind."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        store = anchors.store()
+        pid = store.ensure_person("Sam")
+        audio = speech_pcm(5.0)
+        assert store.add_clip(pid, audio, SR, "accumulated", score=0.71)
+        msg = _labelled_turn(chat["id"], "Sam", score=0.71)
+        anchors.remember_audio(msg["id"], audio, SR, 1)
+        out = _speaker(c, chat["id"], msg["id"], "Sam")
+        assert out["learned"] is True and out["confirmed"] is True
+        clips = _bank("Sam")["clips"]
+        assert len(clips) == 1 and len(_files(store)) == 1
+        assert clips[0]["source"] == "correction"
+        assert clips[0]["upgraded_from"] == "accumulated"
+
+
+def test_a_confirmed_uncertain_label_becomes_certain(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        anchors.store().ensure_person("Mateo")
+        msg = _labelled_turn(chat["id"], "Mateo", uncertain=True)
+        anchors.remember_audio(msg["id"], speech_pcm(3.0), SR, 1)
+        assert _speaker(c, chat["id"], msg["id"], "Mateo")["learned"]
+        label = json.loads(_message_labels(msg["id"]))
+        assert label["labels"] == ["Mateo"] and label["uncertain"] == []
+
+
+def test_the_owner_voice_guard_still_holds_on_a_confirm(app, monkeypatch):
+    """A turn whose audio confidently matches the owner's bank can't be
+    confirmed as someone else: it becomes the owner's, and the answer
+    says so."""
+    monkeypatch.setattr(voiceid, "identify_utterance",
+                        lambda pcm, sr, cands, cfg: {
+                            "status": voiceid.MATCH,
+                            "person_id": cands[0]["person_id"],
+                            "name": cands[0]["name"], "score": 0.9,
+                            "reason": "match"})
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        store = anchors.store()
+        owner = store.ensure_person("Alex")
+        assert store.add_clip(owner, speech_pcm(8.0), SR, "introduction")
+        store.ensure_person("Sam")
+        msg = _labelled_turn(chat["id"], "Sam")
+        anchors.remember_audio(msg["id"], speech_pcm(3.0), SR, 1)
+        out = _speaker(c, chat["id"], msg["id"], "Sam")
+        assert out["name"] == "Alex" and out["confirmed"] is False
+        assert json.loads(_message_labels(msg["id"]))["labels"] == ["Alex"]
+        assert _bank("Sam")["clips"] == []
+
+
+# ── 6. a remembered voice introducing itself ──────────────────────────────
+
+@pytest.fixture
+def verdict(monkeypatch):
+    """The merged intent call, faked: state['reply'] is its JSON."""
+    state = {"reply": {}}
+
+    async def fake(prompt, cfg, max_tokens=2000):
+        return json.dumps(state["reply"])
+
+    monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
+                        as_utility_completion(fake))
+    return state
+
+
+def _scan(app, chat_id, msg_id, text):
+    asyncio.run(introductions.scan_user_turn(
+        chat_id, msg_id, text, app.state.settings.as_cfg()))
+
+
+def test_a_known_voice_saying_its_name_vouches_its_bank(app, verdict):
+    """Sam, named by voice at 0.546, says "my name is Samuel". The rename
+    still lands, and now the turn banks for Sam as an introduction."""
+    verdict["reply"] = {"corrections": [{"who": "", "name": "Samuel"}]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        anchors.store().ensure_person("Sam")
+        msg = _labelled_turn(chat["id"], "Sam")
+        anchors.remember_audio(msg["id"], speech_pcm(6.0), SR, 1)
+        _scan(app, chat["id"], msg["id"], "my name is Samuel")
+        person = anchors.store().find_by_name("Sam")
+        assert person["preferred_name"] == "Samuel"        # renamed, as before
+        bank = _bank("Sam")
+        assert [c_["source"] for c_ in bank["clips"]] == ["introduction"]
+        assert bank["vouched_by"] == "introduction"
+        # the audio was peeked, so a correction can still use it
+        assert anchors.peek_audio(msg["id"]) is not None
+
+
+def test_an_introduction_by_the_voice_it_names_banks_once(app, verdict):
+    verdict["reply"] = {"introductions": ["Sam"]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        anchors.store().ensure_person("Sam")
+        msg = _labelled_turn(chat["id"], "Sam")
+        anchors.remember_audio(msg["id"], speech_pcm(6.0), SR, 1)
+        _scan(app, chat["id"], msg["id"], "this is Sam")
+        _scan(app, chat["id"], msg["id"], "this is Sam")   # said twice
+        assert [c_["source"] for c_ in _bank("Sam")["clips"]] \
+            == ["introduction"]
+
+
+@pytest.mark.parametrize("reply,uncertain,audio", [
+    ({"introductions": ["Dave"]}, False, True),    # Sam introducing Dave
+    ({"introductions": ["Sam"]}, True, True),      # a doubtful label
+    ({"introductions": ["Sam"]}, False, False),    # the audio has gone
+])
+def test_only_the_voice_that_names_itself_feeds_its_bank(
+        app, verdict, reply, uncertain, audio):
+    verdict["reply"] = reply
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        anchors.store().ensure_person("Sam")
+        msg = _labelled_turn(chat["id"], "Sam", uncertain=uncertain)
+        if audio:
+            anchors.remember_audio(msg["id"], speech_pcm(6.0), SR, 1)
+        _scan(app, chat["id"], msg["id"], "this is someone")
+        for p in anchors.store().people():
+            assert p["clip_count"] == 0
+
+
+# ── 7. a long turn banks its best ten seconds ─────────────────────────────
+
+def _speech_seconds(pcm):
+    return sum(hi - lo for lo, hi in
+               voiceid.speech_spans(pcm, SR, pad_seconds=0.0)) / SR
+
+
+def test_the_best_window_holds_the_most_speech():
+    turn = speech_pcm(1.0) + _silence(8.0) + speech_pcm(9.0)
+    head = turn[:int(10 * SR) * 2]
+    best = voiceid.best_speech_window(turn, SR, 10.0)
+    assert len(best) == len(head)
+    assert _speech_seconds(head) < 2.5
+    assert _speech_seconds(best) > 8.5
+    assert best in turn                          # one contiguous slice
+    # all speech: the earliest window wins the tie, the head as before
+    even = speech_pcm(20.0)
+    assert voiceid.best_speech_window(even, SR, 10.0) == even[:int(10 * SR) * 2]
+    short = speech_pcm(4.0)
+    assert voiceid.best_speech_window(short, SR, 10.0) == short
+
+
+def test_a_long_monologue_banks_its_best_stretch(store):
+    pid = store.ensure_person("Sam")
+    turn = speech_pcm(1.0) + _silence(8.0) + speech_pcm(12.0)
+    assert store.add_clip(pid, turn, SR, "correction")
+    clip = store._read_clip_pcm(_files(store)[0])
+    assert len(clip) <= int(anchors.MAX_CLIP_SECONDS * SR) * 2
+    assert _speech_seconds(clip) > 9.5
+    assert clip in turn

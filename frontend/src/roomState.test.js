@@ -4,12 +4,15 @@
 // What these pin: the "In the room" chip names exactly the present people
 // (the transparency cue must not lie); the ask-fallback and mismatch copy is
 // plain English and never claims a label was changed; the tap-to-correct
-// menu offers roster-first names minus the labels the turn already carries;
-// and the remembered-voices summary states sufficiency honestly.
+// menu offers roster-first names minus the labels the turn already carries,
+// led by a confirm-and-learn option for the turn's own name (#477) whose
+// answer becomes one plain line; and the remembered-voices summary states
+// sufficiency honestly.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   adoptRoomMode, AMBIENT_EXPLAINER, askFlag, cleanPreferredName, displayName,
+  CONFIRM_AUDIO_GONE, confirmNote, confirmOption,
   auditionNotice, selfCollectedNotice,
   flagCopy, FORGET_EXPLAINER, mergeFlag, mismatchByMessage, personSummary,
   reassignOptions, rosterChipText, rosterTitle, sufficiencyProgress,
@@ -568,4 +571,45 @@ test('the outlived-backing ask (#221) says what actually happened', () => {
   assert.equal(selfCollectedNotice({ trust: 'human' }), '')
   assert.equal(selfCollectedNotice({ trust: 'low' }), '')
   assert.equal(selfCollectedNotice(null), '')
+})
+
+test('confirm and learn leads the menu for a turn carrying one name (#477)', () => {
+  const opt = confirmOption([{ label: 'Sam', display: 'Samantha', uncertain: false }])
+  assert.deepEqual(opt, { name: 'Sam', display: "Yes, that's Samantha: learn from this",
+    confirm: true })
+  // an uncertain or still-learning label is exactly what confirming is for
+  assert.equal(confirmOption([{ label: 'Mateo', uncertain: true, learning: true }]).name,
+    'Mateo')
+  // the identity name is sent, the preferred spelling is shown
+  assert.equal(confirmOption([{ label: 'Dave' }]).display,
+    "Yes, that's Dave: learn from this")
+  // nothing to confirm: no label, an ordinal, two voices, junk
+  assert.equal(confirmOption([]), null)
+  assert.equal(confirmOption(null), null)
+  assert.equal(confirmOption([{ label: 'Voice 2', uncertain: true }]), null)
+  assert.equal(confirmOption([{ label: 'Sam' }, { label: 'Dave' }]), null)
+  assert.equal(confirmOption([{ label: '  ' }]), null)
+})
+
+test('the confirm note says what was learnt, or plainly why not (#477)', () => {
+  assert.equal(confirmNote({ ok: true, learned: true, name: 'Sam', reason: '' }, 'Sam'),
+    'Learnt from this turn.')
+  assert.equal(
+    confirmNote({ ok: true, learned: false, name: 'Sam', reason: 'audio_gone' }, 'Sam'),
+    'That recording is no longer held, so nothing was learnt. '
+    + 'Confirm within a few minutes next time.')
+  assert.equal(CONFIRM_AUDIO_GONE.split('. ').length, 2)
+  assert.match(
+    confirmNote({ ok: true, learned: false, name: 'Sam', reason: 'two_voices' }, 'Sam'),
+    /Two voices/)
+  assert.match(
+    confirmNote({ ok: true, learned: false, name: 'Sam', reason: 'refused' }, 'Sam'),
+    /too short or too unclear/)
+  // the owner-voice guard moved the turn: say so, whatever was learnt
+  assert.equal(confirmNote({ ok: true, learned: true, name: 'Alex' }, 'Sam'),
+    'This voice matches Alex, so the turn is now labelled Alex.')
+  // a failed call or no answer says nothing here (the banner owns errors)
+  assert.equal(confirmNote(null, 'Sam'), '')
+  assert.equal(confirmNote({ ok: false }, 'Sam'), '')
+  assert.equal(confirmNote({ ok: true, learned: false, name: 'Sam' }, 'Sam'), '')
 })

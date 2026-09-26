@@ -9,7 +9,7 @@ import { participantInfo } from '../speakers'
 import { classifyUsage, costLabel, COST_TONE } from '../messageCost'
 import { fmtTokens } from '../format'
 import { chipData, chipSuffix, chipTitle, crosstalkNote, crosstalkSegments } from '../voiceChips'
-import { flagCopy, reassignOptions } from '../roomState'
+import { confirmNote, confirmOption, flagCopy, reassignOptions } from '../roomState'
 import { auditChips } from '../auditChips'
 import { shownText } from '../passView'
 
@@ -245,6 +245,8 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
   const [discardConfirm, setDiscardConfirm] = useState(null)
   // Tap-to-correct menu on a labelled user turn (#28 phase 2).
   const [chipMenuOpen, setChipMenuOpen] = useState(false)
+  // What "Yes, that's X: learn from this" did (#477), in one line.
+  const [learnNote, setLearnNote] = useState('')
   // How many characters of this message the PREVIOUS render already showed -
   // fadeWords animates only beyond this, so re-parses can't re-flash old text.
   const seenChars = useRef(0)
@@ -297,9 +299,20 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
     // voiceChips.js / roomState.js (pure, node --test); this only renders
     // what they return. Tapping a chip opens the correction menu.
     const voiceChips = chipData(msg, voicePeople)
+    const confirm = onReassign ? confirmOption(voiceChips) : null
     const reassignNames = onReassign
-      ? reassignOptions(roomRoster, voicePeople, voiceChips.map((c) => c.label))
+      ? [...(confirm ? [confirm] : []),
+         ...reassignOptions(roomRoster, voicePeople, voiceChips.map((c) => c.label))]
       : []
+    const pick = (o) => {
+      setChipMenuOpen(false)
+      setLearnNote('')
+      const done = onReassign?.(msg.id, o.name)
+      if (o.confirm) {
+        Promise.resolve(done).then((r) => setLearnNote(confirmNote(r, o.name)))
+          .catch(() => {})
+      }
+    }
     // Crosstalk (#28 phase 4): the plain-English marker, and the best-effort
     // per-voice split when one was salvageable. Decision logic in
     // voiceChips.js; this only renders what it returns.
@@ -368,10 +381,11 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                   <span className="text-[10px] px-2 py-0.5 text-ink-faint">Who spoke this?</span>
                   {reassignNames.map((o) => (
                     <button
-                      key={o.name}
+                      key={o.confirm ? `confirm:${o.name}` : o.name}
                       type="button"
-                      className="text-left text-xs px-2 py-1 rounded text-ink-mid hover:text-ink hover:bg-panel2"
-                      onClick={() => { setChipMenuOpen(false); onReassign?.(msg.id, o.name) }}
+                      className={`text-left text-xs px-2 py-1 rounded hover:text-ink hover:bg-panel2 ${
+                        o.confirm ? 'text-ink border-b border-edge mb-0.5' : 'text-ink-mid'}`}
+                      onClick={() => pick(o)}
                     >
                       {o.display}
                     </button>
@@ -385,6 +399,11 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
                   </button>
                 </div>
               )}
+            </div>
+          )}
+          {learnNote && (
+            <div className="text-[11px] text-ink-dim text-right max-w-[46ch]" role="status">
+              {learnNote}
             </div>
           )}
           {ctNote && (

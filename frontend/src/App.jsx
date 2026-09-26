@@ -299,19 +299,22 @@ export default function App() {
 
   // Tap-to-correct on a labelled turn: reassign, then let the row's
   // message_update event re-render it; refresh the room snapshot for the
-  // resolved flags and any roster change.
+  // resolved flags and any roster change. Returns the route's answer, so the
+  // turn can say what a confirm learnt (#477).
   async function reassignSpeaker(messageId, name) {
     const chatId = activeChatIdRef.current
-    if (!chatId) return
+    if (!chatId) return null
     try {
-      await api.reassignSpeaker(chatId, messageId, name)
+      const r = await api.reassignSpeaker(chatId, messageId, name)
       const d = await api.messagesAfter(chatId, messageId - 1)
       if (chatId === activeChatIdRef.current && d.messages.length) {
         setMessages((m) => mergeMessagesById(m, d.messages))
       }
       refreshRoom(chatId)
+      return r
     } catch (e) {
       setBanner(`Could not reassign the turn: ${e.message}`)
+      return null
     }
   }
 
