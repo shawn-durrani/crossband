@@ -101,43 +101,46 @@ or 10 minutes with no speech. The tracker is NVIDIA's
 Nemotron-3-Diarization, run on this Mac by the loopback diariser
 service.
 
-1. When voice turns on, the relay opens a tracking session.
-2. Each audio chunk from inside a turn goes to the tracker. The silence
-   between turns isn't sent.
+1. When voice turns on, the relay opens a tracking session, using the
+   tracker's 1.04 second setting.
+2. Each audio chunk from inside a turn goes to the tracker as it
+   arrives. The silence between turns isn't sent.
 3. For each hundredth of a second, the tracker says which of up to 8
-   voices is speaking, and whether two overlap.
-4. Crossband ties each of those voices to a session voice, which keeps
-   its identity for the whole session. How it does that is the choice
-   after these steps.
-5. At the end of a turn, crossband turns those frames into spans: which
-   session voice, start, end, and whether anyone else spoke over it.
+   voices is speaking, and whether two overlap. It keeps its own memory
+   of each voice, so a voice keeps its number for the whole session.
+   Each of those voices is a session voice.
+4. When a turn ends, the relay sends the tracker 1.1 seconds of silence.
+   That makes it finish labelling the turn's last second, which it
+   would otherwise hold back until the next turn.
+5. Crossband turns the tracker's frames into spans: which session
+   voice, start, end, and whether anyone else spoke over it. It reads
+   the frames directly, because the tracker's own list of segments
+   counts pauses as speech.
 6. Every clean span's fingerprint is checked against its session
    voice's fingerprint. A span that plainly belongs to another session
-   voice is moved there. This catches the tracker mixing two voices up.
+   voice is moved there. This catches the tracker splitting one person
+   whose voice changes, or mixing two up.
 7. When the session ends, the session voices are dropped.
 
-The tracker can keep its own long memory, or crossband can keep it. A
-spike before any app change decides which, and crossband's memory is
-the likely pick:
+Why the tracker keeps the memory, from the spike on this Mac:
 
-- **The tracker's memory.** Nemotron streams, and remembers voices in
-  one cache of about 21 seconds of speech shared by everyone. It's the
-  least code. NVIDIA doesn't say whether someone quiet for 20 minutes
-  keeps their place, and a port of an earlier model of this kind lost
-  track of who was who after about 20 minutes.
-- **Crossband's memory.** For each turn, the tracker gets the turn plus
-  up to 30 seconds of earlier speech, and splits it in one go, which
-  takes about 40 ms per 12 seconds here. Crossband then joins each
-  voice the tracker found to the session voice that holds most of its
-  earlier seconds. A voice with no earlier seconds joins the session
-  voice its fingerprint matches, or becomes a new one. It's more code,
-  and the long memory is ours to test and fix.
+| Test | Tracker's memory | Crossband's memory, at its best |
+|---|---|---|
+| 15 recorded meetings, 17 to 50 minutes each | 0.9% of speech given to the wrong voice, no voice ever swapped | 4.5% wrong, 7 swaps |
+| Someone back after 20 minutes' silence | Kept their old voice in all three made-up hours | Found it, but slowly in one |
+| A TV talking for 5 minutes | Took a voice of its own, never mixed into a person | Similar |
+| Memory used | About 180 MB | About 400 MB |
+
+The same build matched NVIDIA's published accuracy on the full AMI
+meeting test: 9.5% error at the 1.04 second setting, against NVIDIA's
+9.48%.
 
 ### Fingerprint the clean speech
 
 1. For each span of 0.8 seconds or more where one voice speaks alone,
-   crossband computes a fingerprint with TitaNet-Small, the model it
-   uses today.
+   crossband computes two fingerprints: one with TitaNet-Small, the
+   model it uses today, and one with ERes2Net. Both run through
+   sherpa-onnx, and their scores are averaged in the next step.
 2. Each session voice keeps its fingerprints and a total of clean
    seconds. Its pooled fingerprint is the average, weighted by length.
 3. Speech with two voices at once never goes into a fingerprint.
@@ -154,17 +157,18 @@ After every turn, crossband works out who each session voice is.
    is scored against every known person. The score is the average of
    its three best matches among that person's kept clips. All kept
    clips count, from every day and room.
-2. **Compare with strangers.** The same fingerprint is scored against
-   300 strangers' voices, and so is each person's bank. A fingerprint
-   that matches everyone a little stops looking like a match. The
-   strangers are a small file of fingerprints computed once from a
-   public recording set, LibriSpeech, shipped with the app.
-3. **Turn it into a probability.** A calibration fitted on this
-   household turns the score, and how many seconds it rests on, into
-   the chance that the voice is that person. The calibration comes from
+2. **Turn it into a probability.** A calibration fitted on this
+   household turns the score, and how many seconds of speech it rests
+   on, into the chance that the voice is that person. It's fitted by
    cutting every kept clip into 1, 2, 4 and 8 second pieces and scoring
-   each against every bank, its own clip left out, and against the
-   strangers. It's refitted whenever a bank changes, in under a second.
+   each piece against every bank, with that whole day's clips left out
+   of its own bank. A short clip cut from a longer one leaves with it.
+   Each person's bank is also hidden in turn, so the calibration learns
+   what a voice it doesn't know looks like. It's refitted whenever a
+   bank changes, in under a second.
+3. **Start fair.** At the start of a session, every known person and
+   "someone new" are equally likely. The evidence moves the chances
+   from there.
 4. **One person, one voice.** Session voices and people are matched one
    to one, so two voices can't both be Sam. "Nobody we know" is always
    an option for each voice. If two session voices both look like the
@@ -189,6 +193,21 @@ After every turn, crossband works out who each session voice is.
 The 0.9, 0.1 and 0.5 are starting values. The shadow stage sets them
 from your own sessions.
 
+What the spike measured on the household's kept clips, with a whole day
+left out each time. Today's rule, given the same pooled speech, names
+the right person as often, but it also names people it has never
+learnt. The new scorer calls them new instead.
+
+| Speech heard from one voice | Named right, new scorer | Wrong names | Unknown people named |
+|---|---|---|---|
+| One turn, about 2 seconds | 55% | 0 | 0 |
+| Two turns, about 4 seconds | 93% | 0 | 0 |
+| Five turns, about 11 seconds | 100% | 0 | 0 |
+
+Comparing with a crowd of public voices was tried and dropped. It made
+things worse, because the public recordings were made on different
+microphones from this household's.
+
 ### Label each message
 
 1. A message is labelled with the session voices heard in its time
@@ -197,9 +216,12 @@ from your own sessions.
 2. A long turn is labelled from all of it, not from its last piece.
 3. When two voices overlap, each word of the transcript goes to the
    voice speaking at that word's time. ElevenLabs Scribe Realtime sends
-   word times when asked, and crossband doesn't ask today. The split
-   happens on the Mac, so no voice clips go to the cloud to do it.
-4. A named voice's label is ready when the message is saved, as today.
+   word times when asked, counted from the start of the connection.
+   Asking makes it send each final transcript twice, plain and then
+   with times, so the relay must use the second and drop the first. The
+   split happens on the Mac, so no voice clips go to the cloud to do it.
+4. A named voice's label is ready about 50 ms after the turn ends, well
+   before the message is saved.
 
 ### Ask about new voices
 
@@ -238,13 +260,10 @@ from your own sessions.
 
 ### Tidy up when the session ends
 
-1. Crossband runs the tracker once more over the audio it still holds,
-   the last 10 minutes, with Nemotron's offline setting. That setting
-   reads 30 seconds at a time and is its most accurate.
-2. Then it runs the naming once more, over every fingerprint the
+1. Crossband runs the naming once more, over every fingerprint the
    session collected. A turn whose name changes is relabelled, and one
    line is logged with ids and names only.
-3. Every audio buffer from the session is dropped. Only clips saved by
+2. Every audio buffer from the session is dropped. Only clips saved by
    the rules for learning stay.
 
 ### What the AIs and memory are told
@@ -273,11 +292,25 @@ named yourself counts as the strongest evidence.
 
 ### When a voice is ready
 
-A person's voice is ready when 2 second pieces of their own clips are
+A person's voice is ready when 2 second pieces of their own speech are
 named as them at least 95 times in 100, and never as anyone else, with
-each piece's own clip left out. The Voices page shows that instead of a
-count of seconds. A voice that isn't ready can still be named once a
-session voice has enough evidence.
+that day's clips left out, over at least 20 pieces. Seconds count
+speech only, not pauses. The Voices page shows that instead of a count
+of seconds. A voice that isn't ready can still be named once a session
+voice has enough evidence.
+
+Most banks aren't ready today. In the spike only one of six people
+passed, and two had under 5 seconds of speech saved. So the Voices page
+gains a way to record someone on purpose:
+
+1. You pick the person and press record, with them at the mic.
+2. The app shows a short passage to read aloud and records about 30
+   seconds, with the same mic setting as a voice chat.
+3. The speech check trims it, and it's cut into clips marked as
+   introduced, so they're vouched for and kept first.
+4. The page shows the readiness test's result straight away. A person
+   who isn't ready yet is asked to record once more, ideally on
+   another day or in another room.
 
 ## Modes
 
@@ -327,18 +360,19 @@ Goes:
 
 | Job | Choice | Why |
 |---|---|---|
-| Follow voices | NVIDIA Nemotron-3-Diarization, through NeMo-Speech.cpp on Metal | Up to 8 voices, open licence that allows commercial use (OpenMDW 1.1). The best published error rates of any open diariser that runs live. On this Mac: about 40 ms per 12 seconds, 240 MB of memory. |
-| Fingerprints | TitaNet-Small, kept | 46 of 55 right and none wrong on the 25 September session once turns were split. Fast: 26 ms for 3 seconds. |
-| Second fingerprint | Decided by the shadow stage | TitaNet-Large got 45 right, none wrong. ERes2Net got 48 right, none wrong, but its paper shows it weaker on 2 second clips. Kept only if it cuts wrong names by a third. |
+| Follow voices | NVIDIA Nemotron-3-Diarization, through NeMo-Speech.cpp on Metal | Up to 8 voices, open licence that allows commercial use (OpenMDW 1.1). The best published error rates of any open diariser that runs live, matched on this Mac. About 180 MB, and about half a second of work per turn, spread through the turn. |
+| Fingerprints | TitaNet-Small and ERes2Net, scores averaged | The pair named the most short pieces with no wrong names. Both are Apache 2.0. ERes2Net takes about three times as long as TitaNet-Small, still well under a second a turn. |
+| Instead of ERes2Net | CAM++, with a patched model file | Nearly as good at a third of ERes2Net's cost. The runtime sherpa-onnx ships mishandles its last block of audio, and one setting in the file fixes it. |
 | Speech to text | ElevenLabs Scribe v2 Realtime, kept | It adds word times, for splitting crosstalk. |
 
 Considered and not chosen:
 
 | Option | Why not |
 |---|---|
+| TitaNet-Large | As good as the pair on its own, but a 100 MB download under a licence that needs credit, for no gain over ERes2Net. |
 | NVIDIA Streaming Sortformer | Nemotron's predecessor. 4 voices at most, and worse on every published test. |
 | pyannote Community-1, diart, DiariZen | Community-1 and DiariZen work on a whole recording, not live, and DiariZen's weights are non-commercial. diart is live but makes two to three times the errors. |
-| FluidAudio (Swift, Apache 2.0) | Runs Nemotron and others on Apple hardware, with published accuracy that matches NVIDIA's. The fallback way to run Nemotron if NeMo-Speech.cpp falls short. |
+| FluidAudio (Swift, Apache 2.0) | Runs Nemotron and others on Apple hardware. Not needed, since NeMo-Speech.cpp matched NVIDIA's accuracy here. |
 | Picovoice Eagle | Its licence key checks in with Picovoice's servers, and it's sold to businesses only. |
 | Speechmatics, pyannoteAI | Cloud services, so voices would leave the Mac. |
 | ElevenLabs Scribe batch speaker library | Batch only, and no documented way to enrol a speaker. |
@@ -352,9 +386,11 @@ for a service later without changing anything else.
 Two kinds of truth, both private to this Mac and never committed:
 
 - **Made-up sessions from real voices.** 20 to 60 minute sessions
-  assembled from the household's kept clips, with strangers from public
-  recordings, crosstalk, short replies and long monologues. The truth
-  is known exactly. This is the heart of the voice rig issue.
+  assembled from the household's kept clips, with crosstalk, short
+  replies and long monologues. A stranger is a household member whose
+  bank is hidden for that run, because public recordings are too easy
+  to tell apart. The truth is known exactly. This is the heart of the
+  voice rig issue.
 - **Real sessions in shadow.** Your own evenings, with your corrections
   and confirmations as the truth.
 
@@ -372,21 +408,19 @@ Two kinds of truth, both private to this Mac and never committed:
 
 Every stage is its own pull request and can be reverted on its own.
 
-1. **Spike, outside the app.** Check NeMo-Speech.cpp's Nemotron gets
-   NVIDIA's published accuracy on the public AMI meeting test. Its Mac
-   support is days old, and FluidAudio is the fallback. Run 60 minute
-   made-up sessions through both ways of tracking and pick one, with a
-   person quiet for 20 minutes and a TV talking in the background. Fix the comparison script's
-   CAM++ run, which broke on real clips, and re-run the model
-   comparison with calibration. Check Scribe's word times line up with
-   the tracker's spans.
+1. **Spike, outside the app. Done on 26 September.** The tracker
+   matched NVIDIA's accuracy and keeps its own memory. The pooled,
+   calibrated naming held with no wrong names. Scribe sends word
+   times. The findings are folded into the sections here.
 2. **Shadow.** The new pipeline runs beside today's on every spoken
    turn in every mode, and changes nothing. It writes content-free
    rows and shows a comparison. It replaces today's shadow test, and
    fixes a flaw in it: a turn saved to a bank was then scored against
-   itself, which inflated three scores on 26 September. Gate: five or
-   more sessions with two or more people, and five solo ones, meeting
-   the targets and no worse than today on any session.
+   itself, which inflated three scores on 26 September. Recording a
+   voice on purpose ships in this stage too, so banks are ready before
+   the gate is judged. Gate: five or more sessions with two or more
+   people, and five solo ones, meeting the targets and no worse than
+   today on any session.
 3. **Switch.** A setting picks the new path, and it's the default.
    Today's path is one setting away for two weeks of use.
 4. **Delete.** Today's path goes, with the cloud crosstalk split.
@@ -400,11 +434,12 @@ is rebuilt from its clips by the new scorer at the first start.
 
 | Risk | What happens | What limits it |
 |---|---|---|
-| The tracker loses track in a long session | Two voices swap | The fingerprint check on every span, the end-of-session pass, and the spike choosing the tracking method |
+| The tracker loses track in a long session | Two voices swap | None in 15 recorded meetings. The fingerprint check on every span, and the end-of-session naming pass. |
 | A voice sounds unlike its bank (a cold, a whisper, a new mic) | Named late, or left listening | Probabilities fall, so the app waits instead of guessing. Confirming a turn teaches it. |
 | Two similar voices, like siblings | Both near the bar | The calibration sees them close, one to one stops both getting one name, and you confirm |
 | The AIs' own playback reaches the mic | A voice made of AI speech | A voice heard mostly while the AIs are talking is never named or saved |
-| A TV or radio talks in the background | It takes one of the 8 voices, and gets asked about | You say "that's the TV" once per session |
+| A TV or radio talks in the background | It takes one of the 8 voices, and gets asked about | It never mixed into a person in the spike. You say "that's the TV" once per session. |
+| Thin voice banks | People stay listening for longer | Recording a voice on purpose, and the readiness test on the Voices page |
 | Memory in a long session | The session's audio grows | Keep the last 10 minutes of audio. Older speech lives on only as fingerprints. |
 | A new setting to tune | Bars set wrong for a house | Bars start from this house's own calibration and move in shadow first |
 
@@ -417,9 +452,6 @@ Made by the owner on 26 September:
 2. One mic setting in every mode, solo included.
 3. The app asks about a new voice after 4 seconds of their speech.
 
-The strangers file ships with the app, with credit to LibriSpeech in
-the acknowledgements. Building it on first start would mean a large
-download for a file under a megabyte.
 
 ## Detail
 
@@ -429,8 +461,8 @@ What changes where, by the end of stage 4:
   the speculative check and the cloud split go. What's left becomes the
   session tracker client and the label writer.
 - `backend/voiceid.py`: `classify_utterance` and its bars go. New:
-  scoring against every clip, stranger normalisation, calibration and
-  the one-to-one match.
+  scoring against every clip with two models, calibration and the one
+  to one match.
 - `backend/anchors.py`: sufficiency becomes readiness, and trust moves
   to the new units. Rotation, vouching, protection and the correction
   record stay.
@@ -444,8 +476,10 @@ What changes where, by the end of stage 4:
 - `backend/providers.py`, `memory_client.py`: one heading rule, and the
   probability as confidence. Membro's side needs no change, and the
   meaning of confidence is noted in the memory contract.
-- workbench `diarserve/diarserve.py`: gains session routes, or the
-  30 second context, whichever the spike picks.
+- workbench `diarserve/diarserve.py`: gains session routes to open a
+  tracking session, push audio, end a turn with the silence, and close.
+- The Voices page and `backend/routers/room.py`: recording a voice on
+  purpose, and the readiness result.
 
 Sources:
 
@@ -463,10 +497,9 @@ Sources:
   [TST, 2026](https://arxiv.org/html/2606.14091).
 - One to one matching: [Wang et al., EDM 2024](https://educationaldatamining.org/edm2024/proceedings/2024.EDM-short-papers.33/index.html),
   and pyannoteAI's [voiceprint identification](https://docs.pyannote.ai/tutorials/identification-with-voiceprints).
-- Comparing with strangers: [Matějka et al. 2017](https://www.fit.vut.cz/research/group/speech/public/publi/2017/matejka_interspeech2017_IS170803.pdf).
-  Scores into probabilities: [Brümmer](https://arxiv.org/abs/1307.7981).
+- Scores into probabilities: [Brümmer](https://arxiv.org/abs/1307.7981).
 - Household banks and when to add a clip: [Sholokhov et al. 2022](https://arxiv.org/abs/2205.00288).
-- The long-audio drift report: [mlx-audio-swift#258](https://github.com/Blaizzy/mlx-audio-swift/issues/258).
+- The AMI meeting references the spike scored against, the same ones
+  behind NVIDIA's numbers: [diar-forced-alignment](https://github.com/nttcslab-sp/diar-forced-alignment).
 - Scribe Realtime word times and its lack of diarisation:
   [the realtime API](https://elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-text-realtime).
-- [LibriSpeech](https://www.openslr.org/12), CC BY 4.0.
