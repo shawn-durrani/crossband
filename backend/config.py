@@ -300,6 +300,20 @@ class Settings(BaseModel):
     # isn't on ElevenLabs' list speaks with eleven_flash_v2_5 instead.
     tts_model: str = "eleven_flash_v2_5"
     tts_speed: float = 1.0  # 0.7-1.2; ElevenLabs speaking speed
+    # Eleven v3 only, so the voice holds one accent through a reply (#493).
+    # Every other model is untouched by these three (backend/tts_v3.py).
+    # Stability: "creative", "natural" (the value sent before this setting)
+    # or "robust", the steadiest. Anything else speaks robust.
+    tts_v3_stability: str = "robust"
+    # Hold a v3 reply's text and send it a whole sentence at a time, so no
+    # generation starts or stops mid-sentence. Off sends each piece as the
+    # model writes it.
+    tts_v3_sentence_chunks: bool = True
+    # An ElevenLabs audio tag, such as "[Australian accent]", in front of
+    # every piece of a v3 reply sent upstream, and nowhere else. One
+    # bracketed phrase of at most 40 characters; anything else is ignored.
+    # A seat can set its own (participants.tts_v3_accent_tag).
+    tts_v3_accent_tag: str = ""
     stt_model: str = "scribe_v2"
     voice_pricing: dict = Field(default_factory=lambda: dict(DEFAULT_VOICE_PRICING))
     # Room mode (#28 phase 2): how many people the roster may hold at once

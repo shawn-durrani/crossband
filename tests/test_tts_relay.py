@@ -48,6 +48,7 @@ class FakeUpstream:
     def __init__(self, url, refuse=None):
         self.url, self.refuse = url, refuse
         self.sent = []
+        self.raw = []
         self.queue = asyncio.Queue()
         self.dialogue = "/text-to-dialogue/" in url
 
@@ -63,6 +64,7 @@ class FakeUpstream:
     async def send(self, raw):
         msg = json.loads(raw)
         self.sent.append(msg)
+        self.raw.append(raw)
         spoken = (msg.get("inputs") if self.dialogue
                   else (msg.get("text") or "").strip() and not msg.get("xi_api_key"))
         if spoken and not any("audio" in json.loads(q) for q in self.queue._queue):
@@ -128,19 +130,22 @@ def _set(app, **over):
     app.state.settings = app.state.settings.model_copy(update=over)
 
 
-def _speak(c, seat="", text="Hello there, how are you?"):
-    """One reply through the relay. Returns every frame the browser got."""
+def _speak(c, seat="", text="Hello there, how are you?", chat_id=None):
+    """One reply through the relay. Returns every frame the browser got.
+    The whole reply is sent before any audio is awaited, because on v3 the
+    relay holds a sentence until it ends (#493)."""
     got = []
     with c.websocket_connect("/api/voice/tts") as ws:
-        init = {"chat_id": None, "voice_id": VOICE}
+        init = {"chat_id": chat_id, "voice_id": VOICE}
         if seat:
             init["seat"] = seat
         ws.send_json(init)
         got.append(ws.receive_json())
-        ws.send_json({"text": text})
-        got.append(ws.receive_json())
+        for piece in [text] if isinstance(text, str) else text:
+            ws.send_json({"text": piece})
         ws.send_json({"flush": True, "done": True})
-        got.append(ws.receive_json())
+        while not (got[-1].get("final") or got[-1].get("error")):
+            got.append(ws.receive_json())
     return got
 
 
@@ -174,9 +179,24 @@ def test_automatic_speaks_v3_conversational_through_the_dialogue_socket(app, ups
                    {"final": True}]
     up = upstreams.last
     assert up.url == voice.TTD_WS_URL.format(model_id="eleven_v3_conversational")
+    # #493's defaults: Robust stability, and the sentence held until the
+    # flush because nothing followed its question mark.
     assert up.sent[0] == {"voices": [VOICE], "xi_api_key": "test-key",
-                          "voice_settings": {"stability": 0.5}}
+                          "voice_settings": {"stability": 1.0}}
     assert up.sent[1:] == [
+        {"keep_alive": True},
+        {"inputs": [{"text": "Hello there, how are you?", "voice_id": VOICE}]},
+        {"flush": True}, {"close_socket": True}]
+
+
+def test_natural_and_no_sentence_chunks_send_what_v3_sent_before_493(app, upstreams):
+    _set(app, tts_model="auto", tts_v3_stability="natural",
+         tts_v3_sentence_chunks=False)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        _speak(c)
+    assert upstreams.last.sent == [
+        {"voices": [VOICE], "xi_api_key": "test-key",
+         "voice_settings": {"stability": 0.5}},
         {"inputs": [{"text": "Hello there, how are you?", "voice_id": VOICE}]},
         {"flush": True}, {"close_socket": True}]
 

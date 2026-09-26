@@ -19,6 +19,12 @@ legs you want, and start the run.
 - The full pipeline: listen, think and speak in sequence, timed per
   stage.
 
+On an Eleven v3 model the clip uses your v3 stability and accent tag,
+the same as a live reply, and each result file records both. The clip
+goes to ElevenLabs in one piece, so sentence chunks don't change it.
+[Keeping a v3 voice steady](CONFIG.md#keeping-a-v3-voice-steady) has
+the settings.
+
 Each leg is selectable on its own. A leg a seat can't run is marked
 skipped with the reason, never left blank and never shown as a
 failure. Hosted and self-hosted seats run the same cases.

@@ -8,7 +8,7 @@ import os
 
 import httpx
 
-from . import tts_models
+from . import tts_models, tts_v3
 
 ELEVEN_BASE = "https://api.elevenlabs.io"
 # The two streaming sockets a reply can be spoken through (#480). Which one
@@ -263,6 +263,9 @@ def _synthesize_dialogue(text, voice_id, model_id, cfg):
     from websockets.sync.client import connect
     url = tts_ws_url(tts_models.ROUTE_DIALOGUE, voice_id, model_id)
     chunks = []
+    # The whole reply still goes as one piece, now with the live path's
+    # accent tag in front and its stability in the open message (#493).
+    text = tts_v3.with_tag(text, tts_v3.accent_tag(cfg))
     with connect(url, max_size=16 * 1024 * 1024, open_timeout=30) as ws:
         ws.send(tts_open_message(tts_models.ROUTE_DIALOGUE, cfg, voice_id))
         ws.send(json.dumps({"inputs": [{"text": text, "voice_id": voice_id}]}))
@@ -301,13 +304,20 @@ def tts_ws_url(route, voice_id, model_id):
 
 def tts_open_message(route, cfg, voice_id):
     """The first upstream message. The dialogue socket registers the one
-    voice this connection speaks with and takes only a stability setting
-    (0.5 is v3's "natural"); it buffers on its own fixed threshold of about
-    40 characters and 8 words, so there's no chunk schedule to send."""
+    voice this connection speaks with and takes only a stability setting,
+    which tts_v3_stability picks (#493). It buffers on its own fixed
+    threshold of about 40 characters and 8 words, so there's no chunk
+    schedule to send."""
     if route == tts_models.ROUTE_DIALOGUE:
         return json.dumps({"voices": [voice_id], "xi_api_key": api_key(),
-                           "voice_settings": {"stability": 0.5}})
+                           "voice_settings": {"stability": tts_v3.stability(cfg)}})
     return tts_init_message(cfg)
+
+
+def tts_relay_state(cfg, seat_tag=""):
+    """The per-reply state tts_upstream_frames keeps. Only the dialogue
+    socket reads it: sentence chunks and the accent tag (#493)."""
+    return tts_v3.relay_state(cfg, seat_tag)
 
 
 def tts_upstream_frames(route, msg, voice_id, carry):
@@ -315,20 +325,25 @@ def tts_upstream_frames(route, msg, voice_id, carry):
     when combined) into upstream messages. The browser speaks one protocol
     whichever socket is behind the relay.
 
-    On the dialogue socket a whitespace-only text (the browser's idle
-    keepalive, or the gap between two deltas) becomes a keep_alive, and the
-    whitespace is held in `carry` and sent ahead of the next real text so
-    words never run together."""
+    On the dialogue socket, `carry` is the reply's state. Without sentence
+    chunks, a whitespace-only text (the browser's idle keepalive, or the gap
+    between two deltas) becomes a keep_alive, and the whitespace is held in
+    `carry` and sent ahead of the next real text so words never run
+    together. With them, text is held until a sentence ends (#493). Either
+    way the accent tag, when there is one, goes in front of every piece."""
     out = []
     text = msg.get("text")
     if route == tts_models.ROUTE_DIALOGUE:
-        if isinstance(text, str) and text:
-            if text.strip():
-                out.append({"inputs": [{"text": carry.pop("ws", "") + text,
-                                        "voice_id": voice_id}]})
-            else:
-                carry["ws"] = (carry.get("ws", "") + text)[-4:]
-                out.append({"keep_alive": True})
+        if carry.get("chunks"):
+            out += _held_frames(text, msg, voice_id, carry)
+        else:
+            if isinstance(text, str) and text:
+                if text.strip():
+                    out.append(_dialogue_input(carry.pop("ws", "") + text,
+                                               voice_id, carry))
+                else:
+                    carry["ws"] = (carry.get("ws", "") + text)[-4:]
+                    out.append({"keep_alive": True})
         if msg.get("flush"):
             out.append({"flush": True})
         if msg.get("done"):
@@ -341,6 +356,33 @@ def tts_upstream_frames(route, msg, voice_id, carry):
         if msg.get("done"):
             out.append({"text": ""})
     return [json.dumps(f) for f in out]
+
+
+def _held_frames(text, msg, voice_id, carry):
+    """Sentence chunks on the dialogue socket. Text joins what's held, and
+    everything up to the last sentence end goes out as one piece. A frame
+    that sends nothing becomes a keep_alive, so the socket's 20 second
+    timer never runs out while a sentence is still arriving. A flush or done
+    sends whatever is held. Whitespace stays held until real text follows
+    it, so it always leads the next piece."""
+    out = []
+    if isinstance(text, str) and text:
+        ready, carry["held"] = tts_v3.take_ready(carry.get("held", "") + text)
+        out.append(_dialogue_input(ready, voice_id, carry) if ready
+                   else {"keep_alive": True})
+    if (msg.get("flush") or msg.get("done")) and carry.get("held", "").strip():
+        out.append(_dialogue_input(carry.pop("held"), voice_id, carry))
+    return out
+
+
+def _dialogue_input(piece, voice_id, carry):
+    """One piece of text for the dialogue socket, with the reply's accent
+    tag in front. The tag's characters are counted, because ElevenLabs
+    bills them like any other text."""
+    tag = carry.get("tag")
+    if tag:
+        carry["tag_chars"] = carry.get("tag_chars", 0) + len(tag) + 1
+    return {"inputs": [{"text": tts_v3.with_tag(piece, tag), "voice_id": voice_id}]}
 
 
 def tts_downstream(route, data):

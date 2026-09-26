@@ -27,7 +27,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -73,10 +73,12 @@ SCHEMA_VERSION = 30
 #        research mode, per chat: a bigger tool budget and the research
 #        routine until "back to normal", #253/#417)
 #   v29  chat_seat_state.model + model_from + model_label + model_from_label
-#   v30  participants.tts_model + voice_turn_traces.tts_model (a seat's own
-#        ElevenLabs voice model, and which one spoke each traced turn)
 #        + model_set_by + model_set_at + model_source (a seat stepped up to a
 #        stronger model for one chat, #254)
+#   v30  participants.tts_model + voice_turn_traces.tts_model (a seat's own
+#        ElevenLabs voice model, and which one spoke each traced turn)
+#   v31  participants.tts_v3_accent_tag (a seat's own Eleven v3 accent tag,
+#        #493)
 
 # v29's columns (#254), shared by the migration step and nothing else: the
 # CREATE TABLE in SCHEMA spells the same list out for a fresh database.
@@ -231,6 +233,10 @@ CREATE TABLE IF NOT EXISTS participants(
   -- follow the app setting (tts_model). Validated against the model list
   -- on save and again when a reply is spoken (backend/tts_models.py).
   tts_model TEXT NOT NULL DEFAULT '',
+  -- This seat's own Eleven v3 accent tag, such as '[Australian accent]', or
+  -- '' to follow the app setting (tts_v3_accent_tag). Sent in front of each
+  -- piece of a v3 reply and nowhere else (backend/tts_v3.py).
+  tts_v3_accent_tag TEXT NOT NULL DEFAULT '',
   reasoning_effort TEXT NOT NULL DEFAULT '',
   -- How this seat asks an OpenAI-compatible server to skip its hidden
   -- reasoning trace. '' = send nothing (every hosted seat). The other values
@@ -731,6 +737,13 @@ def init(settings=None):
         mcols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
         if mcols and "web_sources" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN web_sources "
+                        "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 30:  # v31: a seat's own v3 accent tag (#493).
+        # Blank: every seat follows the app setting, which starts empty, so
+        # every reply sends what it sent before the column existed.
+        cols = {r[1] for r in con.execute("PRAGMA table_info(participants)")}
+        if cols and "tts_v3_accent_tag" not in cols:
+            con.execute("ALTER TABLE participants ADD COLUMN tts_v3_accent_tag "
                         "TEXT NOT NULL DEFAULT ''")
     if 1 <= version <= 29:  # v30: voice model choice per seat (#480).
         # Both default blank: every seat follows the app setting and every

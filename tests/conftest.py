@@ -56,7 +56,8 @@ def _room_state_clean():
 
 
 def _reset_room_state():
-    from backend import anchors, diarize, introductions, mismatch, voice_shadow
+    from backend import (anchors, diarize, introductions, mismatch, tts_v3,
+                         voice_shadow)
     from backend.routers import voice as voice_router
 
     for mod, name in (
@@ -87,6 +88,8 @@ def _reset_room_state():
         (voice_shadow, "_TASKS"),
         (voice_shadow, "_warned"),
         (voice_shadow, "_anchor_cache"),
+        # The v3 settings' warn-once memory (#493).
+        (tts_v3, "_warned"),
     ):
         container = getattr(mod, name, None)
         if container is not None:
