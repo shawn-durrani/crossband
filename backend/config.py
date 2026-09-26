@@ -369,6 +369,10 @@ class Settings(BaseModel):
     # live pass left unnamed takes its session voice's name, and nothing
     # else changes. Needs voice_session_shadow.
     voice_session_labels: bool = False
+    # voice_session_live: the relay feeds the tracker as audio arrives, and
+    # the live check names a turn it would leave unnamed from the session
+    # voice, before the seats read it. Needs voice_session_shadow.
+    voice_session_live: bool = False
     # The calibrated voice scorer (#482 stage 2, backend/voice_calibration.py):
     # the redesign's two-model, calibrated scorer and the readiness test the
     # Voices page shows. Off by default. On, it fetches ERes2Net once (pinned

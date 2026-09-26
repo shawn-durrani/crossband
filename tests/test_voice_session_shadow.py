@@ -498,3 +498,203 @@ def test_fillable():
     assert not vss.fillable({"labels": [], "corrected": True})
     assert not vss.fillable({"labels": [], "crosstalk": True})
     assert not vss.fillable(None)
+
+
+# ---------- 8. live: the relay feeds the tracker, the check asks it ----------
+
+LIVE_CFG = dict(CFG, voice_session_live=True)
+
+
+@pytest.fixture
+def live(fakes, monkeypatch):
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
+    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
+    return fakes
+
+
+def _chunks(seconds, size=0.1):
+    pcm = _turn(seconds)
+    step = int(size * SR) * 2
+    return [pcm[i:i + step] for i in range(0, len(pcm), step)]
+
+
+def test_live_is_off_unless_its_own_switch_is_on(fakes):
+    vss.feed(3, _turn(0.5), SR, CFG)
+    vss.end_turn(3, "t1", CFG)
+    assert fakes.calls == [] and vss._feeds == {}
+    assert vss.wait_turn("t1", timeout=0.01) is None
+    assert not vss.live_enabled({"voice_session_live": True})
+
+
+def test_the_feed_pushes_as_audio_arrives_and_names_the_turn(live):
+    live.script = [[{"slot": 1, "start": 0.0, "end": 1.0}]]
+    for chunk in _chunks(1.0):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t1", LIVE_CFG)
+    got = vss.wait_turn("t1", timeout=3)
+    assert got == {"voice": 1, "state": "listening", "name": "",
+                   "score": 1.0}     # 1 s alone is too little to name
+    paths = [c[1] for c in live.calls]
+    assert paths[0] == "/sessions" and paths[-1] == "/sessions/s1/end-turn"
+    audio = [c for c in live.calls if c[1].endswith("/audio")]
+    # quarter-second pieces while the turn runs, the rest before end-turn
+    sizes = [c[2] for c in audio]
+    assert sizes == [9600, 9600, 9600, 3200]   # 0.1 s chunks, pushed at 0.25 s
+    assert sum(sizes) == len(_turn(1.0))
+    row = vss.read_rows()[0]
+    assert row["live"] is True and row["turn_id"] == "t1"
+
+
+def test_a_later_turn_is_named_from_the_voices_whole_session(live):
+    live.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                   [{"slot": 1, "start": 1.0, "end": 3.0}]]
+    for chunk in _chunks(1.0):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t1", LIVE_CFG)
+    assert vss.wait_turn("t1", timeout=3)["state"] == "listening"
+    for chunk in _chunks(2.0):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t2", LIVE_CFG)
+    got = vss.wait_turn("t2", timeout=3)
+    assert got["state"] == "named" and got["name"] == "Alex"
+    rows = vss.read_rows()
+    assert rows[0]["offset"] == 1.0          # session time moved to turn time
+    assert rows[0]["spans"] == [{"slot": 1, "start": 0.0, "end": 2.0,
+                                 "overlap": False}]
+
+
+def test_a_failed_push_gives_no_name_and_the_next_turn_reopens(live):
+    live.fail_on = "/audio"
+    for chunk in _chunks(0.5):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t1", LIVE_CFG)
+    assert vss.wait_turn("t1", timeout=3) is None
+    assert vss.read_rows()[0]["error"] == "unreachable"
+    live.fail_on = None
+    live.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
+    for chunk in _chunks(2.0):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t2", LIVE_CFG)
+    assert vss.wait_turn("t2", timeout=3)["name"] == "Alex"
+    assert live.opened == 2
+
+
+def test_waiting_on_a_turn_that_never_ends_gives_up(live):
+    vss.feed(3, _turn(0.3), SR, LIVE_CFG)
+    vss._result_slot("never")
+    t0 = vss.time.monotonic()
+    assert vss.wait_turn("never", timeout=0.05) is None
+    assert vss.time.monotonic() - t0 < 1.0
+    assert vss.wait_turn("unknown-turn", timeout=5) is None   # no slot: no wait
+
+
+def test_the_shadow_never_pushes_a_turn_twice_when_live(live):
+    assert vss.observe(3, "t1", _turn(2.0), SR, LIVE_CFG, _today()) is None
+    assert live.calls == []
+
+
+# ---------- 9. live: the check names a turn it would leave unnamed ----------
+
+from tests.test_voice_shadow import live_fakes  # noqa: E402,F401  (fixture)
+
+
+def _room_turn(app, monkeypatch, got, loud=False):
+    """Drive one armed-room turn through run_pass with the session's answer
+    faked as `got`, and return the turn's labels and the wait calls."""
+    from fastapi.testclient import TestClient
+    from roomkit import _insert_user_message
+    from tests import test_voice_shadow as tvs
+    waited = []
+
+    async def wait(turn_id, timeout=vss.LIVE_WAIT_S, step=0.02):
+        waited.append(turn_id)
+        return got
+    monkeypatch.setattr(vss, "await_turn", wait)
+    monkeypatch.setattr(voice_shadow, "schedule", lambda *a, **k: None)
+    cfg = dict(tvs.BASE_CFG, **LIVE_CFG)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat, _, _ = tvs._setup(c)
+        m = _insert_user_message(chat["id"], voice_turn_id="t1")
+        tvs._turn(chat["id"], speech_pcm(3.0, amp=tvs.ALEX_AMP if loud
+                                         else tvs.SAM_AMP), "t1", cfg)
+        return json.loads(tvs._labels(m["id"]) or "{}"), waited
+
+
+def test_a_deferred_turn_takes_its_session_name(app, live_fakes,
+                                                monkeypatch):
+    labels, waited = _room_turn(app, monkeypatch, {
+        "voice": 1, "state": "named", "name": "Sam", "score": 0.71})
+    assert waited == ["t1"]
+    assert labels["labels"] == ["Sam"] and labels["source"] == "session"
+    assert "unresolved" not in labels and not labels.get("owner")
+
+
+def test_no_session_name_in_time_leaves_todays_unnamed_marker(
+        app, live_fakes, monkeypatch):
+    labels, waited = _room_turn(app, monkeypatch, None)
+    assert waited == ["t1"]
+    assert labels["labels"] == [] and labels["unresolved"] == \
+        "below_threshold"
+
+
+def test_a_voice_still_listening_leaves_the_marker_too(app, live_fakes,
+                                                       monkeypatch):
+    labels, _ = _room_turn(app, monkeypatch, {
+        "voice": 1, "state": "listening", "name": "", "score": 0.4})
+    assert labels["labels"] == [] and "unresolved" in labels
+
+
+def test_a_turn_the_matcher_names_never_waits(app, live_fakes, monkeypatch):
+    labels, waited = _room_turn(app, monkeypatch, None, loud=True)
+    assert waited == []
+    assert labels["labels"] == ["Alex"] and labels["source"] == "local"
+
+
+def test_the_relay_feeds_every_chunk_and_ends_the_turn_before_the_check(
+        app, monkeypatch):
+    from fastapi.testclient import TestClient
+    from backend import auth, diarize
+    from backend.routers import voice as voice_router
+    from tests.test_stt_relay import FakeEleven, _frame
+    fake = FakeEleven()
+    monkeypatch.setattr(voice_router.websockets, "connect",
+                        lambda *a, **kw: fake)
+    monkeypatch.setattr(voice_router.voice, "enabled", lambda: True)
+    monkeypatch.setattr(voice_router.voice, "api_key", lambda: "test-key")
+    monkeypatch.setattr(auth, "GATE_LOOPBACK_HOSTS",
+                        auth.GATE_LOOPBACK_HOSTS | {"testserver"})
+    app.state.allowed_hosts = {"testserver", "127.0.0.1", "localhost", "::1"}
+    voice_router._captures.clear()
+    order = []
+    monkeypatch.setattr(vss, "feed", lambda chat_id, pcm, sr, cfg:
+                        order.append(("feed", len(pcm))))
+    monkeypatch.setattr(vss, "end_turn", lambda chat_id, tid, cfg:
+                        order.append(("end", tid)))
+    monkeypatch.setattr(diarize, "schedule_turn_check",
+                        lambda *a, **k: order.append(("check",
+                                                      k.get("turn_id"))))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            ws.send_json(_frame())
+            ws.receive_json()
+            ws.send_json(dict(_frame(commit=True), turn_id="t9"))
+            ws.receive_json()
+            ws.send_json({"done": True})
+    assert order == [("feed", 320), ("feed", 320), ("end", "t9"),
+                     ("check", "t9")]
+
+
+def test_the_async_wait_polls_without_a_thread():
+    import asyncio
+    vss._reset_for_tests()
+    assert asyncio.run(vss.await_turn("nobody", timeout=5)) is None  # no slot
+    vss._result_slot("slow")
+    t0 = vss.time.monotonic()
+    assert asyncio.run(vss.await_turn("slow", timeout=0.06)) is None
+    assert vss.time.monotonic() - t0 < 1.0
+    vss._resolve("done", {"state": "named", "name": "Sam"})
+    assert asyncio.run(vss.await_turn("done"))["name"] == "Sam"
+    vss._reset_for_tests()

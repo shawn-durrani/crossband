@@ -72,7 +72,8 @@ from fastapi import WebSocketDisconnect
 from pydantic import BaseModel
 
 from .. import (config, db, diagnostics, diarize, engine, room_state,
-                seat_trace, tts_models, voice, voice_trace)
+                seat_trace, tts_models, voice, voice_session_shadow,
+                voice_trace)
 
 router = APIRouter(tags=["voice"])
 
@@ -891,6 +892,15 @@ async def stt_stream_relay(ws: WebSocket):
                                 room.add_audio(raw, sr)
                             except Exception:
                                 pass
+                            try:
+                                # #482 stage 3: the live session step's feed.
+                                # A queue put, never blocking; off unless
+                                # voice_session_live is set.
+                                if chat_id:
+                                    voice_session_shadow.feed(chat_id, raw,
+                                                              sr, cfg)
+                            except Exception:
+                                pass
                         payload = {
                             "message_type": "input_audio_chunk",
                             "audio_base_64": audio,
@@ -951,6 +961,14 @@ async def stt_stream_relay(ws: WebSocket):
                                 commit_turn_id = (str(msg.get("turn_id") or "")
                                                   .strip()[:64] or None)
                                 commit_turn_fifo.append(commit_turn_id)
+                                # Before the check is scheduled, so the
+                                # turn's live result slot exists when the
+                                # check asks for it (#482 stage 3).
+                                try:
+                                    voice_session_shadow.end_turn(
+                                        chat_id, commit_turn_id, cfg)
+                                except Exception:
+                                    pass
                                 # One routing rule for every voiced turn
                                 # (#461), shared with the batch /stt path: an
                                 # armed room runs the armed pass; otherwise
