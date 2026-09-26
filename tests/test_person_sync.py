@@ -32,6 +32,7 @@ import json
 import logging
 import struct
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -107,7 +108,8 @@ class FakeMembro:
                     if fake.refuse_anchor_lists:
                         self._json({"error": "owner token required"}, 401)
                         return
-                    rows = [{k: a[k] for k in ("id", "sha256", "source")}
+                    rows = [{k: a[k] for k in ("id", "sha256", "source",
+                                               "captured_at") if k in a}
                             for a in fake.anchors.get(parts[2], [])]
                     self._json({"anchors": rows})
                 elif len(parts) == 6 and parts[5] == "file":
@@ -143,6 +145,7 @@ class FakeMembro:
                         return
                     rows.append({"id": len(rows) + 1, "sha256": sha,
                                  "source": body.get("source", ""),
+                                 "captured_at": body.get("captured_at", 0),
                                  "data": data})
                     self._json({"deduped": False, "anchor_id": len(rows)})
                 elif len(parts) == 6 and parts[5] == "move":
@@ -300,10 +303,13 @@ def test_a_thinned_bank_is_restored_from_membro(app, membro):
 
 def test_restore_leaves_a_full_sufficient_bank_alone(app, membro):
     """#311: a bank at capacity and past the sufficiency bar is already
-    best-of; the archive is not downloaded at it."""
+    best-of; the archive is not downloaded at it. The bank's size follows
+    the caps (#477)."""
     store = anchors.store()
     pid = store.ensure_person("Alex")
-    for secs in (2.1, 2.2, 2.3, 2.4, 2.5, 1.1, 1.2, 1.3):
+    longs = [2.1 + 0.1 * i for i in range(anchors.KEEP_CLIPS)]
+    shorts = [1.1 + 0.1 * i for i in range(anchors.KEEP_SHORT_CLIPS)]
+    for secs in longs + shorts:
         assert store.add_clip(pid, _pcm(secs), 16000, source="introduction")
     person_sync.sync_once(membro.url, force=True)
 
@@ -315,6 +321,34 @@ def test_restore_leaves_a_full_sufficient_bank_alone(app, membro):
     out = person_sync.sync_once(membro.url, force=True)
     assert out["restored_clips"] == 0
     assert len(_file_gets(membro)) == before        # not even downloaded
+
+
+def test_a_restored_clip_keeps_its_capture_time_and_is_audited(
+        app, membro, monkeypatch):
+    """#477: a clip membro hands back lands on the day it was spoken, so
+    rotation's sessions see the day it came from and not the restore. A
+    pass that restored anything asks for the hygiene audit when it was
+    given the settings, and a pass without them leaves the audit alone."""
+    from backend import voiceid
+    audits = []
+    monkeypatch.setattr(voiceid, "audit_banks_if_changed",
+                        lambda cfg: audits.append(cfg) or True)
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    assert store.add_clip(pid, _pcm(2.0), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    assert audits == []                              # nothing came back
+    spoken = time.time() - 40 * 86400
+    wav = pcm16_wav(_pcm(2.6), 16000)
+    membro.anchors[pid].append({"id": 9, "sha256": hashlib.sha256(
+        wav).hexdigest(), "source": "accumulated", "captured_at": spoken,
+        "data": wav})
+    cfg = {"voice_id_enabled": True}
+    out = person_sync.sync_once(membro.url, force=True, cfg=cfg)
+    assert out["restored_clips"] == 1
+    stamps = sorted(c["added_at"] for c in store.clips_of(pid))
+    assert stamps[0] == pytest.approx(spoken)
+    assert audits == [cfg]
 
 
 def test_a_refused_anchor_is_not_downloaded_again(app, membro):

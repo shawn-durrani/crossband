@@ -405,20 +405,26 @@ def test_keep_policy_keeps_the_best_n_per_length_class():
     """Deliberately updated for #28 PR-B: keep-best-N applies PER LENGTH
     CLASS. Under the old single pool the short clips (scores scale with
     seconds) were always evicted first, which starved exactly the clips the
-    two-part sufficiency bar needs - so shorts now keep their own best-N."""
-    clips = [{"file": f"c{i}", "seconds": s, "score": s, "added_at": i}
-             for i, s in enumerate([1.0, 5.0, 2.0, 4.0, 3.0, 6.0, 0.5,
-                                    1.5, 1.2])]
+    two-part sufficiency bar needs - so shorts now keep their own best-N.
+    Updated for #477: the caps are symbolic, and every clip here comes
+    from one session, where the ranking is still best-by-score."""
+    t0 = 1_700_000_000
+    short_secs = [2.0 - 0.1 * i for i in range(anchors.KEEP_SHORT_CLIPS + 3)]
+    long_secs = [3.0 + i for i in range(4)]
+    clips = [{"file": f"s{i}", "seconds": s, "score": s, "added_at": t0 + i}
+             for i, s in enumerate(short_secs)]
+    clips += [{"file": f"l{i}", "seconds": s, "score": s,
+               "added_at": t0 + 100 + i} for i, s in enumerate(long_secs)]
     kept = anchors.select_keep(clips)
-    # longs (> SHORT_CLIP_MAX_SECONDS): 5.0, 4.0, 3.0, 6.0 - all four kept
-    # shorts (<= 2.0): best KEEP_SHORT_CLIPS of 1.0/2.0/0.5/1.5/1.2
+    # every long kept: four is under the cap
     assert {c["file"] for c in kept if not anchors.is_short(c)} \
-        == {"c1", "c3", "c4", "c5"}
+        == {f"l{i}" for i in range(4)}
+    # the best KEEP_SHORT_CLIPS shorts, the three weakest gone
     assert {c["file"] for c in kept if anchors.is_short(c)} \
-        == {"c2", "c7", "c8"}  # 2.0s, 1.5s, 1.2s - the best three shorts
+        == {f"s{i}" for i in range(anchors.KEEP_SHORT_CLIPS)}
     # a long-heavy pool still caps at KEEP_CLIPS longs
     longs = [{"file": f"l{i}", "seconds": 3.0 + i, "score": 3.0 + i,
-              "added_at": i} for i in range(anchors.KEEP_CLIPS + 2)]
+              "added_at": t0 + i} for i in range(anchors.KEEP_CLIPS + 2)]
     assert len(anchors.select_keep(longs)) == anchors.KEEP_CLIPS
 
 
