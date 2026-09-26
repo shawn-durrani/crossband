@@ -28,6 +28,7 @@ from . import rounds
 from . import tools as tools_mod
 from . import voice_trace
 from . import voice
+from . import voiceid
 from .config import (ROOT, Settings, mmc_migration_state, key_status,
                      load_settings, report_missing_keys)
 from .memory_client import MemoryClient
@@ -245,6 +246,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # anything can insert a message - a notify() before bind_loop() would
         # otherwise silently no-op.
         events.bind_loop(asyncio.get_running_loop())
+        # #473: load the speaker matcher now, on its own thread, so the
+        # first voice turn after a restart (every deploy is one) can be
+        # named. Only a model already on disk: startup never downloads it.
+        if voiceid.warm_at_startup(settings.as_cfg()):
+            log.info("voice matcher loading in the background")
         # #138 slice 1: one vetted egress path for every model-influenced
         # URL. Tools discover the proxy via egress.proxy_url() - a module
         # global bound to this process, exactly like the events bus above.

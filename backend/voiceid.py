@@ -733,6 +733,8 @@ def _quiet_unlink(path: Path):
 # The fetch+build runs on ONE background daemon thread so no pass ever blocks on
 # the 38MB download; until it is ready, identify_utterance defers to the EL path.
 # Sticky terminal states mean we never hammer the network: a restart re-attempts.
+# App startup claims the warm (warm_at_startup, #473) when the model is already
+# on disk; otherwise the first caller of _get_extractor does.
 
 _lock = threading.Lock()
 _embed_lock = threading.Lock()  # serialise native inference across sessions
@@ -777,7 +779,9 @@ def _set_state(state):
 def _get_extractor(cfg):
     """The ready extractor, or None while cold/fetching/unavailable. On the very
     first cold call it kicks off the background warm and returns None - the pass
-    defers to the EL path until the matcher is ready. Never blocks, never raises."""
+    defers to the EL path until the matcher is ready. Startup normally makes
+    that first call (warm_at_startup, #473), so this lazy claim is the fallback
+    for a model not yet on disk. Never blocks, never raises."""
     global _state
     if sherpa_onnx is None:
         return None
@@ -792,12 +796,40 @@ def _get_extractor(cfg):
     return None
 
 
+def warm_at_startup(cfg) -> bool:
+    """Start loading the matcher while the app starts (#473), so the first
+    voice turn after a restart finds it ready. Crossband restarts on every
+    deploy, and with only the lazy warm in _get_extractor the first turn
+    after each one deferred "unavailable" and went unnamed.
+
+    Only when the feature is on, sherpa-onnx is installed and the model file
+    is already on disk, so a startup never downloads the model. An install
+    that hasn't fetched it yet keeps the lazy path: the first voice check
+    that needs the matcher fetches it, as before. Claims the same one warm
+    _get_extractor would, so a check that arrives mid-load defers exactly as
+    it always has and never starts a second one. Never blocks (the load runs
+    on the warm's own daemon thread) and never raises. True when the warm
+    was requested."""
+    try:
+        if not enabled(cfg) or sherpa_onnx is None:
+            return False
+        if not model_path().is_file():
+            return False
+        _get_extractor(cfg)
+        return True
+    except Exception:
+        log.warning("voiceid: startup warm failed; the first voice check "
+                    "will warm the matcher instead", exc_info=True)
+        return False
+
+
 def matcher_status(cfg) -> str:
     """The matcher's state for the voice health strip (#28): one of
     'disabled' (feature flag off), 'unavailable' (no sherpa-onnx wheel, or
     the fetch/build failed - identification runs on the cloud fallback),
-    'cold' (nothing has needed the matcher yet; the first voice check warms
-    it), 'fetching' (the one-time model download is in flight) or 'ready'.
+    'cold' (not loaded yet: startup loads a model already on disk, #473,
+    and otherwise the first voice check fetches it), 'fetching' (the model
+    is being loaded, or downloaded the one time) or 'ready'.
     Read-only and content-free: it never triggers the warm itself."""
     if not enabled(cfg):
         return "disabled"

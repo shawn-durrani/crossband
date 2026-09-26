@@ -248,7 +248,9 @@ through
 open-source speech toolkit. The app pins the model by its download
 address and its SHA-256, a hash of the file that changes if a single
 byte does. It fetches the file once from the sherpa-onnx releases into
-`<data_dir>/voice_models/` and checks that hash before first use.
+`<data_dir>/voice_models/` and checks that hash before first use. Once
+the file is there, the app loads it in the background every time it
+starts, so the first turn after a restart can be named.
 `GET /api/voice/health` reports the live model's file name, the start
 of its hash, and whether the built-in pin was overridden.
 
