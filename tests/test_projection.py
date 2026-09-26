@@ -833,7 +833,7 @@ def test_unresolved_turn_head_says_why_and_never_the_owner(names, cfg):
 
 
 def test_every_reason_the_matcher_gives_has_words_everywhere():
-    """#482: voiceid could defer with pending_present and no_enrolled, which
+    """#484: voiceid could defer with pending_present and no_enrolled, which
     no list knew. The row still carried the reason, so memory filed the turn
     as an unknown guest while the seats read it as the owner. Every reason
     voiceid can return is in DEFER_REASONS, and the browser's copy covers
