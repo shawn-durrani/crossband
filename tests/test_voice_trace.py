@@ -52,7 +52,8 @@ def test_sanitize_never_persists_free_text_fields():
     out = voice_trace.sanitize_stage(
         {"stage": "end_of_speech_to_final", "ms": 100, "transcript": "my bank pin is 1234",
          "text": "secret", "model": "x"})
-    assert set(out) == {"stage", "ms", "provider", "model", "tts_provider", "speaker"}
+    assert set(out) == {"stage", "ms", "provider", "model", "tts_provider",
+                        "speaker", "tts_model"}
     assert "1234" not in str(out) and "secret" not in str(out)
 
 

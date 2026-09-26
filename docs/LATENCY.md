@@ -45,7 +45,9 @@ wrong.
   fuller per-call log line.
 - For the voice stages, `GET /api/voice/trace/summary` gives the
   median, the 95th percentile and the maximum per stage over the last
-  24 hours, and any seat can read the `voice_latency` diagnostic.
+  24 hours, and any seat can read the `voice_latency` diagnostic. Each
+  voice stage is also split by the ElevenLabs model that spoke, under
+  `by_tts_model`, which is how to compare voice models.
 - For the weight of a conversation, the context ring in the chat header
   shows tokens by component and the megabytes sent again per turn. Or
   ask a seat for the `conversation_performance` diagnostic, which names

@@ -84,6 +84,13 @@ export const api = {
   voiceStatus: () => fetch('/api/voice/status').then(json),
   voiceVoices: () => fetch('/api/voice/voices').then(json),
   voiceAssign: () => fetch('/api/voice/assign', { method: 'POST' }).then(json),
+  // #480: the ElevenLabs voice model picker. The list, the choice and what
+  // Automatic picks today; saving writes config.local.json and applies to
+  // the next reply.
+  voiceModels: () => fetch('/api/voice/models').then(json),
+  setVoiceModel: (model) => fetch('/api/voice/model', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }),
+  }).then(json),
   updateSettings: (body) => fetch('/api/settings', {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   }).then(json),

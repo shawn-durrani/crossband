@@ -191,6 +191,8 @@ def sanitize_stage(raw):
         "model": _clean_str(raw.get("model", "")),
         "tts_provider": _clean_str(raw.get("tts_provider", "")),
         "speaker": _clean_str(raw.get("speaker", "")),
+        # #480: the ElevenLabs model that spoke, as the relay named it.
+        "tts_model": _clean_str(raw.get("tts_model", "")),
     }
 
 
@@ -274,15 +276,17 @@ def _summarize(values):
 
 def aggregate(rows):
     """Turn raw trace rows into a stage-level p50/p95 breakdown, plus segments
-    by model (for the generation stages) and by TTS provider (for the voice
-    stages). `rows` is a list of dicts as returned by db.get_voice_traces.
+    by model (for the generation stages), by TTS provider and by voice model
+    (for the voice stages, #480). `rows` is a list of dicts as returned by
+    db.get_voice_traces.
 
     Shape:
       {
         "turns": <distinct turn_id count>,
         "stages": { <stage>: {count, p50, p95, max,
                               "by_model": {<model>: {...}},
-                              "by_tts_provider": {<provider>: {...}}} },
+                              "by_tts_provider": {<provider>: {...}},
+                              "by_tts_model": {<voice model>: {...}}} },
       }
     """
     by_stage = {}
@@ -295,7 +299,8 @@ def aggregate(rows):
         ms = r.get("ms")
         if not isinstance(ms, (int, float)):
             continue
-        b = by_stage.setdefault(stage, {"all": [], "by_model": {}, "by_tts": {}})
+        b = by_stage.setdefault(stage, {"all": [], "by_model": {}, "by_tts": {},
+                                        "by_tts_model": {}})
         b["all"].append(float(ms))
         model = r.get("model") or ""
         if model:
@@ -303,10 +308,15 @@ def aggregate(rows):
         tts = r.get("tts_provider") or ""
         if tts:
             b["by_tts"].setdefault(tts, []).append(float(ms))
+        tts_model = r.get("tts_model") or ""
+        if tts_model:
+            b["by_tts_model"].setdefault(tts_model, []).append(float(ms))
     stages = {}
     for stage, b in by_stage.items():
         entry = _summarize(b["all"])
         entry["by_model"] = {m: _summarize(v) for m, v in sorted(b["by_model"].items())}
         entry["by_tts_provider"] = {t: _summarize(v) for t, v in sorted(b["by_tts"].items())}
+        entry["by_tts_model"] = {t: _summarize(v)
+                                 for t, v in sorted(b["by_tts_model"].items())}
         stages[stage] = entry
     return {"turns": len(turn_ids), "stages": stages}

@@ -161,8 +161,10 @@ def test_voice_latency_output_keys_are_the_known_bounded_set(app):
     assert isinstance(out["turns"], int) and isinstance(out["samples"], int)
     for stage_name, entry in out["stages"].items():
         assert stage_name in voice_trace.ALLOWED_STAGES
-        assert set(entry) == {"count", "p50", "p95", "max", "by_model", "by_tts_provider"}
-        for segment in (entry["by_model"], entry["by_tts_provider"]):
+        assert set(entry) == {"count", "p50", "p95", "max", "by_model",
+                              "by_tts_provider", "by_tts_model"}
+        for segment in (entry["by_model"], entry["by_tts_provider"],
+                        entry["by_tts_model"]):
             for seg_key, seg_val in segment.items():
                 assert isinstance(seg_key, str) and len(seg_key) <= 64  # bounded identifier
                 assert set(seg_val) == {"count", "p50", "p95", "max"}

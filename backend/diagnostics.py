@@ -477,9 +477,9 @@ async def dispatch_diagnostic(name, cfg: dict) -> dict:
 
 def voice_latency_summary(window_hours: float = 24.0) -> dict:
     """Stage-level p50/p95/max voice latency over the last `window_hours`,
-    segmented by model and TTS provider - recent-turn count and numeric
-    percentiles only. Content-free by construction, not just by convention:
-    `voice_trace.aggregate` only ever sees rows written through
+    segmented by model, TTS provider and voice model - recent-turn count and
+    numeric percentiles only. Content-free by construction, not just by
+    convention: `voice_trace.aggregate` only ever sees rows written through
     `voice_trace.sanitize_stage`'s closed allowlist (an allowlisted stage
     name, a numeric duration, and bounded provider/model/tts/speaker
     identifiers) - there is no transcript column in the table for this

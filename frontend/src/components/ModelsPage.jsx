@@ -9,6 +9,8 @@ import { keepAliveSupport, validKeepAliveValue, normalizeKeepAlive } from '../ke
 import { voiceIdPatch } from '../seatSave'
 import RateCardsPanel from './RateCardsPanel'
 import BenchmarkPanel from './BenchmarkPanel'
+import VoiceModelPanel from './VoiceModelPanel'
+import { choiceNote, seatChoiceRows } from '../ttsModels'
 import { reasoningOptions, effortSupport, normalizeReasoningEffort } from '../reasoningEffort'
 
 const EMPTY = {
@@ -88,7 +90,19 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
   const [modelStatus, setModelStatus] = useState(null) // { [slug]: {...} } | null
   const [refreshKey, setRefreshKey] = useState(0) // bump to re-pull the readout
   const [promoting, setPromoting] = useState(null) // participant id mid-promote
+  const [voiceModels, setVoiceModels] = useState(null) // #480: GET /api/voice/models
   const previewAudio = useRef(null)
+
+  // #480: the ElevenLabs model list, for the app-wide picker and each
+  // seat's own choice. Loaded once per visit; a failure just hides both.
+  useEffect(() => {
+    if (!voiceEnabled) return
+    let live = true
+    api.voiceModels()
+      .then((r) => { if (live) setVoiceModels(r) })
+      .catch(() => { if (live) setVoiceModels(null) })
+    return () => { live = false }
+  }, [voiceEnabled])
 
   // Land where the click promised: consume the arrival intent once.
   const intentDone = useRef(false)
@@ -196,6 +210,9 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
         ...voiceIdPatch({ isNew: !editing.id, voiceId: editing.voice_id,
                           seedVoiceId: editing._seedVoiceId }),
         voice_gain: editing.voice_gain ?? 1,
+        // #480: blank follows the app's voice model. Sent only once the
+        // list has loaded, so a save can never clear a choice it didn't show.
+        ...(voiceModels ? { tts_model: editing.tts_model || '' } : {}),
         reasoning_effort: normalizeReasoningEffort(editing.provider, editing.reasoning_effort),
         // Cleared when it no longer applies (see normalizeThinkingControl), so
         // the saved row can never claim a control the request never sends.
@@ -313,6 +330,10 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
             an unpriced model blocks, collapsed by default so it doesn't crowd
             the roster. */}
         {!editing && <RateCardsPanel />}
+
+        {!editing && voiceEnabled && (
+          <VoiceModelPanel data={voiceModels} onChanged={setVoiceModels} />
+        )}
 
         {/* #91: voice identity has its own first-class page now - this
             menu keeps one line so the capability stays discoverable from
@@ -649,6 +670,27 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                     className="w-40 accent-sky-500 cursor-pointer"
                   />
                   <span className="tabular-nums">{Math.round((editing.voice_gain ?? 1) * 100)}%</span>
+                </span>
+              </label>
+            )}
+            {voiceEnabled && voiceModels && (
+              <label className="block">
+                <span className="text-sm text-ink-mid">
+                  Voice model{' '}
+                  <span className="text-ink-faint">(which ElevenLabs model speaks for this seat)</span>
+                </span>
+                <select
+                  className={field}
+                  value={editing.tts_model || ''}
+                  aria-describedby="seat-voice-model-note"
+                  onChange={(e) => setEditing({ ...editing, tts_model: e.target.value })}
+                >
+                  {seatChoiceRows(voiceModels, editing.tts_model || '').map((r) => (
+                    <option key={r.value || 'app'} value={r.value} disabled={r.disabled}>{r.label}</option>
+                  ))}
+                </select>
+                <span id="seat-voice-model-note" className="mt-1 block text-xs text-ink-faint">
+                  {choiceNote(voiceModels, editing.tts_model || '')}
                 </span>
               </label>
             )}

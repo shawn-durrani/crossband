@@ -118,8 +118,8 @@ a default install records it.
 | key | default | what it does |
 |---|---|---|
 | `voice_provider` | `auto` | Which engine hears and speaks. `auto` uses ElevenLabs when `ELEVENLABS_API_KEY` is set and no voice when it isn't, and `elevenlabs` makes that choice explicit. `local` is reserved for a local engine and, until one lands, selects nothing. |
-| `tts_model` | `eleven_flash_v2_5` | The ElevenLabs streaming text-to-speech model. |
-| `tts_speed` | `1.0` | Speaking speed, from 0.7 to 1.2. Playback speed also has a live slider in the voice dock. |
+| `tts_model` | `eleven_flash_v2_5` | The ElevenLabs model that speaks replies. Pick it on the Models page, which saves it here, or set `auto` to follow the newest model the app can stream live. A seat can pick its own. [Choosing the voice model](#choosing-the-voice-model). |
+| `tts_speed` | `1.0` | Speaking speed, from 0.7 to 1.2. The v3 models don't take it. Playback speed also has a live slider in the voice dock. |
 | `stt_model` | `scribe_v2` | The transcription model. The realtime variant is used on its own when available. |
 | `voice_pricing` | built in | The ElevenLabs rate card used to price speech in and out. |
 | `room_roster_max` | `6` | How many people the room's roster may hold at once. The cap frees as people leave. An explicit `0` seats no guests, and your tap-correction still seats. |
@@ -134,6 +134,41 @@ a default install records it.
 | `voice_id_model_sha256` | `""` | Overrides the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched once to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
 | `diarize_shadow_url` | `""` | The address of a diariser on this computer that the shadow test splits each voice turn with, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty turns that part off. [The shadow test](#the-shadow-test). |
 | `voice_shadow_model` | `""` | A second speaker model the shadow test scores beside the live one. It knows `titanet_large`, about 100MB, downloaded once and checked against a pinned hash, and only while this is set. Empty turns that part off. [The shadow test](#the-shadow-test). |
+
+### Choosing the voice model
+
+The Models page has a voice model picker whenever voice is on. It lists
+the models your ElevenLabs account offers for speech, each with a short
+note, and a choice applies from the next reply with no restart. Each
+seat's editor has the same list beside its voice and volume, and its
+first option follows the app setting.
+
+Automatic picks the newest model ElevenLabs lists for speech that the
+app can stream live. Within a version it prefers the one built for
+conversation, so Eleven v3 Conversational wins over Eleven v3 and Flash
+wins over Multilingual. It skips the Turbo models, which ElevenLabs has
+replaced with Flash, and any model ElevenLabs refused on live voice in
+the last day. When a newer version shows up on the list and streams,
+Automatic moves to it on its own.
+
+ElevenLabs streams speech through two sockets. The v3 models only work
+on the
+[Text to Dialogue WebSocket](https://elevenlabs.io/docs/api-reference/text-to-dialogue/ttd-websocket),
+and every other model uses the
+[text to speech WebSocket](https://elevenlabs.io/docs/api-reference/text-to-speech/v-1-text-to-speech-voice-id-stream-input).
+The app picks the socket from the model's name. If ElevenLabs refuses a
+model when the socket opens, the reply falls back to the next model
+down, and to Flash v2.5 last, so a pick can't silence voice.
+
+The list comes from ElevenLabs and is kept for an hour. When it can't
+be fetched, the picker shows a built-in copy. A model name that isn't
+on the list, typed into `config.local.json` by hand, speaks with Flash
+v2.5 instead. If `CROSSBAND_TTS_MODEL` is set, it wins and the picker
+is locked.
+
+Each voice trace records the model that spoke, and the trace summary
+splits every voice stage by it under `by_tts_model`. Compare the
+first-audio times there before you settle on a model.
 
 ### When the matcher is off or missing
 

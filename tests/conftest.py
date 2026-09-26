@@ -236,3 +236,18 @@ def transcript():
         make_msg(3, "gpt", "and I'm GPT"),
         make_msg(4, "claude", "shall we begin?"),
     ]
+
+
+@pytest.fixture(autouse=True)
+def _tts_models_offline(monkeypatch):
+    """The voice model list (#480) is a process-global cache plus a memory
+    of refused models. Each test starts with neither, and the live path's
+    background refresh never runs, so the keyless suite never asks
+    ElevenLabs for its model list."""
+    from backend import tts_models
+    tts_models._cache.clear()
+    tts_models._refused.clear()
+    monkeypatch.setattr(tts_models, "_spawn_refresh", lambda fetch: None)
+    yield
+    tts_models._cache.clear()
+    tts_models._refused.clear()

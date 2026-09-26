@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
 from .. import db, provenance
-from .. import providers
+from .. import providers, tts_models
 from ..config import load_settings, provenance_for
 from ..engine import slugify
 
@@ -44,6 +44,18 @@ def _keep_alive_error(provider):
             "only - the native API is the only home for the field.")
 
 
+def _tts_model_ok(value) -> bool:
+    """A seat's voice model (#480): blank (follow the app setting), "auto",
+    or an id on the current model list. Read from the cache or the pinned
+    list, so a save never waits on ElevenLabs."""
+    return tts_models.valid_choice(value, tts_models.catalogue()["models"],
+                                   allow_blank=True)
+
+
+_TTS_MODEL_ERROR = ("tts_model must be blank (use the app setting), 'auto', "
+                    "or a voice model from the list")
+
+
 class ParticipantIn(BaseModel):
     name: str | None = None
     provider: str | None = None
@@ -58,6 +70,7 @@ class ParticipantIn(BaseModel):
     reasoning_effort: str | None = None
     thinking_control: str | None = None  # local-endpoint thinking opt-out (#159)
     keep_alive: str | None = None  # Ollama model retention: duration or -1 ('' = Ollama's 5m unload)
+    tts_model: str | None = None  # #480: '' follows the app setting
     lifecycle: str | None = None  # 'trial' | 'onboarded'
 
     @field_validator("voice_gain")
@@ -97,6 +110,8 @@ def create_participant(body: ParticipantIn):
         raise HTTPException(400, _thinking_error(body.provider))
     if not providers.valid_keep_alive(body.provider, body.keep_alive):
         raise HTTPException(400, _keep_alive_error(body.provider))
+    if body.tts_model is not None and not _tts_model_ok(body.tts_model):
+        raise HTTPException(400, _TTS_MODEL_ERROR)
     con = db.connect()
     slug = base_slug = slugify(body.name)
     n = 2
@@ -107,12 +122,12 @@ def create_participant(body: ParticipantIn):
     cur = con.execute(
         "INSERT INTO participants(slug, name, provider, model, base_url, api_key_env, "
         "system_prompt, color, reasoning_effort, thinking_control, keep_alive, "
-        "position, created_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "tts_model, position, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (slug, body.name, body.provider, body.model, body.base_url or None,
          body.api_key_env or None, body.system_prompt or "", body.color or "#a78bfa",
          body.reasoning_effort or "", body.thinking_control or "",
-         body.keep_alive or "", pos, db.now()),
+         body.keep_alive or "", body.tts_model or "", pos, db.now()),
     )
     # newcomers only join NEW chats by default; existing rosters are untouched
     con.commit()
@@ -158,6 +173,9 @@ def update_participant(pid: int, body: ParticipantIn):
         if not providers.valid_keep_alive(effective_provider, updates["keep_alive"]):
             con.close()
             raise HTTPException(400, _keep_alive_error(effective_provider))
+    if "tts_model" in updates and not _tts_model_ok(updates["tts_model"]):
+        con.close()
+        raise HTTPException(400, _TTS_MODEL_ERROR)
     if "enabled" in updates:
         updates["enabled"] = int(updates["enabled"])
     # Onboarding gate: a seat may become 'onboarded' only once an

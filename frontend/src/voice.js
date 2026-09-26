@@ -215,6 +215,9 @@ export default class VoiceController {
     // slug -> the model the server named on that seat's latest speaker_start
     // (#254), for the latency trace's labels.
     this._runningModels = {}
+    // slug -> the ElevenLabs model the TTS relay says is speaking that
+    // seat's current reply (#480), for the same labels.
+    this._voiceModels = {}
     // Round liveness clock for the wedged-gate escape hatch (roundGuard.js):
     // stamped on EVERY incoming round event, read by the VAD's gated branch.
     this._lastRoundEventAt = 0
@@ -302,7 +305,8 @@ export default class VoiceController {
   // Provider/model/voice labels for a speaker, for per-model trace segmentation.
   // The model is the one the server named on this turn's speaker_start (#254).
   _traceMeta(slug) {
-    return traceMeta(this.getParticipants?.(), slug, this._runningModels)
+    return traceMeta(this.getParticipants?.(), slug, this._runningModels,
+                     this._voiceModels)
   }
 
   _postTrace(payload) {
@@ -1443,6 +1447,7 @@ export default class VoiceController {
     }
     if (ev.type === 'speaker_start') {
       this._runningModels[ev.speaker] = ev.model || '' // #254
+      delete this._voiceModels[ev.speaker] // #480: named afresh by the relay
       // Defer opening TTS until the reply has real content, so a benched model's
       // ellipsis-only "…" reply is never voiced (ElevenLabs otherwise breathes it).
       this._pendingSpeaker = { slug: ev.speaker, text: '', started: false }
@@ -1607,6 +1612,8 @@ export default class VoiceController {
       ws.send(JSON.stringify({
         chat_id: this.getChatId(),
         voice_id: participant?.voice_id || '',
+        // #480: the relay reads this seat's own voice model choice
+        seat: slug,
       }))
       open = true
       for (const s of pending) ws.send(s)
@@ -1614,6 +1621,8 @@ export default class VoiceController {
     }
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data)
+      // #480: the relay names the model before any audio arrives
+      if (msg.tts_model) this._voiceModels[slug] = msg.tts_model
       if (msg.audio) {
         this._trace.speakerMark(slug, 'first_audio', this._traceMeta(slug))
         player.push(msg.audio)

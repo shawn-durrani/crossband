@@ -73,7 +73,9 @@ shows a key back to you.
 
 Voice needs one more key. Put your ElevenLabs key in `.env` as
 `ELEVENLABS_API_KEY` and restart the app. Each model then speaks in its
-own voice. Speech goes through the backend, so the key never reaches
+own voice. The Models page picks which ElevenLabs model does the
+speaking, or Automatic, which follows the newest one the app can stream
+live. Speech goes through the backend, so the key never reaches
 the browser. If you don't add a key, voice is off and everything else
 still works.
 
