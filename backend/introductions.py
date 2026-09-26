@@ -711,6 +711,98 @@ def parse_correction_verdict(text) -> list:
     return out
 
 
+# ---- a word spelt out is not a name (#494) ----
+#
+# The 26 September Scrabble game: "It's spelled good. G-O-A-D." came back
+# from the merged scan as a name correction, after #474 had told the prompt
+# that spelling a word out is a transcript fix. The model still wobbles on
+# it, and a stray correction is more than noise: with no `who` it renames
+# the most recent confident speaker, owner-set and locked. So a turn that
+# spells a word out letter by letter keeps a correction only when the turn
+# itself marks the word as a name. Plain rules, no model:
+#
+# 1. the turn talks about a name ("her name's spelt", "call her", "my
+#    surname");
+# 2. the transcript also writes the same name as a name, capitalised
+#    mid-sentence ("No, it's Mateo, M-A-T-E-O"). Transcripts capitalise
+#    names and little else mid-sentence, the signal _SELF_INTRO_RE reads.
+#    Only the same name counts: a near one would let the person spoken to
+#    vouch for a game word one letter off their name ("Hey Dave, is
+#    C-A-V-E a word?").
+#
+# Bare letters never count on their own, even when they are close to a name
+# in the room. "No, it's M-A-T-E-O" after the app named someone Matteo is
+# the same shape as "No, it's C-A-V-E" in a game with Dave playing, and the
+# utility model called that shape a correction three runs out of three
+# ("No, it's J-I-N-X, not jinks", in eval_intent). Missing a real
+# correction costs a rename on the Voices page; a wrong one silently locks
+# a guest's name (resolve_correction_target's rule). A turn with no
+# spelling in it is untouched: "call her Sam" and "it's actually spelt with
+# a K" read exactly as before.
+
+# "G-O-A-D", "g-o-a-d": single letters joined by hyphens. Not "T-shirt",
+# "x-ray" or "Sam-Alex", where a hyphen joins longer pieces.
+_SPELT_HYPHENS = re.compile(r"(?<![\w'-])[A-Za-z](?:-[A-Za-z])+(?![\w'-])")
+# "Z O O S", "Q, A, T", "Q.A.T.": three or more single capitals, each set
+# off by a space, comma or full stop. Three, so "U.S." and "A, B" stay out.
+_SPELT_CAPITALS = re.compile(
+    r"(?<![\w'])[A-Z](?:(?:[.,]\s*|\s+)[A-Z](?![\w'])){2,}")
+_NAME_TALK_RE = re.compile(
+    r"\b(?:sur|nick)?name[sd]?\b"
+    r"|\bcall(?:s|ed)? (?:me|her|him|them)\b"
+    r"|\b(?:i'?m|i am|he'?s|he is|she'?s|she is|they'?re|they are) called\b",
+    re.IGNORECASE)
+_CAPITALISED_WORD = re.compile(r"(?<![\w'-])[A-Z][a-z'-]*[a-z]")
+
+
+def _plain_quotes(text) -> str:
+    text = (text or "").replace("’", "'").replace("‘", "'")
+    return text.replace("“", '"').replace("”", '"')
+
+
+def spelt_words(text) -> list:
+    """Each word the turn spells out letter by letter, joined ("G-O-A-D" is
+    "Goad"), in the order spoken. Empty when the turn spells nothing."""
+    head = _plain_quotes(text)[:1200]
+    found = []
+    for m in sorted(list(_SPELT_HYPHENS.finditer(head))
+                    + list(_SPELT_CAPITALS.finditer(head)),
+                    key=lambda m: m.start()):
+        letters = re.sub(r"[^A-Za-z]", "", m.group(0))
+        found.append(letters[:1].upper() + letters[1:].lower())
+    return found
+
+
+def _mid_sentence(text, start) -> bool:
+    before = re.sub(r"[\s\"'(]+$", "", text[:start])
+    return bool(before) and before[-1] not in ".!?:;"
+
+
+def _written_as_name(form, text) -> bool:
+    """Does the transcript write `form` as a name: capitalised, and not
+    just because it starts a sentence?"""
+    want = fold_name(form)
+    return bool(want) and any(
+        fold_name(re.sub(r"'s$", "", m.group(0))) == want
+        and _mid_sentence(text, m.start())
+        for m in _CAPITALISED_WORD.finditer(text))
+
+
+def keep_name_corrections(corrections, text) -> list:
+    """The corrections a turn plainly meant as names (#494). A turn that
+    spells nothing out keeps every one. A turn that spells a word out keeps
+    one only when the turn talks about a name, or writes the corrected name
+    as a name mid-sentence. Anything else is a word, and is dropped. Pure."""
+    if not corrections or not spelt_words(text):
+        return list(corrections or [])
+    head = _plain_quotes(text)[:1200]
+    if _NAME_TALK_RE.search(head):
+        return list(corrections)
+    return [corr for corr in corrections
+            if any(_written_as_name(f, head)
+                   for f in (corr.get("name"), corr.get("also")) if f)]
+
+
 def resolve_correction_target(who, owner, people, roster_names,
                               recent_speaker=""):
     """WHO does a confirmed correction rename? Returns the person's identity
@@ -777,6 +869,10 @@ SCAN_OUTCOMES = (
                             # pronounced Y") put both names on one person
     "correction_unmatched", # a correction confirmed, but no unambiguous
                             # target person - nothing changed, by design
+    "spelling_set_aside",   # the only instruction heard was a correction in
+                            # a turn that spells a word out, and nothing
+                            # marked the word as a name: set aside before
+                            # any apply, no line in the chat (#494)
     "depth_set",            # spoken reasoning depth set for seat(s) (#105)
     "depth_cleared",        # spoken reasoning depth back to default (#105)
     "depth_once",           # a one-reply depth override parked (#105 slice 2)
@@ -838,6 +934,9 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
     them under the one verdict line. A confirmed instruction that changed
     nothing on every axis it touched posts one plain system line saying so
     (intent.nothing_changed_line) - a miss must never be silent again (#258).
+    The exception is a correction in a turn that spells a word out with
+    nothing marking the word as a name (keep_name_corrections, #494): that
+    was never an instruction, so it is set aside, logged and not posted.
     Every failure ends here (log only)."""
     try:
         seats = await asyncio.to_thread(_all_participant_names)
@@ -847,7 +946,11 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             text, cfg.get("user_name", "User"), seats, present, known)
         reply = await llm_util.utility_complete_logged(
             chat_id, "intent_scan", prompt, cfg, max_tokens=300)
-        verdict = intent.parse_merged(reply)
+        verdict = intent.parse_merged(reply, text)
+        # #494: a correction the spelling guard dropped is logged as set
+        # aside, never posted: a word spelt out isn't a name.
+        set_aside = (len(parse_correction_verdict(reply))
+                     > len(verdict["corrections"]))
         outcome = None
         outcomes = {}
         if verdict["mode_command"] != "none":
@@ -905,7 +1008,9 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             # A confirmed instruction that changed nothing is "no_change",
             # never "model_rejected": the 25 September log showed a heard
             # mode command as rejected, which hid it from anyone reading.
-            outcome = "no_change" if outcomes else "model_rejected"
+            outcome = ("no_change" if outcomes
+                       else "spelling_set_aside" if set_aside
+                       else "model_rejected")
         line = intent.nothing_changed_line(verdict, outcomes)
         if line:
             await asyncio.to_thread(_insert_nothing_changed_line, chat_id, line)

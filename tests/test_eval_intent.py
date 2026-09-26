@@ -72,6 +72,37 @@ def test_corpus_grades_spelt_out_words_apart_from_spelt_out_names():
         "who"] == "owner"
 
 
+def test_corpus_grades_word_game_spellings_as_no_instruction():
+    """The 26 September Scrabble game (#494): "It's spelled good. G-O-A-D."
+    was heard as a name correction. The corpus carries word game spellings
+    in made up turns, graded as no instruction, and bare letters one off a
+    name in the room, which the app sets aside the same way."""
+    games = [f for f in load_fixtures() if f.category == "spelling_game"]
+    assert len(games) >= 5
+    assert all(not f.has_intent for f in games)
+    assert _fx("game_spelled_misheard").text == "It's spelled good. G-O-A-D."
+    bare = _fx("spell_bare_letters_near_a_name")
+    assert bare.present == ["Matteo"] and not bare.has_intent
+
+
+def test_merged_path_scores_what_the_app_would_do_with_a_spelt_word():
+    """The runner gives parse_merged the turn, as the live scan does, so a
+    reply that wobbles on a game word is scored on the verdict the app
+    would act on (#494)."""
+    from backend.config import Settings
+    from backend.llm_util import UtilityCompletion
+
+    async def wobbly(prompt, axis):
+        reply = {"corrections": [{"who": "", "name": "Goad", "also": ""}]}
+        return UtilityCompletion(text=json.dumps(reply), input_tokens=400,
+                                 output_tokens=60, latency_s=0.01)
+
+    fx = _fx("game_spelled_misheard")
+    r = asyncio.run(runner.run_one(fx, "merged", wobbly,
+                                   Settings().as_cfg(), "claude-haiku-4-5"))
+    assert r.heard["corrections"] == [] and r.wrong_axes() == []
+
+
 def test_fixture_validation_rejects_bad_shapes():
     base = {"id": "x", "category": "c", "text": "hi", "expected": {}}
     Fixture.from_dict(base)

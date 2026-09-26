@@ -123,6 +123,13 @@ a question mark in it still gets one reply, because the first seat to
 answer a question can't pass. For "solo mode" to be heard, say it by
 name, or say you're on your own now, like "it's just me now".
 
+A word you spell out letter by letter only counts as a name correction
+when the turn says it's a name. "Her name's spelt S-A-M-M" counts, and
+so does "it's Mateo, M-A-T-E-O", where you say the name and then spell
+it. Letters on their own don't count, even when they're close to the
+name of someone in the room, because a word in a game looks the same.
+A word set aside changes nothing and posts no line.
+
 If a turn is never heard as anything, the manual doors always work:
 the two switches in the voice settings drawer, "switch on now" and
 "switch off for this chat", and typing the command. There's no switch

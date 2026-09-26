@@ -23,7 +23,8 @@ and "heard but changed nothing" wording, tested without a model.
    to fix the transcript was heard as a name correction. The prompt now
    says spelling a word out is no correction unless the word is a
    person's name. Whether the model obeys is measured by eval_intent's
-   spelling fixtures.
+   spelling fixtures. Since #494 a plain rule after the parse holds the
+   line too, pinned in tests/test_spelling_guard.py.
 """
 
 import json
