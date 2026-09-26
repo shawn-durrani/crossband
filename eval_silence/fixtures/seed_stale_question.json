@@ -1,0 +1,21 @@
+{
+  "id": "stale_question_pass",
+  "category": "stale_answered_question",
+  "responder": "claude",
+  "conversation": [
+    {"speaker": "user", "content": "Go into listening mode, you two. Only answer if we ask."},
+    {"speaker": "user", "content": "Claude, is 18mm ply strong enough for a 900mm shelf?"},
+    {"speaker": "claude", "content": "For books it'll sag a little over time. A hardwood lip along the front fixes that."},
+    {"speaker": "user", "content": "Did you look that up, or is that from memory?"},
+    {"speaker": "claude", "content": "From memory, not a live lookup."},
+    {"speaker": "gpt", "content": "Same here, prior knowledge, no search."},
+    {"speaker": "user", "content": "Okay, back to listening."},
+    {"speaker": "Sam (in the room)", "content": "That's three screws done on this side."},
+    {"speaker": "Sam (in the room)", "content": "Honestly, who marked these holes? Must have been me."}
+  ],
+  "already_answered_by": ["claude", "gpt"],
+  "informational_value": "low",
+  "relational_cost_of_silence": "low",
+  "expected_verdict": "pass",
+  "notes": "Minutes after both seats answered a question, a turn with a question mark in it asks the seats nothing. Going back to answer the earlier question again ('no lookup, same as before') adds nothing, and nobody is waiting on it. This is the shape a seat got wrong when the retry told it a question was owed an answer."
+}

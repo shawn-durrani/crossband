@@ -1,0 +1,15 @@
+{
+  "id": "quiet_then_named_speak",
+  "category": "quiet_request_named_seat",
+  "responder": "claude",
+  "conversation": [
+    {"speaker": "user", "content": "Go into listening mode, you two. Only answer if we ask one of you by name."},
+    {"speaker": "Sam (in the room)", "content": "Is that one square?"},
+    {"speaker": "user", "content": "Claude, are you still there?"}
+  ],
+  "already_answered_by": [],
+  "informational_value": "low",
+  "relational_cost_of_silence": "high",
+  "expected_verdict": "speak",
+  "notes": "The same quiet request as asked_to_stay_quiet_pass, but the newest turn names a seat. Being named is the invitation back in, so silence now reads as absence even with nothing new to say. The guard refuses the named seat's pass and tells it an answer is owed."
+}

@@ -36,12 +36,15 @@ detector decision rejected. The judgment stays with the model, under a
 clearer prompt rule.
 
 What can be tested without a model is whether the fixture set encodes
-the principle the same way across five contrasting scenarios: a group
-check in, a resolved factual question, a roll call, a mid debate
-paraphrase, and a direct address. `eval_silence/policy.py` expresses
-the rule as code for that consistency check alone. It is never imported
-by `backend/engine.py` or `backend/providers.py`, and it never runs
-against a live message.
+the principle the same way across contrasting scenarios. The first five
+are a group check in, a resolved factual question, a roll call, a mid
+debate paraphrase, and a direct address. The quiet family covers a room
+where the seats were asked to stay quiet. It has the quiet request
+itself, a question both seats already answered, two people talking to
+each other, and a seat named after a quiet request.
+`eval_silence/policy.py` expresses the rule as code for that
+consistency check alone. It is never imported by `backend/engine.py` or
+`backend/providers.py`, and it never runs against a live message.
 
 Routing is a separate concern and the eval leaves it alone.
 `pick_responders` and `_vocative_responders` in `backend/engine.py`
@@ -55,6 +58,23 @@ offered it the turn.
 have the same redundancy shape, in that a second identical answer adds
 no new information, and opposite expected verdicts. What separates them
 is whether the speaker was being addressed as part of the group.
+
+`seed_asked_to_stay_quiet.json` and `seed_quiet_then_named.json` make
+the same point after a quiet request. In both the seat has nothing new
+to say. People in the room asking each other something leaves its
+silence unremarkable, however long the quiet has run. Naming the seat
+invites it back in, and silence then reads as absence.
+
+## The quiet family goes through a real round
+
+The pass guard in `backend/engine.py` can't tell who a question is for.
+It sees a question mark in the newest turn, holds back the first seat's
+`[pass]` once, and states a note on the retry. Each quiet family
+fixture also runs through a real round in `tests/test_pass.py`, because
+a note that orders an answer makes an obedient seat answer something,
+often a question it already answered. A stand in seat there does what
+the retry note says. A pass verdict must leave no seat reply behind, and
+a named seat must answer. No model is called.
 
 ## Fixture schema
 
@@ -95,20 +115,21 @@ env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY .venv/bin/python -m pytest tests/test
 ```
 
 No keys, no network, no model calls. The suite loads the seed corpus,
-checks each fixture against the schema, checks that all five scenarios
-are still present, pins the four axis combinations of `policy.py`,
-asserts every fixture's axes imply its verdict, and asserts the check in
-and the resolved factual question still resolve oppositely. The wording
-of the live rule is pinned separately, in `tests/test_silence_rule.py`.
+checks each fixture against the schema, checks that every scenario is
+still present, pins the four axis combinations of `policy.py`, asserts
+every fixture's axes imply its verdict, and asserts both contrast pairs
+still resolve oppositely. The wording of the live rule is pinned
+separately, in `tests/test_silence_rule.py`. The quiet family's round
+replay is in `tests/test_pass.py`.
 
 ## How to read the result
 
 Green means every fixture's graded axes imply its graded verdict under
-`eval_silence/policy.py`, and the five scenarios still illustrate one
+`eval_silence/policy.py`, and the scenarios still illustrate one
 principle.
 
 Green doesn't mean the prompt change works on live models. What the
-harness holds in place is the principle and the five scenarios that
+harness holds in place is the principle and the scenarios that
 illustrate it, so a later prompt rewrite can't quietly change what the
 rule means.
 
@@ -134,7 +155,7 @@ A fixture that fails the schema. `load_fixtures` raises `FixtureError`
 for an axis value outside `low` and `high`, a verdict outside `speak`
 and `pass`, a missing required field, an empty `conversation`, a
 duplicate `id` across two files, or a fixtures directory that doesn't
-exist. Deleting one of the five seed files fails
+exist. Deleting one of the seed files fails
 `test_builtin_seed_corpus_loads_and_validates` instead, naming the
 category that went missing.
 

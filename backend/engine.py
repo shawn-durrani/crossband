@@ -576,7 +576,7 @@ _ECHO_LEDGER_ACTIONS = {"log_echo": "logged", "suppress_echo": "suppressed",
 
 
 def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
-                 addressed, user_text, voice_mode, echo_guard, user_name):
+                 addressed, user_text, voice_mode, echo_guard):
     """Judge one completed reply against the pass and echo guards (#241).
 
     Pure: the decision only. The caller owns the SSE yields, the live
@@ -591,7 +591,10 @@ def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
       or on a forced answer after a refused pass), or "retry_echo".
     - note: the guard note the retry states, empty otherwise. A pass on an
       echo retry (#210) is always accepted: the retry note promised it,
-      and the alternative on offer was a restatement.
+      and the alternative on offer was a restatement. A refused pass's
+      note depends on why: a seat named in the turn is told it owes an
+      answer, and a first responder to a question mark is asked to check
+      the turn and told a second pass stands (passes.guard_note).
     - echo_ref: "own" or "round" for the echo actions' log lines, else "".
 
     Tool rounds are exempt from the echo guard (fresh results get engaged
@@ -601,7 +604,7 @@ def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
         if pass_note or echo_note or passes.may_pass(idx, addressed,
                                                      user_text):
             return "suppress_pass", "", ""
-        return "retry_pass", passes.GUARD_NOTE.format(user=user_name), ""
+        return "retry_pass", passes.guard_note(addressed), ""
     # #460: a real reply with a stray [pass] on the end is judged, and
     # kept, without the token.
     content = passes.strip_pass(content)
@@ -1036,8 +1039,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 echo_note=echo_note, echo_refs=echo_refs, idx=idx,
                 addressed=participant["slug"] in addressed,
                 user_text=user_text, voice_mode=voice_mode,
-                echo_guard=round_cfg.get("echo_guard", True),
-                user_name=cfg["user_name"])
+                echo_guard=round_cfg.get("echo_guard", True))
             if action in ("suppress_pass", "retry_pass"):
                 # #98: the seat chose the honourable silence. The client
                 # drops the streamed bubble on this event; voice held TTS

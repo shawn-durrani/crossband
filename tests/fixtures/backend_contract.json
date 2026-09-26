@@ -79,6 +79,18 @@
       {
         "is_cut_pass": true,
         "is_pass": true,
+        "kept": "Sam and Alex are sorting the clamps, not a question for me.",
+        "text": "Sam and Alex are sorting the clamps, not a question for me. [pass]"
+      },
+      {
+        "is_cut_pass": true,
+        "is_pass": true,
+        "kept": "That one wasn't aimed at us.",
+        "text": "That one wasn't aimed at us.\n\n[pass]"
+      },
+      {
+        "is_cut_pass": true,
+        "is_pass": true,
         "kept": "(still listening)",
         "text": "(still listening) [pass]."
       },
@@ -105,6 +117,18 @@
         "is_pass": false,
         "kept": "Nothing beats oak.",
         "text": "Nothing beats oak. [pass]"
+      },
+      {
+        "is_cut_pass": false,
+        "is_pass": false,
+        "kept": "Oak is not for me.",
+        "text": "Oak is not for me. [pass]"
+      },
+      {
+        "is_cut_pass": false,
+        "is_pass": false,
+        "kept": "Not a question for me, but the joint needs a clamp.",
+        "text": "Not a question for me, but the joint needs a clamp. [pass]"
       },
       {
         "is_cut_pass": false,
@@ -175,7 +199,7 @@
       "though"
     ],
     "quiet_max_chars": 100,
-    "quiet_phrase_pattern": "\\b(?:nothing (?:(?:new|more|further|else|much|useful|really) )*(?:to (?:add|say|contribute)|from me|from my end|on my end|on my side|here)|nothing(?: (?:new|more|further|else))?$|(?:don't|do not|didn't|haven't|have not|not) (?:have |got |see )?(?:anything|much|a lot)(?: (?:new|more|further|else))? to (?:add|say|contribute)|no (?:(?:further|more|new) )?(?:input|comments?|thoughts|additions)|(?:stay|stays|staying|stayed|keep|keeps|keeping|remain|remaining|be|being|go|going) (?:quiet|quietly|silent)|(?:quiet|silent|listening|eavesdropping|lurking) mode|(?:hold|holds|holding|held) (?:back|off|fire)|(?:sit|sits|sitting) (?:this|that) (?:one )?out|stay(?:ing)? out of (?:it|this|the way)|passing|pass(?=$| for now| on this| this (?:one|time|round|turn))|listening(?=$| in| quietly| for now| along)|eavesdropping|lurking|standing by|(?:leave|let) (?:you|you two|you both|you all|the two of you|y'all) (?:to it|carry on|chat|talk|continue|get on with it))\\b",
+    "quiet_phrase_pattern": "\\b(?:nothing (?:(?:new|more|further|else|much|useful|really) )*(?:to (?:add|say|contribute)|from me|from my end|on my end|on my side|here)|nothing(?: (?:new|more|further|else))?$|(?:don't|do not|didn't|haven't|have not|not) (?:have |got |see )?(?:anything|much|a lot)(?: (?:new|more|further|else))? to (?:add|say|contribute)|no (?:(?:further|more|new) )?(?:input|comments?|thoughts|additions)|(?:stay|stays|staying|stayed|keep|keeps|keeping|remain|remaining|be|being|go|going) (?:quiet|quietly|silent)|(?:quiet|silent|listening|eavesdropping|lurking) mode|(?:hold|holds|holding|held) (?:back|off|fire)|(?:sit|sits|sitting) (?:this|that) (?:one )?out|stay(?:ing)? out of (?:it|this|the way)|passing|pass(?=$| for now| on this| this (?:one|time|round|turn))|listening(?=$| in| quietly| for now| along)|eavesdropping|lurking|standing by|(?:leave|let) (?:you|you two|you both|you all|the two of you|y'all) (?:to it|carry on|chat|talk|continue|get on with it)|(?:not|wasn't|was not|isn't|is not) (?:(?:a question|one) (?:for|to)|aimed at|addressed to|meant for|directed at) (?:me|us)|(?:not|wasn't|isn't|nobody|no one|nobody's|no one's) (?:asking|addressing|asked|addressed) (?:me|us)|no question (?:for|aimed at|to) (?:me|us))\\b",
     "token": "[pass]",
     "tts_first_chunk_chars": 120
   },

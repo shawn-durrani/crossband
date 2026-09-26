@@ -39,18 +39,62 @@ frontend/src/passView.js applies the same rule, pinned through
 tests/fixtures/backend_contract.json, so the screen and the voice agree
 with what the engine stores.
 
+The question half of the guard asks for a second look (26 September
+field test). The engine's only test for a direct question is a question
+mark in the newest turn. After the owner asked the seats to stay quiet,
+two people in the room asked each other things all evening, and the
+first seat's pass was refused on each of those turns. The old retry note,
+under a "you must answer" heading, said the owner had asked a direct
+question and a substantive reply was owed. One seat trusted it: with no
+such question in the newest turn, it went back and answered one it and
+the other seat had answered minutes earlier, or said out loud that nobody
+had asked it anything. The other seat passed again, which the engine
+already accepts. The retry now says what the engine saw, a question mark,
+under a neutral heading, and lets a second pass stand. A seat named in
+the turn still gets the firm note. Replayed on made-up turns, the seat
+that spoke under the old note passed under the new one, and still
+answered a real question and a turn that named it. When it did speak
+after the new note, it said the turn wasn't for it ("not a question for
+me") and then wrote the token, so a remark saying so is a quiet remark
+too.
+
 Pure module: the engine consumes it, tests drive it without I/O.
 """
 import re
 
 PASS_TOKEN = "[pass]"
 
-GUARD_NOTE = (
-    "Your [pass] was refused: {user} asked a direct question and you are "
-    "first to answer it (or you were addressed by name), so at least one "
-    "substantive reply is owed. Answer now - as briefly as you like, but "
-    "with actual content."
+# The retry notes the guard states. They reach the seat as trusted app
+# context, which the system prompt tells it never to doubt, so each one says
+# only what the engine actually checked. Naming is checked, so the addressed
+# note is firm. A direct question is not: the engine sees a question mark
+# in the newest turn and nothing more, so the question note asks for a
+# second look and lets a second [pass] stand.
+ADDRESSED_NOTE = (
+    "Your [pass] was refused: the newest turn names you, so you owe it an "
+    "answer. Answer that turn now, as briefly as you like, but with actual "
+    "content."
 )
+QUESTION_NOTE = (
+    "One check before your [pass] stands. The newest turn has a question "
+    "mark in it and you're first to reply, and a question put to the AI "
+    "members is owed at least one real answer. Read the newest turn alone, "
+    "and never go back to answer an earlier question instead. If it asks "
+    "you or the other AI members something, answer it now, briefly, with "
+    "actual content. If it doesn't (people in the room talking to each "
+    "other, someone thinking out loud, or chatter while you've been asked "
+    "to stay quiet), your pass stands: reply with exactly [pass] and "
+    "nothing else. Whatever you write goes to the room, not to the app, so "
+    "never report this check or say why you're passing. If you've been "
+    "asked to stay quiet and aren't sure the turn is for you, it isn't."
+)
+
+
+def guard_note(addressed: bool) -> str:
+    """The note a refused pass's one retry states: firm for a seat named in
+    the newest turn, a second look for a first responder to a question."""
+    return ADDRESSED_NOTE if addressed else QUESTION_NOTE
+
 
 # What a quiet remark says, one phrase at a time. Matched against a
 # normalised clause (lowercase, straight apostrophes, words joined by single
@@ -78,6 +122,12 @@ QUIET_PHRASE_PATTERN = (
     r"|eavesdropping|lurking|standing by"
     r"|(?:leave|let) (?:you|you two|you both|you all|the two of you|"
     r"y'all) (?:to it|carry on|chat|talk|continue|get on with it)"
+    r"|(?:not|wasn't|was not|isn't|is not) "
+    r"(?:(?:a question|one) (?:for|to)|aimed at|addressed to|"
+    r"meant for|directed at) (?:me|us)"
+    r"|(?:not|wasn't|isn't|nobody|no one|nobody's|no one's) "
+    r"(?:asking|addressing|asked|addressed) (?:me|us)"
+    r"|no question (?:for|aimed at|to) (?:me|us)"
     r")\b"
 )
 QUIET_PHRASE = re.compile(QUIET_PHRASE_PATTERN)
