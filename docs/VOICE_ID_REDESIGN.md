@@ -406,9 +406,10 @@ Each has a recommendation. They go to the owner as separate questions.
    in solo too, or keep solo's cleaner sound. Recommended: one setting.
 3. **When to ask about a new voice.** After 4 seconds of their speech,
    or after their second turn. Recommended: 4 seconds.
-4. **The strangers file.** Ship 300 LibriSpeech voices (CC BY 4.0, with
-   credit), or build it on first start from a download. Recommended:
-   ship it.
+
+The strangers file ships with the app, with credit to LibriSpeech in
+the acknowledgements. Building it on first start would mean a large
+download for a file under a megabyte.
 
 ## Detail
 
