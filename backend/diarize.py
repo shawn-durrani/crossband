@@ -470,7 +470,7 @@ DECISION_UNRESOLVED = "unresolved"
 # construction, like every other value here.
 DEFER_REASONS = {"too_short", "below_threshold", "ambiguous", "multi",
                  "not_speech", "no_candidates", "unavailable", "disabled",
-                 "error"}
+                 "error", "pending_present", "no_enrolled"}
 
 
 # Decision history (#304 evidence capture): the single freshest record

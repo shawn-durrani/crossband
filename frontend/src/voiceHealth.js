@@ -130,6 +130,8 @@ export const UNRESOLVED_COPY = {
   unavailable: ['matcher not ready', 'The on-device matcher was not available for that turn.'],
   disabled: ['matching off', 'Voice identification is switched off.'],
   error: ['check failed', 'The voice check did not complete for that turn.'],
+  pending_present: ['maybe someone still being learnt', 'It might be someone in the room whose voice is not learnt yet, so it was left unnamed rather than guessed.'],
+  no_enrolled: ['no voices learnt yet', 'Nobody has enough voice banked to match against.'],
 }
 
 export function pulseReadout(lastDecision, sessionActive = false) {

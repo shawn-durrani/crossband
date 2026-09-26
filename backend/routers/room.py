@@ -513,8 +513,12 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
                     log.info("correction resolved to the owner by voice: "
                              "chat=%s score=%.3f", chat_id, verdict["score"])
                     name = owner
+        # source="correction" is what memory reads as owner-correction, the
+        # method membro always binds on. Without it the owner's own answer
+        # reached memory as by-elimination, the weakest claim (#484).
         payload = {"clusters": old.get("clusters") or [],
-                   "labels": [name], "uncertain": [], "corrected": True}
+                   "labels": [name], "uncertain": [], "corrected": True,
+                   "source": "correction"}
         if old.get("crosstalk") is True:
             # A correction answers WHO spoke, not WHAT was lost: the turn's
             # audio still held two voices, so the crosstalk marker survives

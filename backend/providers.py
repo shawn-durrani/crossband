@@ -999,6 +999,8 @@ UNRESOLVED_HEAD_COPY = {
     "unavailable": "matcher not ready",
     "disabled": "matching off",
     "error": "check failed",
+    "pending_present": "maybe someone still being learnt",
+    "no_enrolled": "no voices learnt yet",
 }
 
 # Honest pending identity (#28, night test 4; meaning narrowed by PR-B).
@@ -1110,12 +1112,18 @@ def _turn_attribution(msg, cfg, now=None):
     labels = [l for l in (data.get("labels") if isinstance(data.get("labels"), list) else [])
               if isinstance(l, str) and _clean_head(l)]
     if not labels:
-        why = UNRESOLVED_HEAD_COPY.get(data.get("unresolved"))
-        if why:
+        reason = data.get("unresolved")
+        if reason:
             # #411: the matcher looked and could not name the voice. Never
-            # the owner, and never a bare "pending": the head says why.
+            # the owner, and never a bare "pending": the head says why. A
+            # reason with no words yet still reads as unnamed, as memory
+            # already reads it (memory_client._unresolved), so a new reason
+            # can never pass a doubted turn off as the owner (#484).
+            why = UNRESOLVED_HEAD_COPY.get(reason) \
+                if isinstance(reason, str) else None
+            where = f"in the room, {why}" if why else "in the room"
             return (UNIDENTIFIED_SPEAKER[0].upper() + UNIDENTIFIED_SPEAKER[1:]
-                    + f" (in the room, {why})"), "unnamed", []
+                    + f" ({where})"), "unnamed", []
         return owner, "plain", []
     if data.get("learning") is True and len(labels) == 1:
         # Cold start (#28): named by elimination, still being learned. Read

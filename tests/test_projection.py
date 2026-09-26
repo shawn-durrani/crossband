@@ -824,9 +824,32 @@ def test_unresolved_turn_head_says_why_and_never_the_owner(names, cfg):
     # every reason the matcher can give has words, and no other key does
     from backend import diarize
     assert set(UNRESOLVED_HEAD_COPY) == diarize.DEFER_REASONS
+    # a reason with no words yet is still unnamed, never the owner: memory
+    # already files any unresolved turn as an unknown guest (#484)
     junk = _voice_msg("hm", age_secs=99, voice_labels=_json.dumps(
         {"clusters": ["local"], "labels": [], "unresolved": "made-up"}))
-    assert _user_turn_head(junk, _room_cfg(cfg)) == cfg["user_name"]
+    assert _user_turn_head(junk, _room_cfg(cfg)) == \
+        "Unidentified speaker (in the room)"
+
+
+def test_every_reason_the_matcher_gives_has_words_everywhere():
+    """#482: voiceid could defer with pending_present and no_enrolled, which
+    no list knew. The row still carried the reason, so memory filed the turn
+    as an unknown guest while the seats read it as the owner. Every reason
+    voiceid can return is in DEFER_REASONS, and the browser's copy covers
+    the same set as the seats' copy."""
+    import re as _re
+    from pathlib import Path
+    from backend import diarize
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "backend" / "voiceid.py").read_text()
+    given = set(_re.findall(r'_defer\(\s*"([a-z_]+)"', src))
+    assert {"pending_present", "no_enrolled", "below_threshold"} <= given
+    assert given <= diarize.DEFER_REASONS, given - diarize.DEFER_REASONS
+    js = (root / "frontend" / "src" / "voiceHealth.js").read_text()
+    block = js.split("export const UNRESOLVED_COPY = {", 1)[1].split("\n}", 1)[0]
+    keys = set(_re.findall(r"^\s*([a-z_]+):", block, _re.M))
+    assert keys == diarize.DEFER_REASONS
 
 
 def test_room_note_tells_seats_names_come_from_voice(cfg):
