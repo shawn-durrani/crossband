@@ -15,7 +15,23 @@ next to what the app did, without changing anything:
     and what a strict-agreement rule would have named.
 
 Both parts are optional and default off (`diarize_shadow_url`,
-`voice_shadow_model`); either runs without the other.
+`voice_shadow_model`); either runs without the other. Whenever either is
+on, two more measures ride every row (#477):
+
+  * MULTI. The live matcher compares a turn with one average of each
+    person's best three clips. `multi` compares it with every kept clip
+    one by one and scores each person by the mean of their MULTI_TOP_K
+    best clip scores, so a voice recorded in two different rooms can
+    match the room it is in today. Live model only.
+  * BANK_WOULD. What a per-person banking bar would have decided for the
+    turn. Today a named turn feeds its person's bank only when its score
+    clears the naming threshold plus voice_id_banking_extra, one bar for
+    everyone, so a voice that always scores a little under it never
+    learns. The per-person bar asks instead whether the score clears the
+    scores strangers get against that person's own bank by
+    BANK_WOULD_Z spreads, and, with the second model on, whether both
+    models named the same person. The row records the decision, the
+    margin and today's bar beside it. The shadow never banks.
 
 THE RULES, all pinned in tests/test_voice_shadow.py:
 
@@ -60,6 +76,22 @@ person, named or not; `consensus` names that person only when both models
 also clear their own bars; `fused` applies the same open-set rule to the
 fused scores. `today` is what the live pass wrote, and today.ms is the end
 of speech (the commit) to the label written.
+
+MULTI'S BAR. The best of several clips scores higher than an average does,
+for strangers as much as for the right person, so the live threshold
+would name too much. Multi gets its own impostor statistics, every
+person's clips scored against every other person's clips by the same
+top-k rule, and its threshold is the score at the same z as Small's live
+threshold, exactly as Large's is. Without statistics it falls back to the
+live bar, and the row says so (`source`).
+
+BANK_WOULD'S STATISTICS. A person's impostor scores are every OTHER
+person's kept clips scored against that person's enrolled average, the
+same comparison a stranger's turn gets. With fewer than
+MIN_IMPOSTOR_SCORES of them the household's statistics stand in
+(`scope`), and with none the decision is skip. Only a turn the live rule
+names is considered, since only a named turn ever banks, and only the
+whole turn, since banking is per turn.
 """
 
 import asyncio
@@ -109,17 +141,29 @@ ANCHOR_CACHE_MAX = 64
 ROWS_FILE = "voice_shadow.jsonl"
 ROWS_MAX = 5000                 # past this the file is cut back to ROWS_KEEP
 ROWS_KEEP = 4000
-ROW_VERSION = 1
+ROW_VERSION = 2                 # 2 (#477): multi and bank_would
+# Multi (#477): a person's score is the mean of their best MULTI_TOP_K clip
+# scores, so one lucky clip can't carry a name alone. A bank with fewer
+# clips uses what it has.
+MULTI_TOP_K = 2
+CLIP_CACHE_MAX = 1024           # per-clip embeddings kept for multi
+# Bank_would (#477): a named turn would bank when its score clears the
+# person's impostor mean by this many spreads. Strangers' scores sit near
+# a normal curve, and three spreads is where about one in a thousand of
+# them would reach. Every row keeps z itself, so any other bar can be
+# tried on the same turns later.
+BANK_WOULD_Z = 3.0
 
 # ---- process state (reset by _reset_for_tests) ----------------------------
 _TASKS: set = set()
 _EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="voice-shadow")
-_lock = threading.Lock()            # guards _large, _anchor_cache, _stats
+_lock = threading.Lock()            # guards _large, the caches, _stats
 _rows_lock = threading.Lock()
 _large_embed_lock = threading.Lock()
 _large = {"key": None, "state": "cold", "ex": None}
 _anchor_cache: dict = {}            # (model, pid, fingerprint) -> anchors
+_clip_cache: dict = {}              # (clip file, bytes) -> Small embedding
 _warned: set = set()
 _stats = {"rows": 0, "dropped": 0, "diariser": "", "diariser_model": ""}
 
@@ -332,13 +376,19 @@ def impostor_stats(anchors):
     """Mean and spread of this model's cross-speaker scores: each person's
     clip embeddings against every OTHER person's centroid. None when there
     are fewer than MIN_IMPOSTOR_SCORES of them."""
-    scores = [voiceid.cosine(clip, other["emb"])
-              for pid, a in (anchors or {}).items() for clip in a["clips"]
-              for opid, other in anchors.items() if opid != pid]
+    return _spread([voiceid.cosine(clip, other["emb"])
+                    for pid, a in (anchors or {}).items()
+                    for clip in a["clips"]
+                    for opid, other in anchors.items() if opid != pid])
+
+
+def _spread(scores):
+    """Mean, spread (floored) and count of a list of impostor scores, or
+    None with fewer than MIN_IMPOSTOR_SCORES of them."""
     if len(scores) < MIN_IMPOSTOR_SCORES:
         return None
     mean = sum(scores) / len(scores)
-    spread = math.sqrt(sum((s - mean) ** 2 for s in scores) / len(scores))
+    spread = math.sqrt(sum((x - mean) ** 2 for x in scores) / len(scores))
     return {"mean": round(mean, 4), "std": round(max(spread, SPREAD_FLOOR), 4),
             "n": len(scores)}
 
@@ -409,6 +459,109 @@ def fused_scores(small_scores, large_scores, bars):
             for pid in small_scores if pid in large_scores}
 
 
+def topk_mean(query, clips, k=None):
+    """A person's multi score (#477): the mean of the query's best `k`
+    cosines against that person's clip embeddings, or of all of them when
+    there are fewer. None with no clips."""
+    k = MULTI_TOP_K if k is None else k
+    sims = sorted((voiceid.cosine(query, c) for c in clips or ()),
+                  reverse=True)[:max(1, k)]
+    return sum(sims) / len(sims) if sims else None
+
+
+def multi_scores(query, multi):
+    """{person_id: topk_mean} for one embedding over every kept clip."""
+    out = {}
+    for pid, entry in (multi or {}).items():
+        score = topk_mean(query, entry["clips"])
+        if score is not None:
+            out[pid] = score
+    return out
+
+
+def multi_impostor_stats(multi):
+    """Impostor statistics under multi's own rule: each person's clips
+    scored against every OTHER person's clips by topk_mean. None with too
+    few scores."""
+    return _spread([topk_mean(clip, other["clips"])
+                    for pid, a in (multi or {}).items() for clip in a["clips"]
+                    for opid, other in multi.items()
+                    if opid != pid and other["clips"]])
+
+
+def multi_bar(cfg, small_stats, multi_stats, pending):
+    """Multi's naming bar: the live bar carried onto multi's scale at the
+    same z, the way Large's is (see the module docstring), or the live bar
+    itself when either set of statistics is missing."""
+    t = voiceid._threshold(cfg)
+    m = voiceid._margin(cfg)
+    p = voiceid._pending_extra(cfg) if pending else 0.0
+    c = voiceid.CLOSE_PAIR_EXTRA_MARGIN
+    if small_stats and multi_stats:
+        ratio = multi_stats["std"] / small_stats["std"]
+        z = (t - small_stats["mean"]) / small_stats["std"]
+        return {"threshold": round(multi_stats["mean"]
+                                   + z * multi_stats["std"], 4),
+                "margin": round(m * ratio, 4), "pending": round(p * ratio, 4),
+                "close_extra": round(c * ratio, 4), "stats": multi_stats,
+                "source": "matched", "k": MULTI_TOP_K}
+    return {"threshold": t, "margin": m, "pending": p, "close_extra": c,
+            "stats": multi_stats, "source": "live", "k": MULTI_TOP_K}
+
+
+def person_impostor_stats(pid, anchors, clips_by_person=None):
+    """How strangers score against one person's enrolled average (#477):
+    every OTHER person's clip embeddings against `pid`'s centroid.
+    `clips_by_person` ({pid: [emb, ...]}, every kept clip) is used when
+    given, else the enrolment clips in `anchors`. None with too few."""
+    own = (anchors or {}).get(pid)
+    if not own:
+        return None
+    source = clips_by_person or {o: a["clips"] for o, a in anchors.items()}
+    return _spread([voiceid.cosine(clip, own["emb"])
+                    for opid, clips in source.items() if opid != pid
+                    for clip in clips])
+
+
+def bank_would(whole, anchors, household, cfg, second_on,
+               clips_by_person=None):
+    """What a per-person banking bar would have decided for one whole turn
+    (#477). Never banks: the answer is a record. `whole` is the turn's
+    score_unit output, `anchors` the live model's, `household` Small's
+    impostor statistics, `second_on` whether the second model is
+    configured. Returns {"decision": "bank" | "skip", "reason", ...}."""
+    small = whole.get("small") or {}
+    if "pid" not in small:
+        return {"decision": "skip", "reason": whole.get("reason")
+                or small.get("reason") or "unavailable"}
+    if not small.get("named"):
+        return {"decision": "skip", "reason": "unnamed"}
+    pid, score = small["pid"], small["score"]
+    out = {"person": small["named"], "score": score, "k": BANK_WOULD_Z,
+           "today_bar": voiceid.score_banks(score, cfg)}
+    stats = person_impostor_stats(pid, anchors, clips_by_person)
+    scope = "person"
+    if stats is None:
+        stats, scope = household, "household"
+    if stats is None:
+        return dict(out, decision="skip", reason="no_statistics")
+    bar = stats["mean"] + BANK_WOULD_Z * stats["std"]
+    out.update(stats=dict(stats, scope=scope), bar=round(bar, 4),
+               margin=round(score - bar, 4),
+               z=round((score - stats["mean"]) / stats["std"], 3))
+    if second_on:
+        large = whole.get("large") or {}
+        if "pid" not in large:
+            return dict(out, decision="skip", second=None,
+                        reason="second_model_unavailable")
+        out["second"] = large.get("named") == small["named"]
+        if not out["second"]:
+            return dict(out, decision="skip", reason="models_disagree")
+    if score < bar:
+        return dict(out, decision="skip", reason="under_person_bar")
+    return dict(out, decision="bank", reason="clears_person_bar")
+
+
 def _view(scores, names, bar, close_pairs):
     ranked = sorted(((s, pid) for pid, s in scores.items()), reverse=True)
     best, pid = ranked[0] if ranked else (None, None)
@@ -420,13 +573,15 @@ def _view(scores, names, bar, close_pairs):
 
 
 def score_unit(pcm, sample_rate, per_model, bars, close_pairs, cfg,
-               models=("small", "large")):
+               models=("small", "large"), multi=None):
     """Everything the shadow records for one stretch of audio, a whole turn
     or one segment: each model's view, whether they agree, the fused view
     and the strict-agreement verdict. `per_model` maps a model to its
     anchors ({pid: {"name", "emb", "clips"}}); a model with no anchors is
-    reported unavailable. Pure apart from `embed`."""
-    out, scores, ms = {}, {}, {}
+    reported unavailable. `multi` ({pid: {"name", "clips"}}, every kept
+    clip) adds the multi view from the same Small embedding, so it costs
+    no extra embedding of the turn. Pure apart from `embed`."""
+    out, scores, ms, embs = {}, {}, {}, {}
     for model in models:
         anchors = per_model.get(model)
         if not anchors:
@@ -438,11 +593,19 @@ def score_unit(pcm, sample_rate, per_model, bars, close_pairs, cfg,
         if emb is None:
             out[model] = {"reason": "unavailable"}
             continue
+        embs[model] = emb
         scores[model] = {pid: voiceid.cosine(emb, a["emb"])
                          for pid, a in anchors.items()}
         names = {pid: a["name"] for pid, a in anchors.items()}
         out[model] = _view(scores[model], names, bars[model], close_pairs)
         out[model]["ms"] = ms[model]
+    if multi is not None:
+        if "small" in embs and multi and bars.get("multi"):
+            names = {pid: m["name"] for pid, m in multi.items()}
+            out["multi"] = _view(multi_scores(embs["small"], multi), names,
+                                 bars["multi"], close_pairs)
+        else:
+            out["multi"] = {"reason": "unavailable"}
     small, large = out.get("small", {}), out.get("large", {})
     both = "pid" in small and "pid" in large
     out["agree"] = (small["pid"] == large["pid"]) if both else None
@@ -624,6 +787,43 @@ def build_anchors(model, candidates, sample_rate, cfg):
     return out
 
 
+def build_multi(candidates, sample_rate, cfg):
+    """{pid: {"name", "clips"}} for the multi method (#477): every kept clip
+    of each candidate (anchors.enrollment_clips with no limit, so the same
+    gates as the live matcher), embedded one by one with the live model.
+    Each clip's embedding is cached on its file and length, so a bank that
+    gains a clip embeds only the new one."""
+    from . import anchors as anchor_store
+    ids = [c["person_id"] for c in candidates or () if c.get("person_id")]
+    if not ids:
+        return {}
+    names = {c["person_id"]: c.get("name") for c in candidates}
+    clips = anchor_store.store().enrollment_clips(ids, sample_rate,
+                                                  max_clips=None)
+    out = {}
+    for pid, info in clips.items():
+        pcms = info["pcms"]
+        # The fingerprint ends with the clip files, in the order of pcms.
+        files = tuple(info["fingerprint"])[-len(pcms):] if pcms else ()
+        embs = []
+        for fname, pcm in zip(files, pcms):
+            key = (fname, len(pcm))
+            with _lock:
+                emb = _clip_cache.get(key)
+            if emb is None:
+                emb = embed("small", pcm, sample_rate, cfg)
+                if emb is None:
+                    continue
+                with _lock:
+                    _clip_cache[key] = emb
+                    while len(_clip_cache) > CLIP_CACHE_MAX:
+                        _clip_cache.pop(next(iter(_clip_cache)))
+            embs.append(emb)
+        if embs:
+            out[pid] = {"name": names.get(pid) or info["name"], "clips": embs}
+    return out
+
+
 # ================= one turn =================================================
 
 def _message_id(chat_id, turn_id):
@@ -666,9 +866,15 @@ def score_turn(chat_id, turn_id, pcm, sample_rate, cfg, today, split,
         a0 = time.perf_counter()
         per_model[model] = build_anchors(model, candidates, sr, cfg)
         anchor_ms[model] = round((time.perf_counter() - a0) * 1000, 1)
+    a0 = time.perf_counter()
+    multi = build_multi(candidates, sr, cfg)
+    anchor_ms["multi"] = round((time.perf_counter() - a0) * 1000, 1)
     stats = {m: impostor_stats(per_model.get(m)) for m in models}
     bars = model_bars(cfg, stats.get("small"), stats.get("large"),
                       bool(today.get("pending")))
+    bars["multi"] = multi_bar(cfg, stats.get("small"),
+                              multi_impostor_stats(multi),
+                              bool(today.get("pending")))
     try:
         close = anchor_store.store().close_pairs()
     except Exception:
@@ -677,7 +883,11 @@ def score_turn(chat_id, turn_id, pcm, sample_rate, cfg, today, split,
 
     reason = gate(pcm, sr)
     whole = {"reason": reason} if reason else score_unit(
-        pcm, sr, per_model, bars, close, cfg, models)
+        pcm, sr, per_model, bars, close, cfg, models, multi)
+    whole["bank_would"] = bank_would(
+        whole, per_model.get("small"), stats.get("small"), cfg,
+        "large" in models,
+        {pid: m["clips"] for pid, m in multi.items()} or None)
     ms["whole"] = {m: (whole.get(m) or {}).get("ms") for m in models} \
         if not reason else {}
 
@@ -700,7 +910,7 @@ def score_turn(chat_id, turn_id, pcm, sample_rate, cfg, today, split,
                     entry["reason"] = why
                 else:
                     entry.update(score_unit(seg_pcm, sr, per_model, bars,
-                                            close, cfg, models))
+                                            close, cfg, models, multi))
                     for m in models:
                         split_ms[m] += (entry.get(m) or {}).get("ms") or 0.0
                 rows.append(entry)
@@ -790,8 +1000,9 @@ def read_rows(limit=100, chat_id=None) -> list:
 
 # ================= reading the comparison ===================================
 
-METHODS = ("small", "small_split", "large", "large_split", "consensus",
-           "consensus_split", "fused", "fused_split")
+METHODS = ("small", "small_split", "multi", "multi_split", "large",
+           "large_split", "consensus", "consensus_split", "fused",
+           "fused_split")
 
 
 def _names_for(row, method):
@@ -817,6 +1028,8 @@ def compare(rows) -> dict:
     A method's answer is "+"-joined names, "" when it named nobody, and None
     when it didn't run on that turn."""
     lines, tally = [], {m: collections.Counter() for m in METHODS}
+    banking = collections.Counter()
+    banking_people: dict = {}
     for row in rows:
         today = row.get("today") or {}
         today_names = today.get("labels") or []
@@ -847,9 +1060,35 @@ def compare(rows) -> dict:
                 t["named_where_today_did_not"] += 1
             elif today_names:
                 t["unnamed_where_today_named"] += 1
+        would = (row.get("whole") or {}).get("bank_would") or {}
+        line["bank_would"] = would.get("decision")
+        line["bank_would_margin"] = would.get("margin")
+        if would.get("person"):
+            _tally_banking(banking, banking_people, would)
         lines.append(line)
-    return {"lines": lines,
-            "tally": {m: dict(c) for m, c in tally.items() if c}}
+    tallies = {m: dict(c) for m, c in tally.items() if c}
+    if banking:
+        tallies["bank_would"] = dict(banking, people=banking_people)
+    return {"lines": lines, "tally": tallies}
+
+
+def _tally_banking(banking, people, would):
+    """One named turn's bank_would against today's bar (#477). The two
+    counts that matter are the turns the per-person bar would bank where
+    today's refused, the stuck voice, and the reverse."""
+    decision, today = would["decision"], bool(would.get("today_bar"))
+    banking["turns"] += 1
+    banking[decision] += 1
+    if decision == "skip":
+        banking[f"skip_{would.get('reason')}"] += 1
+    if decision == "bank" and not today:
+        banking["bank_where_today_refused"] += 1
+    elif decision == "skip" and today:
+        banking["skip_where_today_banked"] += 1
+    who = people.setdefault(would["person"], {"bank": 0, "skip": 0,
+                                              "today_bar": 0})
+    who[decision] += 1
+    who["today_bar"] += int(today)
 
 
 def _ran(row, method):
@@ -931,5 +1170,6 @@ def _reset_for_tests():
     with _lock:
         _large.update(key=None, state="cold", ex=None)
         _anchor_cache.clear()
+        _clip_cache.clear()
     _warned.clear()
     _stats.update(rows=0, dropped=0, diariser="", diariser_model="")

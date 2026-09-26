@@ -181,9 +181,11 @@ ignores proxy settings, so the audio stays here.
 `GET /api/voice/shadow` shows the comparison, newest turn first. Each
 line puts today's label beside what each method named. The methods are
 the live model on the whole turn and on the split pieces (`small` and
-`small_split`), the second model (`large` and `large_split`), both models
-agreeing (`consensus` and `consensus_split`), and the blended score
-(`fused` and `fused_split`). A tally counts, for each method, the turns it
+`small_split`), and the live model against every stored clip (`multi`
+and `multi_split`). The others are the second model (`large` and
+`large_split`), both models agreeing (`consensus` and
+`consensus_split`), and the blended score (`fused` and `fused_split`).
+A tally counts, for each method, the turns it
 named, the turns it left unnamed, and the turns it named differently from
 today. Add `chat_id` for one chat, or `rows=true` for every score.
 
@@ -196,6 +198,28 @@ scale, and the agreement rule names a person only when both models name
 them. With one remembered person there are no impostors to measure. Then
 there's no blend, and the second model uses a fixed bar nobody has tuned.
 Each line keeps the raw scores, so any bar can be tried again later.
+
+#### Every clip, and a banking bar per person
+
+Two more measures run whenever either part is on. The live check compares
+a turn with one average of each person's best three clips. `multi`
+compares it with every clip the person has stored, one at a time, and
+scores each person by their two best clips. A voice recorded in two
+different rooms can then match the room it's in today. The best of
+several clips scores higher for strangers too, so `multi` gets a bar of
+its own, set the way the second model's is.
+
+`bank_would` asks whether a named turn's audio would have been stored if
+each person had a banking bar of their own. Today a named turn is stored
+only when it clears the naming bar plus `voice_id_banking_extra`, and
+that bar is the same for everyone. A voice that always scores just under
+it never gets another clip. The per-person bar asks whether the score
+is at least three standard deviations higher than the scores strangers
+get against that person's stored voice. With the second model on, both models must
+also name the same person. The line records the decision, how far the
+score was over or under the bar, and what today's bar said. The tally
+counts the turns the per-person bar would have stored where today's bar
+refused, and the reverse. Nothing is stored either way.
 
 ## Memory, the companion service
 

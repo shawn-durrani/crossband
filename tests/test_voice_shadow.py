@@ -25,6 +25,13 @@ What these tests pin, in order:
    and the route serves it behind the usual session gate.
 9. THE SECOND MODEL'S FETCH. Pinned and verified by the same code as the
    primary, and started only when the setting names it.
+10. MULTI AND BANK_WOULD (#477). Multi scores a turn against every kept
+   clip, by the mean of each person's best MULTI_TOP_K clips, on its own
+   z-matched bar, and embeds each clip once. Bank_would records what a
+   per-person banking bar would decide beside today's bar: it banks a
+   near-bar voice whose strangers score far lower, skips under the bar,
+   when the models disagree or when the second model isn't ready, and it
+   never writes to the store. Both reach the rows and the tally.
 
 Keyless and offline: the diariser is a fake (or a local socket that
 misbehaves on purpose), and both speaker models are one fake embedding
@@ -298,6 +305,9 @@ def test_the_shadow_never_writes_to_the_anchor_store(
         row = voice_shadow.score_turn(1, "t1", pcm, 16000, SHADOW_CFG, today,
                                       split)
     assert row["whole"]["small"]["best"] == "Alex"
+    # multi and bank_would ran under the same traps (#477)
+    assert row["whole"]["multi"]["best"] == "Alex"
+    assert row["whole"]["bank_would"]["decision"] in ("bank", "skip")
 
 
 def test_cold_start_and_unresolved_turns_are_recorded_too(
@@ -469,8 +479,11 @@ def test_the_http_client_ignores_proxies_and_redirects(monkeypatch):
 ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
             "candidates", "pending", "today", "models", "bars", "whole",
             "split", "ms"}
-UNIT_KEYS = {"small", "large", "agree", "fused", "consensus", "reason"}
+UNIT_KEYS = {"small", "large", "agree", "fused", "consensus", "reason",
+             "multi", "bank_would"}
 VIEW_KEYS = {"best", "pid", "score", "second", "named", "reason", "ms"}
+BANK_WOULD_KEYS = {"decision", "reason", "person", "score", "k", "today_bar",
+                   "stats", "bar", "margin", "z", "second"}
 
 
 def _walk_strings(value):
@@ -503,8 +516,12 @@ def test_rows_hold_no_words_and_no_audio(app, live_fakes, fake_models,
     units = [row["whole"]] + row["split"]["segments"]
     for unit in units:
         assert set(unit) - {"start", "end", "slot", "used_s"} <= UNIT_KEYS
-        for model in ("small", "large"):
+        for model in ("small", "large", "multi"):
             assert set(unit[model]) <= VIEW_KEYS
+    assert set(row["whole"]["bank_would"]) <= BANK_WOULD_KEYS
+    assert set(row["whole"]["bank_would"]["stats"]) <= {"mean", "std", "n",
+                                                        "scope"}
+    assert all("bank_would" not in s for s in row["split"]["segments"])
     # nothing long enough to be encoded audio, and no field that holds any
     assert max(len(s) for s in _walk_strings(row)) < 80
     for banned in ("audio", "pcm", "text", "transcript", "words", "content"):
@@ -891,3 +908,241 @@ def test_the_second_model_arrives_through_the_primarys_verified_fetch(
     voice_shadow._warm_large("titanet_large")
     assert not path.exists()
     assert voice_shadow._large["state"] == "unavailable"
+
+
+# ── 10. multi and bank_would (#477) ─────────────────────────────────────────
+
+def test_topk_mean_is_the_mean_of_the_best_clips():
+    q = [1.0, 0.0]
+    clips = [[1.0, 0.0], [0.6, 0.8], [0.0, 1.0]]
+    assert voice_shadow.topk_mean(q, clips, k=2) == pytest.approx(0.8)
+    assert voice_shadow.topk_mean(q, clips, k=1) == pytest.approx(1.0)
+    assert voice_shadow.topk_mean(q, clips[:1], k=2) == pytest.approx(1.0)
+    assert voice_shadow.topk_mean(q, [], k=2) is None
+    assert voice_shadow.MULTI_TOP_K == 2
+
+
+def test_multi_reaches_a_voice_the_average_misses():
+    """Alex was recorded in two rooms. The average of his clips sits
+    between them, so a turn from either room scores lower against it than
+    against his clips from that room."""
+    phone = voiceid.l2_normalize([1.0, 0.0, 1.0, 0.0])
+    laptop = voiceid.l2_normalize([1.0, 0.0, 0.0, 1.0])
+    sam = voiceid.l2_normalize([0.0, 1.0, 0.0, 0.0])
+    anchors_ = _anchors({"alex": [phone, phone, laptop, laptop],
+                         "sam": [sam, sam, sam]})
+    multi = {pid: {"name": a["name"], "clips": a["clips"]}
+             for pid, a in anchors_.items()}
+    turn = phone
+    average = voiceid.cosine(turn, anchors_["alex"]["emb"])
+    per_clip = voice_shadow.multi_scores(turn, multi)
+    assert average == pytest.approx(0.866, abs=1e-3)
+    assert per_clip["alex"] == pytest.approx(1.0)
+    assert per_clip["sam"] == pytest.approx(0.0)
+
+
+def test_multi_gets_its_own_z_matched_bar():
+    small = {"mean": 0.2, "std": 0.1, "n": 10}
+    multi = {"mean": 0.3, "std": 0.05, "n": 10}
+    bar = voice_shadow.multi_bar({}, small, multi, pending=False)
+    # Small's live threshold 0.5 is z = 3 on Small; the same z on multi
+    assert bar["threshold"] == pytest.approx(0.3 + 3 * 0.05)
+    assert bar["margin"] == pytest.approx(0.12 * 0.5)
+    assert bar["source"] == "matched" and bar["k"] == 2
+    assert voice_shadow.multi_bar({}, small, multi, True)["pending"] == \
+        pytest.approx(0.08 * 0.5)
+    live = voice_shadow.multi_bar({}, small, None, pending=False)
+    assert live["source"] == "live"
+    assert (live["threshold"], live["margin"]) == (0.5, 0.12)
+    stats = voice_shadow.multi_impostor_stats(
+        {"a": {"clips": [[1.0, 0.0], [0.8, 0.6]]},
+         "b": {"clips": [[0.0, 1.0], [0.6, 0.8]]}})
+    expected = [voice_shadow.topk_mean(c, o) for c, o in (
+        ([1.0, 0.0], [[0.0, 1.0], [0.6, 0.8]]),
+        ([0.8, 0.6], [[0.0, 1.0], [0.6, 0.8]]),
+        ([0.0, 1.0], [[1.0, 0.0], [0.8, 0.6]]),
+        ([0.6, 0.8], [[1.0, 0.0], [0.8, 0.6]]))]
+    assert stats["n"] == 4
+    assert stats["mean"] == round(sum(expected) / 4, 4)
+
+
+def test_multi_embeds_every_kept_clip_once(app, monkeypatch):
+    calls = []
+    monkeypatch.setattr(voice_shadow, "embed", fake_embed_factory(calls))
+    with TestClient(app, base_url="http://127.0.0.1"):
+        store = anchors.store()
+        alex = store.ensure_person("Alex")
+        for n in range(5):                     # five long clips, all kept
+            assert store.add_clip(alex, speech_pcm(2.5 + n / 10,
+                                                   amp=ALEX_AMP), 16000,
+                                  source="introduction")
+        _remember("Sam", SAM_AMP)
+        cands = diarize.remembered_candidates()
+        enrolled = voice_shadow.build_anchors("small", cands, 16000, {})
+        multi = voice_shadow.build_multi(cands, 16000, {})
+        assert len(enrolled[alex]["clips"]) == anchors.ENROLL_CLIPS
+        assert len(multi[alex]["clips"]) == 5          # every kept clip
+        before = len(calls)
+        voice_shadow.build_multi(cands, 16000, {})
+        assert len(calls) == before                    # cached per clip
+        assert store.add_clip(alex, speech_pcm(1.5, amp=ALEX_AMP), 16000,
+                              source="accumulated")
+        again = voice_shadow.build_multi(cands, 16000, {})
+        assert len(again[alex]["clips"]) == 6
+        assert len(calls) == before + 1                # only the new clip
+
+
+def test_multi_rides_every_unit_row_and_tally(app, fake_models,
+                                              fake_diariser):
+    pcm = speech_pcm(3.0, amp=ALEX_AMP) + speech_pcm(2.0, amp=SAM_AMP)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        _setup(c)
+        today = {"path": "local", "labels": ["Alex"],
+                 "candidates": diarize.remembered_candidates()}
+        split = voice_shadow.diarise("http://127.0.0.1:8910", pcm, 16000)
+        row = voice_shadow.score_turn(1, "t", pcm, 16000, SHADOW_CFG, today,
+                                      split)
+    assert row["v"] == 2
+    assert row["bars"]["multi"]["k"] == voice_shadow.MULTI_TOP_K
+    assert "multi" in row["ms"]["anchors"]
+    assert [s["multi"]["named"] for s in row["split"]["segments"]] == \
+        ["Alex", "Sam"]
+    out = voice_shadow.compare([row])
+    assert out["lines"][0]["multi_split"] == "Alex+Sam"
+    assert out["tally"]["multi_split"]["two_or_more"] == 1
+    assert out["tally"]["multi"]["turns"] == 1
+
+
+def _unit(small_named, score, pid="sam", large=None):
+    """A whole-turn unit as score_unit writes it."""
+    unit = {"small": {"best": small_named or "Sam", "pid": pid,
+                      "score": score, "named": small_named,
+                      "reason": "match" if small_named else "ambiguous"}}
+    if large is not None:
+        unit["large"] = large
+    return unit
+
+
+def _household():
+    """Alex's five clips and Sam's three, with Sam's voice far from Alex's.
+    Alex's clips score about 0.14 against Sam's average, give or take
+    0.04, so Sam's own bar sits near 0.25."""
+    alex = [voiceid.l2_normalize([1.0, 0.1 + 0.05 * (i % 3), 0.0, 0.0])
+            for i in range(5)]
+    sam = [voiceid.l2_normalize([0.0, 1.0, 0.0, 0.1 * i]) for i in range(3)]
+    return _anchors({"alex": alex, "sam": sam})
+
+
+def test_person_impostor_stats_score_strangers_against_one_bank():
+    a = _household()
+    stats = voice_shadow.person_impostor_stats("sam", a)
+    expected = [voiceid.cosine(c, a["sam"]["emb"]) for c in a["alex"]["clips"]]
+    assert stats["n"] == 5
+    assert stats["mean"] == round(sum(expected) / 5, 4)
+    # Alex has only Sam's three clips as strangers: too few alone
+    assert voice_shadow.person_impostor_stats("alex", a) is None
+    assert voice_shadow.person_impostor_stats("mateo", a) is None
+
+
+def test_bank_would_banks_a_near_bar_voice_that_today_refuses():
+    """The stuck voice: Sam is named at 0.56, under today's banking bar
+    (0.5 + 0.1), while strangers score about 0.1 against Sam's bank."""
+    a = _household()
+    stats = voice_shadow.person_impostor_stats("sam", a)
+    would = voice_shadow.bank_would(_unit("Sam", 0.56), a, None, BASE_CFG,
+                                    second_on=False)
+    assert would["decision"] == "bank"
+    assert would["reason"] == "clears_person_bar"
+    assert would["today_bar"] is False
+    assert would["stats"]["scope"] == "person"
+    assert would["bar"] == pytest.approx(stats["mean"] + 3 * stats["std"],
+                                         abs=1e-4)
+    assert would["margin"] == pytest.approx(0.56 - would["bar"], abs=1e-4)
+    assert would["z"] > voice_shadow.BANK_WOULD_Z
+    assert would["person"] == "Sam" and "second" not in would
+
+
+def test_bank_would_skips_under_the_bar_and_says_by_how_much():
+    a = _household()
+    household = {"mean": 0.3, "std": 0.1, "n": 12}
+    # Alex has too few strangers of his own, so the household stands in
+    would = voice_shadow.bank_would(_unit("Alex", 0.55, pid="alex"), a,
+                                    household, BASE_CFG, second_on=False)
+    assert would["stats"]["scope"] == "household"
+    assert would["decision"] == "skip"
+    assert would["reason"] == "under_person_bar"
+    assert would["margin"] == pytest.approx(0.55 - 0.6)
+    # no statistics at all: skip, and say why
+    would = voice_shadow.bank_would(_unit("Alex", 0.9, pid="alex"), a, None,
+                                    BASE_CFG, second_on=False)
+    assert would == {"decision": "skip", "reason": "no_statistics",
+                     "person": "Alex", "score": 0.9, "k": 3.0,
+                     "today_bar": True}
+
+
+def test_bank_would_needs_a_named_turn_and_both_models_with_the_second_on():
+    a = _household()
+    unnamed = voice_shadow.bank_would(_unit(None, 0.52), a, None, BASE_CFG,
+                                      second_on=False)
+    assert unnamed == {"decision": "skip", "reason": "unnamed"}
+    gated = voice_shadow.bank_would({"reason": "too_short"}, a, None,
+                                    BASE_CFG, second_on=False)
+    assert gated == {"decision": "skip", "reason": "too_short"}
+    agree = _unit("Sam", 0.7, large={"pid": "sam", "named": "Sam"})
+    differ = _unit("Sam", 0.7, large={"pid": "alex", "named": "Alex"})
+    unsure = _unit("Sam", 0.7, large={"pid": "sam", "named": None})
+    missing = _unit("Sam", 0.7, large={"reason": "unavailable"})
+    got = {name: voice_shadow.bank_would(u, a, None, BASE_CFG, True)
+           for name, u in (("agree", agree), ("differ", differ),
+                           ("unsure", unsure), ("missing", missing))}
+    assert (got["agree"]["decision"], got["agree"]["second"]) == ("bank", True)
+    assert got["differ"]["reason"] == "models_disagree"
+    assert got["unsure"]["reason"] == "models_disagree"
+    assert got["missing"]["reason"] == "second_model_unavailable"
+    assert all(got[k]["decision"] == "skip"
+               for k in ("differ", "unsure", "missing"))
+
+
+def test_bank_would_reaches_the_row_and_never_banks(app, fake_models):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        _setup(c)
+        store = anchors.store()
+        before = store.clip_fingerprint()
+        today = {"path": "local", "labels": ["Alex"],
+                 "candidates": diarize.remembered_candidates()}
+        row = voice_shadow.score_turn(1, "t", speech_pcm(3.0, amp=ALEX_AMP),
+                                      16000, SHADOW_CFG, today, None)
+        assert store.clip_fingerprint() == before
+    would = row["whole"]["bank_would"]
+    assert would["person"] == "Alex"
+    assert would["decision"] == "bank" and would["second"] is True
+    assert would["today_bar"] is True
+    out = voice_shadow.compare([row])
+    assert out["lines"][0]["bank_would"] == "bank"
+    assert out["lines"][0]["bank_would_margin"] == would["margin"]
+
+
+def test_the_tally_counts_bank_would_against_todays_bar():
+    def row(person, decision, today_bar, reason=None):
+        would = {"person": person, "decision": decision,
+                 "today_bar": today_bar, "margin": 0.1,
+                 "reason": reason or ("clears_person_bar"
+                                      if decision == "bank" else "x")}
+        return {"today": {"labels": [person]}, "whole": {
+            "small": {"pid": person.lower(), "named": person},
+            "bank_would": would}}
+    rows = [row("Sam", "bank", False), row("Sam", "bank", False),
+            row("Alex", "bank", True),
+            row("Alex", "skip", True, reason="models_disagree"),
+            {"today": {}, "whole": {"bank_would": {"decision": "skip",
+                                                   "reason": "unnamed"}}}]
+    tally = voice_shadow.compare(rows)["tally"]["bank_would"]
+    assert tally["turns"] == 4                         # named turns only
+    assert tally["bank"] == 3 and tally["skip"] == 1
+    assert tally["bank_where_today_refused"] == 2      # the stuck voice
+    assert tally["skip_where_today_banked"] == 1
+    assert tally["skip_models_disagree"] == 1
+    assert tally["people"] == {"Sam": {"bank": 2, "skip": 0, "today_bar": 0},
+                               "Alex": {"bank": 1, "skip": 1,
+                                        "today_bar": 2}}
+    assert "bank_would" not in voice_shadow.compare([])["tally"]

@@ -150,9 +150,10 @@ def voice_shadow_rows(request: Request, chat_id: int | None = None,
                       limit: int = 100, rows: bool = False):
     """The shadow test's comparison (#465 stage 1): for each recent armed
     voice turn, today's live label beside what every shadow method would
-    have named (whole turn and split, TitaNet-Small, TitaNet-Large, the
-    strict-agreement consensus and the fused score), a tally per method,
-    and the shadow's own state. `rows=true` adds the full rows, with every
+    have named (whole turn and split, TitaNet-Small, every kept clip one by
+    one, TitaNet-Large, the strict-agreement consensus and the fused
+    score) and what a per-person banking bar would have done (#477), a
+    tally per method, and the shadow's own state. `rows=true` adds the full rows, with every
     score. Names, scores, counts and timings only: no transcript text and no
     audio exist in a shadow row. Session-gated like every /api route."""
     from .. import voice_shadow
