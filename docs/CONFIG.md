@@ -136,6 +136,7 @@ a default install records it.
 | `voice_session_shadow` | `false` | Adds the session test to the shadow test: it follows each voice through the whole voice session and names each voice from everything it has said. Needs `diarize_shadow_url` and a diariser with session routes. [The session test](#the-session-test). |
 | `voice_session_labels` | `false` | Lets the session test fill in names. A voice turn today's naming left unnamed takes the name the session test gave its voice. It never replaces a name, and nothing else changes. Needs `voice_session_shadow`. [The session test](#the-session-test). |
 | `voice_shadow_model` | `""` | A second speaker model the shadow test scores beside the live one. It knows `titanet_large`, about 100MB, downloaded once and checked against a pinned hash, and only while this is set. Empty turns that part off. [The shadow test](#the-shadow-test). |
+| `voice_calibrated_scorer` | `false` | Shows on the Voices page whether each stored voice is ready. On, it downloads the ERes2Net speaker model once, about 26MB, checks it against a pinned hash, and works in the background. It never names a turn. [When a voice is ready](VOICE_ID.md#when-a-voice-is-ready). |
 
 ### Choosing the voice model
 

@@ -8,6 +8,7 @@
 // behaviour - the pure-module suites own behaviour.
 import { renderToStaticMarkup } from 'react-dom/server'
 import ThreadView from './components/ThreadView'
+import VoiceReadiness from './components/VoiceReadiness'
 
 const PARTICIPANTS = [
   { slug: 'claude', name: 'Claude', color: '#7aa2f7', enabled: true, model: 'claude-opus-4-8' },
@@ -84,5 +85,24 @@ export function renderSmoke() {
       throw new Error(`render smoke: ${JSON.stringify(needle)} must not be in the markup`)
     }
   }
-  return html.length
+  // #482 stage 2: the Voices page's readiness line, for a ready voice, one
+  // short of pieces, and the test switched off (which draws nothing).
+  const summary = { state: 'ready', min_pieces: 20, share: 0.95, piece_seconds: 2 }
+  const readiness = renderToStaticMarkup(
+    <div>
+      <VoiceReadiness summary={summary} readiness={{
+        ready: true, reason: 'ready', pieces: 40, share_right: 1,
+        named_as_other: 0, days: 2, speech_seconds: 52 }} />
+      <VoiceReadiness summary={summary} readiness={{
+        ready: false, reason: 'too_few_pieces', pieces: 12, share_right: 1,
+        named_as_other: 0, days: 2, speech_seconds: 14 }} />
+      <VoiceReadiness summary={{ state: 'off' }} readiness={null} />
+    </div>,
+  )
+  for (const needle of ['Ready', '52s of speech', 'Needs more speech: 12 of 20 pieces']) {
+    if (!readiness.includes(needle)) {
+      throw new Error(`render smoke: expected ${JSON.stringify(needle)} in the readiness markup`)
+    }
+  }
+  return html.length + readiness.length
 }

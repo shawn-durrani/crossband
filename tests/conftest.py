@@ -122,15 +122,22 @@ def _voiceid_offline(monkeypatch):
     automatically (there is no cloud fallback). Tests that exercise the
     matcher seed a fake (or the real) extractor explicitly; this fixture
     just guarantees the default is 'absent'."""
-    from backend import voice_shadow, voiceid
+    from backend import voice_calibration, voice_shadow, voiceid
     voiceid._reset_for_tests()
     voice_shadow._reset_for_tests()
+    voice_calibration._reset_for_tests()
     monkeypatch.setattr(voiceid, "_spawn_fetch", lambda cfg: None)
     # The shadow's second model (#465) is fetched the same way, and is kept
     # offline the same way.
     monkeypatch.setattr(voice_shadow, "_spawn_large_fetch",
                         lambda cfg, key: None)
+    # So is the calibrated scorer's ERes2Net (#482 stage 2). Its worker
+    # thread is stopped between tests, so it never reads another test's
+    # data directory.
+    monkeypatch.setattr(voice_calibration, "_spawn_eres2net_fetch",
+                        lambda cfg: None)
     yield
+    voice_calibration._reset_for_tests()
     voiceid._reset_for_tests()
     voice_shadow._reset_for_tests()
 
