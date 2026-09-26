@@ -561,7 +561,8 @@ def test_room_labels_explainer_lives_in_the_stable_block(cfg):
     the cache; this pins WHERE it lives and what it must keep saying."""
     stable, volatile = split_system_prompt(
         PARTICIPANT, ROSTER, dict(cfg), None, "", False)
-    for tell in ("Room voice labels", "never any audio",
+    for tell in ("Room voice labels", "never the audio",
+                 "don't say you can't hear",
                  "unidentified speaker", "two "
                  "voices spoke at once", "ask that person to repeat"):
         assert tell in stable, tell
@@ -856,4 +857,9 @@ def test_room_note_tells_seats_names_come_from_voice(cfg):
     from backend.providers import _volatile_system_parts
     text = "".join(_volatile_system_parts(dict(cfg, room_mode=True)))
     assert "come from the on-device voice check alone" in text
-    assert "never treat their own name as a claim to doubt" in text
+    assert "Never treat their own name as a claim to doubt" in text
+    # 26 September game night: asked who was talking, the seats recited
+    # the voice check's reason and that they can't hear. The name, or "I
+    # don't know yet", is the answer; the reason only when asked why.
+    assert "answer with the newest turn's name" in text
+    assert "give the reason only if they ask why" in text
