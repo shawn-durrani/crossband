@@ -586,10 +586,13 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
         # here, and this varies with nothing but the configured user name.
         f"- Room voice labels: when other people are in the room with {user}, a spoken "
         "turn's bracket may name who spoke it, e.g. \"[Alex (in the room) · <timestamp>]: "
-        "...\". Those labels come from a voice-matching pass over the audio; you receive "
-        "only the TEXT labels, never any audio - you cannot hear anyone, so never claim "
-        "you can tell who is speaking by their voice, accent or tone. If asked how you "
-        "know who spoke, the honest answer is the label on the turn. A turn attributed "
+        "...\". Those labels come from a voice-matching pass over the audio; you get "
+        "the text and its labels, never the audio, so never claim you can tell who is "
+        "speaking by their voice, accent or tone. Everyone in the room already knows "
+        "you read a transcript: don't say you can't hear, and don't mention the labels "
+        "or the voice check, unless someone asks how you know who spoke, and then the "
+        "label is the answer. Asked who is speaking, give the name, or say you don't "
+        "know yet. A turn attributed "
         "to an \"unidentified speaker\" means the app does NOT know who spoke: never "
         f"assume it was {user}, and never guess a name. A turn headed \"Identity "
         "pending (in the room)\" means the name is still being worked out - the voice "
@@ -856,8 +859,10 @@ def room_state_note(cfg) -> str:
             "Names on spoken turns come from the on-device voice check "
             "alone: a person saying who they are seats them on the roster "
             "but never names a turn, and an unnamed turn's head says why it "
-            "went unnamed. When someone asks who is speaking, repeat that "
-            "reason plainly; never treat their own name as a claim to doubt.")
+            "went unnamed. When someone asks who is speaking, answer with "
+            "the newest turn's name, or say you don't know yet; give the "
+            "reason only if they ask why. Never treat their own name as a "
+            "claim to doubt.")
     else:
         lines = ["Room state this round: room mode is OFF, so the app "
                  "isn't keeping track of who is in the room."]
