@@ -22,7 +22,12 @@ prompt tension that needs a structural outlet. The contract under test:
   a remark that only says the seat has nothing to add or is staying quiet
   makes it a pass (not stored, not shown, not spoken, not sent to
   memory, and refused like any pass where the guard applies), and a real
-  reply is kept without the token, cut off or not.
+  reply is kept without the token, cut off or not;
+- the retry note says only what the engine checked (26 September): a
+  seat named in the turn is told it owes an answer, and a first responder
+  to a question mark is asked to look again and told a second [pass]
+  stands, never that the owner asked it something. The quiet family of
+  eval_silence fixtures replays through a real round to hold that.
 """
 
 import asyncio
@@ -36,7 +41,8 @@ from backend import db, engine, rounds
 from backend.app import create_app
 from backend.config import Settings
 from backend.engine import explicitly_addressed
-from backend.passes import (is_cut_pass, is_pass, is_quiet_remark,
+from backend.passes import (ADDRESSED_NOTE, QUESTION_NOTE, guard_note,
+                             is_cut_pass, is_pass, is_quiet_remark,
                              may_pass, strip_pass)
 
 
@@ -165,11 +171,16 @@ def test_judge_reply_pass_actions():
     insisted pass suppresses."""
     from backend.engine import _judge_reply
     common = dict(echo_note="", echo_refs={}, voice_mode=False,
-                  echo_guard=True, user_name="Alex")
+                  echo_guard=True)
     action, note, _ = _judge_reply("[pass]", [], pass_note="", idx=0,
                                    addressed=False,
                                    user_text="what's the weather?", **common)
-    assert action == "retry_pass" and "Alex" in note
+    assert action == "retry_pass" and note == QUESTION_NOTE
+    action, note, _ = _judge_reply("[pass]", [], pass_note="", idx=1,
+                                   addressed=True,
+                                   user_text="Alex here, no question",
+                                   **common)
+    assert action == "retry_pass" and note == ADDRESSED_NOTE
     action, _, _ = _judge_reply("[pass]", [], pass_note="", idx=1,
                                 addressed=False,
                                 user_text="what's the weather?", **common)
@@ -195,8 +206,7 @@ def test_judge_reply_echo_actions():
         [{"id": 1, "speaker": "claude", "content": prior}],
         "claude", {"claude"}, {"claude": "Claude"})
     common = dict(pass_note="", echo_refs=refs, idx=1, addressed=False,
-                  user_text="anything else?", echo_guard=True,
-                  user_name="Alex")
+                  user_text="anything else?", echo_guard=True)
     restating = prior
     action, note, ref = _judge_reply(restating, [], echo_note="",
                                      voice_mode=False, **common)
@@ -217,7 +227,7 @@ def test_judge_reply_accepts_an_ordinary_reply():
     action, note, ref = _judge_reply(
         "Here's a fresh thought.", [], pass_note="", echo_note="",
         echo_refs={}, idx=0, addressed=False, user_text="hi",
-        voice_mode=False, echo_guard=True, user_name="Alex")
+        voice_mode=False, echo_guard=True)
     assert (action, note, ref) == ("accept", "", "")
 
 
@@ -333,6 +343,11 @@ QUIET_PASSES = [
     "I don\u2019t have anything to add. [pass]",
     "(still listening) [pass]",
     "\u2026 [pass]",
+    # After a question-mark retry (26 September replay), a seat that meant
+    # to pass said the turn wasn't for it, then passed.
+    "Sam and Alex are sorting the clamps, not a question for me. [pass]",
+    "That's Alex talking it through - not asking me anything.\n\n[pass]",
+    "That one wasn't aimed at us. [pass]",
 ]
 REAL_WITH_TOKEN = [
     ("The glue needs 24 hours to cure.  [pass]",
@@ -342,6 +357,9 @@ REAL_WITH_TOKEN = [
     ("Nothing to add, but Sam's cut list is one leg short. [pass]",
      "Nothing to add, but Sam's cut list is one leg short."),
     ("Yes.  [pass]", "Yes."),
+    ("Oak is not for me.  [pass]", "Oak is not for me."),
+    ("Not a question for me, but the joint needs a clamp. [pass]",
+     "Not a question for me, but the joint needs a clamp."),
 ]
 
 
@@ -456,3 +474,99 @@ def test_a_quiet_remark_fits_inside_the_first_tts_chunk():
     init = json.loads(voice.tts_init_message({"tts_speed": 1.0}))
     first_chunk = init["generation_config"]["chunk_length_schedule"][0]
     assert passes.QUIET_MAX_CHARS < first_chunk
+
+
+# ---------- the retry says what the engine saw (26 September) ----------
+#
+# After the owner asked the seats to stay quiet, people in the room asked
+# each other things, and every question mark refused the first seat's pass.
+# The old retry note said the owner had asked a direct question and an
+# answer was owed, under a "you must answer" heading. One seat did as told:
+# it answered a question both seats had answered minutes before, or said
+# out loud that nobody had asked it anything. The wording below is made up.
+
+def test_the_retry_notes_say_only_what_the_engine_checked():
+    assert guard_note(addressed=True) is ADDRESSED_NOTE
+    assert guard_note(addressed=False) is QUESTION_NOTE
+    # A question mark is all the engine sees, so that's all the note says:
+    # it never names who asked, or claims anyone asked the seat anything.
+    assert "question mark" in QUESTION_NOTE
+    for claim in ("{user}", "asked a direct question", "you are first to "
+                  "answer it", "must answer"):
+        assert claim not in QUESTION_NOTE
+    # It lets a second pass stand, bare, and keeps the seat on this turn.
+    assert "your pass stands" in QUESTION_NOTE
+    assert "exactly [pass] and nothing else" in QUESTION_NOTE
+    assert "earlier question" in QUESTION_NOTE
+    # Naming is checked, so the named seat's note stays firm.
+    assert "names you" in ADDRESSED_NOTE
+    assert "pass stands" not in ADDRESSED_NOTE
+
+
+def test_the_retry_heading_leaves_the_verdict_to_the_note(cfg):
+    """The heading over the note was "you must answer", which outweighed
+    a note that let the pass stand when replayed on a live model."""
+    from backend.providers import split_system_prompt
+    seat = {"name": "Claude", "slug": "claude", "system_prompt": ""}
+    roster = [seat, {"name": "GPT", "slug": "gpt"}]
+    for note in (QUESTION_NOTE, ADDRESSED_NOTE):
+        stable, volatile = split_system_prompt(
+            seat, roster, {**cfg, "pass_refused": note}, None, "", True)
+        assert note in volatile and note not in stable
+        assert "must answer" not in volatile.lower()
+
+
+def _obeys_the_note(i, cfg):
+    """A seat that does what the retry note says, the way the field seat
+    did. Its first reply is always [pass]. On a retry it passes again only
+    when the note says its pass stands, and otherwise answers the question
+    it last answered, which is what it found when told one was owed."""
+    note = cfg.get("pass_refused") or ""
+    if not note or "your pass stands" in note:
+        return "[pass]"
+    return "From memory, not a live lookup, same as before."
+
+
+def _quiet_family():
+    from eval_silence.fixtures_loader import load_fixtures
+    ids = ("asked_to_stay_quiet_pass", "stale_question_pass",
+           "room_chatter_pass", "quiet_then_named_speak")
+    by_id = {fx.id: fx for fx in load_fixtures()}
+    return [by_id[i] for i in ids]
+
+
+@pytest.mark.parametrize("fx", _quiet_family(), ids=lambda fx: fx.id)
+def test_the_quiet_fixtures_hold_through_a_real_round(app, monkeypatch, fx):
+    """Each quiet-family fixture from eval_silence, replayed: its turns go
+    in, its last turn is sent, and its responder speaks first. A pass
+    verdict leaves no seat reply behind, even though the question mark
+    refuses the first pass once. A speak verdict (a named seat) leaves
+    exactly the named seat's answer."""
+    calls = []
+    monkeypatch.setattr(engine.providers, "stream_reply",
+                        scripted(_obeys_the_note, calls))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        con = db.connect()
+        seats = {p["slug"] for p in db.get_chat_participants(con, chat_id)}
+        assert fx.responder in seats
+        for turn in fx.conversation[:-1]:
+            speaker = turn["speaker"] if turn["speaker"] in seats else "user"
+            db.insert_message(con, chat_id, speaker, turn["content"],
+                              notify=False)
+        con.execute("UPDATE chats SET next_first=? WHERE id=?",
+                    (fx.responder, chat_id))
+        con.commit()
+        con.close()
+        _, msgs = _round(c, chat_id, fx.conversation[-1]["content"])
+    replies = [m for m in msgs[len(fx.conversation):]
+               if m["speaker"] in seats]
+    assert calls[0]["slug"] == fx.responder
+    # the question mark (or the name) held the first pass back once
+    assert calls[1]["slug"] == fx.responder and calls[1]["refused"]
+    if fx.expected_verdict == "pass":
+        assert calls[1]["refused"] == QUESTION_NOTE
+        assert replies == []
+    else:
+        assert calls[1]["refused"] == ADDRESSED_NOTE
+        assert [m["speaker"] for m in replies] == [fx.responder]

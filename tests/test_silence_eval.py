@@ -1,10 +1,13 @@
 """Tests for the silence/speak-vs-pass fixture eval (`eval_silence/`) --
 no live API calls, no model judgment: this pins fixture schema validation and
-the internal consistency of the five-scenario contrast matrix (group
-check-in, resolved factual question, roll-call, mid-debate paraphrase, direct
-address) against the general relational-cost-of-silence principle now in
-backend/providers.py. It does NOT test what a real model would actually say
--- that needs live conversations."""
+the internal consistency of the contrast matrix (group check-in, resolved
+factual question, roll-call, mid-debate paraphrase, direct address, and the
+quiet family: asked to stay quiet, a stale answered question, room chatter,
+and a named seat after a quiet request) against the general
+relational-cost-of-silence principle now in backend/providers.py. It does
+NOT test what a real model would actually say -- that needs live
+conversations. tests/test_pass.py replays the quiet family through a real
+round, to hold the pass guard to the same verdicts."""
 
 import json
 
@@ -23,7 +26,9 @@ def test_builtin_seed_corpus_loads_and_validates():
     assert len(ids) == len(set(ids)), "fixture ids must be unique"
     categories = {fx.category for fx in fixtures}
     for expected in ("group_checkin", "resolved_factual_question", "roll_call",
-                     "mid_debate_paraphrase", "direct_address"):
+                     "mid_debate_paraphrase", "direct_address",
+                     "asked_to_stay_quiet", "stale_answered_question",
+                     "room_chatter", "quiet_request_named_seat"):
         assert expected in categories, f"missing seed category {expected}"
 
 
@@ -128,3 +133,29 @@ def test_redundancy_alone_does_not_decide_it():
     assert checkin.expected_verdict == "speak"
     assert resolved.expected_verdict == "pass"
     assert checkin.relational_cost_of_silence != resolved.relational_cost_of_silence
+
+
+def test_a_quiet_request_holds_until_a_seat_is_named():
+    """The quiet family's contrast, pinned the way the check-in pair is:
+    the same quiet request, the same nothing-new-to-say, and opposite
+    verdicts. A question mark between two people in the room leaves the
+    seats' silence unremarkable; naming a seat is the invitation back in.
+    A quiet stretch the owner asked for never raises the cost of silence on
+    its own."""
+    fixtures = {fx.id: fx for fx in load_fixtures()}
+    chatter = fixtures["asked_to_stay_quiet_pass"]
+    named = fixtures["quiet_then_named_speak"]
+    assert chatter.informational_value == named.informational_value == "low"
+    assert chatter.expected_verdict == "pass"
+    assert named.expected_verdict == "speak"
+    assert chatter.relational_cost_of_silence == "low"
+    assert named.relational_cost_of_silence == "high"
+
+
+def test_an_answered_question_stays_answered():
+    """A question both seats already answered doesn't come back as owed
+    when a later turn happens to hold a question mark."""
+    stale = {fx.id: fx for fx in load_fixtures()}["stale_question_pass"]
+    assert stale.already_answered_by == ["claude", "gpt"]
+    assert stale.expected_verdict == "pass"
+    assert "?" in stale.conversation[-1]["content"]

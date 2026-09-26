@@ -783,10 +783,15 @@ def _volatile_system_parts(cfg):
         parts.append("\n## Specialist delegation - already claimed\n" + delegation)
     refused = (cfg.get("pass_refused") or "").strip()
     if refused:
-        # #98: the engine refused this seat's [pass] (first responder on a
-        # direct question, or addressed by name) and is re-running it once.
-        # Volatile by nature - present for exactly one retry call.
-        parts.append("\n## Pass refused - you must answer\n" + refused)
+        # #98: the engine held back this seat's [pass] (first responder on
+        # a turn with a question mark, or addressed by name) and is
+        # re-running it once. Volatile by nature - present for exactly one
+        # retry call. The heading stays neutral: the note itself says
+        # whether an answer is owed (passes.guard_note). A "you must
+        # answer" heading over a note that lets a second pass stand
+        # outweighed the note on a live model, replaying the 26 September
+        # field test's shape on made-up turns.
+        parts.append("\n## About your [pass]\n" + refused)
     echoed = (cfg.get("echo_refused") or "").strip()
     if echoed:
         # #210: the engine dropped this seat's restated draft and is

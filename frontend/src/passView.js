@@ -46,6 +46,12 @@ export const QUIET_PHRASE_PATTERN = String.raw`\b(?:`
   + String.raw`|eavesdropping|lurking|standing by`
   + String.raw`|(?:leave|let) (?:you|you two|you both|you all|the two of you|`
   + String.raw`y'all) (?:to it|carry on|chat|talk|continue|get on with it)`
+  + String.raw`|(?:not|wasn't|was not|isn't|is not) `
+  + String.raw`(?:(?:a question|one) (?:for|to)|aimed at|addressed to|`
+  + String.raw`meant for|directed at) (?:me|us)`
+  + String.raw`|(?:not|wasn't|isn't|nobody|no one|nobody's|no one's) `
+  + String.raw`(?:asking|addressing|asked|addressed) (?:me|us)`
+  + String.raw`|no question (?:for|aimed at|to) (?:me|us)`
   + String.raw`)\b`
 // backend/passes.py CLAUSE_BREAK_PATTERN, QUIET_MAX_CHARS, QUIET_CONTRAST
 // and AFTER_TOKEN.

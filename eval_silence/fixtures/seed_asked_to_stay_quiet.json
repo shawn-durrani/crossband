@@ -1,0 +1,15 @@
+{
+  "id": "asked_to_stay_quiet_pass",
+  "category": "asked_to_stay_quiet",
+  "responder": "claude",
+  "conversation": [
+    {"speaker": "user", "content": "Sam and I are building the bookshelf now. Go into listening mode, and don't reply unless we ask for one of you by name."},
+    {"speaker": "Sam (in the room)", "content": "Where did you put the long clamps?"},
+    {"speaker": "user", "content": "Under the bench. Hang on, do you mean the blue ones?"}
+  ],
+  "already_answered_by": [],
+  "informational_value": "low",
+  "relational_cost_of_silence": "low",
+  "expected_verdict": "pass",
+  "notes": "The owner asked every seat to stay quiet until one is named. The newest turn has a question mark in it, but it's the two people talking to each other. A quiet stretch the owner asked for reads as doing what was asked, never as absence, however long it runs. The engine still sees the question mark and asks the first seat to look again, and its second [pass] has to stand."
+}

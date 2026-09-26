@@ -10,7 +10,10 @@ testable without a model is that the fixture set encodes the general
 principle -- pass only when BOTH the informational value of speaking AND the
 relational cost of staying silent are low -- consistently, across a small
 contrasting matrix (group check-in, resolved factual question, roll-call,
-mid-debate paraphrase, direct address). See eval_silence/README.md.
+mid-debate paraphrase, direct address, and the quiet family: a quiet
+request, a stale answered question, room chatter, a named seat). See
+eval_silence/README.md; tests/test_pass.py replays the quiet family through
+a real round against the pass guard.
 
 Nothing here is imported by backend/engine.py or backend/providers.py --
 engine.py's pick_responders routing is untouched by this eval (a hardcoded

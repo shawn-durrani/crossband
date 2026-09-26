@@ -1,0 +1,15 @@
+{
+  "id": "room_chatter_pass",
+  "category": "room_chatter",
+  "responder": "gpt",
+  "conversation": [
+    {"speaker": "user", "content": "Dave's here, we're sanding the bench top."},
+    {"speaker": "Dave (in the room)", "content": "Do you want another coffee?"},
+    {"speaker": "user", "content": "Yes please. Is the kettle still on?"}
+  ],
+  "already_answered_by": [],
+  "informational_value": "low",
+  "relational_cost_of_silence": "low",
+  "expected_verdict": "pass",
+  "notes": "No quiet request at all. Two people in the room ask each other things, and nobody is talking to the seats. Their silence goes unnoticed, and a reply would only interrupt. A question mark alone doesn't make a turn a question for the seats."
+}
