@@ -163,6 +163,14 @@ def test_trust_rule_and_floor():
     strong = {"clips": [_auto(i, 0.72) for i in range(4)], "vouched_at": 1.0}
     assert anchors.bank_trust(weak) == "low"
     assert anchors.bank_trust(strong) == "high"
+    # a genuine near-bar voice: every automatic clip cleared the banking bar
+    # (0.60) but none reached the old trust bar (0.65), so it was paused
+    # for good. It isn't any more (#499).
+    near_bar = {"clips": [_auto(i, s) for i, s in
+                          enumerate((0.6056, 0.6323, 0.6177, 0.6056))],
+                "vouched_at": 1.0}
+    assert anchors.bank_trust(near_bar) == "high"
+    assert anchors.TRUST_SCORE_BAR == 0.5 + 0.1   # the default banking bar
     # pre-#221 clips carry no scores: high, never an upgrade shock
     unscored = {"clips": [_auto(i) for i in range(4)], "vouched_at": 1.0}
     assert anchors.bank_trust(unscored) == "high"
