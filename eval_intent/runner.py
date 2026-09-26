@@ -51,8 +51,10 @@ async def run_one(fx, strategy: str, caller, cfg, model: str) -> Result:
                                      fx.present, fx.known)
         done = await caller(prompt, "merged")
         cost = price_utility_call(model, done, cfg)[0] if done.text is not None else 0.0
+        # The turn goes to the parser too, for the live scan's rule on words
+        # spelt out letter by letter (#494).
         return Result(fixture=fx, strategy=strategy,
-                      heard=parse_merged(done.text),
+                      heard=parse_merged(done.text, fx.text),
                       replies={"merged": done.text or ""}, cost_usd=cost,
                       latency_s=done.latency_s, calls=1,
                       missing_key=done.text is None and not done.timed_out,

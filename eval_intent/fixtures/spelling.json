@@ -132,5 +132,102 @@
         }
       ]
     }
+  },
+  {
+    "id": "game_is_it_a_word",
+    "category": "spelling_game",
+    "known": [
+      "Sam",
+      "Dave"
+    ],
+    "present": [
+      "Sam",
+      "Dave"
+    ],
+    "text": "Is Z-O-O-S a word?",
+    "expected": {},
+    "notes": "A word game with people in the room. Asking whether a spelt word is allowed is about the word."
+  },
+  {
+    "id": "game_spelled_misheard",
+    "category": "spelling_game",
+    "known": [
+      "Sam",
+      "Dave",
+      "Mateo"
+    ],
+    "present": [
+      "Sam",
+      "Dave"
+    ],
+    "text": "It's spelled good. G-O-A-D.",
+    "expected": {},
+    "notes": "The 26 September shape. The transcript heard the word as good, and the speaker spelt the word they played."
+  },
+  {
+    "id": "game_bare_letters",
+    "category": "spelling_game",
+    "known": [
+      "Mateo",
+      "Sam"
+    ],
+    "present": [
+      "Mateo"
+    ],
+    "text": "Q-A-T.",
+    "expected": {},
+    "notes": "Only letters, and nothing says they spell a name."
+  },
+  {
+    "id": "game_word_to_a_person",
+    "category": "spelling_game",
+    "known": [
+      "Sam"
+    ],
+    "present": [
+      "Sam"
+    ],
+    "text": "Sam, can I put Q-A-T on the triple word score?",
+    "expected": {},
+    "notes": "Spoken to a person in the room, about a word."
+  },
+  {
+    "id": "game_no_its",
+    "category": "spelling_game",
+    "known": [
+      "Dave"
+    ],
+    "present": [
+      "Dave"
+    ],
+    "text": "No, it's J-I-N-X, not jinks.",
+    "expected": {},
+    "notes": "The same shape as a name correction, but the word is a word."
+  },
+  {
+    "id": "game_word_near_a_name",
+    "category": "spelling_game",
+    "known": [
+      "Dave"
+    ],
+    "present": [
+      "Dave"
+    ],
+    "text": "Is C-A-V-E a word?",
+    "expected": {},
+    "notes": "One letter off a name in the room. Still a word in a game."
+  },
+  {
+    "id": "spell_bare_letters_near_a_name",
+    "category": "spelling_negative",
+    "known": [
+      "Matteo"
+    ],
+    "present": [
+      "Matteo"
+    ],
+    "text": "No, it's M-A-T-E-O.",
+    "expected": {},
+    "notes": "Bare letters one off a name in the room look just like a game word one off a player's name, so the app sets them aside. Saying the name before spelling it still counts."
   }
 ]

@@ -139,13 +139,18 @@ def _json_object(text):
     return data if isinstance(data, dict) else None
 
 
-def parse_merged(text) -> dict:
+def parse_merged(text, message="") -> dict:
     """One reply to the merged prompt into the verdict shape, reusing the
     app's own per-axis parsers (introductions.py, depth.py) so this is the
     same judge the harness measured. Anything off-shape degrades to nothing
     heard on that axis, never to an error. Imports the two modules lazily:
     both import this one back (introductions.py builds and parses the
-    merged prompt), so a top-level import would cycle."""
+    merged prompt), so a top-level import would cycle.
+
+    `message` is the turn the reply is about. With it, a correction in a
+    turn that spells a word out has to be marked as a name by the turn
+    itself (introductions.keep_name_corrections, #494). The live scan and
+    the harness both pass it, so both measure the same rule."""
     from . import depth as depth_mod
     from . import introductions as intro
     out = empty_verdict()
@@ -158,7 +163,8 @@ def parse_merged(text) -> dict:
     out["introductions"] = names["introductions"]
     out["departures"] = names["departures"]
     out["aliases"] = names["aliases"]
-    out["corrections"] = intro.parse_correction_verdict(text)
+    out["corrections"] = intro.keep_name_corrections(
+        intro.parse_correction_verdict(text), message)
     if isinstance(data.get("depth"), list):
         out["depth"] = depth_mod.parse_depth_verdict(
             json.dumps({"changes": data["depth"]}))

@@ -31,13 +31,16 @@ requests against tool requests, and turns that carry two instructions
 at once. It also covers requests for the seats to hold back, like
 "just eavesdrop until we ask", which must never switch room mode on or
 off. Then there are words spelt out letter by letter to fix the
-transcript, like "K-E-R-F". Those are never a name correction, while a
-person's name spelt out still is one. All of it is made up. A set built from real turns belongs
-outside the repository.
+transcript, like "K-E-R-F", and words spelt in a word game, like "is
+Z-O-O-S a word?". Those are never a name correction, while a person's
+name spelt out still is one. All of it is made up. A set built from
+real turns belongs outside the repository.
 
 ## What it compares
 
-The `merged` strategy is the path the app runs, one call per turn.
+The `merged` strategy is the path the app runs, one call per turn. It
+also applies the app's rule for a word spelt out letter by letter, so
+its score is what the app would act on.
 The strategy named `today` is the baseline, and the app doesn't run it.
 It checks each turn against the four phrase lists, sends a separate
 prompt for each list that fires, and hears no research cue at all. The
