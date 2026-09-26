@@ -117,12 +117,14 @@ service.
 7. When the session ends, the session voices are dropped.
 
 The tracker can keep its own long memory, or crossband can keep it. A
-spike before any app change decides which:
+spike before any app change decides which, and crossband's memory is
+the likely pick:
 
-- **The tracker's memory.** Nemotron streams, and holds each voice in a
-  speaker cache. It's the least code. A third-party port of the same
-  kind of model lost track of who was who after about 20 minutes, so
-  it needs proving over an hour.
+- **The tracker's memory.** Nemotron streams, and remembers voices in
+  one cache of about 21 seconds of speech shared by everyone. It's the
+  least code. NVIDIA doesn't say whether someone quiet for 20 minutes
+  keeps their place, and a port of an earlier model of this kind lost
+  track of who was who after about 20 minutes.
 - **Crossband's memory.** For each turn, the tracker gets the turn plus
   up to 30 seconds of earlier speech, and splits it in one go, which
   takes about 40 ms per 12 seconds here. Crossband then joins each
@@ -209,8 +211,11 @@ from your own sessions.
    themselves, or picking a name from the menu. The name goes on the
    voice, every turn it spoke is relabelled, and its best clean audio
    becomes that person's first clips, marked as introduced.
-4. If nobody answers before the session ends, the audio is dropped.
-5. In solo mode the app never asks. A new voice shows as "someone
+4. You can also answer "that's the TV" or "that's the radio". That
+   voice is then ignored for the rest of the session, and never asked
+   about again.
+5. If nobody answers before the session ends, the audio is dropped.
+6. In solo mode the app never asks. A new voice shows as "someone
    else" and nothing is learnt.
 
 ### Learn
@@ -233,10 +238,13 @@ from your own sessions.
 
 ### Tidy up when the session ends
 
-1. Crossband runs the naming once more over everything the session
-   heard. A turn whose name changes is relabelled, and one line is
-   logged with ids and names only.
-2. Every audio buffer from the session is dropped. Only clips saved by
+1. Crossband runs the tracker once more over the audio it still holds,
+   the last 10 minutes, with Nemotron's offline setting. That setting
+   reads 30 seconds at a time and is its most accurate.
+2. Then it runs the naming once more, over every fingerprint the
+   session collected. A turn whose name changes is relabelled, and one
+   line is logged with ids and names only.
+3. Every audio buffer from the session is dropped. Only clips saved by
    the rules for learning stay.
 
 ### What the AIs and memory are told
@@ -319,7 +327,7 @@ Goes:
 
 | Job | Choice | Why |
 |---|---|---|
-| Follow voices | NVIDIA Nemotron-3-Diarization, through NeMo-Speech.cpp on Metal | Up to 8 voices, open licence that allows commercial use (OpenMDW 1.1). On this Mac: about 40 ms per 12 seconds, 240 MB of memory. Already installed for the shadow test. |
+| Follow voices | NVIDIA Nemotron-3-Diarization, through NeMo-Speech.cpp on Metal | Up to 8 voices, open licence that allows commercial use (OpenMDW 1.1). The best published error rates of any open diariser that runs live. On this Mac: about 40 ms per 12 seconds, 240 MB of memory. |
 | Fingerprints | TitaNet-Small, kept | 46 of 55 right and none wrong on the 25 September session once turns were split. Fast: 26 ms for 3 seconds. |
 | Second fingerprint | Decided by the shadow stage | TitaNet-Large got 45 right, none wrong. ERes2Net got 48 right, none wrong, but its paper shows it weaker on 2 second clips. Kept only if it cuts wrong names by a third. |
 | Speech to text | ElevenLabs Scribe v2 Realtime, kept | It adds word times, for splitting crosstalk. |
@@ -328,9 +336,9 @@ Considered and not chosen:
 
 | Option | Why not |
 |---|---|
-| NVIDIA Streaming Sortformer | 4 voices at most, and a port lost track of voices on long audio. |
-| pyannote Community-1 | Splits a whole recording at once, not live. A candidate for the end-of-session pass. |
-| FluidAudio (Swift, Apache 2.0) | Good on-device diarisers with enrolment, but it'd need a Swift helper process beside a Python app. |
+| NVIDIA Streaming Sortformer | Nemotron's predecessor. 4 voices at most, and worse on every published test. |
+| pyannote Community-1, diart, DiariZen | Community-1 and DiariZen work on a whole recording, not live, and DiariZen's weights are non-commercial. diart is live but makes two to three times the errors. |
+| FluidAudio (Swift, Apache 2.0) | Runs Nemotron and others on Apple hardware, with published accuracy that matches NVIDIA's. The fallback way to run Nemotron if NeMo-Speech.cpp falls short. |
 | Picovoice Eagle | Its licence key checks in with Picovoice's servers, and it's sold to businesses only. |
 | Speechmatics, pyannoteAI | Cloud services, so voices would leave the Mac. |
 | ElevenLabs Scribe batch speaker library | Batch only, and no documented way to enrol a speaker. |
@@ -364,8 +372,11 @@ Two kinds of truth, both private to this Mac and never committed:
 
 Every stage is its own pull request and can be reverted on its own.
 
-1. **Spike, outside the app.** Run 60 minute made-up sessions through
-   both ways of tracking and pick one. Fix the comparison script's
+1. **Spike, outside the app.** Check NeMo-Speech.cpp's Nemotron gets
+   NVIDIA's published accuracy on the public AMI meeting test. Its Mac
+   support is days old, and FluidAudio is the fallback. Run 60 minute
+   made-up sessions through both ways of tracking and pick one, with a
+   person quiet for 20 minutes and a TV talking in the background. Fix the comparison script's
    CAM++ run, which broke on real clips, and re-run the model
    comparison with calibration. Check Scribe's word times line up with
    the tracker's spans.
@@ -389,23 +400,22 @@ is rebuilt from its clips by the new scorer at the first start.
 
 | Risk | What happens | What limits it |
 |---|---|---|
-| The tracker loses track in a long session | Two voices swap slots | The fingerprint check on every span, the end-of-session pass, and the spike choosing the tracking method |
+| The tracker loses track in a long session | Two voices swap | The fingerprint check on every span, the end-of-session pass, and the spike choosing the tracking method |
 | A voice sounds unlike its bank (a cold, a whisper, a new mic) | Named late, or left listening | Probabilities fall, so the app waits instead of guessing. Confirming a turn teaches it. |
 | Two similar voices, like siblings | Both near the bar | The calibration sees them close, one to one stops both getting one name, and you confirm |
-| The AIs' own playback reaches the mic | A slot made of AI speech | A voice heard mostly while the AIs are talking is never named or saved |
+| The AIs' own playback reaches the mic | A voice made of AI speech | A voice heard mostly while the AIs are talking is never named or saved |
+| A TV or radio talks in the background | It takes one of the 8 voices, and gets asked about | You say "that's the TV" once per session |
 | Memory in a long session | The session's audio grows | Keep the last 10 minutes of audio. Older speech lives on only as fingerprints. |
 | A new setting to tune | Bars set wrong for a house | Bars start from this house's own calibration and move in shadow first |
 
-## Open decisions
+## Decisions
 
-Each has a recommendation. They go to the owner as separate questions.
+Made by the owner on 26 September:
 
-1. **Crosstalk in the cloud.** Drop the Scribe batch split, or keep it
-   as a fallback you switch on. Recommended: drop it.
-2. **One mic setting.** Turn noise suppression and automatic gain off
-   in solo too, or keep solo's cleaner sound. Recommended: one setting.
-3. **When to ask about a new voice.** After 4 seconds of their speech,
-   or after their second turn. Recommended: 4 seconds.
+1. The cloud crosstalk split goes, with no fallback. Overlap is split
+   on the Mac from Scribe's word times.
+2. One mic setting in every mode, solo included.
+3. The app asks about a new voice after 4 seconds of their speech.
 
 The strangers file ships with the app, with credit to LibriSpeech in
 the acknowledgements. Building it on first start would mean a large
@@ -440,8 +450,14 @@ What changes where, by the end of stage 4:
 Sources:
 
 - [Nemotron-3-Diarization model card](https://huggingface.co/nvidia/Nemotron-3-Diarization),
-  [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp),
-  [OpenMDW 1.1](https://openmdw.ai/license/1-1/).
+  with error rates of 12.73% on DIHARD III and 9.25% on AMI, its
+  [Mac support in NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp/pull/50),
+  the [FluidAudio port](https://github.com/FluidInference/FluidAudio/pull/883),
+  and [OpenMDW 1.1](https://openmdw.ai/license/1-1/).
+- [Streaming Sortformer v2.1](https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1),
+  [pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1),
+  [diart](https://github.com/juanmc2005/diart) and
+  [DiariZen](https://github.com/BUTSpeechFIT/DiariZen).
 - Short clips four times harder: [DAME, ICASSP 2026](https://arxiv.org/abs/2601.13999).
 - Naming voices rather than turns, and leaning towards too many voices:
   [TST, 2026](https://arxiv.org/html/2606.14091).
