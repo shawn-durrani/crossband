@@ -300,6 +300,7 @@ test('traceMeta labels a stepped-up turn with the model it ran on', () => {
   const roster = [{ slug: 'claude', provider: 'anthropic', model: 'claude-sonnet-5' }]
   assert.deepEqual(traceMeta(roster, 'claude', { claude: 'claude-opus-5' }), {
     provider: 'anthropic', model: 'claude-opus-5', tts_provider: 'elevenlabs',
+    tts_model: '',
   })
 })
 
@@ -308,6 +309,36 @@ test('traceMeta falls back to the configured model, then to blanks', () => {
   assert.equal(traceMeta(roster, 'gpt', {}).model, 'gpt-5.1')
   assert.equal(traceMeta(roster, 'gpt', undefined).model, 'gpt-5.1')
   assert.deepEqual(traceMeta(roster, 'nobody', {}), {
-    provider: '', model: '', tts_provider: 'elevenlabs',
+    provider: '', model: '', tts_provider: 'elevenlabs', tts_model: '',
   })
+})
+
+// #480: the relay names the ElevenLabs model speaking each reply, and the
+// trace carries it so first-audio times can be compared model by model.
+test('traceMeta carries the voice model the relay named for this seat', () => {
+  const roster = [{ slug: 'gpt', provider: 'openai', model: 'gpt-5.1' }]
+  assert.equal(traceMeta(roster, 'gpt', {}, { gpt: 'eleven_v3_conversational' }).tts_model,
+    'eleven_v3_conversational')
+  assert.equal(traceMeta(roster, 'gpt', {}, { claude: 'eleven_flash_v2_5' }).tts_model, '')
+  assert.equal(traceMeta(roster, 'gpt', {}).tts_model, '')
+})
+
+test('the voice model tags every voice stage, and the first one named wins', () => {
+  const clk = fakeClock()
+  const tr = new VoiceTrace({ now: clk.now })
+  tr.begin('t')
+  clk.set(500); tr.mark('transcript_final')
+  clk.set(1000); tr.mark('first_token')
+  // first_delta lands before the relay has named a model
+  tr.speakerMark('gpt', 'first_delta', { ...META, tts_model: '' })
+  clk.set(1300); tr.speakerMark('gpt', 'first_audio', { ...META, tts_model: 'eleven_v3_conversational' })
+  clk.set(1310); tr.speakerMark('gpt', 'play_invoked', { ...META, tts_model: 'eleven_flash_v2_5' })
+  clk.set(1400); tr.speakerMark('gpt', 'playback')
+  const stages = tr.flush().stages
+  const tagged = (name) => stages.find((s) => s.stage === name).tts_model
+  assert.equal(tagged('first_token_to_first_audio'), 'eleven_v3_conversational')
+  assert.equal(tagged('first_audio_to_playback'), 'eleven_v3_conversational')
+  assert.equal(tagged('end_to_end_first_audio'), 'eleven_v3_conversational')
+  // the generation stage is about the language model, not the voice
+  assert.equal(stages.find((s) => s.stage === 'final_to_first_token').tts_model, undefined)
 })

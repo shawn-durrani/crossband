@@ -47,8 +47,8 @@ export class VoiceTrace {
       turnId: turnId || `t${this._now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
       chatId: this._getChatId(),
       marks: {},
-      // slug -> { provider, model, tts_provider, first_delta, first_audio,
-      //           play_invoked, playback }. speakerOrder preserves the order
+      // slug -> { provider, model, tts_provider, tts_model, first_delta,
+      //           first_audio, play_invoked, playback }. speakerOrder preserves the order
       //           speakers first appeared (≈ play order) so we can tell the
       //           first reply (no queue ahead of it) from the 2nd+ (which queue).
       speakers: {},
@@ -84,6 +84,7 @@ export class VoiceTrace {
       if (meta.provider && !s.provider) s.provider = meta.provider
       if (meta.model && !s.model) s.model = meta.model
       if (meta.tts_provider && !s.tts_provider) s.tts_provider = meta.tts_provider
+      if (meta.tts_model && !s.tts_model) s.tts_model = meta.tts_model
     }
     if (s[name] === undefined) s[name] = at ?? this._now()
   }
@@ -126,7 +127,8 @@ export class VoiceTrace {
     t.speakerOrder.forEach((slug, i) => {
       const s = t.speakers[slug]
       const tags = { provider: s.provider || '', model: s.model || '',
-                     tts_provider: s.tts_provider || '', speaker: slug }
+                     tts_provider: s.tts_provider || '',
+                     tts_model: s.tts_model || '', speaker: slug }
       push('first_token_to_first_audio', s.first_delta, s.first_audio, tags)
       push('first_audio_to_playback', s.first_audio, s.playback, tags)
       // Serialisation cost: this speaker's audio was READY at first_audio, but
@@ -142,7 +144,8 @@ export class VoiceTrace {
     if (first) {
       push('end_to_end_first_audio', m.speech_end, first.playback,
         { provider: first.provider || '', model: first.model || '',
-          tts_provider: first.tts_provider || '', speaker: firstSlug })
+          tts_provider: first.tts_provider || '',
+          tts_model: first.tts_model || '', speaker: firstSlug })
     }
 
     // stable, human-friendly order for logs/tests (ties keep insertion order,
@@ -179,10 +182,14 @@ export class VoiceTrace {
 // runs a different model from the one its settings name, and a trace
 // labelled with the configured model would file its latency under the wrong
 // model. The configured model is the fallback for a server that sends none.
-export function traceMeta(participants, slug, running) {
+// `voices` maps slug -> the ElevenLabs model the TTS relay said is speaking
+// this reply (#480), so first-audio times can be compared model by model.
+// It is blank until the relay names one, and first write wins per speaker.
+export function traceMeta(participants, slug, running, voices) {
   const p = (participants || []).find((x) => x.slug === slug)
   const model = (running && running[slug]) || p?.model || ''
-  return { provider: p?.provider || '', model, tts_provider: 'elevenlabs' }
+  return { provider: p?.provider || '', model, tts_provider: 'elevenlabs',
+           tts_model: (voices && voices[slug]) || '' }
 }
 
 export { STAGE_ORDER }

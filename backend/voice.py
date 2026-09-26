@@ -2,14 +2,24 @@
 quota. The API key stays server-side; the browser talks only to this backend.
 Every synthesized character and transcribed second is logged to voice_usage."""
 
+import base64
 import json
 import os
 
 import httpx
 
+from . import tts_models
+
 ELEVEN_BASE = "https://api.elevenlabs.io"
+# The two streaming sockets a reply can be spoken through (#480). Which one
+# a model uses is tts_models.route_for's call: the text-to-speech socket
+# refuses every eleven_v3 id, and the dialogue socket takes only those.
 TTS_WS_URL = (
     "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
+    "?model_id={model_id}&output_format=mp3_44100_128"
+)
+TTD_WS_URL = (
+    "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input"
     "?model_id={model_id}&output_format=mp3_44100_128"
 )
 # Scribe v2 Realtime streaming STT - opt-in, parallel to the batch transcribe()
@@ -137,6 +147,38 @@ def list_voices():
     ]
 
 
+def list_models():
+    """GET /v1/models, raw. tts_models.parse_models keeps the speech ones."""
+    r = httpx.get(f"{ELEVEN_BASE}/v1/models", headers=_headers(), timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def model_fetcher(cfg):
+    """list_models when voice runs on ElevenLabs, else None, so a keyless
+    install (and the keyless test suite) never asks for the list."""
+    return list_models if provider_for(cfg) == PROVIDER_ELEVENLABS else None
+
+
+def tts_choice(cfg, seat_choice=""):
+    """Resolve which model speaks for this config and seat, from the cached
+    or pinned list, never waiting on the network. A stale list is refreshed
+    in the background for the next reply."""
+    fetch = model_fetcher(cfg)
+    tts_models.refresh_soon(fetch)
+    snap = tts_models.catalogue()
+    refused = tts_models.refused_ids()
+    resolved = tts_models.resolve(cfg.get("tts_model"), seat_choice,
+                                  models=snap["models"], refused=refused)
+    resolved["attempts"] = tts_models.attempts(resolved, snap["models"], refused)
+    return resolved
+
+
+def tts_model_for(cfg, seat_choice="") -> str:
+    """The model id a reply would be spoken with right now."""
+    return tts_choice(cfg, seat_choice)["model"]
+
+
 def subscription():
     """Live credit balance for the quota display. Needs User:Read on the key."""
     r = httpx.get(f"{ELEVEN_BASE}/v1/user/subscription", headers=_headers(), timeout=TIMEOUT)
@@ -191,12 +233,14 @@ def transcribe_diarized(audio_bytes, mime, cfg, num_speakers=None):
 
 
 def synthesize(text, voice_id, cfg):
-    """Non-streaming TTS for the synthetic benchmark (#94): one POST, the
-    whole mp3 back. The live voice path stays on the streaming websocket;
-    this exists so a benchmark can time and retain synthesis without playing
-    it. Voice settings mirror tts_init_message so the artefact sounds like
-    the room."""
-    model_id = cfg.get("tts_model") or "eleven_flash_v2_5"
+    """Non-streaming TTS for the synthetic benchmark (#94): the whole mp3
+    back. The live voice path stays on the streaming sockets; this exists so
+    a benchmark can time and retain synthesis without playing it. The model
+    resolves exactly as a live reply's would (#480). Voice settings mirror
+    tts_init_message so the artefact sounds like the room."""
+    model_id = tts_model_for(cfg)
+    if tts_models.route_for(model_id) == tts_models.ROUTE_DIALOGUE:
+        return _synthesize_dialogue(text, voice_id, model_id, cfg)
     r = httpx.post(
         f"{ELEVEN_BASE}/v1/text-to-speech/{voice_id}",
         params={"output_format": "mp3_44100_128"},
@@ -211,6 +255,29 @@ def synthesize(text, voice_id, cfg):
     raise RuntimeError(f"Text-to-speech failed ({r.status_code}: {r.text[:200]})")
 
 
+def _synthesize_dialogue(text, voice_id, model_id, cfg):
+    """A whole reply through the dialogue socket, the same one a live v3
+    reply uses (ElevenLabs lists v3 Conversational on that socket only).
+    One connection: register the voice, send the text, close, collect
+    the audio."""
+    from websockets.sync.client import connect
+    url = tts_ws_url(tts_models.ROUTE_DIALOGUE, voice_id, model_id)
+    chunks = []
+    with connect(url, max_size=16 * 1024 * 1024, open_timeout=30) as ws:
+        ws.send(tts_open_message(tts_models.ROUTE_DIALOGUE, cfg, voice_id))
+        ws.send(json.dumps({"inputs": [{"text": text, "voice_id": voice_id}]}))
+        ws.send(json.dumps({"close_socket": True}))
+        while True:
+            data = json.loads(ws.recv(timeout=60))
+            if data.get("audio"):
+                chunks.append(base64.b64decode(data["audio"]))
+            if data.get("error"):
+                raise RuntimeError("Text-to-speech failed "
+                                   f"({str(data.get('message') or data['error'])[:200]})")
+            if data.get("is_final"):
+                return b"".join(chunks)
+
+
 def tts_init_message(cfg):
     """First message on the ElevenLabs TTS websocket: auth + adaptive chunking.
     Small first chunk for fast time-to-first-audio, larger after for prosody."""
@@ -221,6 +288,75 @@ def tts_init_message(cfg):
                            "speed": cfg.get("tts_speed", 1.0)},
         "generation_config": {"chunk_length_schedule": [120, 200, 260, 290]},
     })
+
+
+def tts_ws_url(route, voice_id, model_id):
+    """The upstream socket URL for one reply. The model id has already been
+    validated against the model list; the voice id sits in the path on the
+    text-to-speech socket and in the first message on the dialogue one."""
+    if route == tts_models.ROUTE_DIALOGUE:
+        return TTD_WS_URL.format(model_id=model_id)
+    return TTS_WS_URL.format(voice_id=voice_id, model_id=model_id)
+
+
+def tts_open_message(route, cfg, voice_id):
+    """The first upstream message. The dialogue socket registers the one
+    voice this connection speaks with and takes only a stability setting
+    (0.5 is v3's "natural"); it buffers on its own fixed threshold of about
+    40 characters and 8 words, so there's no chunk schedule to send."""
+    if route == tts_models.ROUTE_DIALOGUE:
+        return json.dumps({"voices": [voice_id], "xi_api_key": api_key(),
+                           "voice_settings": {"stability": 0.5}})
+    return tts_init_message(cfg)
+
+
+def tts_upstream_frames(route, msg, voice_id, carry):
+    """Translate one browser frame ({text}, {flush}, {done}, in that order
+    when combined) into upstream messages. The browser speaks one protocol
+    whichever socket is behind the relay.
+
+    On the dialogue socket a whitespace-only text (the browser's idle
+    keepalive, or the gap between two deltas) becomes a keep_alive, and the
+    whitespace is held in `carry` and sent ahead of the next real text so
+    words never run together."""
+    out = []
+    text = msg.get("text")
+    if route == tts_models.ROUTE_DIALOGUE:
+        if isinstance(text, str) and text:
+            if text.strip():
+                out.append({"inputs": [{"text": carry.pop("ws", "") + text,
+                                        "voice_id": voice_id}]})
+            else:
+                carry["ws"] = (carry.get("ws", "") + text)[-4:]
+                out.append({"keep_alive": True})
+        if msg.get("flush"):
+            out.append({"flush": True})
+        if msg.get("done"):
+            out.append({"close_socket": True})
+    else:
+        if text:
+            out.append({"text": text})
+        if msg.get("flush"):
+            out.append({"text": " ", "flush": True})
+        if msg.get("done"):
+            out.append({"text": ""})
+    return [json.dumps(f) for f in out]
+
+
+def tts_downstream(route, data):
+    """One upstream message as the browser frame to send, and whether the
+    reply is over. The sockets name their last message differently:
+    `isFinal` on text-to-speech, `is_final` on dialogue."""
+    out = {}
+    if data.get("audio"):
+        out["audio"] = data["audio"]
+    final = data.get("is_final") if route == tts_models.ROUTE_DIALOGUE \
+        else data.get("isFinal")
+    if final:
+        out["final"] = True
+    if data.get("error"):
+        out["error"] = data.get("message") or data["error"]
+    return out, bool(final or data.get("error"))
 
 
 def voice_cost(kind, units, cfg):

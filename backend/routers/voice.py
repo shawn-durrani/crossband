@@ -9,7 +9,9 @@
 
 import asyncio
 import base64
+import contextlib
 import json
+import os
 import time
 import uuid
 from urllib.parse import urlparse
@@ -67,9 +69,10 @@ import logging
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi import WebSocketDisconnect
+from pydantic import BaseModel
 
-from .. import (db, diagnostics, diarize, engine, room_state, seat_trace,
-                voice, voice_trace)
+from .. import (config, db, diagnostics, diarize, engine, room_state,
+                seat_trace, tts_models, voice, voice_trace)
 
 router = APIRouter(tags=["voice"])
 
@@ -96,12 +99,59 @@ def voice_status(request: Request):
     cfg = request.app.state.settings.as_cfg()
     if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
         return {"enabled": False}
-    out = {"enabled": True, "tts_model": request.app.state.settings.tts_model}
+    out = {"enabled": True, "tts_model": voice.tts_model_for(cfg),
+           "tts_model_setting": request.app.state.settings.tts_model}
     try:
         out["quota"] = voice.subscription()
     except Exception:
         out["quota"] = None  # key may lack User:Read - fine
     return out
+
+
+# #480: the voice model setting. The app-wide choice lives in
+# config.local.json as `tts_model`, so it survives restarts and sits beside
+# every other voice key; a seat's own choice lives on its participants row.
+TTS_MODEL_ENV = config.ENV_PREFIX + "TTS_MODEL"
+
+
+def _models_payload(request):
+    cfg = request.app.state.settings.as_cfg()
+    snap = tts_models.catalogue(voice.model_fetcher(cfg))
+    return tts_models.describe(request.app.state.settings.tts_model, snap,
+                               locked_by_env=bool(os.environ.get(TTS_MODEL_ENV)))
+
+
+@router.get("/api/voice/models")
+def voice_models(request: Request):
+    """The models the picker offers, the current choice, what Automatic
+    picks today and why. Fetches ElevenLabs' list when the hour-long cache
+    is stale; a keyless install, or an unreachable API, gets the pinned list
+    and says so in `source`."""
+    return _models_payload(request)
+
+
+class VoiceModelIn(BaseModel):
+    model: str
+
+
+@router.put("/api/voice/model")
+def set_voice_model(body: VoiceModelIn, request: Request):
+    """Save the app-wide voice model: "auto" or an id on the current list,
+    anything else refused. Takes effect on the next reply, no restart."""
+    if os.environ.get(TTS_MODEL_ENV):
+        raise HTTPException(409, f"{TTS_MODEL_ENV} is set in the environment "
+                                 "and wins over this setting. Remove it to "
+                                 "choose the model here.")
+    value = (body.model or "").strip()
+    cfg = request.app.state.settings.as_cfg()
+    snap = tts_models.catalogue(voice.model_fetcher(cfg))
+    if not tts_models.valid_choice(value, snap["models"]):
+        raise HTTPException(400, f"Unknown voice model {value[:64]!r}. "
+                                 "Choose Automatic or a model from the list.")
+    config.write_local_key("tts_model", value)
+    request.app.state.settings = request.app.state.settings.model_copy(
+        update={"tts_model": value})
+    return _models_payload(request)
 
 
 @router.get("/api/voice/voices")
@@ -244,7 +294,8 @@ def voice_trace_ingest(payload: dict = Body(...)):
         for s in stages:
             db.insert_voice_trace(con, turn_id, chat_id, s["stage"], s["ms"],
                                   provider=s["provider"], model=s["model"],
-                                  tts_provider=s["tts_provider"], speaker=s["speaker"])
+                                  tts_provider=s["tts_provider"], speaker=s["speaker"],
+                                  tts_model=s["tts_model"])
         con.commit()
     finally:
         con.close()
@@ -405,8 +456,9 @@ def voice_debug_dump(payload: dict = Body(...)):
 @router.get("/api/voice/trace/summary")
 def voice_trace_summary(window_hours: float = 24.0):
     """Development diagnostics: stage-level p50/p95 latency over the last
-    `window_hours`, segmented by model and TTS provider. Backs a dev dashboard
-    and answers the core question - which stage dominates the wait.
+    `window_hours`, segmented by model, TTS provider and voice model. Backs
+    a dev dashboard and answers the core question - which stage dominates
+    the wait.
 
     Delegates to diagnostics.voice_latency_summary - shared with the
     get_diagnostic MCP tool's "voice_latency" diagnostic."""
@@ -436,12 +488,21 @@ async def tts_relay(ws: WebSocket):
         await ws.send_json({"error": "participant has no voice assigned"})
         await ws.close()
         return
-    url = voice.TTS_WS_URL.format(voice_id=voice_id, model_id=cfg["tts_model"])
+    # #480: the seat's own model choice, else the app's. Resolved from the
+    # cached or pinned model list: nothing on this path waits on ElevenLabs.
+    choice = voice.tts_choice(cfg, _seat_tts_choice(init.get("seat")))
     chars = 0
     up = down = None
     try:
-        async with websockets.connect(url, max_size=16 * 1024 * 1024) as eleven:
-            await eleven.send(voice.tts_init_message(cfg))
+        async with contextlib.AsyncExitStack() as stack:
+            eleven, model, route = await _open_tts_upstream(
+                stack, choice["attempts"], voice_id)
+            await eleven.send(voice.tts_open_message(route, cfg, voice_id))
+            # Which model is speaking, for the latency trace's labels. The
+            # browser ignores frames it doesn't know, so an older client is
+            # unaffected.
+            await ws.send_json({"tts_model": model})
+            carry = {}
 
             async def pump_up():
                 nonlocal chars
@@ -450,29 +511,20 @@ async def tts_relay(ws: WebSocket):
                     text = msg.get("text")
                     if text:
                         chars += len(text)
-                        await eleven.send(json.dumps({"text": text}))
-                    if msg.get("flush"):
-                        await eleven.send(json.dumps({"text": " ", "flush": True}))
+                    for frame in voice.tts_upstream_frames(route, msg, voice_id, carry):
+                        await eleven.send(frame)
                     if msg.get("done"):
-                        await eleven.send(json.dumps({"text": ""}))
                         return
 
             async def pump_down():
                 try:
                     async for raw in eleven:
-                        data = json.loads(raw)
-                        out = {}
-                        if data.get("audio"):
-                            out["audio"] = data["audio"]
-                        if data.get("isFinal"):
-                            out["final"] = True
-                        if data.get("error"):
-                            out["error"] = data.get("message") or data["error"]
+                        out, over = voice.tts_downstream(route, json.loads(raw))
                         if out:
                             await ws.send_json(out)
-                        if data.get("isFinal") or data.get("error"):
+                        if over:
                             return
-                    # ElevenLabs closed without isFinal - still tell the client we're done
+                    # ElevenLabs closed without a final frame - still tell the client we're done
                     await ws.send_json({"final": True})
                 except (WebSocketDisconnect, RuntimeError):
                     # client closed the socket mid-stream (barge-in / turn end / a new
@@ -510,6 +562,55 @@ async def tts_relay(ws: WebSocket):
             await ws.close()
         except Exception:
             pass
+
+
+def _seat_tts_choice(slug) -> str:
+    """A seat's own voice model choice (#480), '' when it follows the app.
+    One indexed read, inline: the relay is on the reply's critical path and
+    WAL readers never wait on a writer."""
+    if not isinstance(slug, str) or not slug:
+        return ""
+    try:
+        con = db.connect()
+        try:
+            row = con.execute("SELECT tts_model FROM participants WHERE slug=?",
+                              (slug,)).fetchone()
+        finally:
+            con.close()
+    except Exception:
+        log.warning("seat voice model not read; the app setting speaks",
+                    exc_info=True)
+        return ""
+    return (row["tts_model"] if row else "") or ""
+
+
+async def _open_tts_upstream(stack, attempts, voice_id):
+    """Connect to ElevenLabs with the first model it accepts (#480).
+
+    ElevenLabs refuses a model it can't stream on a socket at the handshake
+    (HTTP 400 `unsupported_model`), before any text is sent, so falling back
+    costs one short round trip and loses nothing. The refusal is remembered
+    for a day: Automatic skips the model and the settings page names it.
+    Any other failure (a bad key, a rate limit, the network) is raised as
+    before. Returns (connection, model, route)."""
+    for i, model in enumerate(attempts):
+        route = tts_models.route_for(model)
+        url = voice.tts_ws_url(route, voice_id, model)
+        try:
+            conn = await stack.enter_async_context(
+                websockets.connect(url, max_size=16 * 1024 * 1024))
+        except websockets.InvalidStatus as e:
+            if not tts_models.is_model_refusal(e) or i == len(attempts) - 1:
+                raise
+            tts_models.mark_refused(model)
+            log.warning("tts model refused: model=%s route=%s next=%s",
+                        model, route, attempts[i + 1])
+            continue
+        if i:
+            log.warning("tts spoke with fallback: wanted=%s model=%s",
+                        attempts[0], model)
+        return conn, model, route
+    raise RuntimeError("no voice model to try")
 
 
 # #134: the capture-session registry - every live microphone, visible from

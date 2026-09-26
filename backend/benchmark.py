@@ -134,7 +134,15 @@ def seat_public(row: dict) -> dict:
     it as name-only); key VALUES never appear anywhere in a result."""
     return {k: row.get(k) or "" for k in (
         "slug", "name", "provider", "model", "base_url", "api_key_env",
-        "voice_id", "reasoning_effort", "thinking_control")}
+        "voice_id", "reasoning_effort", "thinking_control", "tts_model")}
+
+
+def seat_voice_cfg(seat: dict, cfg: dict) -> dict:
+    """The cfg a seat's synthesis runs with: its own voice model choice
+    (#480) over the app's, so the benchmark hears what a live reply would."""
+    if seat.get("tts_model"):
+        return {**cfg, "tts_model": seat["tts_model"]}
+    return cfg
 
 
 def build_plan(body: dict, participants: list, eleven_on: bool):
@@ -329,7 +337,7 @@ async def ensure_fixture(plan: dict, cfg: dict):
     clip.write_bytes(audio)
     info = {"file": FIXTURE_FILE, "sentence": FIXTURE_SENTENCE,
             "synthetic": True, "voice_id": plan["fixture_voice"],
-            "tts_model": cfg.get("tts_model") or "",
+            "tts_model": voice.tts_model_for(cfg),
             "created_at": _iso_now()}
     meta.write_text(json.dumps(info, indent=1))
     return info, ""
@@ -371,7 +379,7 @@ def _fresh_results(run_id: str, plan: dict, cfg: dict) -> dict:
         "config": {
             "dimensions": plan["dimensions"],
             "cases": plan["cases"],
-            "tts_model": cfg.get("tts_model") or "",
+            "tts_model": voice.tts_model_for(cfg),
             "stt_model": cfg.get("stt_model") or "scribe_v2",
             "tts_sentence": TTS_SENTENCE,
         },
@@ -479,10 +487,11 @@ async def _tts_unit(seat: dict, plan: dict, cfg: dict, run_dir: Path) -> dict:
     why = voice_support(plan, seat)
     if why:
         return {"status": "unsupported", "reason": why}
+    seat_cfg = seat_voice_cfg(seat, cfg)
     try:
         t0 = time.monotonic()
         audio = await asyncio.to_thread(
-            tts_call, TTS_SENTENCE, seat["voice_id"], cfg)
+            tts_call, TTS_SENTENCE, seat["voice_id"], seat_cfg)
         dt = time.monotonic() - t0
     except Exception as e:
         return {"status": "failed", "error": str(e)[:300]}
@@ -494,6 +503,7 @@ async def _tts_unit(seat: dict, plan: dict, cfg: dict, run_dir: Path) -> dict:
         "bytes": len(audio),
         "chars": len(TTS_SENTENCE),
         "est_cost": voice.voice_cost("tts", len(TTS_SENTENCE), cfg),
+        "tts_model": voice.tts_model_for(seat_cfg),
         "artefact": artefact,
     }
 
@@ -529,7 +539,7 @@ async def _pipeline_unit(seat, plan, fixture, no_fixture, cfg, run_dir) -> dict:
         t0 = time.monotonic()
         audio_out = await asyncio.to_thread(
             tts_call, speak or "The model returned an empty reply.",
-            seat["voice_id"], cfg)
+            seat["voice_id"], seat_voice_cfg(seat, cfg))
         stages["tts"] = {"seconds": round(time.monotonic() - t0, 3),
                          "bytes": len(audio_out), "chars": len(speak),
                          "est_cost": voice.voice_cost("tts", len(speak), cfg)}

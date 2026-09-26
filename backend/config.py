@@ -293,6 +293,11 @@ class Settings(BaseModel):
     # until such an engine lands: a reserved provider must never leak audio
     # bytes to the cloud.
     voice_provider: str = "auto"
+    # The ElevenLabs model that speaks replies (#480): "auto" follows the
+    # newest model crossband can stream live (tts_models.AUTOMATIC_RULE), or
+    # name one from the list the app's Models page shows. Set in the app,
+    # which writes config.local.json; a seat can choose its own. An id that
+    # isn't on ElevenLabs' list speaks with eleven_flash_v2_5 instead.
     tts_model: str = "eleven_flash_v2_5"
     tts_speed: float = 1.0  # 0.7-1.2; ElevenLabs speaking speed
     stt_model: str = "scribe_v2"

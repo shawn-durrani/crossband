@@ -27,7 +27,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -73,6 +73,8 @@ SCHEMA_VERSION = 29
 #        research mode, per chat: a bigger tool budget and the research
 #        routine until "back to normal", #253/#417)
 #   v29  chat_seat_state.model + model_from + model_label + model_from_label
+#   v30  participants.tts_model + voice_turn_traces.tts_model (a seat's own
+#        ElevenLabs voice model, and which one spoke each traced turn)
 #        + model_set_by + model_set_at + model_source (a seat stepped up to a
 #        stronger model for one chat, #254)
 
@@ -225,6 +227,10 @@ CREATE TABLE IF NOT EXISTS participants(
   color TEXT NOT NULL DEFAULT '#a1a1aa',
   voice_id TEXT NOT NULL DEFAULT '',
   voice_gain REAL NOT NULL DEFAULT 1.0,  -- relative voice weight 0.2–3.0 (#163: >1 boosts by ducking the rest)
+  -- This seat's own ElevenLabs voice model: 'auto', a model id, or '' to
+  -- follow the app setting (tts_model). Validated against the model list
+  -- on save and again when a reply is spoken (backend/tts_models.py).
+  tts_model TEXT NOT NULL DEFAULT '',
   reasoning_effort TEXT NOT NULL DEFAULT '',
   -- How this seat asks an OpenAI-compatible server to skip its hidden
   -- reasoning trace. '' = send nothing (every hosted seat). The other values
@@ -452,6 +458,7 @@ CREATE TABLE IF NOT EXISTS voice_turn_traces(
   provider TEXT NOT NULL DEFAULT '',   -- model provider (anthropic|openai) where applicable
   model TEXT NOT NULL DEFAULT '',      -- model id where applicable
   tts_provider TEXT NOT NULL DEFAULT '', -- voice/TTS provider (e.g. elevenlabs)
+  tts_model TEXT NOT NULL DEFAULT '',  -- the voice model that spoke (e.g. eleven_flash_v2_5)
   speaker TEXT NOT NULL DEFAULT '',    -- participant slug for per-speaker stages
   created_at REAL NOT NULL
 );
@@ -725,6 +732,15 @@ def init(settings=None):
         if mcols and "web_sources" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN web_sources "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 29:  # v30: voice model choice per seat (#480).
+        # Both default blank: every seat follows the app setting and every
+        # older trace row simply has no recorded voice model - exactly what
+        # was true before the columns existed. Never backfilled.
+        for table in ("participants", "voice_turn_traces"):
+            cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+            if cols and "tts_model" not in cols:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN tts_model "
+                            "TEXT NOT NULL DEFAULT ''")
     if 1 <= version <= 28:  # v29: a seat's per-chat model step-up (#254).
         # Every column defaults blank or zero, so every existing row runs its
         # configured model - exactly its pre-migration behaviour.
@@ -1030,15 +1046,17 @@ def log_utility_usage(con, chat_id, kind, model, input_tokens, output_tokens, co
 
 
 def insert_voice_trace(con, turn_id, chat_id, stage, ms, *, provider="",
-                       model="", tts_provider="", speaker=""):
+                       model="", tts_provider="", speaker="", tts_model=""):
     """Persist ONE stage of a voice turn's latency trace. Callers must
     pass already-sanitized values (see voice_trace.sanitize) - this is a thin
     writer, not a validator. Content-free by construction: no transcript, reply,
     or spoken text is ever a parameter here."""
     con.execute(
         "INSERT INTO voice_turn_traces(turn_id, chat_id, stage, ms, provider, "
-        "model, tts_provider, speaker, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-        (turn_id, chat_id, stage, ms, provider, model, tts_provider, speaker, now()),
+        "model, tts_provider, speaker, tts_model, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (turn_id, chat_id, stage, ms, provider, model, tts_provider, speaker,
+         tts_model, now()),
     )
 
 
