@@ -16,7 +16,7 @@ import { reasoningOptions, effortSupport, normalizeReasoningEffort } from '../re
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
   system_prompt: '', color: '#a78bfa', enabled: true, reasoning_effort: '',
-  thinking_control: '', keep_alive: '',
+  thinking_control: '', keep_alive: '', tts_v3_accent_tag: '',
 }
 
 // Glanceable "is this what's actually running?" readout for one seat.
@@ -213,6 +213,9 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
         // #480: blank follows the app's voice model. Sent only once the
         // list has loaded, so a save can never clear a choice it didn't show.
         ...(voiceModels ? { tts_model: editing.tts_model || '' } : {}),
+        // #493: blank follows the app's v3 accent tag. The backend refuses
+        // anything but one short [bracketed phrase].
+        ...(voiceEnabled ? { tts_v3_accent_tag: (editing.tts_v3_accent_tag || '').trim() } : {}),
         reasoning_effort: normalizeReasoningEffort(editing.provider, editing.reasoning_effort),
         // Cleared when it no longer applies (see normalizeThinkingControl), so
         // the saved row can never claim a control the request never sends.
@@ -691,6 +694,26 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                 </select>
                 <span id="seat-voice-model-note" className="mt-1 block text-xs text-ink-faint">
                   {choiceNote(voiceModels, editing.tts_model || '')}
+                </span>
+              </label>
+            )}
+            {voiceEnabled && (
+              <label className="block">
+                <span className="text-sm text-ink-mid">
+                  v3 accent tag{' '}
+                  <span className="text-ink-faint">(Eleven v3 only, never shown in the chat)</span>
+                </span>
+                <input
+                  className={field}
+                  value={editing.tts_v3_accent_tag || ''}
+                  maxLength={40}
+                  placeholder="blank follows the app setting, e.g. [Australian accent]"
+                  aria-describedby="seat-accent-tag-note"
+                  onChange={(e) => setEditing({ ...editing, tts_v3_accent_tag: e.target.value })}
+                />
+                <span id="seat-accent-tag-note" className="mt-1 block text-xs text-ink-faint">
+                  Sent to ElevenLabs in front of each piece of this seat's v3 replies,
+                  to keep one accent. One bracketed phrase, up to 40 characters.
                 </span>
               </label>
             )}

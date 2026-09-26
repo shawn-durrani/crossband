@@ -120,6 +120,9 @@ a default install records it.
 | `voice_provider` | `auto` | Which engine hears and speaks. `auto` uses ElevenLabs when `ELEVENLABS_API_KEY` is set and no voice when it isn't, and `elevenlabs` makes that choice explicit. `local` is reserved for a local engine and, until one lands, selects nothing. |
 | `tts_model` | `eleven_flash_v2_5` | The ElevenLabs model that speaks replies. Pick it on the Models page, which saves it here, or set `auto` to follow the newest model the app can stream live. A seat can pick its own. [Choosing the voice model](#choosing-the-voice-model). |
 | `tts_speed` | `1.0` | Speaking speed, from 0.7 to 1.2. The v3 models don't take it. Playback speed also has a live slider in the voice dock. |
+| `tts_v3_stability` | `robust` | How steady an Eleven v3 voice stays: `creative`, `natural` or `robust`, the steadiest. Only the v3 models read it. [Keeping a v3 voice steady](#keeping-a-v3-voice-steady). |
+| `tts_v3_sentence_chunks` | `true` | Sends a v3 reply to ElevenLabs a whole sentence at a time. Off sends each piece as the model writes it. Only the v3 models read it. |
+| `tts_v3_accent_tag` | `""` | An ElevenLabs audio tag, such as `[Australian accent]`, sent in front of each piece of a v3 reply and never shown or stored. It must be one bracketed phrase of at most 40 characters. A seat can set its own. |
 | `stt_model` | `scribe_v2` | The transcription model. The realtime variant is used on its own when available. |
 | `voice_pricing` | built in | The ElevenLabs rate card used to price speech in and out. |
 | `room_roster_max` | `6` | How many people the room's roster may hold at once. The cap frees as people leave. An explicit `0` seats no guests, and your tap-correction still seats. |
@@ -173,6 +176,54 @@ is locked.
 Each voice trace records the model that spoke, and the trace summary
 splits every voice stage by it under `by_tts_model`. Compare the
 first-audio times there before you settle on a model.
+
+### Keeping a v3 voice steady
+
+Eleven v3 can drift into a different accent partway through a reply.
+ElevenLabs' dialogue socket starts a fresh stretch of speech each time
+it has about 40 characters and 8 words, and each stretch can come out a
+little different. The `tts_v3_*` settings steer that. They only apply
+to the v3 models, and every other model sends what it always has.
+
+`tts_v3_stability` picks one of the stability modes in ElevenLabs'
+[v3 prompting guide](https://elevenlabs.io/docs/best-practices/prompting/eleven-v3).
+The app sends `creative` as 0, `natural` as 0.5 and `robust` as 1.
+Robust holds the voice and its accent steadiest. The guide says it
+follows direction tags less, so an accent tag may land more softly
+with it. A value that isn't one of the three speaks robust.
+
+With `tts_v3_sentence_chunks` on, the app holds the reply's text as the
+model writes it and sends it when a sentence ends. A sentence ends at a
+full stop, question mark or exclamation mark with a space after it, or
+at a new line. Text with no sentence end goes once it passes 250
+characters, cut at a space, and ElevenLabs advises v3 inputs of about
+that length for steady output. An abbreviation such as Dr. counts as a
+sentence end, which splits the speech there and never runs two words
+together.
+
+Holding text costs a little time before the first word. The first
+sentence goes the moment it ends, and the socket still waits for its
+own 40 characters and 8 words. Timed through the relay with a stand-in
+socket, over eight short made-up replies, sentence chunks held back
+the first audio by a median of 0.18 seconds for a model writing 40
+tokens a second. A long opening sentence of 124 characters took 0.58
+seconds longer. At 80 tokens a second the median was 0.09 seconds.
+Turn the setting off if that start matters more than the accent.
+
+`tts_v3_accent_tag` puts an audio tag such as `[Australian accent]` or
+`[strong British accent]` in front of every piece the app sends. The
+tag goes to ElevenLabs and nowhere else, so it never shows in the chat,
+the transcript, memory or captions. It's sent as text, so it counts
+toward your ElevenLabs characters. A seat can set its own tag in its
+editor on the Models page, and a blank one follows this setting. The
+tag must be one bracketed phrase of at most 40 characters, made of
+letters, spaces, hyphens and apostrophes. The seat editor refuses
+anything else, and a bad value in `config.local.json` is ignored with a
+warning in the log.
+
+To hear the difference, run the benchmark's text to speech leg once
+per setting and compare the saved clips.
+[BENCHMARK.md](BENCHMARK.md) says where they go.
 
 ### When the matcher is off or missing
 

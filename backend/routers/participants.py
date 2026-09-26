@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
 from .. import db, provenance
-from .. import providers, tts_models
+from .. import providers, tts_models, tts_v3
 from ..config import load_settings, provenance_for
 from ..engine import slugify
 
@@ -54,6 +54,8 @@ def _tts_model_ok(value) -> bool:
 
 _TTS_MODEL_ERROR = ("tts_model must be blank (use the app setting), 'auto', "
                     "or a voice model from the list")
+_ACCENT_TAG_ERROR = ("tts_v3_accent_tag must be blank (use the app setting) "
+                     f"or {tts_v3.TAG_RULE}")
 
 
 class ParticipantIn(BaseModel):
@@ -71,6 +73,7 @@ class ParticipantIn(BaseModel):
     thinking_control: str | None = None  # local-endpoint thinking opt-out (#159)
     keep_alive: str | None = None  # Ollama model retention: duration or -1 ('' = Ollama's 5m unload)
     tts_model: str | None = None  # #480: '' follows the app setting
+    tts_v3_accent_tag: str | None = None  # #493: '' follows the app setting
     lifecycle: str | None = None  # 'trial' | 'onboarded'
 
     @field_validator("voice_gain")
@@ -112,6 +115,10 @@ def create_participant(body: ParticipantIn):
         raise HTTPException(400, _keep_alive_error(body.provider))
     if body.tts_model is not None and not _tts_model_ok(body.tts_model):
         raise HTTPException(400, _TTS_MODEL_ERROR)
+    # #493: sent to ElevenLabs in front of each piece of a v3 reply, so only
+    # one bracketed phrase gets through, never text to be spoken.
+    if body.tts_v3_accent_tag is not None and not tts_v3.valid_tag(body.tts_v3_accent_tag):
+        raise HTTPException(400, _ACCENT_TAG_ERROR)
     con = db.connect()
     slug = base_slug = slugify(body.name)
     n = 2
@@ -122,12 +129,14 @@ def create_participant(body: ParticipantIn):
     cur = con.execute(
         "INSERT INTO participants(slug, name, provider, model, base_url, api_key_env, "
         "system_prompt, color, reasoning_effort, thinking_control, keep_alive, "
-        "tts_model, position, created_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "tts_model, tts_v3_accent_tag, position, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (slug, body.name, body.provider, body.model, body.base_url or None,
          body.api_key_env or None, body.system_prompt or "", body.color or "#a78bfa",
          body.reasoning_effort or "", body.thinking_control or "",
-         body.keep_alive or "", body.tts_model or "", pos, db.now()),
+         body.keep_alive or "", body.tts_model or "",
+         tts_v3.clean_tag(body.tts_v3_accent_tag),
+         pos, db.now()),
     )
     # newcomers only join NEW chats by default; existing rosters are untouched
     con.commit()
@@ -176,6 +185,11 @@ def update_participant(pid: int, body: ParticipantIn):
     if "tts_model" in updates and not _tts_model_ok(updates["tts_model"]):
         con.close()
         raise HTTPException(400, _TTS_MODEL_ERROR)
+    if "tts_v3_accent_tag" in updates:
+        if not tts_v3.valid_tag(updates["tts_v3_accent_tag"]):
+            con.close()
+            raise HTTPException(400, _ACCENT_TAG_ERROR)
+        updates["tts_v3_accent_tag"] = tts_v3.clean_tag(updates["tts_v3_accent_tag"])
     if "enabled" in updates:
         updates["enabled"] = int(updates["enabled"])
     # Onboarding gate: a seat may become 'onboarded' only once an

@@ -491,7 +491,11 @@ async def tts_relay(ws: WebSocket):
         return
     # #480: the seat's own model choice, else the app's. Resolved from the
     # cached or pinned model list: nothing on this path waits on ElevenLabs.
-    choice = voice.tts_choice(cfg, _seat_tts_choice(init.get("seat")))
+    seat = _seat_voice(init.get("seat"))
+    choice = voice.tts_choice(cfg, seat["tts_model"])
+    # #493: sentence chunks and the accent tag. Read by the dialogue socket
+    # only, so every other model sends what it always has.
+    carry = voice.tts_relay_state(cfg, seat["tts_v3_accent_tag"])
     chars = 0
     up = down = None
     try:
@@ -503,7 +507,6 @@ async def tts_relay(ws: WebSocket):
             # browser ignores frames it doesn't know, so an older client is
             # unaffected.
             await ws.send_json({"tts_model": model})
-            carry = {}
 
             async def pump_up():
                 nonlocal chars
@@ -554,6 +557,8 @@ async def tts_relay(ws: WebSocket):
         for task in (up, down):
             if task and not task.done():
                 task.cancel()
+        # The accent tag is sent as text, so it's billed as text (#493).
+        chars += carry.get("tag_chars", 0)
         if chars:
             con = db.connect()
             db.log_voice_usage(con, chat_id, "tts", chars, voice.voice_cost("tts", chars, cfg))
@@ -565,24 +570,29 @@ async def tts_relay(ws: WebSocket):
             pass
 
 
-def _seat_tts_choice(slug) -> str:
-    """A seat's own voice model choice (#480), '' when it follows the app.
-    One indexed read, inline: the relay is on the reply's critical path and
-    WAL readers never wait on a writer."""
+_SEAT_VOICE_BLANK = {"tts_model": "", "tts_v3_accent_tag": ""}
+
+
+def _seat_voice(slug) -> dict:
+    """A seat's own voice model (#480) and v3 accent tag (#493), each ''
+    when it follows the app. One indexed read, inline: the relay is on the
+    reply's critical path and WAL readers never wait on a writer."""
     if not isinstance(slug, str) or not slug:
-        return ""
+        return dict(_SEAT_VOICE_BLANK)
     try:
         con = db.connect()
         try:
-            row = con.execute("SELECT tts_model FROM participants WHERE slug=?",
-                              (slug,)).fetchone()
+            row = con.execute("SELECT tts_model, tts_v3_accent_tag FROM participants "
+                              "WHERE slug=?", (slug,)).fetchone()
         finally:
             con.close()
     except Exception:
-        log.warning("seat voice model not read; the app setting speaks",
+        log.warning("seat voice settings not read; the app settings speak",
                     exc_info=True)
-        return ""
-    return (row["tts_model"] if row else "") or ""
+        return dict(_SEAT_VOICE_BLANK)
+    if not row:
+        return dict(_SEAT_VOICE_BLANK)
+    return {k: row[k] or "" for k in _SEAT_VOICE_BLANK}
 
 
 async def _open_tts_upstream(stack, attempts, voice_id):

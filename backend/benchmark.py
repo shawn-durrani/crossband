@@ -134,15 +134,16 @@ def seat_public(row: dict) -> dict:
     it as name-only); key VALUES never appear anywhere in a result."""
     return {k: row.get(k) or "" for k in (
         "slug", "name", "provider", "model", "base_url", "api_key_env",
-        "voice_id", "reasoning_effort", "thinking_control", "tts_model")}
+        "voice_id", "reasoning_effort", "thinking_control", "tts_model",
+        "tts_v3_accent_tag")}
 
 
 def seat_voice_cfg(seat: dict, cfg: dict) -> dict:
     """The cfg a seat's synthesis runs with: its own voice model choice
-    (#480) over the app's, so the benchmark hears what a live reply would."""
-    if seat.get("tts_model"):
-        return {**cfg, "tts_model": seat["tts_model"]}
-    return cfg
+    (#480) and v3 accent tag (#493) over the app's, so the benchmark hears
+    what a live reply would."""
+    own = {k: seat[k] for k in ("tts_model", "tts_v3_accent_tag") if seat.get(k)}
+    return {**cfg, **own} if own else cfg
 
 
 def build_plan(body: dict, participants: list, eleven_on: bool):
@@ -380,6 +381,10 @@ def _fresh_results(run_id: str, plan: dict, cfg: dict) -> dict:
             "dimensions": plan["dimensions"],
             "cases": plan["cases"],
             "tts_model": voice.tts_model_for(cfg),
+            # How a v3 clip was made (#493), so two runs can be told apart
+            # by ear and by file. Seats with their own tag carry it below.
+            "tts_v3_stability": cfg.get("tts_v3_stability") or "",
+            "tts_v3_accent_tag": cfg.get("tts_v3_accent_tag") or "",
             "stt_model": cfg.get("stt_model") or "scribe_v2",
             "tts_sentence": TTS_SENTENCE,
         },
