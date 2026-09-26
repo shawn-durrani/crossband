@@ -304,11 +304,15 @@ VOUCH_SOURCES = ("introduction", "correction")
 
 # #221: when rotation has replaced every clip a human stood behind, the
 # save-time match scores of the survivors decide the bank's standing. The
-# bar sits inside the measured same-speaker range (0.63-0.73 on the pinned
-# model) and above the borderline-steal shape that hovers near the naming
-# threshold: a genuine bank's accumulations clear it comfortably, a
-# taken-over bank's early thefts do not.
-TRUST_SCORE_BAR = 0.65
+# bar is the default banking bar (voice_id_threshold 0.5 plus
+# voice_id_banking_extra 0.1, #222): the live path banks nothing below it,
+# so a median under it means clips got in some other way, the
+# borderline-steal shape near the naming threshold that #221 exists for.
+# It was 0.65, above the banking bar, and that paused genuine voices whose
+# own matches sit at 0.60-0.63: on 26 September an owner-auditioned bank
+# (medians 0.61) was paused again by the one clip it banked after the
+# audition, so a new chat couldn't name that person at all (#499).
+TRUST_SCORE_BAR = 0.60
 
 
 def bank_vouched(person: dict) -> bool:
