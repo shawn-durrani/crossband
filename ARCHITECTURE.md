@@ -26,6 +26,11 @@ guest.py        - Claude Code as a summonable participant
 voiceid.py      - the voice matcher; anchors.py is its clip store,
                   introductions.py the phrase and seating layer, and
                   diarize.py crosstalk splitting and the label passes
+voice_session_shadow.py - follows each voice through a voice session
+                  on the loopback diariser, names voices from pooled
+                  speech, and feeds the live check when switched on
+voice_calibration.py - the calibrated scorer behind voice readiness
+tts_v3.py       - how replies are shaped for the Eleven v3 voices
 accounting.py   - cost with provenance; provenance.py defines the axes
 frontend/       - React UI; pure .js modules hold the rules and are tested
 ```

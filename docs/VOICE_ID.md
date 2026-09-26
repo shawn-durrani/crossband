@@ -153,6 +153,45 @@ reply said. If you've just asked for room mode on or off, they don't
 confirm it or deny it. The app's own line in the chat says what
 changed.
 
+The models don't say they can't hear, and they don't mention the voice
+check, unless you ask how they know who spoke. Everyone in the room
+already knows they read a transcript. Asked who's speaking, they give the name
+on the newest turn, or say they don't know yet.
+
+## Following each voice through a session
+
+The matcher judges each turn on its own. A second way of naming
+follows each voice across the whole voice session, and names the voice
+once there's enough of it. It runs on your computer, on a diariser
+that works out who spoke when, and it's off until you turn it on.
+[The session test](CONFIG.md#the-session-test) in CONFIG.md has the
+settings and the diariser it needs.
+
+Here's what happens with all of it on.
+
+1. When you start talking in a chat, the app opens a tracking session
+   on the diariser and sends it your audio as it arrives.
+2. The diariser gives each voice it hears a number that lasts the whole
+   session. A voice that comes back after a long quiet keeps its number.
+3. Each stretch of 0.8 seconds or more where one voice speaks alone
+   adds to that voice's fingerprint. Speech where two people overlap
+   never does.
+4. Once a voice has 1.5 seconds of clean speech, its fingerprint is
+   compared with every kept clip of every person. It's named when one
+   person clearly wins, and two voices can't both be the same person.
+5. When the matcher can't name your turn, the app waits up to 0.8
+   seconds for the session's name and uses it. The name is usually
+   ready about a tenth of a second after you stop.
+6. When a voice is named later, its earlier unnamed turns in the
+   session take the name too.
+
+A session's name never replaces a name the matcher gave or one you
+set. It seats nobody and saves no clips. Memory treats a guest's name
+from here as the weakest kind of evidence, so facts from their turns
+wait for review before they're linked to them. A voice that has 4
+seconds of speech and matches nobody is marked as new. The app doesn't
+ask who it is yet, and a TV or radio in the room shows up the same way.
+
 ## Starting from nothing
 
 Learning a voice from nothing is called a cold start, and it has one
@@ -472,7 +511,10 @@ human stood behind, but you can delete or move them, and the hygiene
 guard can set them aside. When none is left in the bank, those scores
 decide the bank's standing. Weak scores pause identification until
 your ear confirms the voice again, and strong scores keep it working,
-with a note under Remembered voices. The exception for someone already
+with a note under Remembered voices. Weak means a middle score under
+0.6, the score a clip needs to be saved at all, so a voice that saves
+its clips cleanly keeps working even when its matches never score
+high. The exception for someone already
 seated applies to this pause too. Clips stored before scores were
 recorded carry none, and a bank made of those keeps working.
 

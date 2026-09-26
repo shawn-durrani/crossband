@@ -430,6 +430,33 @@ Every stage is its own pull request and can be reverted on its own.
 Nothing migrates by hand. Fingerprints are never stored, so every bank
 is rebuilt from its clips by the new scorer at the first start.
 
+### Where it stands, 26 September
+
+Part of stage 3 went live early, as a narrower step than the plan's
+switch. The owner asked to cut over during that evening's game, after
+the session naming named 33 of 35 turns where the matcher named 4.
+
+Live on this install:
+
+- The diariser's tracking sessions, and the session naming running
+  beside the matcher on every spoken turn in an armed room.
+- The relay feeds the tracker as you talk. When the matcher can't name
+  a turn, the session's name goes on it before the models read it,
+  about a tenth of a second after you stop.
+- A voice named later fills in its earlier unnamed turns.
+- The calibrated scorer, used so far only for the readiness test on
+  the Voices page.
+
+Not built yet:
+
+- Session names come from TitaNet-Small against every kept clip, on
+  the matcher's own bar. The calibrated two-model scorer doesn't name
+  turns yet.
+- Recording a voice on purpose, asking who a new voice is, saving clips
+  from a session, and the one mic setting.
+- The session name only fills gaps. It never overrules the matcher,
+  and today's path hasn't been removed.
+
 ## Risks
 
 | Risk | What happens | What limits it |
