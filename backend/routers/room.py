@@ -167,6 +167,25 @@ def voice_shadow_rows(request: Request, chat_id: int | None = None,
     return out
 
 
+@router.get("/api/voice/shadow/sessions")
+def voice_session_shadow_rows(request: Request, chat_id: int | None = None,
+                              limit: int = 200, rows: bool = False):
+    """The session shadow's comparison (#482 stage 2): for each recent
+    voice turn, today's live label beside the name its session voice had
+    then and at the end of its session, a tally, and the module's state.
+    `rows=true` adds the full rows. Slots, names, scores and timings only.
+    Session-gated like every /api route."""
+    from .. import voice_session_shadow
+    cfg = request.app.state.settings.as_cfg()
+    limit = max(1, min(int(limit), 2000))
+    recent = voice_session_shadow.read_rows(limit=limit, chat_id=chat_id)
+    out = {"status": voice_session_shadow.status(cfg),
+           **voice_session_shadow.compare(recent)}
+    if rows:
+        out["rows"] = recent
+    return out
+
+
 @router.post("/api/voice/people/{person_id}/name")
 def rename_person(person_id: str, body: dict = Body(...)):
     """Set a remembered person's preferred display name (#28 phase 3) - the

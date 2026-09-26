@@ -1161,6 +1161,14 @@ async def _run(chat_id, pcm, sample_rate, cfg, turn_id, today, t_sched):
         _warn_once("row", "a shadow row could not be built or written; "
                           "the live path is unaffected")
         log.debug("voice shadow failure detail", exc_info=True)
+    # #482 stage 2: the session shadow rides the same single worker, after
+    # this turn's row, so turns reach its tracker in order. observe never
+    # raises.
+    from . import voice_session_shadow
+    if voice_session_shadow.enabled(cfg):
+        await loop.run_in_executor(_EXECUTOR, voice_session_shadow.observe,
+                                   chat_id, turn_id, pcm, sample_rate, cfg,
+                                   today)
 
 
 # ---- test seam ------------------------------------------------------------

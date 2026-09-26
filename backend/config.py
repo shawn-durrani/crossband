@@ -361,6 +361,10 @@ class Settings(BaseModel):
     # "titanet_large" is the one known name; it is fetched once, pinned and
     # SHA-256-verified like the primary, only while this is set.
     voice_shadow_model: str = ""
+    # voice_session_shadow: the redesign's session tracking and pooled
+    # naming (#482 stage 2, backend/voice_session_shadow.py), measured
+    # beside today's. Needs diarize_shadow_url and a diariser with /sessions.
+    voice_session_shadow: bool = False
 
     # memory companion service (Membro)
     memory_url: str = "http://127.0.0.1:8901"
