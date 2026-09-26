@@ -288,7 +288,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # first pass after a deploy is the backfill of the installed base,
         # and a membro that is down makes this a logged no-op.
         person_sync_task = asyncio.create_task(asyncio.to_thread(
-            person_sync.sync_once, settings.memory_url, True))
+            person_sync.sync_once, settings.memory_url, True,
+            settings.as_cfg()))
         # Voice latency traces are diagnostics, not records - prune the
         # table on startup so it self-limits instead of growing forever.
         try:

@@ -212,6 +212,59 @@ and it spots a model's name the same way. Any such name is dropped
 before seating, and the seat writer refuses the exact names outright
 as a final guard.
 
+## How a bank keeps its clips
+
+A bank holds up to 10 clips longer than two seconds and 5 shorter
+ones. The short clips give a one-word remark something like itself to
+match. A clip is at most 10 seconds long, and a longer turn keeps the
+10 seconds that hold the most speech. Once a bank is full, a new clip
+has to win a place, and the clip that loses is deleted. That's
+rotation.
+
+Rotation keeps clips from as many sittings as it can. The app groups a
+person's clips into sessions, where a session is a run of clips with
+no gap of more than two hours between them. A new clip competes with
+its own session's clips first. Every session keeps its best clip
+before any session keeps a second, so one long evening can't push out
+the clips from other days. Inside a session, the longer and louder
+clip wins, and the newer clip wins a tie.
+
+A clip a human stood behind never makes way for an automatic one. That
+covers a clip from an introduction, a clip from a turn you corrected,
+and a clip you moved into the bank yourself. If a bank has more of
+those than it can hold, they compete with each other by the same rule.
+
+The voice fingerprint the matcher compares against is built from the
+speech in each clip. A pause longer than about half a second is left
+out, and the gaps between words stay in. The stored clip keeps its
+pauses, so a clip you play back on the Voices page sounds as it was
+recorded. A clip with less than a second of speech in it is used
+whole.
+
+## Teaching it a voice yourself
+
+A named turn adds to its person's bank only when the match clears the
+banking bar, which sits a little higher than the naming bar. A voice that
+always scores just under it gets named but never learns. You can teach
+it yourself. Tap the name on the turn and pick "Yes, that's Sam: learn
+from this". The name stays, and the app learns from that turn whatever
+it scored. The bank counts as vouched, and the clip is kept through
+rotation, the same as a clip from a correction.
+
+The app keeps the audio of the last 24 turns in memory, up to the last
+30 seconds of each, so confirm soon after the turn. When the recording
+has gone, the turn says so and nothing is learnt. A turn with two
+voices in it is never learnt from. If the voice on the turn matches
+yours, the turn is labelled with your name, and the line under it says
+so.
+
+A remembered voice that says its own name teaches the app the same
+way. When someone the app has just named Sam says "this is Sam" or "my
+name is Samuel", the turn's audio goes into Sam's bank as an
+introduction. A rename in the same breath still happens. The words and
+the voice have to agree, so Sam saying Dave's name feeds nobody's
+bank.
+
 ## English bias
 
 Two separate parts lean English. The first is the one model call that
@@ -321,11 +374,10 @@ someone else's clips mixed in. A bank that's wholly wrong has one
 shape. It reached enough speech without a single spoken introduction
 or correction from you, by cold start and accumulation alone.
 
-The app keeps only the best few clips in a bank, so older clips are
-dropped as better speech arrives. That's rotation. A bank is vouched
-the moment a human stands behind it, which happens when an
-introduction banks into it or when you correct a turn into it. The
-stamp is on the person, so it survives rotation and merges.
+A bank is vouched the moment a human stands behind it, which happens
+when an introduction banks into it or when you correct a turn into it.
+The stamp is on the person, so it survives
+[rotation](#how-a-bank-keeps-its-clips) and merges.
 
 A sufficient bank nobody vouched for asks for your ear under
 Remembered voices: listen to its clips and confirm. Until you do, a
@@ -345,13 +397,14 @@ began recording that crossing keeps working while flagged, so an
 upgrade takes nothing away.
 
 Vouching can also be outlived. Each time accumulation banks a clip,
-the app records the score it matched at. When rotation has replaced
-every clip a human stood behind, those scores decide the bank's
-standing. Weak scores pause identification until your ear confirms
-the voice again, and strong scores keep it working, with a note under
-Remembered voices. The exception for someone already seated applies
-to this pause too. Clips stored before scores were recorded carry
-none, and a bank made of those keeps working.
+the app records the score it matched at. Rotation keeps the clips a
+human stood behind, but you can delete or move them, and the hygiene
+guard can set them aside. When none is left in the bank, those scores
+decide the bank's standing. Weak scores pause identification until
+your ear confirms the voice again, and strong scores keep it working,
+with a note under Remembered voices. The exception for someone already
+seated applies to this pause too. Clips stored before scores were
+recorded carry none, and a bank made of those keeps working.
 
 ## The durable home
 
@@ -360,7 +413,10 @@ Learnt voices have a second home in
 service that remembers from one conversation to the next. With membro
 set up (`MEMORY_AUTH_TOKEN` in the environment), a background pass
 uploads accepted clips to membro's person records, pulls in people
-this install doesn't hold, and obeys forget marks. Forgetting a person
+this install doesn't hold, and obeys forget marks. A bank that isn't
+full gets clips back from membro, a few each pass, and each one keeps
+the day it was recorded, so it rejoins that day's session. The pass
+then asks the hygiene guard to check them. Forgetting a person
 in either app deletes the stored audio in both. The pass runs at
 startup, after rounds, and the moment you forget someone, always on a
 worker thread that no turn waits for. If membro is down, the pass logs

@@ -102,9 +102,11 @@ def _wav_to_pcm(data: bytes):
         return w.readframes(w.getnframes()), w.getframerate()
 
 
-def sync_once(memory_url: str, force: bool = False) -> dict:
+def sync_once(memory_url: str, force: bool = False, cfg=None) -> dict:
     """One full pass. Serialised behind a lock (startup and a round end
-    can coincide) and debounced unless forced."""
+    can coincide) and debounced unless forced. With `cfg`, a pass that
+    pulled or restored clips asks for the hygiene audit (#477), so a
+    restored clip is judged before a voice session has to add one."""
     with _lock:
         if not force and time.time() - _state["last"] < DEBOUNCE_S:
             return {"skipped": "debounced"}
@@ -115,7 +117,11 @@ def sync_once(memory_url: str, force: bool = False) -> dict:
             return {"skipped": "no token"}
         _state["last"] = time.time()
         try:
-            return _run(memory_url.rstrip("/"), token)
+            out = _run(memory_url.rstrip("/"), token)
+            if cfg is not None and (out.get("pulled_clips")
+                                    or out.get("restored_clips")):
+                _audit_after_sync(cfg)
+            return out
         except httpx.HTTPError as e:
             code = (e.response.status_code
                     if isinstance(e, httpx.HTTPStatusError) else None)
@@ -135,6 +141,17 @@ def sync_once(memory_url: str, force: bool = False) -> dict:
             _report_once("unreachable", logging.WARNING,
                          "person sync skipped (membro unreachable): %s", e)
             return {"skipped": f"unreachable: {e}"}
+
+
+def _audit_after_sync(cfg) -> None:
+    """Run the hygiene audit over clips a pass brought in. Best effort:
+    a cold matcher or the audit's cool-down leaves the change on the
+    books for the next bank change, the same as any other clip."""
+    try:
+        from . import voiceid
+        voiceid.audit_banks_if_changed(cfg)
+    except Exception:
+        log.debug("audit after person sync failed", exc_info=True)
 
 
 def kick(memory_url: str) -> threading.Thread:
@@ -334,7 +351,8 @@ def _run(base: str, token: str) -> dict:
                     continue
                 if store.add_clip(pid, pcm, rate,
                                   source=a.get("source") or "accumulated",
-                                  membro_sha=a.get("sha256")):
+                                  membro_sha=a.get("sha256"),
+                                  added_at=a.get("captured_at")):
                     out["pulled_clips"] += 1
 
         # PUSH people first (so replay targets exist), then REPLAY the
@@ -432,9 +450,12 @@ def _run(base: str, token: str) -> dict:
                     _remember_offered(pid, sha)
                     continue
                 _remember_offered(pid, sha)
+                # The clip keeps the time it was first captured (#477),
+                # so rotation ranks it with the day it was spoken.
                 if store.add_clip(pid, pcm, rate,
                                   source=a.get("source") or "accumulated",
-                                  membro_sha=sha):
+                                  membro_sha=sha,
+                                  added_at=a.get("captured_at")):
                     out["restored_clips"] += 1
 
         store.set_sync_watermark(newest)

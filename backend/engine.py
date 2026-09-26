@@ -1277,7 +1277,8 @@ async def post_round_reflect_job(chat_id, cfg):
     # inside sync_once; a worker thread; membro down = logged no-op).
     try:
         await asyncio.to_thread(person_sync.sync_once,
-                                cfg.get("memory_url") or "http://127.0.0.1:8901")
+                                cfg.get("memory_url") or "http://127.0.0.1:8901",
+                                False, cfg)
     except Exception:
         log.exception("person sync after round failed")
     try:

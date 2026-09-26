@@ -353,6 +353,43 @@ export function reassignOptions(roster, people, currentLabels) {
   return out
 }
 
+// Confirm and learn (#477): the first option in the "Who spoke this?" menu
+// when the turn carries one person's name. Picking it sends that same name
+// to the correction route, which keeps the label and learns from the turn's
+// audio for them, whatever the banking bar said. A turn with no name, an
+// ordinal ("Voice 2") or two voices offers nothing to confirm.
+export function confirmOption(chips) {
+  const named = (chips || []).filter(
+    (c) => c && typeof c.label === 'string' && c.label.trim())
+  if (named.length !== 1 || /^Voice \d+$/.test(named[0].label)) return null
+  const shown = named[0].display || named[0].label
+  return { name: named[0].label, display: `Yes, that's ${shown}: learn from this`,
+    confirm: true }
+}
+
+// The one line a turn shows after "Yes, that's X" (#477), from the
+// correction route's answer. `requested` is the name that was confirmed.
+// Empty when there is nothing to say.
+export const CONFIRM_AUDIO_GONE =
+  'That recording is no longer held, so nothing was learnt. '
+  + 'Confirm within a few minutes next time.'
+export function confirmNote(result, requested) {
+  if (!result || result.ok !== true) return ''
+  const name = typeof result.name === 'string' ? result.name : ''
+  if (name && requested && name.toLowerCase() !== String(requested).toLowerCase()) {
+    return `This voice matches ${name}, so the turn is now labelled ${name}.`
+  }
+  if (result.learned) return 'Learnt from this turn.'
+  if (result.reason === 'audio_gone') return CONFIRM_AUDIO_GONE
+  if (result.reason === 'two_voices') {
+    return 'Two voices were heard on this turn, so nothing was learnt.'
+  }
+  if (result.reason === 'refused') {
+    return 'That recording was too short or too unclear to learn from.'
+  }
+  return ''
+}
+
 // The remembered-voices panel's per-person line: honest about what is stored
 // and whether it is enough to identify them. `minShortClips` feeds the
 // two-part bar's copy (#28 PR-B); `setAside` surfaces clips the hygiene

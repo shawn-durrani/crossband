@@ -2,7 +2,8 @@
 
 Per named person, this module accumulates several seconds of clean
 single-speaker speech across utterances - deliberately not just the first two
-seconds ever heard - and keeps the best few clips. Those clips are what get
+seconds ever heard - and keeps a bounded, varied set of clips (#477: up to
+ten long and five short, ranked across sessions). Those clips are what get
 prepended to every diarization request (the anchor prefix), which is the only
 thing that makes per-request cluster labels comparable across utterances and
 across sessions: a known person is re-identified the moment they speak in a
@@ -52,7 +53,7 @@ INDEX_NAME = "index.json"
 
 # ---- clip acceptance / sufficiency (the tuning knobs, in one place) ----
 MIN_CLIP_SECONDS = 1.0     # shorter than this carries too little voice to help
-MAX_CLIP_SECONDS = 10.0    # longer clips are trimmed to their first 10s
+MAX_CLIP_SECONDS = 10.0    # longer clips keep their best 10s of speech (#477)
 MIN_CLIP_RMS = 120         # int16 RMS floor - near-silence is not an anchor
 # Clip LENGTH CLASSES (#28 PR-B, eighth field test): the banks were built
 # from long utterances only, so a second-long interjection had nothing like
@@ -63,8 +64,20 @@ MIN_CLIP_RMS = 120         # int16 RMS floor - near-silence is not an anchor
 # and sufficiency requires BOTH the seconds bar AND a minimum number of short
 # clips, so short utterances become identifiable rather than unmatchable.
 SHORT_CLIP_MAX_SECONDS = 2.0
-KEEP_CLIPS = 5             # best N LONG clips per person, by quality score
-KEEP_SHORT_CLIPS = 3       # best N SHORT clips per person, kept separately
+# Bank size (#477). Five long and three short clips held about ten days of
+# an everyday voice, so a bank forgot other rooms, microphones and moods
+# within a fortnight. Ten and five hold at most about 110s of audio per
+# person (around 3.5MB at 16kHz), and every cost that grows with them is
+# bounded: the audit embeds each clip once per process, the prefix still
+# takes about 2.5s per person, and enrolment still averages ENROLL_CLIPS.
+KEEP_CLIPS = 10            # LONG clips kept per person
+KEEP_SHORT_CLIPS = 5       # SHORT clips kept per person, a class of their own
+# Which clips rotation keeps (#477): a bank is ranked for variety across
+# sessions, and a session is a run of one person's clips with no gap
+# longer than this between them. A new clip competes with its own
+# session's clips first, so one long evening can't push out every other
+# day. Clips carry no chat id, so the gap is the whole definition.
+SESSION_GAP_S = 2 * 3600
 MIN_SHORT_CLIPS = 2        # short clips needed for sufficiency (configurable)
 SUFFICIENT_SECONDS = 6.0   # accepted seconds needed before identification is trusted
 PREFIX_PERSON_SECONDS = 2.5  # roughly how much of each person rides the prefix
@@ -74,8 +87,13 @@ MERGED_NAMES_MAX = 8       # spellings one person answers to, bounded (#28)
 PREFIX_CACHE_MAX = 8       # built-prefix snapshots kept per store (#28)
 # Quarantined clips (#28 PR-B, the hygiene guard): clips the pairwise audit
 # set aside are KEPT ON DISK but excluded from matching. Bounded per person;
-# past the cap the oldest set-aside clip is deleted for real.
-QUARANTINE_MAX = 8
+# past the cap the oldest set-aside clip is deleted for real. Sized to one
+# full bank (#477), as it was when banks held eight, so an audit that sets
+# a whole bank aside deletes nothing.
+QUARANTINE_MAX = KEEP_CLIPS + KEEP_SHORT_CLIPS
+# Speech spans per clip file for enrolment (#477). A clip file never
+# changes once written, so its spans are measured once per process.
+SPEECH_SPAN_CACHE_MAX = 512
 # Refusal visibility (#312): a clip the acceptance gate turns away is
 # recorded on the person - a bounded list of recent refusal times and the
 # last reason - so a still-learning bank that never grows can say why on
@@ -166,19 +184,96 @@ def active_clips(clips: list) -> list:
     return [c for c in clips or [] if not c.get("quarantined")]
 
 
+def _quality(clip):
+    """A clip's rank inside its session: quality score, newest on a tie."""
+    return (clip.get("score", 0), clip.get("added_at") or 0)
+
+
+def clip_protected(clip: dict) -> bool:
+    """Did a human stand behind this clip (#477)? An introduction or an
+    owner correction banked it, or the owner moved it here (#90), the
+    same clips surviving_human_clip counts. Rotation never drops one to
+    make room for an automated clip."""
+    return clip.get("source") in VOUCH_SOURCES or bool(clip.get("moved_at"))
+
+
+def clip_sessions(clips: list) -> list:
+    """The session number of each clip, in the order given (#477). Clips
+    sorted by added_at start a new session at every gap longer than
+    SESSION_GAP_S. A clip with no timestamp is a session of its own, so
+    legacy clips are never lumped together."""
+    out = [0] * len(clips)
+    session, last = -1, None
+    for i in sorted(range(len(clips)),
+                    key=lambda i: clips[i].get("added_at") or 0):
+        at = clips[i].get("added_at") or 0
+        if not at:
+            session += 1
+            out[i] = session
+            continue
+        if last is None or at - last > SESSION_GAP_S:
+            session += 1
+        out[i] = session
+        last = at
+    return out
+
+
+def _variety_order(pool: list, seated: dict) -> list:
+    """Round robin across sessions (#477): every session's best clip, then
+    every session's second best, and so on, best quality first within a
+    round. `pool` is [(clip, session)]. `seated` counts clips a session
+    already holds from an earlier pick, which start it that many rounds
+    in, so a session's protected clips count against its own share."""
+    by_session: dict = {}
+    for clip, session in pool:
+        by_session.setdefault(session, []).append(clip)
+    keyed = []
+    for session, members in by_session.items():
+        members.sort(key=_quality, reverse=True)
+        for rank, clip in enumerate(members):
+            keyed.append((seated.get(session, 0) + rank, clip, session))
+    keyed.sort(key=lambda k: (k[0], tuple(-x for x in _quality(k[1]))))
+    return [(clip, session) for _, clip, session in keyed]
+
+
 def select_keep(clips: list) -> list:
-    """Keep the best clips by score (ties: newest wins) - the refresh policy
-    that lets better speech displace an early mediocre clip. Applied PER
-    LENGTH CLASS (#28 PR-B): the best KEEP_CLIPS long clips AND the best
-    KEEP_SHORT_CLIPS short ones, because scores scale with seconds and a
-    single shared pool starved the short class that interjection matching
-    needs. Callers pass ACTIVE clips; quarantined clips are not ranked here
-    (they are set aside, not competing)."""
-    ranked = sorted(clips, key=lambda c: (c["score"], c.get("added_at", 0)),
-                    reverse=True)
-    longs = [c for c in ranked if not is_short(c)][:KEEP_CLIPS]
-    shorts = [c for c in ranked if is_short(c)][:KEEP_SHORT_CLIPS]
-    return [c for c in ranked if c in longs or c in shorts]
+    """Which clips a bank keeps, PER LENGTH CLASS (#28 PR-B): KEEP_CLIPS
+    long ones and KEEP_SHORT_CLIPS short ones, because scores scale with
+    seconds and a single shared pool starved the short class that
+    interjection matching needs.
+
+    Within a class (#477):
+
+    - clips a human stood behind (clip_protected) are kept first, so an
+      automated clip can never rotate one out. Past the cap they compete
+      among themselves by the same rule;
+    - the rest fill what's left for variety: every session's best clip
+      before any session's second, where a session's protected clips
+      already count toward its share. A new clip competes with its own
+      session's clips first, and an evening of clips can't push out
+      every other day.
+    Inside a session the quality score decides, newest on a tie, so
+    better speech still displaces a mediocre clip from the same sitting.
+    One session alone reduces to the old best-by-score rule.
+
+    Callers pass ACTIVE clips; quarantined clips are not ranked here
+    (they are set aside, not competing). The answer is in score order."""
+    sessions = clip_sessions(clips)
+    keep = set()
+    for in_class, cap in ((lambda c: not is_short(c), KEEP_CLIPS),
+                          (is_short, KEEP_SHORT_CLIPS)):
+        pool = [(c, s) for c, s in zip(clips, sessions) if in_class(c)]
+        guarded = _variety_order(
+            [p for p in pool if clip_protected(p[0])], {})[:cap]
+        seated: dict = {}
+        for _, session in guarded:
+            seated[session] = seated.get(session, 0) + 1
+        rest = _variety_order(
+            [p for p in pool if not clip_protected(p[0])], seated)
+        for clip, _ in guarded + rest[:cap - len(guarded)]:
+            keep.add(id(clip))
+    return [c for c in sorted(clips, key=_quality, reverse=True)
+            if id(c) in keep]
 
 
 def is_sufficient(clips: list) -> bool:
@@ -298,10 +393,19 @@ def identification_paused(person: dict) -> bool:
 
 
 def trim_clip(pcm: bytes, sample_rate: int) -> bytes:
-    """Cap a clip at MAX_CLIP_SECONDS (keep the head - utterance starts are
-    where the cleanest single-speaker audio usually is)."""
+    """Cap a clip at MAX_CLIP_SECONDS. A longer turn keeps the stretch that
+    holds the most speech (#477, voiceid.best_speech_window), so a long
+    monologue banks its best ten seconds and not whatever came first. The
+    result is still one contiguous slice of the turn, which is what
+    retract_utterance_clips relies on. A window can start or end in a
+    pause, so its dead air is trimmed again."""
+    from . import voiceid
     cap = int(MAX_CLIP_SECONDS * (sample_rate or 16000)) * 2
-    return pcm[:cap]
+    if len(pcm) <= cap:
+        return pcm
+    return voiceid.trim_dead_air(
+        voiceid.best_speech_window(pcm, sample_rate, MAX_CLIP_SECONDS),
+        sample_rate)
 
 
 def person_id_for(name: str) -> str:
@@ -331,6 +435,8 @@ class AnchorStore:
         # the fingerprint that never depends on filesystem timestamp
         # granularity (the on-disk mtime/size half covers other processes).
         self._gen = 0
+        # (clip file, bytes, rate) -> speech spans, for enrolment (#477).
+        self._span_cache: OrderedDict = OrderedDict()
 
     # -- filesystem plumbing --
 
@@ -817,7 +923,8 @@ class AnchorStore:
         return survivor_id
 
     def add_clip(self, person_id: str, pcm: bytes, sample_rate: int,
-                 source: str, score=None, membro_sha=None) -> bool:
+                 source: str, score=None, membro_sha=None,
+                 added_at=None, dedupe=False) -> bool:
         """Offer one utterance's audio as an anchor clip. Trims the dead
         air off both ends (#310), applies the quality gate, the 10s cap
         and the keep-best-N refresh; evicted clips have their files
@@ -833,7 +940,14 @@ class AnchorStore:
         home's content address for it. The local bytes are trimmed here,
         so they stop hashing to that address - corrections and the push
         diff must speak to membro by this stamp, never by re-hashing the
-        local file."""
+        local file. `added_at` (#477): for a clip restored from membro,
+        when it was first captured, so rotation's sessions place it on
+        the day it was spoken. Missing, unparseable or in the future
+        means now. `dedupe` (#477): for a human confirming a turn the bank
+        may already hold. When the same bytes are already in this person's
+        bank, nothing new is written and True comes back, and a clip an
+        automated path banked takes this source, so a human now stands
+        behind it."""
         from . import voiceid
         pcm = trim_clip(voiceid.trim_dead_air(pcm or b"", sample_rate),
                         sample_rate)
@@ -846,13 +960,29 @@ class AnchorStore:
             person = data["people"].get(person_id)
             if person is None:
                 return False
+            held = self._held_copy(person, pcm, sample_rate) if dedupe \
+                else None
+            if held is not None:
+                if source in VOUCH_SOURCES and not clip_protected(held):
+                    held["upgraded_from"] = held.get("source", "")
+                    held["source"] = source
+                    if not person.get("vouched_at"):
+                        person["vouched_at"] = time.time()
+                        person["vouched_by"] = source
+                    self._save(data)
+                return True
             fname = self._write_clip(pcm, sample_rate, person_id)
             clips = person.get("clips", [])
             was_sufficient = is_sufficient(clips)
+            now = time.time()
+            try:
+                at = float(added_at) if added_at else now
+            except (TypeError, ValueError):
+                at = now
             entry = {"file": fname, "seconds": q["seconds"],
                      "rms": q["rms"], "score": q["score"],
                      "sample_rate": sample_rate, "source": source,
-                     "added_at": time.time()}
+                     "added_at": at if 0 < at <= now else now}
             if membro_sha:
                 entry["membro_sha"] = str(membro_sha)
             if score is not None:
@@ -887,6 +1017,22 @@ class AnchorStore:
                 if c["file"] not in kept_files:
                     self._delete_file(c["file"])
         return True
+
+    def _held_copy(self, person: dict, pcm: bytes, sample_rate: int):
+        """The clip in this person's bank holding exactly these bytes, or
+        None (#477). Only files of the same size are read."""
+        size = len(pcm) + 44
+        for c in person.get("clips", []):
+            if c.get("sample_rate") != sample_rate:
+                continue
+            try:
+                if os.path.getsize(self.root / c["file"]) != size:
+                    continue
+                if self._read_clip_pcm(c["file"]) == pcm:
+                    return c
+            except OSError:
+                continue
+        return None
 
     def _record_refusal(self, person_id, source, q):
         """A refused clip is not silent (#312). The failing measure lands
@@ -1214,13 +1360,20 @@ class AnchorStore:
         averaged; a hard-cut concatenation would embed the seams, not the
         voice) and reads at most `max_clips` per person.
 
+        Each clip comes back speech-only (#477): voiceid.speech_only leaves
+        its long pauses out, so the fingerprint is of the voice and not the
+        room's silence. The file on disk is never changed. `max_clips=None`
+        reads every kept clip.
+
         Returns {person_id: {"name", "fingerprint", "pcms"}}. `fingerprint` is
-        the tuple of kept clip filenames: the matcher keys its embedding cache
-        on it, so identification re-embeds a person ONLY when their kept clip
-        set actually changes (anchor accumulation that displaces a clip), not
+        voiceid.SPEECH_ONLY_VERSION followed by the kept clip filenames: the
+        matcher keys its embedding cache on it, so identification re-embeds a
+        person ONLY when their kept clip set actually changes (anchor
+        accumulation that displaces a clip) or the speech rule does, not
         on every store save the way the coarse index fingerprint would - the
         same 'invalidate only on real change' intent as build_prefix's cache,
         one level finer. No audio leaves the process; this is read only."""
+        from . import voiceid
         with self._lock:
             data = self._load()
         out = {}
@@ -1247,14 +1400,38 @@ class AnchorStore:
             pcms, files = [], []
             for c in take:
                 try:
-                    pcms.append(self._read_clip_pcm(c["file"]))
-                    files.append(c["file"])
+                    raw = self._read_clip_pcm(c["file"])
                 except OSError:
                     log.warning("anchor clip unreadable: %s", c["file"])
+                    continue
+                pcms.append(voiceid.speech_only(
+                    raw, sample_rate,
+                    spans=self._speech_spans(c["file"], raw, sample_rate)))
+                files.append(c["file"])
             if pcms:
                 out[pid] = {"name": person.get("name", pid),
-                            "fingerprint": tuple(files), "pcms": pcms}
+                            "fingerprint": (voiceid.SPEECH_ONLY_VERSION,)
+                            + tuple(files),
+                            "pcms": pcms}
         return out
+
+    def _speech_spans(self, fname: str, pcm: bytes, sample_rate: int):
+        """voiceid.speech_spans for one clip file, measured once per
+        process (#477): the file never changes once written, and a new
+        clip gets a new name. Keyed on the length and rate too, so a
+        test that rewrites a file by hand still reads true."""
+        from . import voiceid
+        key = (fname, len(pcm), sample_rate)
+        with self._lock:
+            hit = self._span_cache.get(key)
+        if hit is not None:
+            return hit
+        spans = voiceid.speech_spans(pcm, sample_rate)
+        with self._lock:
+            self._span_cache[key] = spans
+            while len(self._span_cache) > SPEECH_SPAN_CACHE_MAX:
+                self._span_cache.popitem(last=False)
+        return spans
 
     # -- the pairwise hygiene guard's storage (#28 PR-B) --
     #

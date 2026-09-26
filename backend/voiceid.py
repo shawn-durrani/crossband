@@ -137,7 +137,10 @@ CLOSE_PAIR_COSINE = 0.6
 CLOSE_PAIR_EXTRA_MARGIN = 0.10
 
 ENROLL_CACHE_MAX = 64  # per-person averaged embeddings kept, keyed by clip set
-CLIP_EMB_CACHE_MAX = 256  # per-clip audit embeddings (clip files never change)
+# Per-clip audit embeddings (clip files never change). Sized for banks of
+# up to 15 clips plus 15 set aside (#477) across a household and its
+# regular guests, so the audit does not re-embed every clip every run.
+CLIP_EMB_CACHE_MAX = 512
 
 # The speech gate (#217). The speaker model answers "whose voice is this",
 # never "is this a voice": a static burst embeds like anything else and can
@@ -171,6 +174,25 @@ SPEECH_MIN_AUDIBLE_FRACTION = 0.15  # sampled frames that must be audible
 SPEECH_MIN_AUDIBLE_FRAMES = 3       # and never fewer than this many
 SPEECH_TRIM_MARGIN_SECONDS = 0.2    # kept around the voiced span by the trim
 SPEECH_TRIM_SCAN_SECONDS = 6.4      # how deep a trim walk looks for speech
+# Speech-only fingerprints (#477). A stored clip keeps the pauses between
+# phrases (the end trim above leaves gaps inside the speech alone), and a
+# bank's fingerprint is taken from its speech: the pauses are left out of
+# what the model hears, never out of the file. A frame is speech when it
+# clears the gate's absolute floor and a tenth of the clip's loudest
+# frame. Each stretch of speech keeps SPEECH_ONLY_PAD_SECONDS either side,
+# so word gaps stay whole, only a pause over about 0.6s is cut, and every
+# join falls in quiet audio. With less than SPEECH_ONLY_MIN_SECONDS of
+# speech left the measure has failed on that clip, and the whole clip is
+# fingerprinted. Measured on real banks with the pinned model, the gate's
+# own fifth cut into quiet syllables and pulled the weakest same-voice
+# scores down by 0.1 or more, where a tenth with this pad kept the
+# weakest within about 0.02 of untrimmed and the average level.
+SPEECH_ONLY_FLOOR_RATIO = 0.1
+SPEECH_ONLY_PAD_SECONDS = 0.3
+SPEECH_ONLY_MIN_SECONDS = 1.0
+# Rides every enrolment fingerprint, so a change to the rule above
+# re-embeds every bank instead of reusing a fingerprint of the old audio.
+SPEECH_ONLY_VERSION = "speech-v1"
 
 # A verdict's status. "match" means name this turn locally; "defer" means the
 # turn stays unresolved - honestly uncertain - EXCEPT the "multi" reason,
@@ -552,6 +574,94 @@ def trim_dead_air(pcm, sample_rate) -> bytes:
     return pcm[lo * 2:hi * 2]
 
 
+def _frame_levels(samples, starts, n, np):
+    """RMS of every n-sample frame at `starts`. With numpy, one pass of
+    prefix sums: a 10s clip is 625 frames, and this runs for every clip
+    a bank fingerprints."""
+    if np is not None and len(starts):
+        sq = np.concatenate(([0.0], np.cumsum(samples * samples)))
+        idx = np.asarray(starts)
+        energy = np.maximum(sq[idx + n] - sq[idx], 0.0)
+        return [math.sqrt(e / n) for e in energy.tolist()]
+    return [_frame_rms(samples, s0, n, np) for s0 in starts]
+
+
+def speech_spans(pcm, sample_rate, pad_seconds=None) -> list:
+    """Where the speech is in one PCM-16 clip (#477), as (start, end)
+    sample offsets, merged and in order. A frame counts when it clears
+    both the gate's absolute floor and SPEECH_ONLY_FLOOR_RATIO of the
+    loudest frame, and each counted frame is widened by `pad_seconds`
+    (SPEECH_ONLY_PAD_SECONDS unless given) on both sides. Empty for
+    silence, and the whole clip when it is too short to frame. Pure."""
+    sr = sample_rate or 16000
+    n = int(SPEECH_FRAME_SECONDS * sr)
+    hop = max(1, int(SPEECH_FRAME_HOP_SECONDS * sr))
+    usable = (len(pcm) - (len(pcm) % 2)) // 2
+    if usable <= 0:
+        return []
+    if n <= 0 or usable < n:
+        return [(0, usable)]
+    np, samples = _load_samples(pcm, usable)
+    starts = list(range(0, usable - n + 1, hop))
+    levels = _frame_levels(samples, starts, n, np)
+    floor = max(SPEECH_FRAME_MIN_RMS,
+                max(levels) * SPEECH_ONLY_FLOOR_RATIO)
+    pad = int((SPEECH_ONLY_PAD_SECONDS if pad_seconds is None
+               else pad_seconds) * sr)
+    spans = []
+    for s0, level in zip(starts, levels):
+        if level < floor:
+            continue
+        lo, hi = max(0, s0 - pad), min(usable, s0 + n + pad)
+        if spans and lo <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], hi))
+        else:
+            spans.append((lo, hi))
+    return spans
+
+
+def best_speech_window(pcm, sample_rate, seconds) -> bytes:
+    """The `seconds` of one PCM-16 recording that hold the most speech
+    (#477), as a contiguous slice, so a long turn banks its best stretch
+    and not whatever came first. Speech is speech_spans with no pad. The
+    amount of speech inside a window changes in straight lines as the
+    window slides, so the best one starts where one of its edges meets
+    the edge of a stretch of speech, and only those starts are tried.
+    Ties go to the earliest. Shorter audio comes back whole. Pure."""
+    sr = sample_rate or 16000
+    usable = (len(pcm) - (len(pcm) % 2)) // 2
+    win = int(seconds * sr)
+    if usable <= win:
+        return pcm[:usable * 2]
+    spans = speech_spans(pcm, sr, pad_seconds=0.0)
+    last = usable - win
+    starts = {0, last}
+    for lo, hi in spans:
+        starts.update((lo, hi, lo - win, hi - win))
+
+    def speech_in(s0):
+        return sum(max(0, min(hi, s0 + win) - max(lo, s0)) for lo, hi in spans)
+
+    best = max(sorted(min(max(0, x), last) for x in starts), key=speech_in)
+    return pcm[best * 2:(best + win) * 2]
+
+
+def speech_only(pcm, sample_rate, spans=None) -> bytes:
+    """The speech of one clip with its long pauses left out (#477), for a
+    bank's fingerprint. The stored clip is never changed. The whole clip
+    comes back unchanged when there is nothing to cut, or when less than
+    SPEECH_ONLY_MIN_SECONDS of speech would be left. `spans` takes a
+    speech_spans answer the caller cached."""
+    sr = sample_rate or 16000
+    usable = (len(pcm) - (len(pcm) % 2)) // 2
+    if spans is None:
+        spans = speech_spans(pcm, sr)
+    kept = sum(hi - lo for lo, hi in spans)
+    if kept >= usable or kept < SPEECH_ONLY_MIN_SECONDS * sr:
+        return pcm
+    return b"".join(pcm[lo * 2:hi * 2] for lo, hi in spans)
+
+
 # ================= config helpers =========================================
 
 def enabled(cfg) -> bool:
@@ -896,6 +1006,9 @@ def _enrolled_embeddings(candidates, sample_rate, ex):
     anchor clips. Averaged per person and CACHED keyed by the person's kept clip
     set, so identification re-embeds a person only when their anchors actually
     change - not on every utterance (mirrors the phase-1 prefix cache intent).
+    The clips arrive speech-only (#477, anchors.enrollment_clips), and the
+    cache key carries SPEECH_ONLY_VERSION inside the fingerprint, so no
+    embedding of the untrimmed audio is ever reused.
     Candidates whose clips are unreadable or insufficient are simply omitted."""
     ids = [c["person_id"] for c in candidates if c.get("person_id")]
     if not ids:
@@ -1050,7 +1163,10 @@ def audit_banks(cfg, sample_rate=16000):
                     continue
                 emb = _clip_emb_cache.get(fname)
                 if emb is None:
-                    emb = _embed(ex, _pcm_to_float(pcm), sample_rate)
+                    # The same speech-only audio enrolment embeds (#477),
+                    # so the audit judges the fingerprint that matches.
+                    emb = _embed(ex, _pcm_to_float(
+                        speech_only(pcm, sample_rate)), sample_rate)
                     if emb is None:
                         continue
                     _clip_emb_cache[fname] = emb
