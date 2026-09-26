@@ -243,11 +243,22 @@ def _tts_models_offline(monkeypatch):
     """The voice model list (#480) is a process-global cache plus a memory
     of refused models. Each test starts with neither, and the live path's
     background refresh never runs, so the keyless suite never asks
-    ElevenLabs for its model list."""
-    from backend import tts_models
+    ElevenLabs for its model list.
+
+    The list fetch itself refuses too. create_app loads the repo's .env,
+    so on a machine with a real ELEVENLABS_API_KEY (the deploy box runs
+    this suite before every restart) the foreground fetch used to reach
+    ElevenLabs and a "keyless" test read the live list. A test that wants
+    the live list patches voice.list_models itself."""
+    from backend import tts_models, voice
+
+    def _no_network():
+        raise RuntimeError("the test suite never fetches the voice model list")
+
     tts_models._cache.clear()
     tts_models._refused.clear()
     monkeypatch.setattr(tts_models, "_spawn_refresh", lambda fetch: None)
+    monkeypatch.setattr(voice, "list_models", _no_network)
     yield
     tts_models._cache.clear()
     tts_models._refused.clear()
