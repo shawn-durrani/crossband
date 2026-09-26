@@ -39,6 +39,22 @@ THE RULES, pinned in tests/test_voice_session_shadow.py:
   * Content-free rows: ids, slots, names, scores, seconds and timings. The
     turn's audio lives in memory for the pass, and the diariser keeps the
     session's audio in memory only.
+
+FILLING IN (`voice_session_labels`, off by default, the first live step of
+the cut-over, asked for by the owner on 26 September): when a session
+voice is named, every turn of the session whose main voice it is, and
+that today's pass left with no name, takes that name as its label, with
+source "session". Rules, pinned in the same test file:
+
+  * Only a turn with no label is filled. A name from the live pass, a
+    turn a person corrected or confirmed, a crosstalk turn and a label that
+    doesn't parse are never touched. A label this module wrote may move
+    when its voice's name changes.
+  * Nothing else happens: no seat, no banked clip, no ask. Memory reads
+    source "session" as by-elimination, the weakest method, which membro
+    never binds on by itself.
+  * The owner's own name (or a spelling of it) is written with the owner
+    marker, as the live pass writes it.
 """
 
 import collections
@@ -64,6 +80,8 @@ ROWS_FILE = "voice_session_shadow.jsonl"
 ROWS_MAX = 5000
 ROWS_KEEP = 4000
 ROW_VERSION = 1
+SESSION_SOURCE = "session"      # the label source a filled-in turn carries
+TURNS_KEPT = 400                # turns per session a late name can fill
 
 _lock = threading.Lock()        # guards _sessions and _stats
 _rows_lock = threading.Lock()
@@ -75,6 +93,11 @@ def enabled(cfg) -> bool:
     """On only with its own switch AND the shadow's loopback diariser."""
     return bool((cfg or {}).get("voice_session_shadow")
                 and voice_shadow.diariser_url(cfg))
+
+
+def labels_enabled(cfg) -> bool:
+    """Filling in unnamed turns needs the session shadow on as well."""
+    return bool(enabled(cfg) and (cfg or {}).get("voice_session_labels"))
 
 
 def status(cfg) -> dict:
@@ -250,7 +273,8 @@ def _session_for(chat_id, base, now):
         if not isinstance(sid, (str, int)) or str(sid) == "":
             raise _SessionError("bad_response")
         sess = {"id": str(sid), "base": base, "opened_at": now,
-                "last_at": now, "pushed_s": 0.0, "voices": {}, "turns": 0}
+                "last_at": now, "pushed_s": 0.0, "voices": {}, "turns": 0,
+                "turn_voice": [], "filled": {}}
         with _lock:
             _sessions[chat_id] = sess
             _stats["sessions_opened"] += 1
@@ -368,6 +392,11 @@ def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
                    bool(today.get("pending")))
         named = name_voices(sess["voices"], people, bar)
         main = main_voice(spans)
+        if main is not None and turn_id:
+            sess["turn_voice"].append((str(turn_id), main))
+            del sess["turn_voice"][:-TURNS_KEPT]
+        filled = fill_labels(chat_id, sess, named, cfg) \
+            if labels_enabled(cfg) else None
         row.update(
             session=sess["id"], turn=sess["turns"],
             offset=round(offset, 3),
@@ -379,6 +408,8 @@ def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
             voices={str(k): v for k, v in sorted(named.items())},
             bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
             embedded=embedded, people=len(people))
+        if filled is not None:
+            row["filled"] = filled
         with _lock:
             _stats["diariser"] = "ok"
         voice_shadow._recovered("session", "the tracking sessions answer "
@@ -403,6 +434,59 @@ def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
     row["ms"] = round((time.perf_counter() - t0) * 1000, 1)
     write_row(row)
     return row
+
+
+# ================= filling in unnamed turns ==================================
+
+def _labels_of(raw):
+    """A message's voice labels as a dict, {} when it has none, None when
+    they don't parse (left alone)."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def fillable(old):
+    """May a turn with these labels take a session name? Only when it has
+    no name, or the name there is one this module wrote."""
+    if old is None or old.get("corrected") or old.get("crosstalk"):
+        return False
+    names = [n for n in old.get("labels") or () if isinstance(n, str)
+             and n.strip()]
+    return not names or old.get("source") == SESSION_SOURCE
+
+
+def fill_labels(chat_id, sess, named, cfg):
+    """Write each named session voice's name onto its unnamed turns in this
+    session (see FILLING IN above). Returns how many labels it wrote."""
+    from . import diarize, introductions
+    owner = ((cfg or {}).get("user_name") or "").strip()
+    done = sess.setdefault("filled", {})
+    count = 0
+    con = db.connect()
+    try:
+        for turn_id, slot in sess.get("turn_voice") or ():
+            voice = named.get(slot) or {}
+            name = voice.get("name")
+            if voice.get("state") != "named" or not name \
+                    or done.get(turn_id) == name:
+                continue
+            msg = db.get_message_by_voice_turn(con, chat_id, turn_id)
+            if not msg or not fillable(_labels_of(msg["voice_labels"])):
+                continue
+            is_owner = bool(owner) and introductions.owner_alias(name, owner)
+            db.set_message_voice_labels(con, msg["id"], diarize.label_payload(
+                [name], clusters=(SESSION_SOURCE,), source=SESSION_SOURCE,
+                score=voice.get("score") or 0.0, owner=is_owner))
+            done[turn_id] = name
+            count += 1
+    finally:
+        con.close()
+    return count
 
 
 # ================= the rows file ============================================

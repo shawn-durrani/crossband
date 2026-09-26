@@ -365,6 +365,10 @@ class Settings(BaseModel):
     # naming (#482 stage 2, backend/voice_session_shadow.py), measured
     # beside today's. Needs diarize_shadow_url and a diariser with /sessions.
     voice_session_shadow: bool = False
+    # voice_session_labels: the first live step of the cut-over. A turn the
+    # live pass left unnamed takes its session voice's name, and nothing
+    # else changes. Needs voice_session_shadow.
+    voice_session_labels: bool = False
 
     # memory companion service (Membro)
     memory_url: str = "http://127.0.0.1:8901"
