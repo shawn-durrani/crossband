@@ -134,6 +134,7 @@ a default install records it.
 | `voice_id_model_sha256` | `""` | Overrides the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched once to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
 | `diarize_shadow_url` | `""` | The address of a diariser on this computer that the shadow test splits each voice turn with, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty turns that part off. [The shadow test](#the-shadow-test). |
 | `voice_session_shadow` | `false` | Adds the session test to the shadow test: it follows each voice through the whole voice session and names each voice from everything it has said. Needs `diarize_shadow_url` and a diariser with session routes. [The session test](#the-session-test). |
+| `voice_session_live` | `false` | Runs the session test live. The app sends your audio to the diariser while you talk, and a turn the voice check can't name takes its session voice's name before the AIs read it. Needs `voice_session_shadow`. [The session test](#the-session-test). |
 | `voice_session_labels` | `false` | Lets the session test fill in names. A voice turn today's naming left unnamed takes the name the session test gave its voice. It never replaces a name, and nothing else changes. Needs `voice_session_shadow`. [The session test](#the-session-test). |
 | `voice_shadow_model` | `""` | A second speaker model the shadow test scores beside the live one. It knows `titanet_large`, about 100MB, downloaded once and checked against a pinned hash, and only while this is set. Empty turns that part off. [The shadow test](#the-shadow-test). |
 | `voice_calibrated_scorer` | `false` | Shows on the Voices page whether each stored voice is ready. On, it downloads the ERes2Net speaker model once, about 26MB, checks it against a pinned hash, and works in the background. It never names a turn. [When a voice is ready](VOICE_ID.md#when-a-voice-is-ready). |
@@ -240,6 +241,14 @@ or confirmed, and a turn with two voices at once are never touched. It
 seats nobody and saves no voice clips. Memory treats a guest's name from
 here as the weakest kind of evidence, so a fact from their turn waits
 for review before it's linked to them.
+
+Setting `voice_session_live` moves the session test into the live
+check. The app sends each piece of your audio to the diariser while
+you're still talking, so when you stop, only the naming is left. When
+the voice check can't name a turn, it waits up to 0.8 seconds for the
+session test's name and uses it, so the AIs read the name with your
+turn instead of a moment later. If no name comes in time, the turn
+stays unnamed as before, and filling in can still name it later.
 
 `GET /api/voice/shadow` shows the comparison, newest turn first. Each
 line puts today's label beside what each method named. The methods are

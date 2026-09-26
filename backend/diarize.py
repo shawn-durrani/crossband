@@ -1175,6 +1175,13 @@ async def _live_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
                         turn_id=turn_id)
         log.info("diarize pass (voiceid defer): chat=%s reason=%s", chat_id,
                  reason)
+        # #482 stage 3: with the live session step on, the tracker has
+        # followed this voice through the session, so its name can stand in
+        # for the defer. Waits at most voice_session_shadow.LIVE_WAIT_S, off
+        # the loop, and falls through to the unnamed marker otherwise.
+        if await _deliver_session_name(chat_id, pcm, sample_rate, commit_ts,
+                                       session, cfg, turn_id, today, t0):
+            return
         # #411: the turn stays unnamed, and the row now says so and why. No
         # name, no banking, no cloud call - the same defer as before, with
         # the reason written where the seats and memory can read it, so a
@@ -1418,6 +1425,44 @@ def label_payload(labels, *, clusters=("local",), uncertain=(), source="local",
         # turn, never as the owner.
         payload["unresolved"] = unresolved
     return payload
+
+
+async def _deliver_session_name(chat_id, pcm, sample_rate, commit_ts,
+                                session, cfg, turn_id, today, t0):
+    """Label a turn the matcher deferred with its session voice's name, when
+    the live session step is on and named that voice in time. True when a
+    label went out. Never raises: any failure is today's defer."""
+    from . import introductions, voice_session_shadow
+    if not turn_id or not voice_session_shadow.live_enabled(cfg):
+        return False
+    try:
+        got = await voice_session_shadow.await_turn(turn_id)
+    except Exception:
+        log.debug("live session wait failed", exc_info=True)
+        return False
+    if not got or got.get("state") != "named" or not got.get("name"):
+        return False
+    name = got["name"]
+    owner = (cfg.get("user_name") or "").strip()
+    is_owner = bool(owner) and introductions.owner_alias(name, owner)
+    today.update(path="session", labels=[name], uncertain=[], reason="",
+                 score=got.get("score"))
+    record_decision(chat_id, DECISION_LOCAL,
+                    (time.perf_counter() - t0) * 1000, turn_id=turn_id)
+    log.info("diarize pass (session name): chat=%s", chat_id)
+    try:
+        await _deliver_label(
+            chat_id, pcm, sample_rate, commit_ts, session,
+            label_payload([name], clusters=(voice_session_shadow
+                                             .SESSION_SOURCE,),
+                          source=voice_session_shadow.SESSION_SOURCE,
+                          score=got.get("score") or 0.0, owner=is_owner),
+            turn_id=turn_id)
+    except Exception:
+        log.info("session label failed: chat=%s", chat_id)
+        log.debug("session label failure detail", exc_info=True)
+        return False
+    return True
 
 
 async def _deliver_label(chat_id, pcm, sample_rate, commit_ts, session,

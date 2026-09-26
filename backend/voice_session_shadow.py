@@ -61,6 +61,7 @@ import collections
 import json
 import logging
 import os
+import queue
 import threading
 import time
 from pathlib import Path
@@ -82,6 +83,10 @@ ROWS_KEEP = 4000
 ROW_VERSION = 1
 SESSION_SOURCE = "session"      # the label source a filled-in turn carries
 TURNS_KEPT = 400                # turns per session a late name can fill
+LIVE_WAIT_S = 0.8               # longest the live check waits for a name
+FEED_CHUNK_BYTES = int(0.25 * 16000) * 2   # audio pushed at a time, live
+FEED_QUEUE_MAX = 4000           # chunks held before new ones are dropped
+RESULTS_MAX = 256               # turns whose live result is remembered
 
 _lock = threading.Lock()        # guards _sessions and _stats
 _rows_lock = threading.Lock()
@@ -100,9 +105,297 @@ def labels_enabled(cfg) -> bool:
     return bool(enabled(cfg) and (cfg or {}).get("voice_session_labels"))
 
 
+def live_enabled(cfg) -> bool:
+    """The live step: the relay feeds the tracker as audio arrives, and the
+    live check names an otherwise unnamed turn from it. Needs the session
+    shadow on as well."""
+    return bool(enabled(cfg) and (cfg or {}).get("voice_session_live"))
+
+
+# ================= the live feed ============================================
+# LIVE (`voice_session_live`, #482 stage 3). The relay hands every audio
+# chunk inside a turn to feed() as it arrives, and end_turn() at the commit.
+# A per-chat feed thread pushes the chunks to the tracking session in
+# quarter-second pieces, so when the turn ends only the end-turn flush and
+# the naming are left to do (about a tenth of a second). The live check
+# asks wait_turn() for the turn's main voice, for at most LIVE_WAIT_S, and
+# falls back to today's behaviour when nothing comes. Nothing here runs on
+# the event loop, and a failure never reaches the relay or the live check.
+
+_feeds: dict = {}               # chat_id -> _Feed
+_results: "collections.OrderedDict" = collections.OrderedDict()
+
+
+def _result_slot(turn_id):
+    with _lock:
+        slot = _results.get(turn_id)
+        if slot is None:
+            slot = {"event": threading.Event(), "result": None}
+            _results[turn_id] = slot
+            while len(_results) > RESULTS_MAX:
+                _results.popitem(last=False)
+        return slot
+
+
+def _resolve(turn_id, result):
+    if not turn_id:
+        return
+    slot = _result_slot(turn_id)
+    slot["result"] = result
+    slot["event"].set()
+
+
+def wait_turn(turn_id, timeout=LIVE_WAIT_S):
+    """The live result for one turn: {"voice", "state", "name", "score"},
+    or None when there is none within `timeout` (blocking; call it off the
+    event loop)."""
+    tid = str(turn_id or "")[:64]
+    if not tid:
+        return None
+    with _lock:
+        slot = _results.get(tid)
+    if slot is None:
+        return None
+    slot["event"].wait(timeout)
+    return slot["result"]
+
+
+def peek_turn(turn_id):
+    """(known, done, result) for one turn without waiting: known is False
+    when no slot was opened for it (no live feed saw the turn)."""
+    tid = str(turn_id or "")[:64]
+    with _lock:
+        slot = _results.get(tid) if tid else None
+    if slot is None:
+        return False, False, None
+    return True, slot["event"].is_set(), slot["result"]
+
+
+async def await_turn(turn_id, timeout=LIVE_WAIT_S, step=0.02):
+    """wait_turn for the event loop: polls every `step` seconds instead of
+    holding a thread, so the live check never borrows a worker to wait."""
+    import asyncio
+    deadline = time.monotonic() + timeout
+    while True:
+        known, done, result = peek_turn(turn_id)
+        if not known:
+            return None
+        if done:
+            return result
+        if time.monotonic() >= deadline:
+            return None
+        await asyncio.sleep(step)
+
+
+def feed(chat_id, pcm, sample_rate, cfg):
+    """One audio chunk from inside a turn (the relay, on the event loop):
+    queued for the chat's feed thread, never blocking."""
+    if not chat_id or not pcm or sample_rate != SAMPLE_RATE \
+            or not live_enabled(cfg):
+        return
+    _feed_for(chat_id, cfg).put(("audio", bytes(pcm)))
+
+
+def end_turn(chat_id, turn_id, cfg):
+    """The relay's commit: the turn so far is done. Opens the turn's result
+    slot at once, so the live check can wait on it."""
+    if not chat_id or not live_enabled(cfg):
+        return
+    tid = str(turn_id or "")[:64] or None
+    if tid:
+        _result_slot(tid)
+    with _lock:
+        f = _feeds.get(chat_id)
+    if f is None:
+        _resolve(tid, None)
+        return
+    f.put(("end", tid))
+
+
+def _feed_for(chat_id, cfg):
+    with _lock:
+        f = _feeds.get(chat_id)
+        if f is None or not f.alive:
+            f = _Feed(chat_id, cfg)
+            _feeds[chat_id] = f
+            f.start()
+        return f
+
+
+def embed_live(pcm, sample_rate, cfg):
+    """TitaNet-Small on one clean span, for the live step. Unlike the
+    shadow's embed it doesn't wait for the live check to finish, because
+    the live check is waiting on this. Tests replace this one function."""
+    audio = voiceid._pcm_to_float(pcm)
+    if audio is None or len(audio) == 0:
+        return None
+    ex = voiceid._get_extractor(cfg)
+    if ex is None:
+        return None
+    return voiceid._embed(ex, audio, sample_rate)
+
+
+def _live_candidates(chat_id):
+    """The live check's own candidates: every remembered person, with the
+    people seated in this chat kept even while their bank is paused."""
+    from . import diarize
+    con = db.connect()
+    try:
+        seated = {r["person_id"] for r in db.get_room_roster(
+            con, chat_id, present_only=True) if r["person_id"]}
+    finally:
+        con.close()
+    return diarize.remembered_candidates(rostered_ids=frozenset(seated))
+
+
+class _Feed:
+    """One chat's feed thread. It owns the chat's tracking session while
+    live, so nothing else pushes audio to it."""
+
+    def __init__(self, chat_id, cfg):
+        self.chat_id = chat_id
+        self.cfg = dict(cfg)
+        self.q = queue.Queue(maxsize=FEED_QUEUE_MAX)
+        self.alive = True
+        self.pending = bytearray()      # not yet pushed
+        self.turn_pcm = bytearray()     # this turn's audio, pushed or not
+        self.spans = []                 # this turn's spans so far
+        self.turn_start = None          # session time the turn began at
+        self.broken = False             # the session failed mid-turn
+        self.thread = threading.Thread(
+            target=self._run, daemon=True,
+            name=f"voice-session-feed-{chat_id}")
+
+    def start(self):
+        self.thread.start()
+
+    def put(self, item):
+        try:
+            self.q.put_nowait(item)
+        except queue.Full:
+            with _lock:
+                _stats["feed_dropped"] = _stats.get("feed_dropped", 0) + 1
+
+    def _run(self):
+        try:
+            while True:
+                try:
+                    kind, value = self.q.get(timeout=SESSION_IDLE_S)
+                except queue.Empty:
+                    break
+                if kind == "audio":
+                    self.turn_pcm += value
+                    self.pending += value
+                    if len(self.pending) >= FEED_CHUNK_BYTES:
+                        self._push()
+                elif kind == "end":
+                    self._end(value)
+        finally:
+            self.alive = False
+            with _lock:
+                if _feeds.get(self.chat_id) is self:
+                    _feeds.pop(self.chat_id, None)
+                sess = _sessions.pop(self.chat_id, None)
+            if sess:
+                _close(sess)
+
+    def _session(self):
+        base = voice_shadow.diariser_url(self.cfg)
+        if not base:
+            raise _SessionError("no_diariser")
+        return _session_for(self.chat_id, base, time.time())
+
+    def _push(self):
+        if not self.pending or self.broken:
+            self.pending.clear()
+            return
+        try:
+            sess = self._session()
+            if self.turn_start is None:
+                self.turn_start = sess["pushed_s"]
+            chunk = bytes(self.pending)
+            self.pending.clear()
+            got = clean_spans(_call(
+                "POST", f"{sess['base']}/sessions/{sess['id']}/audio",
+                content=chunk))
+            if got is None:
+                raise _SessionError("bad_response")
+            sess["pushed_s"] += len(chunk) / 2 / SAMPLE_RATE
+            sess["last_at"] = time.time()
+            self.spans += got
+        except _SessionError as err:
+            self._fail(err.reason)
+        except Exception:
+            log.debug("session feed push failed", exc_info=True)
+            self._fail("error")
+
+    def _fail(self, reason):
+        self.broken = True
+        self.pending.clear()
+        with _lock:
+            _sessions.pop(self.chat_id, None)
+            _stats["diariser"] = reason
+        voice_shadow._warn_once(
+            "session", "the diariser's tracking session failed (%s); live "
+                       "naming falls back until it answers", reason)
+
+    def _end(self, turn_id):
+        t0 = time.perf_counter()
+        pcm = bytes(self.turn_pcm)
+        result = None
+        row = {"v": ROW_VERSION, "at": round(time.time(), 3),
+               "chat_id": self.chat_id, "turn_id": turn_id or "",
+               "message_id": None, "live": True,
+               "seconds": round(len(pcm) / 2 / SAMPLE_RATE, 3)}
+        try:
+            if self.pending:
+                self._push()
+            if self.broken:
+                raise _SessionError(_stats.get("diariser") or "error")
+            if not pcm or self.turn_start is None:
+                return
+            sess = self._session()
+            got = clean_spans(_call(
+                "POST", f"{sess['base']}/sessions/{sess['id']}/end-turn"))
+            if got is None:
+                raise _SessionError("bad_response")
+            sess["last_at"] = time.time()
+            sess["turns"] += 1
+            result = _name_turn(
+                self.chat_id, sess, turn_id, pcm, SAMPLE_RATE,
+                self.spans + got, self.turn_start, self.cfg,
+                _live_candidates(self.chat_id), False,
+                lambda seg: embed_live(seg, SAMPLE_RATE, self.cfg), row)
+            with _lock:
+                _stats["diariser"] = "ok"
+            voice_shadow._recovered("session", "the tracking sessions "
+                                               "answer again")
+        except _SessionError as err:
+            if not self.broken:
+                self._fail(err.reason)
+            row["error"] = err.reason
+        except Exception:
+            log.debug("session feed turn failed", exc_info=True)
+            row["error"] = "error"
+            with _lock:
+                _sessions.pop(self.chat_id, None)
+        finally:
+            _resolve(turn_id, result)
+            self.turn_pcm.clear()
+            self.spans = []
+            self.turn_start = None
+            self.broken = False
+        row["ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        try:
+            write_row(row)
+        except Exception:
+            log.debug("session feed row failed", exc_info=True)
+
+
 def status(cfg) -> dict:
     with _lock:
-        return {"on": enabled(cfg), "open_sessions": len(_sessions),
+        return {"on": enabled(cfg), "live": live_enabled(cfg),
+                "feeds": len(_feeds), "open_sessions": len(_sessions),
                 "sessions_opened": _stats["sessions_opened"],
                 "rows_written": _stats["rows"],
                 "diariser": _stats["diariser"]}
@@ -336,7 +629,10 @@ def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
     raises: a failure is one row with an error and a log line once."""
     t0 = time.perf_counter()
     base = voice_shadow.diariser_url(cfg)
-    if not base or not pcm or sample_rate != SAMPLE_RATE:
+    if not base or not pcm or sample_rate != SAMPLE_RATE \
+            or live_enabled(cfg):
+        # Live, the relay's feed pushes the audio as it arrives; pushing it
+        # again here would give the tracker every turn twice.
         return None
     now = time.time()
     seconds = len(pcm) / 2 / sample_rate
@@ -356,60 +652,11 @@ def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
         sess["pushed_s"] = offset + seconds
         sess["last_at"] = now
         sess["turns"] += 1
-        spans = []
-        for s in pushed + flushed:
-            a = max(0.0, s["start"] - offset)
-            b = min(seconds, s["end"] - offset)
-            if b > a:
-                spans.append({**s, "start": round(a, 3), "end": round(b, 3)})
-        embedded = 0
-        for s in spans:
-            # Every voice heard is on the table, even one heard only over
-            # someone else: it listens with no evidence.
-            sess["voices"].setdefault(s["slot"],
-                                      {"prints": [], "clean_s": 0.0})
-            if s["overlap"] or s["end"] - s["start"] < MIN_SPAN_S:
-                continue
-            seg = voice_shadow.span_pcm(pcm, sample_rate,
-                                        [(s["start"], s["end"])])
-            if voice_shadow.gate(seg, sample_rate):
-                continue
-            emb = voice_shadow.embed("small", seg, sample_rate, cfg)
-            if emb is None:
-                continue
-            secs = len(seg) / 2 / sample_rate
-            v = sess["voices"].setdefault(s["slot"],
-                                          {"prints": [], "clean_s": 0.0})
-            v["prints"].append((emb, secs))
-            v["clean_s"] += secs
-            embedded += 1
-        candidates = today.get("candidates") or []
-        # A second's grace: a clip banked by the live pass that opened the
-        # session carries a timestamp just after the session's own.
-        people = bank(candidates, sample_rate, cfg,
-                      before=sess["opened_at"] - 1.0)
-        bar = _bar(people, candidates, sample_rate, cfg,
-                   bool(today.get("pending")))
-        named = name_voices(sess["voices"], people, bar)
-        main = main_voice(spans)
-        if main is not None and turn_id:
-            sess["turn_voice"].append((str(turn_id), main))
-            del sess["turn_voice"][:-TURNS_KEPT]
-        filled = fill_labels(chat_id, sess, named, cfg) \
-            if labels_enabled(cfg) else None
-        row.update(
-            session=sess["id"], turn=sess["turns"],
-            offset=round(offset, 3),
-            spans=spans, main=main,
-            main_state=(named.get(main) or {}).get("state", "listening")
-            if main is not None else "",
-            main_name=(named.get(main) or {}).get("name", "")
-            if main is not None else "",
-            voices={str(k): v for k, v in sorted(named.items())},
-            bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
-            embedded=embedded, people=len(people))
-        if filled is not None:
-            row["filled"] = filled
+        _name_turn(chat_id, sess, turn_id, pcm, sample_rate, pushed + flushed,
+                   offset, cfg, today.get("candidates") or [],
+                   bool(today.get("pending")),
+                   lambda seg: voice_shadow.embed("small", seg, sample_rate,
+                                                  cfg), row)
         with _lock:
             _stats["diariser"] = "ok"
         voice_shadow._recovered("session", "the tracking sessions answer "
@@ -434,6 +681,74 @@ def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
     row["ms"] = round((time.perf_counter() - t0) * 1000, 1)
     write_row(row)
     return row
+
+
+def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
+               cfg, candidates, pending, embed_fn, row):
+    """The naming step, shared by the shadow's observe and the live feed:
+    move the tracker's spans into turn time, fingerprint the clean ones,
+    name every session voice, fill in unnamed turns when that's on, and
+    put it all on `row`. Returns the turn's main voice as {"voice",
+    "state", "name", "score"}, or None when no voice spoke."""
+    seconds = len(pcm) / 2 / sample_rate
+    spans = []
+    for s in raw_spans:
+        a = max(0.0, s["start"] - offset)
+        b = min(seconds, s["end"] - offset)
+        if b > a:
+            spans.append({**s, "start": round(a, 3), "end": round(b, 3)})
+    if True:
+        embedded = 0
+        for s in spans:
+            # Every voice heard is on the table, even one heard only over
+            # someone else: it listens with no evidence.
+            sess["voices"].setdefault(s["slot"],
+                                      {"prints": [], "clean_s": 0.0})
+            if s["overlap"] or s["end"] - s["start"] < MIN_SPAN_S:
+                continue
+            seg = voice_shadow.span_pcm(pcm, sample_rate,
+                                        [(s["start"], s["end"])])
+            if voice_shadow.gate(seg, sample_rate):
+                continue
+            emb = embed_fn(seg)
+            if emb is None:
+                continue
+            secs = len(seg) / 2 / sample_rate
+            v = sess["voices"].setdefault(s["slot"],
+                                          {"prints": [], "clean_s": 0.0})
+            v["prints"].append((emb, secs))
+            v["clean_s"] += secs
+            embedded += 1
+        # A second's grace: a clip banked by the live pass that opened the
+        # session carries a timestamp just after the session's own.
+        people = bank(candidates, sample_rate, cfg,
+                      before=sess["opened_at"] - 1.0)
+        bar = _bar(people, candidates, sample_rate, cfg, pending)
+        named = name_voices(sess["voices"], people, bar)
+        main = main_voice(spans)
+        if main is not None and turn_id:
+            sess["turn_voice"].append((str(turn_id), main))
+            del sess["turn_voice"][:-TURNS_KEPT]
+        filled = fill_labels(chat_id, sess, named, cfg) \
+            if labels_enabled(cfg) else None
+        row.update(
+            session=sess["id"], turn=sess["turns"],
+            offset=round(offset, 3),
+            spans=spans, main=main,
+            main_state=(named.get(main) or {}).get("state", "listening")
+            if main is not None else "",
+            main_name=(named.get(main) or {}).get("name", "")
+            if main is not None else "",
+            voices={str(k): v for k, v in sorted(named.items())},
+            bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
+            embedded=embedded, people=len(people))
+        if filled is not None:
+            row["filled"] = filled
+    if main is None:
+        return None
+    voice = named.get(main) or {}
+    return {"voice": main, "state": voice.get("state", "listening"),
+            "name": voice.get("name", ""), "score": voice.get("score")}
 
 
 # ================= filling in unnamed turns ==================================
@@ -570,5 +885,9 @@ def compare(rows) -> dict:
 
 def _reset_for_tests():
     with _lock:
+        for f in _feeds.values():
+            f.alive = False
+        _feeds.clear()
+        _results.clear()
         _sessions.clear()
         _stats.update(rows=0, diariser="", sessions_opened=0)
