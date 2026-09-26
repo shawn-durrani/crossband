@@ -133,6 +133,7 @@ a default install records it.
 | `voice_id_model_url` | `""` | Overrides the local speaker model's download URL. Empty uses the built-in pinned URL. Pin the hash too, because a URL override checked against the default hash fails verification and the matcher stays unavailable. |
 | `voice_id_model_sha256` | `""` | Overrides the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched once to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
 | `diarize_shadow_url` | `""` | The address of a diariser on this computer that the shadow test splits each voice turn with, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty turns that part off. [The shadow test](#the-shadow-test). |
+| `voice_session_shadow` | `false` | Adds the session test to the shadow test: it follows each voice through the whole voice session and names each voice from everything it has said. Needs `diarize_shadow_url` and a diariser with session routes. [The session test](#the-session-test). |
 | `voice_shadow_model` | `""` | A second speaker model the shadow test scores beside the live one. It knows `titanet_large`, about 100MB, downloaded once and checked against a pinned hash, and only while this is set. Empty turns that part off. [The shadow test](#the-shadow-test). |
 
 ### Choosing the voice model
@@ -212,6 +213,22 @@ that's slow or down costs the turn nothing. The call gives up after three
 seconds, the line records the error, and the log says so once. The
 address has to be on this computer, the call follows no redirects and
 ignores proxy settings, so the audio stays here.
+
+### The session test
+
+The session test is a third part of the shadow test, switched on with
+`voice_session_shadow`. It follows each voice through the whole voice
+session instead of one turn at a time. For each chat it opens a
+tracking session on the diariser, sends it every turn in order, and
+gets back which voice spoke when, with each voice keeping its number
+for the session. It builds up each voice's fingerprint from every clean
+stretch it has said, and names the voice once there's enough of it, one
+person per voice. Each turn gets one line in
+`data/voice_session_shadow.jsonl`, with today's label beside what the
+session test named, and `GET /api/voice/shadow/sessions` shows them
+side by side, including the name each voice ended the session with. A
+voice clip saved during the session is left out of the comparison, so
+no voice is scored against its own audio.
 
 `GET /api/voice/shadow` shows the comparison, newest turn first. Each
 line puts today's label beside what each method named. The methods are
