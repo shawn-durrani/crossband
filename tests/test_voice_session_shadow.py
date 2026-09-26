@@ -317,7 +317,7 @@ def test_the_live_store_is_never_written(fakes, monkeypatch):
 ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
             "today", "session", "turn", "offset", "spans", "main",
             "main_state", "main_name", "voices", "bar", "embedded",
-            "people", "ms"}
+            "people", "ms", "filled"}
 
 
 def test_rows_are_content_free_and_owner_only(fakes):
@@ -358,3 +358,143 @@ def test_the_route_serves_the_view(app, fakes):
     assert body["tally"]["turns"] == 1
     assert body["rows"][0]["main_name"] == "Alex"
     assert "status" in body
+
+
+# ---------- 7. filling in unnamed turns (voice_session_labels) ----------
+
+LABELS_CFG = dict(CFG, voice_session_labels=True)
+
+
+def _msg(chat_id, turn_id, labels=None):
+    from roomkit import _insert_user_message
+    from backend import db
+    m = _insert_user_message(chat_id, "a turn", voice_turn_id=turn_id)
+    if labels is not None:
+        con = db.connect()
+        try:
+            db.set_message_voice_labels(con, m["id"], labels)
+        finally:
+            con.close()
+    return m["id"]
+
+
+def _labels(mid):
+    from roomkit import _message_labels
+    raw = _message_labels(mid)
+    return json.loads(raw) if raw else {}
+
+
+def _chat(app):
+    from fastapi.testclient import TestClient
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        return c.post("/api/chats", json={"participant_ids": []}).json()["id"]
+
+
+def test_filling_in_is_off_unless_its_own_switch_is_on(app, fakes):
+    chat = _chat(app)
+    mid = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
+                            "uncertain": [], "unresolved": "below_threshold"})
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
+    row = vss.observe(chat, "t1", _turn(2.0), SR, CFG, _today(()))
+    assert "filled" not in row
+    assert _labels(mid)["labels"] == []
+    assert not vss.labels_enabled({"voice_session_labels": True})
+
+
+def test_an_unnamed_turn_takes_its_voices_name(app, fakes, monkeypatch):
+    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    chat = _chat(app)
+    mid = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
+                            "uncertain": [], "unresolved": "below_threshold"})
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
+    row = vss.observe(chat, "t1", _turn(2.0), SR, LABELS_CFG, _today(()))
+    assert row["filled"] == 1
+    got = _labels(mid)
+    assert got["labels"] == ["Sam"] and got["source"] == "session"
+    assert "unresolved" not in got and not got.get("owner")
+    # memory reads it as the weakest method, which membro never binds on
+    from backend.memory_client import speaker_identity
+    assert speaker_identity({"voice_labels": got}, "guest:Sam",
+                            {})["method"] == "by-elimination"
+
+
+def test_the_owners_name_carries_the_owner_marker(app, fakes):
+    chat = _chat(app)
+    mid = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
+                            "uncertain": [], "unresolved": "below_threshold"})
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
+    vss.observe(chat, "t1", _turn(2.0), SR, LABELS_CFG, _today(()))
+    got = _labels(mid)
+    assert got["labels"] == ["Alex"] and got["owner"] is True
+
+
+def test_a_name_a_correction_or_crosstalk_is_never_touched(app, fakes,
+                                                           monkeypatch):
+    """The voice is Sam, but each of these turns already says something a
+    person or the live pass decided, so none changes."""
+    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    chat = _chat(app)
+    keep = {
+        "t1": {"clusters": ["local"], "labels": ["Alex"], "uncertain": [],
+               "source": "local", "score": 0.6},
+        "t2": {"clusters": [], "labels": ["Alex"], "uncertain": [],
+               "corrected": True, "source": "correction"},
+        "t3": {"clusters": ["s0", "s1"], "labels": [], "uncertain": [],
+               "crosstalk": True},
+    }
+    ids = {t: _msg(chat, t, labels) for t, labels in keep.items()}
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}],
+                    [{"slot": 1, "start": 2.0, "end": 4.0}],
+                    [{"slot": 1, "start": 4.0, "end": 6.0}]]
+    for t in ("t1", "t2", "t3"):
+        vss.observe(chat, t, _turn(2.0), SR, LABELS_CFG, _today(()))
+    for t, labels in keep.items():
+        assert _labels(ids[t]) == labels
+
+
+def test_a_turn_named_late_is_filled_when_its_voice_is_named(app, fakes,
+                                                             monkeypatch):
+    """1 s is too little to name, so the first turn stays unnamed. The
+    second turn names the voice, and the first turn takes the name too.
+    A turn whose message wasn't saved yet at its own pass is filled on a
+    later one."""
+    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    chat = _chat(app)
+    first = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
+                              "uncertain": [], "unresolved": "too_short"})
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                    [{"slot": 1, "start": 1.0, "end": 3.0}],
+                    [{"slot": 1, "start": 3.0, "end": 5.0}]]
+    assert vss.observe(chat, "t1", _turn(1.0), SR, LABELS_CFG,
+                       _today(()))["filled"] == 0
+    assert _labels(first)["labels"] == []
+    vss.observe(chat, "t2", _turn(2.0), SR, LABELS_CFG, _today(()))
+    assert _labels(first)["labels"] == ["Sam"]
+    second = _msg(chat, "t2")            # saved after its own pass
+    vss.observe(chat, "t3", _turn(2.0), SR, LABELS_CFG, _today(()))
+    assert _labels(second)["labels"] == ["Sam"]
+
+
+def test_nothing_but_the_label_changes(app, fakes, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("filling in must not seat or bank")
+    from backend import room_state
+    monkeypatch.setattr(room_state, "seat", boom)
+    monkeypatch.setattr(anchors.AnchorStore, "add_clip", boom)
+    chat = _chat(app)
+    _msg(chat, "t1", {"clusters": ["local"], "labels": [], "uncertain": []})
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
+    assert vss.observe(chat, "t1", _turn(2.0), SR, LABELS_CFG,
+                       _today(()))["filled"] == 1
+
+
+def test_fillable():
+    assert vss.fillable({})
+    assert vss.fillable({"labels": [], "unresolved": "multi"})
+    assert vss.fillable({"labels": ["Sam"], "source": "session"})
+    assert not vss.fillable({"labels": ["Sam"], "source": "local"})
+    assert not vss.fillable({"labels": ["Sam"], "uncertain": ["Sam"],
+                             "learning": True, "source": "cold-start"})
+    assert not vss.fillable({"labels": [], "corrected": True})
+    assert not vss.fillable({"labels": [], "crosstalk": True})
+    assert not vss.fillable(None)
