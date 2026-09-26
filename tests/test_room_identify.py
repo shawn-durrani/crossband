@@ -429,6 +429,12 @@ def test_reassign_rewrites_label_resolves_flags_and_feeds_the_anchor(app):
         assert r.json()["learned"] is True
         data = json.loads(_message_labels(msg["id"]))
         assert data["labels"] == ["Alex"] and data["corrected"] is True
+        # memory reads the owner's answer as owner-correction, which membro
+        # always binds on, not as the weakest claim (#484)
+        assert data["source"] == "correction"
+        from backend.memory_client import speaker_identity
+        assert speaker_identity({"voice_labels": data}, "guest:Alex",
+                                {})["method"] == "owner-correction"
         assert _flags(chat["id"]) == []                  # doubt answered
         alex = anchors.store().find_by_name("Alex")
         assert alex and alex["clip_count"] == 1          # ground truth stored

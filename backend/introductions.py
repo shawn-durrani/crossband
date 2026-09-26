@@ -1434,10 +1434,14 @@ def _reconcile_intro_label(con, chat_id, message_id, known, owner, cfg):
         old = json.loads(row["voice_labels"])
     except (TypeError, json.JSONDecodeError):
         old = {}
+    # The words named this person, so the label's provenance is the
+    # introduction, which memory reads as a human-backed method. Keeping
+    # the voice match's "local" sent it as a voice match with no score,
+    # which membro never binds on (#484).
     db.set_message_voice_labels(con, message_id, {
         "clusters": old.get("clusters") or ["local"],
         "labels": [known["name"]], "uncertain": [],
-        "source": old.get("source") or "local"})
+        "source": "introduction"})
     # 2. The seat: only B's AUTOMATED seat retracts. A seat a human placed
     # (introduction, correction, owner) is never unwound by this path.
     seat_retracted = False

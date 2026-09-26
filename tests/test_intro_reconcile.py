@@ -112,6 +112,9 @@ def test_contradiction_unwinds_seat_label_and_clips(world):
     # the words win: the turn now says Sam, confidently
     labels = _labels(world["message_id"])
     assert labels["labels"] == ["Sam"] and labels["uncertain"] == []
+    # the words named Sam, so memory hears "introduced", a method membro
+    # binds on, not a scoreless voice match it never binds on (#484)
+    assert labels["source"] == "introduction"
     # the wrong automated seat is gone; the introduced person is seated
     assert _present(world["chat_id"]) == {"Sam"}
     # the contested clip left Dave's bank; his introduction clip survives
