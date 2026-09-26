@@ -369,6 +369,13 @@ class Settings(BaseModel):
     # live pass left unnamed takes its session voice's name, and nothing
     # else changes. Needs voice_session_shadow.
     voice_session_labels: bool = False
+    # The calibrated voice scorer (#482 stage 2, backend/voice_calibration.py):
+    # the redesign's two-model, calibrated scorer and the readiness test the
+    # Voices page shows. Off by default. On, it fetches ERes2Net once (pinned
+    # and SHA-256-verified like the primary) and builds in the background at
+    # startup and after every bank change. It never names a turn: live
+    # naming keeps the matcher above and the sufficiency bar.
+    voice_calibrated_scorer: bool = False
 
     # memory companion service (Membro)
     memory_url: str = "http://127.0.0.1:8901"

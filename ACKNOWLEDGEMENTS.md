@@ -21,6 +21,7 @@ MIT, BSD, Apache-2.0, PSF, MPL-2.0, ISC):
 
 ## Models (fetched at runtime, not vendored)
 - **NeMo TitaNet-Small** speaker-verification model ([CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)), by [NVIDIA NeMo](https://github.com/NVIDIA/NeMo), distributed as ONNX via the [sherpa-onnx speaker-recognition models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models). Crossband fetches this ~38MB file once to the data directory (SHA-256-verified, never committed) and runs it fully offline to identify known voices in room mode (#28).
+- **ERes2Net** speaker-verification model trained on VoxCeleb ([Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)), by the [3D-Speaker](https://github.com/modelscope/3D-Speaker) project, distributed as ONNX via the same [sherpa-onnx speaker-recognition models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models). Fetched once (~26MB, SHA-256-verified, never committed) only while `voice_calibrated_scorer` is on, for the calibrated scorer and the Voices page's readiness test (#482).
 
 ## Services (paid APIs, bring your own keys)
 - **Anthropic** and **OpenAI**: the minds in the room

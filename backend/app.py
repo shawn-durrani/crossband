@@ -28,6 +28,7 @@ from . import rounds
 from . import tools as tools_mod
 from . import voice_trace
 from . import voice
+from . import voice_calibration
 from . import voiceid
 from .config import (ROOT, Settings, mmc_migration_state, key_status,
                      load_settings, report_missing_keys)
@@ -251,6 +252,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # named. Only a model already on disk: startup never downloads it.
         if voiceid.warm_at_startup(settings.as_cfg()):
             log.info("voice matcher loading in the background")
+        # #482 stage 2: the calibrated scorer and the readiness test build
+        # on their own worker thread, only while the setting is on.
+        if voice_calibration.start(settings.as_cfg()):
+            log.info("voice readiness building in the background")
         # #138 slice 1: one vetted egress path for every model-influenced
         # URL. Tools discover the proxy via egress.proxy_url() - a module
         # global bound to this process, exactly like the events bus above.
@@ -340,6 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             egress.set_proxy_url(None)
             egress.set_view_proxy_url(None)
             await app.state.egress.stop()
+            voice_calibration.stop()
             events.unbind_loop()
             try:
                 app.state.lock.close()

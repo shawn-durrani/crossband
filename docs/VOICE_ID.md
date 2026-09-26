@@ -265,6 +265,67 @@ introduction. A rename in the same breath still happens. The words and
 the voice have to agree, so Sam saying Dave's name feeds nobody's
 bank.
 
+## When a voice is ready
+
+The Voices page can tell you whether each stored voice is ready, which
+means the app should name that person on a day it hasn't heard them
+yet. It's a test, and it changes nothing about how turns are named.
+Turn it on with `voice_calibrated_scorer` in [CONFIG.md](CONFIG.md) and
+restart the app.
+
+The test cuts the speech in a person's clips into 2 second pieces. It
+takes each day's clips out of their bank in turn, and checks whether
+that day's pieces are still named as them. A voice is ready when at
+least 95 pieces in 100 are named as them, none is named as anyone else,
+and there are at least 20 pieces. Seconds count speech, never the
+pauses, and clips the hygiene guard set aside count for nothing.
+
+The page shows "Ready" or what the voice still needs.
+
+- "Needs more speech: 12 of 20 pieces" means there isn't enough stored
+  speech to test yet.
+- "Needs speech from another day" means every clip comes from one day.
+  With that day taken out there's nothing left to test against, so the
+  app has to hear them on another day.
+- "2 of 30 pieces sounded like someone else" means some of their pieces
+  were named as another person. Listen to their clips, because one may
+  be someone else's voice.
+- "87% of pieces named right, 95% needed" means too many pieces were
+  left unnamed.
+
+### How the test names a piece
+
+Two speaker models fingerprint every clip: TitaNet-Small, the model the
+matcher runs, and
+[ERes2Net](https://github.com/modelscope/3D-Speaker), a speaker model
+from the 3D-Speaker project under the Apache 2.0 licence. A person's
+score is the average of the three best matches among all their clips,
+and the two models' scores are averaged. A calibration fitted on your
+household turns that score, and the seconds of speech behind it, into
+the chance the voice is that person. Every known person and someone
+new start out equally likely, and a piece is named when one person
+reaches 0.9.
+
+The calibration learns from your own clips. Pieces of 1, 2, 4 and 8
+seconds are scored against every bank, with the piece's own day left
+out of its own person's bank. Against everyone else's bank, a piece
+shows what a voice the app doesn't know looks like. A short clip cut
+from a longer turn leaves with that turn's clip. For a person whose
+clips all come from one day, each clip leaves on its own.
+
+The work runs on its own thread, at startup and after every change to
+a bank, and lets any live voice check go first. The first run after a
+start takes a few minutes, and later runs only fingerprint new clips.
+Fingerprints stay in memory and are never written anywhere. ERes2Net is
+about 26MB, downloaded once from the sherpa-onnx releases into
+`<data_dir>/voice_models/` and checked against a pinned SHA-256 before
+first use.
+
+`GET /api/voice/people` gives each person's result as `readiness`: the
+pieces tested, the share named right, how many were named as someone
+else, the days and the seconds of speech. The answer's own `readiness`
+field holds the test's state and its rules.
+
 ## English bias
 
 Two separate parts lean English. The first is the one model call that

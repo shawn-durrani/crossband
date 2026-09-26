@@ -59,15 +59,28 @@ def get_roster(chat_id: int, request: Request):
 
 
 @router.get("/api/voice/people")
-def get_people():
+def get_people(request: Request):
     """Remembered voices: names, clip counts, accepted seconds, sufficiency
     (both halves of the two-part bar), set-aside counts and close-pair
     hints (#28 PR-B). No audio and no transcript text ever leaves this
-    endpoint."""
-    return {"people": anchors.store().people(),
+    endpoint.
+
+    Readiness (#482 stage 2): each person's result from the calibrated
+    scorer's readiness test, read from its last background build (None
+    while the setting is off or before the first build), and the test's
+    state and rules under `readiness`. This route never builds anything.
+    `sufficient` is unchanged, and live naming still keys on it."""
+    from .. import voice_calibration
+    cfg = request.app.state.settings.as_cfg()
+    people = anchors.store().people()
+    ready = voice_calibration.readiness(cfg)
+    for person in people:
+        person["readiness"] = ready.get(person["person_id"])
+    return {"people": people,
             "sufficient_seconds": anchors.SUFFICIENT_SECONDS,
             "min_short_clips": anchors.MIN_SHORT_CLIPS,
-            "short_clip_max_seconds": anchors.SHORT_CLIP_MAX_SECONDS}
+            "short_clip_max_seconds": anchors.SHORT_CLIP_MAX_SECONDS,
+            "readiness": voice_calibration.status(cfg)}
 
 
 @router.get("/api/voice/health")

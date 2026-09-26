@@ -469,6 +469,7 @@ class AnchorStore:
         os.chmod(tmp, 0o600)
         os.replace(tmp, self._index_path())
         self._gen += 1  # every mutation invalidates the built-prefix cache
+        _notify_change()
 
     def _index_fingerprint(self):
         """Cheap change detector for build_prefix's cache: the in-process
@@ -1462,6 +1463,37 @@ class AnchorStore:
                 out[pid] = {"name": person.get("name", pid), "clips": clips}
         return out
 
+    def calibration_clips(self, sample_rate: int, audio: bool = True) -> dict:
+        """Every person's ACTIVE clips at `sample_rate`, for the calibrated
+        scorer (#482 stage 2, backend/voice_calibration.py), with the
+        metadata it leaves days out by. Quarantined clips are left out, as
+        they are everywhere matching happens. {pid: {"clips": [{"file",
+        "added_at", "source", "pcm"}]}}, where `pcm` is present only with
+        `audio` (without it this is one index read, the scorer's change
+        detector). No names: the scorer keys on person ids. Read only;
+        unreadable files are skipped."""
+        with self._lock:
+            data = self._load()
+        out = {}
+        for pid, person in data["people"].items():
+            clips = []
+            for c in active_clips(person.get("clips", [])):
+                if c.get("sample_rate") != sample_rate:
+                    continue
+                row = {"file": c["file"],
+                       "added_at": float(c.get("added_at") or 0.0),
+                       "source": c.get("source", "")}
+                if audio:
+                    try:
+                        row["pcm"] = self._read_clip_pcm(c["file"])
+                    except OSError:
+                        log.warning("anchor clip unreadable: %s", c["file"])
+                        continue
+                clips.append(row)
+            if clips:
+                out[pid] = {"clips": clips}
+        return out
+
     def clip_fingerprint(self):
         """Change detector for the audit: the full clip-file sets, per
         person, sorted. Quarantine flags do NOT enter it - the audit WRITES
@@ -1520,6 +1552,32 @@ class AnchorStore:
             data = self._load()
         return [tuple(p) for p in data.get("close_pairs") or []
                 if isinstance(p, (list, tuple)) and len(p) >= 2]
+
+
+# Change listeners (#482 stage 2): called after every index save, so a
+# background consumer (the calibrated scorer) can rebuild after a bank
+# change without polling. A listener runs inside the store's lock and
+# must only set a flag; one that raises is logged and never reaches the
+# store's caller, so a save behaves exactly as it did before listeners.
+_change_listeners: list = []
+
+
+def add_change_listener(fn) -> None:
+    if fn not in _change_listeners:
+        _change_listeners.append(fn)
+
+
+def remove_change_listener(fn) -> None:
+    if fn in _change_listeners:
+        _change_listeners.remove(fn)
+
+
+def _notify_change() -> None:
+    for fn in list(_change_listeners):
+        try:
+            fn()
+        except Exception:
+            log.debug("anchor change listener failed", exc_info=True)
 
 
 _store: AnchorStore | None = None

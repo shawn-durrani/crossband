@@ -163,6 +163,13 @@ from matching, and shown as set aside. Close centroid pairs widen the
 match margin for that pair alone. A bank nobody vouched for can't
 re-seat anyone until the owner confirms it.
 
+The readiness test measures and never names. With its setting off it
+starts no thread, downloads nothing and embeds nothing. On, it builds
+on its own thread, lets a live check go first, and the same turns get
+the same labels as with it off. Its calibration is checked on a made-up
+household where the right answer is known, down to which day leaves
+with which piece and a voice with no bank coming out as someone new.
+
 The health surface holds no content. `GET /api/voice/health` returns
 states, counts and milliseconds, never a name and never transcript
 text. The per-chat last-decision record is bounded and written only

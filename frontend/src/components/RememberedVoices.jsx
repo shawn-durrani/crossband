@@ -14,12 +14,16 @@ import { auditionNotice, selfCollectedNotice } from '../roomState.js'
 import { cleanPreferredName, FORGET_EXPLAINER, personSummary,
          sufficiencyProgress } from '../roomState.js'
 import { clipRow, DELETE_CLIP_EXPLAINER, moveTargets } from '../voiceClips.js'
+import VoiceReadiness from './VoiceReadiness'
 
 export default function RememberedVoices() {
   const [open, setOpen] = useState(false)
   const [people, setPeople] = useState(null)     // null = not loaded yet
   const [sufficientSecs, setSufficientSecs] = useState(6)
   const [minShortClips, setMinShortClips] = useState(0)
+  // The readiness test's state and rules (#482 stage 2); each person's
+  // own result rides on their row as p.readiness.
+  const [readiness, setReadiness] = useState(null)
   const [error, setError] = useState(null)
   const [confirming, setConfirming] = useState(null)  // person_id pending confirm
   const [editing, setEditing] = useState(null)        // person_id being renamed
@@ -144,6 +148,7 @@ export default function RememberedVoices() {
       setPeople(d.people || [])
       setSufficientSecs(d.sufficient_seconds || 6)
       setMinShortClips(d.min_short_clips || 0)
+      setReadiness(d.readiness || null)
       setError(null)
     } catch (e) {
       setError(`Could not load remembered voices: ${e.message}`)
@@ -334,6 +339,7 @@ export default function RememberedVoices() {
                     </div>
                   )}
                   <div className="text-xs text-ink-dim mt-0.5">{s.status}</div>
+                  <VoiceReadiness readiness={p.readiness} summary={readiness} />
                   {/* The hygiene guard's surfacing (#28 PR-B): clips set
                       aside because they matched another voice better. */}
                   {s.setAside && (
