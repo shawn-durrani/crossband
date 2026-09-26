@@ -19,6 +19,11 @@ and "heard but changed nothing" wording, tested without a model.
    instruction at all and that "off" needs a plain statement, and a spoken
    room change posts mode_changed_line. Whether the model obeys is measured
    by eval_intent's room_hold_back fixtures, not here.
+6. The 26 September field test (#474): a word spelt out letter by letter
+   to fix the transcript was heard as a name correction. The prompt now
+   says spelling a word out is no correction unless the word is a
+   person's name. Whether the model obeys is measured by eval_intent's
+   spelling fixtures.
 """
 
 import json
@@ -68,6 +73,19 @@ def test_merged_prompt_makes_both_directions_need_a_plain_statement():
     assert "alone now" in p
     assert "we're just talking" in p and "the opposite of alone" in p
     assert "When unsure, \"none\"" in p
+
+
+def test_merged_prompt_says_a_spelt_out_word_is_no_correction():
+    p = intent.build_merged_prompt("hello", "Alex", ["Claude"], [], [])
+    assert "spoken and transcribed" in p
+    assert "spelling one out is a transcript fix, never a correction" in p
+    assert "whoever the message is spoken to" in p
+    assert "does not make the spelt word their name" in p
+    assert "a word the message calls a thing" in p
+    assert "Only a word that is a person's name counts" in p
+    assert "with their name spelt out is an introduction" in p
+    assert "spelt out letters joined" in p
+    assert "never the same name spelt out" in p
 
 
 # ---------- parse_merged ----------

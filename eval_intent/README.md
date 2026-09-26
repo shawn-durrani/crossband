@@ -30,7 +30,9 @@ known to drop, the negatives the depth rules guard against, research
 requests against tool requests, and turns that carry two instructions
 at once. It also covers requests for the seats to hold back, like
 "just eavesdrop until we ask", which must never switch room mode on or
-off. All of it is made up. A set built from real turns belongs
+off. Then there are words spelt out letter by letter to fix the
+transcript, like "K-E-R-F". Those are never a name correction, while a
+person's name spelt out still is one. All of it is made up. A set built from real turns belongs
 outside the repository.
 
 ## What it compares

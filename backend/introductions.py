@@ -228,6 +228,20 @@ def _clean_name(raw) -> str:
     return name if name[:1].isupper() else name[:1].upper() + name[1:]
 
 
+_SPELT_OUT = re.compile(r"^[A-Za-z](?:-[A-Za-z])+$")
+
+
+def _join_spelt(raw):
+    """A name the model handed back still spelt out letter by letter
+    ("M-A-T-E-O") as the one word it spells, "Mateo" (#474). Stored as it
+    came, the letters became a person's second name. Anything else comes
+    back unchanged."""
+    if isinstance(raw, str) and _SPELT_OUT.match(raw.strip()):
+        letters = raw.replace("-", "").strip()
+        return letters[:1].upper() + letters[1:].lower()
+    return raw
+
+
 def parse_verdict(text) -> dict:
     """Parse the utility model's JSON verdict, defensively: anything that is
     not the documented shape degrades to 'nothing found' rather than raising.
@@ -659,7 +673,9 @@ def parse_correction_verdict(text) -> list:
     names collapse by voice) carries an extra "also" key - the second form
     - included only when it survives cleaning, is not a relationship noun
     and actually differs from the name, so single-form entries keep their
-    historical shape exactly."""
+    historical shape exactly. A form still spelt out letter by letter is
+    joined into its word first (#474), so "M-A-T-E-O" beside "Mateo" is
+    one form, not two."""
     if not text:
         return []
     m = re.search(r"\{.*\}", text, re.DOTALL)
@@ -676,7 +692,7 @@ def parse_correction_verdict(text) -> list:
                   if isinstance(data.get("corrections"), list) else []):
         if not isinstance(entry, dict):
             continue
-        name = _clean_name(entry.get("name"))
+        name = _clean_name(_join_spelt(entry.get("name")))
         if not name or relationship_noun(name):
             continue
         raw_who = entry.get("who")
@@ -685,7 +701,7 @@ def parse_correction_verdict(text) -> list:
         else:
             who = _clean_name(raw_who)
         parsed = {"who": who, "name": name}
-        also = _clean_name(entry.get("also"))
+        also = _clean_name(_join_spelt(entry.get("also")))
         if also and not relationship_noun(also) \
                 and also.casefold() != name.casefold():
             parsed["also"] = also

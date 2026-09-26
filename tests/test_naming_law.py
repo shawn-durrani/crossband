@@ -438,6 +438,26 @@ def test_parse_correction_verdict_keeps_the_also_form():
         assert out == [{"who": "", "name": "Matteo"}], junk
 
 
+def test_parse_correction_verdict_joins_spelt_out_letters():
+    """#474: a spelt out correction came back with the letters as its
+    second form, which would have stored "M-A-T-E-O" as one of Mateo's
+    names. The letters join into the word they spell."""
+    parse = introductions.parse_correction_verdict
+    out = parse(json.dumps({"corrections": [
+        {"who": "", "name": "Mateo", "also": "M-A-T-E-O"}]}))
+    assert out == [{"who": "", "name": "Mateo"}]
+    out = parse(json.dumps({"corrections": [
+        {"who": "owner", "name": "S-A-M-M", "also": ""}]}))
+    assert out == [{"who": "owner", "name": "Samm"}]
+    # a real second form still counts, and a hyphenated name is left alone
+    out = parse(json.dumps({"corrections": [
+        {"who": "", "name": "Matteo", "also": "M-A-T-E-O"}]}))
+    assert out == [{"who": "", "name": "Matteo", "also": "Mateo"}]
+    out = parse(json.dumps({"corrections": [
+        {"who": "Sam", "name": "Sam-Alex", "also": ""}]}))
+    assert out == [{"who": "Sam", "name": "Sam-Alex"}]
+
+
 def test_alias_declaration_puts_both_names_on_one_person(app):
     with TestClient(app, base_url="http://127.0.0.1"):
         chat_id = _mk_chat()

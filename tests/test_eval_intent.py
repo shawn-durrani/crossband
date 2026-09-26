@@ -54,6 +54,24 @@ def test_corpus_grades_hold_back_requests_as_no_instruction():
     assert _fx("room_on_and_listen").expected["mode_command"] == "on"
 
 
+def test_corpus_grades_spelt_out_words_apart_from_spelt_out_names():
+    """The 26 September field test (#474): a word spelt out after a few
+    noes, to fix the transcript, was heard as a name correction. The corpus
+    carries that shape in made-up words, graded as no instruction, beside
+    real name corrections spelt out, which must still count."""
+    fixtures = load_fixtures()
+    words = [f for f in fixtures if f.category == "spelling_negative"]
+    names = [f for f in fixtures if f.category == "correction_spelt_out"]
+    assert len(words) >= 5 and len(names) >= 3
+    assert all(not f.has_intent for f in words)
+    assert all(f.expected["corrections"] for f in names)
+    assert _fx("spell_misheard_word_after_noes").text.startswith("No, no, no.")
+    after_noes = _fx("correction_spelt_out_after_noes")
+    assert after_noes.expected["corrections"][0]["name"] == "Mateo"
+    assert _fx("correction_spelt_out_owner").expected["corrections"][0][
+        "who"] == "owner"
+
+
 def test_fixture_validation_rejects_bad_shapes():
     base = {"id": "x", "category": "c", "text": "hi", "expected": {}}
     Fixture.from_dict(base)

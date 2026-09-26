@@ -1,0 +1,136 @@
+[
+  {
+    "id": "spell_misheard_word_after_noes",
+    "category": "spelling_negative",
+    "known": [
+      "Sam",
+      "Dave"
+    ],
+    "present": [
+      "Sam"
+    ],
+    "text": "No, no, no. D-O-V-E-T-A-I-L.",
+    "expected": {},
+    "notes": "The transcript got a word wrong and the speaker spelt it out after a few noes. That fixes the transcript, not anyone's name."
+  },
+  {
+    "id": "spell_misheard_word_said",
+    "category": "spelling_negative",
+    "known": [
+      "Sam"
+    ],
+    "text": "No, I said kerf. K-E-R-F.",
+    "expected": {},
+    "notes": "Repeating a misheard word, then spelling it."
+  },
+  {
+    "id": "spell_ordinary_word_question",
+    "category": "spelling_negative",
+    "text": "How do you spell necessary? N-E-C-E-S-S-A-R-Y?",
+    "expected": {}
+  },
+  {
+    "id": "spell_timber_not_jar",
+    "category": "spelling_negative",
+    "known": [
+      "Dave"
+    ],
+    "text": "Not jar. J-A-R-R-A-H, the timber.",
+    "expected": {}
+  },
+  {
+    "id": "spell_word_to_a_person",
+    "category": "spelling_negative",
+    "known": [
+      "Sam"
+    ],
+    "present": [
+      "Sam"
+    ],
+    "text": "Sam, it's spelt T-E-N-O-N, like the joint.",
+    "expected": {},
+    "notes": "Spoken to a person in the room, but the spelt word is a joint, not Sam's name."
+  },
+  {
+    "id": "spell_town_name",
+    "category": "spelling_negative",
+    "known": [
+      "Sam"
+    ],
+    "text": "No, the town is F-A-I-R-H-A-V-E-N.",
+    "expected": {},
+    "notes": "A place spelt out is a transcript fix, like any other word that isn't a person's name."
+  },
+  {
+    "id": "correction_spelt_out_not_the_old_form",
+    "category": "correction_spelt_out",
+    "known": [
+      "Matteo",
+      "Sam"
+    ],
+    "present": [
+      "Matteo"
+    ],
+    "text": "It's Mateo, M-A-T-E-O, not Matteo.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "Matteo",
+          "name": "Mateo",
+          "also": ""
+        }
+      ]
+    }
+  },
+  {
+    "id": "correction_spelt_out_after_noes",
+    "category": "correction_spelt_out",
+    "known": [
+      "Sam"
+    ],
+    "text": "No, no. It's Mateo, M-A-T-E-O.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "",
+          "name": "Mateo",
+          "also": ""
+        }
+      ]
+    },
+    "notes": "The same noes as the transcript fixes, but the spelt word is a person's name. Nobody known is named, so who is left blank."
+  },
+  {
+    "id": "correction_spelt_out_named_person",
+    "category": "correction_spelt_out",
+    "known": [
+      "Sam",
+      "Dave"
+    ],
+    "text": "Sam's name is spelt S-A-M-M, with two Ms.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "Sam",
+          "name": "Samm",
+          "also": ""
+        }
+      ]
+    }
+  },
+  {
+    "id": "correction_spelt_out_owner",
+    "category": "correction_spelt_out",
+    "user_name": "Matteo",
+    "text": "My name's spelt M-A-T-E-O, one T.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "owner",
+          "name": "Mateo",
+          "also": ""
+        }
+      ]
+    }
+  }
+]
