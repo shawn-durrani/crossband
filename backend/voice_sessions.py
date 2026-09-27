@@ -112,6 +112,9 @@ FILLING IN, rules pinned in the same test file:
   * Nothing else happens: no seat, no saved clip, no ask.
   * The owner's own name (or a spelling of it) is written with the owner
     marker, as the pass writes it.
+  * A voice someone said is a TV or a radio (media_voice) fills its turns
+    with the unresolved reason "media" instead of a name, and is never
+    named or marked new again in the session unless a person names it.
 """
 
 import collections
@@ -144,6 +147,7 @@ ROWS_MAX = 5000
 ROWS_KEEP = 4000
 ROW_VERSION = 1
 SESSION_SOURCE = "session"      # the label source the pass and filling write
+MEDIA = "media"                 # a voice someone said is a TV or a radio
 TURNS_KEPT = 400                # turns per session a late name can fill
 LIVE_WAIT_S = 0.8               # longest the pass waits for a name
 FEED_CHUNK_BYTES = int(0.25 * 16000) * 2   # audio pushed at a time
@@ -557,7 +561,25 @@ def human_named(chat_id, turn_id, name, person_id, cfg):
         if (other.get("human") or {}).get("pid") == person_id:
             other.pop("human", None)
     voice["human"] = {"name": name, "pid": person_id}
+    voice.pop(MEDIA, None)      # a name set by hand outranks "that's the TV"
     fill_labels(chat_id, sess, {slot: {"state": "named", "name": name}}, cfg)
+    return True
+
+
+def media_voice(chat_id, turn_id, cfg):
+    """Someone said the session voice that spoke a turn is a TV, a radio or
+    a recording (#523): from now on it is never named, seated, asked about
+    or saved in this session, and its turns that carry no name, or a
+    session name, say so at once. True when a session voice was marked."""
+    with _lock:
+        sess = _sessions.get(chat_id)
+    slot = voice_of_turn(chat_id, turn_id)
+    voice = sess["voices"].get(slot) if sess and slot is not None else None
+    if voice is None:
+        return False
+    voice.pop("human", None)
+    voice[MEDIA] = True
+    fill_labels(chat_id, sess, {slot: {"state": MEDIA}}, cfg)
     return True
 
 
@@ -982,6 +1004,14 @@ def _human_first(voices, out, taken):
             taken.add(h["pid"])
 
 
+def _media_first(voices, out):
+    """A voice someone said is a TV or a radio takes no name and is never
+    new, whatever the scores say (media_voice)."""
+    for slot, v in voices.items():
+        if v.get(MEDIA) and not v.get("human") and slot in out:
+            out[slot].update(state=MEDIA, name="", pid="")
+
+
 def name_voices_calibrated(voices, allowed, snapshot):
     """Name every session voice on the calibrated two-model scorer: each
     voice's pooled TitaNet-Small and ERes2Net fingerprints, and its clean
@@ -1010,11 +1040,13 @@ def name_voices_calibrated(voices, allowed, snapshot):
         out[slot] = entry
     taken = set()
     _human_first(voices, out, taken)
+    _media_first(voices, out)
     pairs = sorted(((pr, slot, pid) for slot, row in probs.items()
                     for pid, pr in row.items()), reverse=True)
     for pr, slot, pid in pairs:
         entry = out[slot]
-        if entry["pid"] or pid in taken or pr < vc.NAME_BAR:
+        if entry["pid"] or entry["state"] == MEDIA or pid in taken \
+                or pr < vc.NAME_BAR:
             continue
         if (voices[slot].get("clean_s") or 0.0) < LISTEN_MIN_S:
             continue
@@ -1022,7 +1054,7 @@ def name_voices_calibrated(voices, allowed, snapshot):
                      score=round(pr, 4), prob=round(pr, 4))
         taken.add(pid)
     for slot, entry in out.items():
-        if entry["state"] == "named":
+        if entry["state"] in ("named", MEDIA):
             continue
         best = max((probs.get(slot) or {}).values(), default=None)
         if (voices[slot].get("clean_s") or 0.0) >= NEW_VOICE_MIN_S \
@@ -1065,11 +1097,12 @@ def name_voices(voices, people, bar):
                      "clean_s": round(v.get("clean_s") or 0.0, 2)}
     taken = set()
     _human_first(voices, out, taken)
+    _media_first(voices, out)
     pairs = sorted(((s, slot, pid) for slot, row in scores.items()
                     for pid, s in row.items()), reverse=True)
     for score, slot, pid in pairs:
         entry = out[slot]
-        if entry["pid"] or pid in taken:
+        if entry["pid"] or entry["state"] == MEDIA or pid in taken:
             continue
         if (voices[slot].get("clean_s") or 0.0) < LISTEN_MIN_S:
             continue
@@ -1082,7 +1115,7 @@ def name_voices(voices, people, bar):
                      score=round(score, 4))
         taken.add(pid)
     for slot, entry in out.items():
-        if entry["state"] == "named":
+        if entry["state"] in ("named", MEDIA):
             continue
         best = entry["score"]
         if (voices[slot].get("clean_s") or 0.0) >= NEW_VOICE_MIN_S \
@@ -1565,8 +1598,9 @@ def fillable(old):
 
 def fill_labels(chat_id, sess, named, cfg, skip=""):
     """Write each named session voice's name onto its unnamed turns in this
-    session (see FILLING IN above), all but the turn `skip`. Returns how
-    many labels it wrote."""
+    session (see FILLING IN above), all but the turn `skip`, and a TV's
+    mark onto a media voice's (media_voice). Returns how many labels it
+    wrote."""
     from . import diarize, introductions
     owner = ((cfg or {}).get("user_name") or "").strip()
     done = sess.setdefault("filled", {})
@@ -1576,23 +1610,39 @@ def fill_labels(chat_id, sess, named, cfg, skip=""):
         for turn_id, slot in sess.get("turn_voice") or ():
             voice = named.get(slot) or {}
             name = voice.get("name")
-            if voice.get("state") != "named" or not name \
-                    or done.get(turn_id) == name or turn_id == skip:
+            # The mark a turn got, so it isn't written twice. A TV's can't
+            # clash with a name, since no name holds a bracket.
+            mark = "(media)" if voice.get("state") == MEDIA else name
+            if not (voice.get("state") == MEDIA
+                    or (voice.get("state") == "named" and name)) \
+                    or done.get(turn_id) == mark or turn_id == skip:
                 continue
             msg = db.get_message_by_voice_turn(con, chat_id, turn_id)
             old = _labels_of(msg["voice_labels"]) if msg else None
             if not msg or not fillable(old):
                 continue
-            if old.get("labels") == [name] and not (
+            if voice.get("state") == MEDIA:
+                already = old.get("unresolved") == MEDIA \
+                    and not old.get("labels")
+            else:
+                already = old.get("labels") == [name] and not (
                     old.get("uncertain") or old.get("learning")
-                    or old.get("unresolved")):
-                done[turn_id] = name        # already says so
+                    or old.get("unresolved"))
+            if already:
+                done[turn_id] = mark        # already says so
                 continue
-            is_owner = bool(owner) and introductions.owner_alias(name, owner)
-            db.set_message_voice_labels(con, msg["id"], diarize.label_payload(
-                [name], clusters=(SESSION_SOURCE,), source=SESSION_SOURCE,
-                score=voice.get("score") or 0.0, owner=is_owner))
-            done[turn_id] = name
+            if voice.get("state") == MEDIA:
+                payload = diarize.label_payload(
+                    [], clusters=(SESSION_SOURCE,), source=SESSION_SOURCE,
+                    unresolved=MEDIA)
+            else:
+                is_owner = bool(owner) and introductions.owner_alias(
+                    name, owner)
+                payload = diarize.label_payload(
+                    [name], clusters=(SESSION_SOURCE,), source=SESSION_SOURCE,
+                    score=voice.get("score") or 0.0, owner=is_owner)
+            db.set_message_voice_labels(con, msg["id"], payload)
+            done[turn_id] = mark
             count += 1
     finally:
         con.close()

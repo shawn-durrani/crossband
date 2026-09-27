@@ -304,7 +304,8 @@ export function flagCopy(flag) {
   if (!flag) return ''
   if (flag.kind === 'unknown_voice') {
     return 'Someone new is speaking - who? Say or type their name '
-      + '(e.g. "that\'s Dave") and their turns will be named.'
+      + '(e.g. "that\'s Dave") and their turns will be named. '
+      + 'If it\'s the TV or radio, say "that\'s the TV".'
   }
   if (flag.kind === 'mismatch') {
     const who = flag.suspected

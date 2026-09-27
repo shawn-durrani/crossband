@@ -380,6 +380,24 @@ def relationship_noun(name: str) -> bool:
     return word.endswith("s") and word[:-1] in _RELATIONSHIP_NOUNS
 
 
+# A TV is never a person (#523). "That's the TV" said while the app asks
+# who a new voice is may come back from the model as an introduction of
+# "TV", so the device words never reach the roster, whatever the turn.
+_MEDIA_NOUNS = {"tv", "telly", "television", "radio", "video", "podcast",
+                "film", "movie", "show", "stereo", "recording", "youtube"}
+_MEDIA_LEADING = ("the", "a", "an", "my", "our", "just", "that")
+
+
+def media_noun(name: str) -> bool:
+    """Is `name` a TV, a radio or a recording rather than a person? The
+    whole cleaned name, less a leading "the", "just" and the like."""
+    words = [w for w in re.sub(r"[^a-z ]", " ", (name or "").casefold())
+             .split() if w]
+    while words and words[0] in _MEDIA_LEADING:
+        words = words[1:]
+    return len(words) == 1 and words[0] in _MEDIA_NOUNS
+
+
 def match_remembered_name(text, known_names, exclude=frozenset()) -> str:
     """When an introduction gave only a relationship ('my wife is here'), the
     utterance may still contain a proper name the roster verdict missed - and
@@ -865,6 +883,10 @@ SCAN_OUTCOMES = (
     "ask_raised",           # relationship-only, no remembered match: asking
     "ask_answered",         # an introduction named the voice an open "who's
                             # this?" ask points at (#523, voice_ask.py)
+    "media_ignored",        # "that's the TV" answered the ask: that voice is
+                            # ignored for the rest of its session (#523)
+    "media_turn",           # the turn came from a voice someone said is a
+                            # TV, so nothing it said was applied (#523)
     "roster_grew",          # already armed; people were added
     "roster_shrank",        # a departure freed roster slots
     "name_corrected",       # a spoken correction set a preferred name
@@ -937,9 +959,12 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
     several axes at once ("group mode on - this is Dave") applies all of
     them under the one verdict line. An introduction heard while a "who's
     this?" ask is open can also answer it, naming the voice the ask points
-    at (backend/voice_ask.py, #523). A confirmed instruction that changed
-    nothing on every axis it touched posts one plain system line saying so
-    (intent.nothing_changed_line) - a miss must never be silent again (#258).
+    at, and so can "that's the TV", which has that voice ignored for the
+    rest of its session (backend/voice_ask.py, #523). A turn spoken by a
+    voice someone said is a TV applies nothing. A confirmed instruction
+    that changed nothing on every axis it touched posts one plain system
+    line saying so (intent.nothing_changed_line) - a miss must never be
+    silent again (#258).
     The exception is a correction in a turn that spells a word out with
     nothing marking the word as a name (keep_name_corrections, #494): that
     was never an instruction, so it is set aside, logged and not posted.
@@ -970,6 +995,25 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             # These can learn from the turn's own audio, which the voice
             # check remembers a moment after the message is saved.
             await await_turn_audio(message_id)
+        if message_id and verdict != intent.empty_verdict() \
+                and await asyncio.to_thread(voice_ask.said_by_media,
+                                            message_id):
+            # #523: a voice someone said is a TV said this, so nothing in
+            # it is an instruction. Its label is on the row by now: the
+            # voice check labels a turn well inside the model call.
+            _log_verdict(chat_id, "media_turn")
+            return
+        if verdict["media"]:
+            # #523: "that's the TV" answers an open ask, before any name in
+            # the same turn could.
+            ask = await asyncio.to_thread(voice_ask.open_ask, chat_id) \
+                if asking else None
+            result = await asyncio.to_thread(
+                voice_ask.answer_media, chat_id, ask, message_id, cfg) \
+                if ask is not None else "no_change"
+            outcomes["media"] = result
+            if outcome is None and result != "no_change":
+                outcome = result
         if verdict["mode_command"] != "none":
             direction = (COMMAND_ARM if verdict["mode_command"] == "on"
                         else COMMAND_DISARM)
@@ -982,7 +1026,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             # #523: an open "who's this?" ask may be what this names. It is
             # read again now, because the introduction closes it.
             ask = await asyncio.to_thread(voice_ask.open_ask, chat_id) \
-                if asking and verdict["introductions"] else None
+                if asking and verdict["introductions"] \
+                and not verdict["media"] else None
             result = await asyncio.to_thread(apply_scan, chat_id, verdict,
                                              cfg, text, message_id)
             if ask is not None:
@@ -1350,6 +1395,12 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
         if len(intros) < before:
             log.info("participant-alias introduction dropped: chat=%s n=%d",
                      chat_id, before - len(intros))
+        # A TV is never a person (#523).
+        before = len(intros)
+        intros = [n for n in intros if not media_noun(n)]
+        if len(intros) < before:
+            log.info("media introduction dropped: chat=%s n=%d",
+                     chat_id, before - len(intros))
         # Naming hygiene (#28 phase 4): strip relationship nouns. "Sam" and
         # "Wife" in one verdict is the proper name plus its echo; "Wife"
         # alone is an unnamed introduction, resolved below.
@@ -1715,6 +1766,8 @@ def _heard_someone_else(message_id, owner):
              and n.strip()]
     if any(not owner_alias(n, owner) for n in names):
         return True
+    if data.get("unresolved") == "media":
+        return True             # a TV vouches for nobody (#523)
     if data.get("unresolved") == "new_voice":
         from . import diarize
         return diarize.owner_sufficient(anchors.store().people(), owner)

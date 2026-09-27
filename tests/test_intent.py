@@ -63,6 +63,25 @@ def test_the_asking_note_is_added_only_while_the_app_is_asking():
     assert asking.replace(intent.ASKING_NOTE, "") == plain
     assert "that's Dave" in intent.ASKING_NOTE
     assert asking.endswith("That's Dave.")
+    # and only then is the model asked whether the voice is a TV
+    assert "that's the TV" in intent.ASKING_NOTE
+    assert '"media": true' in intent.ASKING_NOTE
+    assert "media" not in plain
+
+
+def test_parse_merged_reads_a_tv_only_as_a_plain_true():
+    assert intent.parse_merged('{"media": true}')["media"] is True
+    for junk in ('{"media": "true"}', '{"media": 1}', '{}', '{"media": null}'):
+        assert intent.parse_merged(junk)["media"] is False, junk
+    assert intent.empty_verdict()["media"] is False
+
+
+def test_line_for_a_tv_heard_while_the_app_wasnt_asking():
+    verdict = {**intent.empty_verdict(), "media": True}
+    assert "TV or radio" in intent.nothing_changed_line(
+        verdict, {"media": "no_change"})
+    assert intent.nothing_changed_line(
+        verdict, {"media": "media_ignored"}) == ""
 
 
 def test_merged_prompt_handles_empty_lists():

@@ -1013,6 +1013,7 @@ UNRESOLVED_HEAD_COPY = {
     "no_enrolled": "no voices learnt yet",
     "listening": "still listening",
     "new_voice": "a new voice",
+    "media": "a TV or radio, not a person",
 }
 
 # Honest pending identity (#28, night test 4; meaning narrowed by PR-B).
@@ -1027,6 +1028,10 @@ UNRESOLVED_HEAD_COPY = {
 # again. The window survives at its measured-era width as slack for a
 # slow check.
 PENDING_IDENTITY_HEAD = "Identity pending" + IN_ROOM_SUFFIX
+# A voice someone said is a TV, a radio or a recording (#523). Its turns
+# still reach the seats, under a head that says plainly it isn't a person
+# in the room, so they don't answer it or take its words as someone's.
+MEDIA_HEAD = "Background audio (a TV or radio, not a person in the room)"
 PENDING_IDENTITY_SECS = 4.0
 
 # Crosstalk in the projection (#28 phase 4). The voice check marks a turn
@@ -1125,6 +1130,8 @@ def _turn_attribution(msg, cfg, now=None):
               if isinstance(l, str) and _clean_head(l)]
     if not labels:
         reason = data.get("unresolved")
+        if reason == "media":
+            return MEDIA_HEAD, "unnamed", []
         if reason:
             # #411: the matcher looked and could not name the voice. Never
             # the owner, and never a bare "pending": the head says why. A

@@ -293,6 +293,7 @@ def test_owner_anchor_seeds_from_the_introductions_own_audio(app):
     ({"labels": [], "unresolved": "new_voice"}, False, True),  # owner unknown
     ({"labels": ["Dave"], "uncertain": [], "owner": True}, True, True),
     ({"labels": [], "unresolved": "listening"}, True, True),
+    ({"labels": [], "unresolved": "media"}, False, False),     # a TV (#523)
 ])
 def test_the_owner_is_seeded_only_from_a_voice_that_could_be_theirs(
         app, labels, owner_known, seeds):

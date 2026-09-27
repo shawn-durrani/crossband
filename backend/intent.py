@@ -2,7 +2,8 @@
 reads every instruction the live scan acts on - a room-mode command, an
 introduction or departure (with aliases), a name correction, a reasoning-
 depth change, a research cue (#253/#417), an explicit ask for a stronger
-model (#254) - and returns them all in one JSON verdict.
+model (#254), and while the app asks who a new voice is, "that's the TV"
+(#523) - and returns them all in one JSON verdict.
 
 The prompt and the parser live here, not in eval_intent, so the harness that
 justified the switch (`python -m eval_intent`) and the live scan
@@ -30,7 +31,7 @@ MAX_MODEL_SEATS = 8
 def empty_verdict() -> dict:
     return {"mode_command": "none", "introductions": [], "departures": [],
             "aliases": {}, "corrections": [], "depth": [], "research": "none",
-            "stronger_model": []}
+            "stronger_model": [], "media": False}
 
 
 # While the app is asking who a new voice is (#523), the turn may be the
@@ -40,7 +41,11 @@ def empty_verdict() -> dict:
 ASKING_NOTE = (
     "The app has just asked who a new voice in the room is, so the message "
     "may answer it. An answer saying who the voice is ('that's Dave', 'that "
-    "was my brother Dave', 'it's Dave') introduces that name.\n")
+    "was my brother Dave', 'it's Dave') introduces that name. An answer "
+    "saying the voice isn't a person but a TV, radio, video, podcast or "
+    "other recording ('that's the TV', 'it's just the radio', 'ignore "
+    "that, it was a video') introduces nobody: add \"media\": true to the "
+    "reply, whatever else it asks.\n")
 
 
 def build_merged_prompt(text: str, user_name: str, seat_names: list,
@@ -202,6 +207,9 @@ def parse_merged(text, message="") -> dict:
     out["research"] = RESEARCH_MORE if data.get("research") == RESEARCH_MORE \
         else "none"
     out["stronger_model"] = parse_model_seats(data.get("stronger_model"))
+    # #523: only a turn the model was told might answer the ask can say
+    # the voice is a TV, and only a plain true counts.
+    out["media"] = data.get("media") is True
     return out
 
 
@@ -304,6 +312,11 @@ def _research_line() -> str:
             "research mode is already on for this chat.")
 
 
+def _media_line() -> str:
+    return ("Heard that a voice is a TV or radio, and nothing changed: the "
+            "app wasn't asking about one new voice.")
+
+
 def _model_line() -> str:
     return ("Heard a request for a stronger model, and nothing changed: "
             "the seats named are already on one for this chat, or can't "
@@ -315,9 +328,11 @@ def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
     nothing, or "" when there is nothing to say - no instruction was heard
     at all, or ANY confirmed axis actually changed something. `outcomes`
     maps the axes the scan applied - "mode_command", "introductions",
-    "corrections", "depth", "research", "stronger_model" - to the outcome
+    "corrections", "depth", "research", "stronger_model", "media" - to the
+    outcome
     string apply_command / apply_scan / apply_corrections / apply_depth /
-    research.apply_research / model_step.step_up returned.
+    research.apply_research / model_step.step_up / voice_ask.answer_media
+    returned.
 
     A turn that instructs on more than one axis at once only gets the line
     when EVERY instructed axis was a no-op; the wording then names the
@@ -333,6 +348,7 @@ def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
         ("depth", bool(verdict.get("depth")), _depth_line),
         ("research", verdict.get("research") == RESEARCH_MORE, _research_line),
         ("stronger_model", bool(verdict.get("stronger_model")), _model_line),
+        ("media", verdict.get("media") is True, _media_line),
     )
     if outcomes.get("model") == "model_stepped":
         return ""  # #254: a depth cue or a stronger-model ask moved a model
