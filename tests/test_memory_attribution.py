@@ -307,7 +307,7 @@ def test_handoff_resolves_speakers_and_source_app_is_untouched(app):
     ingests = [body for url, body in fake.posts if url.endswith("/ingest")]
     assert len(ingests) == 1
     payload = ingests[0]
-    assert payload["source_app"] == SOURCE_APP == "multi-model-chat"
+    assert payload["source_app"] == SOURCE_APP == "multi-model-chat"  # secret-scan: allow (the permanent wire value, pinned)
     speakers = {int(m["external_id"]): m["speaker"]
                 for m in payload["messages"]}
     assert speakers[m_owner["id"]] == "user"

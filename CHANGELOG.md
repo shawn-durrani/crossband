@@ -1227,7 +1227,7 @@ out the old `dev.sideband.server` label and installs
   repo. One limit: a guest session begun before the upgrade cannot be
   resumed with continue_last, because its transcript is keyed by the
   old working directory; summon a fresh visit instead.
-- The source tag sent to Membro stays `multi-model-chat`, now
+- The source tag sent to Membro stays `multi-model-chat`, now <!-- secret-scan: allow (historical wire value) -->
   documented as deliberately permanent: Membro keys conversation
   identity on it, and renaming it would fork every open chat's memory
   history.

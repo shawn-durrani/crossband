@@ -303,8 +303,14 @@ def test_the_answer_says_checking_until_the_build_covers_the_new_clips(
         pids = {n: bank(store, n, clips) for n, clips in HOUSEHOLD.items()}
         dave = pids["Dave"]
         vc._worker["kick"].set()
-        assert _wait(lambda: c.get(f"/api/voice/people/{dave}/readiness")
-                     .json()["state"] == "current")
+
+        def settled():
+            got = c.get(f"/api/voice/people/{dave}/readiness").json()
+            # the person's entry can be current while a debounced rebuild
+            # for the other banks is still running; wait for both
+            return got["state"] == "current" \
+                and got["summary"]["state"] == "ready"
+        assert _wait(settled)
         before = c.get(f"/api/voice/people/{dave}/readiness").json()
         assert before["readiness"]["reason"] == "one_day"
         assert before["summary"]["state"] == "ready"

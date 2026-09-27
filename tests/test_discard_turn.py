@@ -70,7 +70,7 @@ def test_ingested_watermark_is_reported_honestly(app):
         # it, so the UI hands the owner membro's erase deep link instead of
         # a dead end. A clean discard (test above) carries no ref.
         assert r.json() == {"ok": True, "ingested": True,
-                            "memory_ref": {"source_app": "multi-model-chat",
+                            "memory_ref": {"source_app": "multi-model-chat",  # secret-scan: allow (historical wire value)
                                            "conversation": str(chat["id"]),
                                            "message": str(m["id"])}}
         assert m["id"] not in _ids(chat["id"])
