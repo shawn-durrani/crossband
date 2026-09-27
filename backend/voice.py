@@ -72,8 +72,8 @@ def stt_ws_url(keyterms=None, timestamps=False) -> str:
 
 # ---- one final per commit (#482 item D) ----
 #
-# With word times asked for, Scribe answers each commit twice, in this
-# order: `committed_transcript` (the text) and then
+# With word times asked for, Scribe answers each commit twice, usually in
+# this order: `committed_transcript` (the text) and then
 # `committed_transcript_with_timestamps` (the same text, plus every word
 # with its start and end in seconds, counted from the first audio sent on
 # the socket). The browser must still get exactly one final per commit, and
@@ -84,11 +84,44 @@ def stt_ws_url(keyterms=None, timestamps=False) -> str:
 # is never lost. After TIMED_MISSES_TO_STOP such misses in a row the relay
 # stops waiting for the rest of the socket's life, so a Scribe that has
 # stopped sending word times costs a wait twice, not on every turn.
+#
+# Scribe sometimes sends the two the other way round, the timed one first
+# (seen on 27 September, mostly for an empty transcript, #470). That timed
+# final is the commit's final, and the plain one after it is its twin: it
+# sends nothing and takes no commit, so the next turn keeps its own id.
 
 PLAIN_FINAL = "committed_transcript"
 TIMED_FINAL = "committed_transcript_with_timestamps"
 TIMED_FINAL_WAIT_S = 0.3
 TIMED_MISSES_TO_STOP = 2
+
+# ---- keeping a quiet socket open (#470) ----
+#
+# Scribe closes a realtime socket that has had no audio for about 15
+# seconds: a normal close, with no error first. The browser only streams
+# while someone speaks, so every quiet stretch used to end the socket, the
+# browser reopened it, and a turn that began as it closed lost its start.
+# The relay now sends Scribe STT_KEEPALIVE_MS of silence whenever nothing
+# has gone up for STT_KEEPALIVE_IDLE_S. Scribe bills audio by the second,
+# so that's 20 ms in every 5 s of quiet, about 15 seconds of audio an hour.
+#
+# Scribe holds that silence as audio waiting for a commit, and commits it on
+# its own once about 36 seconds have built up. A final nobody asked for
+# would take the next real commit's turn id. So while no turn is open, once
+# STT_KEEPALIVE_COMMIT_S of keepalive silence is waiting, the relay commits
+# it itself and keeps that final to itself. Scribe refuses a commit of less
+# than 0.3 s of audio, which this stays well above.
+STT_KEEPALIVE_IDLE_S = 5.0
+STT_KEEPALIVE_MS = 20
+STT_KEEPALIVE_COMMIT_S = 1.0
+STT_KEEPALIVE_RATE = 16000
+
+
+def keepalive_audio() -> str:
+    """STT_KEEPALIVE_MS of silence as Scribe takes it: PCM-16 mono at
+    STT_KEEPALIVE_RATE, base64."""
+    samples = STT_KEEPALIVE_RATE * STT_KEEPALIVE_MS // 1000
+    return base64.b64encode(b"\x00\x00" * samples).decode()
 
 
 def _same_text(a, b) -> bool:
@@ -114,11 +147,18 @@ class CommitFinals:
         self.commits = []     # commits still waiting for their final, in order
         self.pending = None   # a plain final held for its timed twin
         self.owed = None      # a commit whose plain final went out alone
+        self.early = None     # a commit whose timed final came first
         self.misses = 0       # plain finals in a row that went out alone
         self.alone = 0        # finals sent without word times, all told
 
-    def commit(self, turn_id, start, end):
-        self.commits.append({"turn_id": turn_id, "start": start, "end": end})
+    def commit(self, turn_id, start, end, keepalive=False):
+        """`keepalive` marks the relay's own commit of keepalive silence
+        (#470): its final is paired like any other, so the FIFO stays in
+        step, and the relay keeps it to itself."""
+        turn = {"turn_id": turn_id, "start": start, "end": end}
+        if keepalive:
+            turn["keepalive"] = True
+        self.commits.append(turn)
 
     def _next(self):
         if self.commits:
@@ -128,6 +168,12 @@ class CommitFinals:
     def plain(self, text, now):
         out = self._release()
         self.owed = None
+        early, self.early = self.early, None
+        if early is not None and (not self.commits
+                                  or _same_text(early["text"], text)):
+            # The twin of a timed final that came first: that commit's
+            # final already went out, so this one sends nothing.
+            return out
         self.pending = {"turn": self._next(), "text": text,
                         "until": now + self.wait_s}
         if self.misses >= TIMED_MISSES_TO_STOP:
@@ -147,8 +193,12 @@ class CommitFinals:
             # The late twin of a final that already went out: its words
             # still belong to that commit, and nothing goes to the browser.
             return [{"turn": owed["turn"], "text": None, "words": words}]
-        # A commit Scribe answered with the timed final alone.
-        return [{"turn": self._next(), "text": text, "words": words}]
+        # A commit Scribe answered with the timed final first, or alone.
+        # Word times are arriving, so the misses start again.
+        turn = self._next()
+        self.early = {"turn": turn, "text": text}
+        self.misses = 0
+        return [{"turn": turn, "text": text, "words": words}]
 
     def expire(self, now):
         if self.pending is not None and now >= self.pending["until"]:

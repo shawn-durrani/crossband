@@ -57,7 +57,15 @@ export function shouldReopenAfterClose({ active, sttRealtime, sttClosing } = {})
 // it and rebuild the capture graph. A short zero-frame blip commits exactly as
 // today (the drop-commit guard swallows it); only a real utterance with a dead
 // feed diverges.
-export function realtimeCommitAction({ framesSent, speechMs, minSpeechMs } = {}) {
+//
+// #470: `socketChanged` says the realtime socket this utterance began on
+// isn't the one open now (it closed and was reopened while the person was
+// talking, or it wasn't open yet when they started). Realtime then holds
+// only the end of what they said, so a real utterance is salvaged from the
+// recorder instead, which holds all of it.
+export function realtimeCommitAction({ framesSent, speechMs, minSpeechMs,
+                                       socketChanged = false } = {}) {
   if (speechMs >= minSpeechMs && framesSent === 0) return 'salvage-rebuild'
+  if (speechMs >= minSpeechMs && socketChanged) return 'salvage'
   return 'commit'
 }

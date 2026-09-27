@@ -194,6 +194,19 @@ def voice_assign(request: Request):
     return {"participants": out}
 
 
+# #470: why a turn took the backup path, as the browser names it
+# (frontend/src/voice.js). Allowlisted so the log line is content-free;
+# anything else is logged as "unknown".
+#  batch        realtime transcription was off for this turn
+#  reconnecting the realtime socket was being reopened as the turn ended
+#  reconnect    the realtime socket was replaced while the turn was spoken
+#  late         realtime didn't answer in time
+#  rescue       realtime failed with the turn waiting on its words
+#  no_audio     the turn's audio never reached the realtime socket
+STT_BACKUP_WHY = {"batch", "reconnecting", "reconnect", "late", "rescue",
+                  "no_audio"}
+
+
 # The largest identity copy the batch path reads: MAX_UTTERANCE_SECONDS at
 # the highest rate wav_pcm16 accepts, plus room for the header.
 _BATCH_PCM_MAX_BYTES = diarize.MAX_UTTERANCE_SECONDS * 48000 * 2 + 4096
@@ -202,7 +215,8 @@ _BATCH_PCM_MAX_BYTES = diarize.MAX_UTTERANCE_SECONDS * 48000 * 2 + 4096
 @router.post("/api/chats/{chat_id}/stt")
 async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
               duration_ms: int = Form(0), turn_id: str = Form(""),
-              after: str = Form(""), pcm: UploadFile | None = File(None)):
+              after: str = Form(""), pcm: UploadFile | None = File(None),
+              why: str = Form("")):
     """Batch speech-to-text: the fallback once realtime transcription
     fails, and the salvage for a turn realtime lost.
 
@@ -214,13 +228,19 @@ async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
     names the piece before this one when a long turn was cut (#469), as
     the relay's commit frame does. Async because the check is a task on
     the running loop; the transcription and the metering are blocking and
-    run on worker threads."""
+    run on worker threads.
+
+    #470: `why` says why this turn took the backup path, one word from
+    STT_BACKUP_WHY, logged content-free so a rise shows in service.log."""
     cfg = request.app.state.settings.as_cfg()
     if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
         raise HTTPException(400, voice.disabled_reason(cfg))
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty audio")
+    log.info("stt backup path: chat=%s why=%s speech_s=%.1f", chat_id,
+             why if why in STT_BACKUP_WHY else "unknown",
+             max(duration_ms, 0) / 1000)
     turn_id = (turn_id or "").strip()[:64]
     if pcm is not None and turn_id and chat_id:
         try:
@@ -654,8 +674,14 @@ def _pop_capture(sid: str, reason: str) -> None:
     if entry is None:
         return
     lifetime_s = time.time() - entry["started_at"]
-    log.info("stt capture close: sid=%s chat=%s reason=%s lifetime_s=%.1f live_now=%d",
-             sid, entry["chat_id"], reason, lifetime_s, len(_captures))
+    # #470: the turns this session carried and the keepalives it sent.
+    # Beside the batch path's "stt backup path" lines, the turns say how
+    # often a turn took the backup path instead.
+    counts = entry.get("counts") or {}
+    log.info("stt capture close: sid=%s chat=%s reason=%s lifetime_s=%.1f live_now=%d "
+             "turns=%d keepalives=%d",
+             sid, entry["chat_id"], reason, lifetime_s, len(_captures),
+             counts.get("turns", 0), counts.get("keepalives", 0))
 
 
 @router.get("/api/voice/captures")
@@ -706,7 +732,12 @@ async def stt_stream_relay(ws: WebSocket):
     commit is answered twice. voice.CommitFinals pairs the two answers so
     the browser still gets one {final, turn_id} per commit, and the words
     go to backend/crosstalk.py in the turn's own time, for the local split
-    of a turn two people spoke in. Pinned by tests/test_stt_relay.py."""
+    of a turn two people spoke in. Pinned by tests/test_stt_relay.py.
+
+    Quiet stretches (#470): Scribe ends a socket that hears nothing for
+    about 15 s, so the relay fills a long gap between the browser's frames
+    with a sliver of silence (backend/voice.py's keepalive notes). The
+    browser's own frames go up unchanged. Pinned by tests/test_stt_relay.py."""
     if not _ws_local(ws):
         await ws.close(code=4403)
         return
@@ -726,10 +757,13 @@ async def stt_stream_relay(ws: WebSocket):
     # own session apart from an orphan's. Capture only - the TTS relay is
     # playback and never registers.
     sid = uuid.uuid4().hex[:12]
+    # #470: content-free counts for the close line: the browser's commits
+    # and the relay's keepalives.
+    counts = {"turns": 0, "keepalives": 0}
     _captures[sid] = {"sid": sid, "chat_id": chat_id,
                       "started_at": time.time(),
                       "client": (ws.headers.get("user-agent") or "")[:80],
-                      "ws": ws}
+                      "ws": ws, "counts": counts}
     # Diagnostics-only, content-free: sid open/close-with-reason and session
     # lifetime, for the turn-handoff investigation (issue: voice turn-handoff
     # stuck in listening / false "2 microphones live"). Bug B's leading
@@ -742,7 +776,7 @@ async def stt_stream_relay(ws: WebSocket):
              sid, chat_id, len(_captures))
     await ws.send_json({"session": sid})
     seconds = 0.0
-    up = down = None
+    up = down = alive = None
     last_partial = ""  # freshest partial transcript - the prewarm query
     # #85/#104: pair each commit's turn_id with the final it produces. The
     # upstream returns finals in commit order on this one socket, so a FIFO
@@ -757,6 +791,10 @@ async def stt_stream_relay(ws: WebSocket):
     # where the current turn began on it. Each commit is recorded with both
     # ends, so its word times can be read in the turn's own time.
     stt_clock = {"sent": 0.0, "began": None}
+    # #470: when audio last went up, whether any has yet (previous_text
+    # rides only the socket's first chunk), and the keepalive silence
+    # Scribe holds uncommitted. Shared by pump_up and keep_alive.
+    upstream = {"at": time.monotonic(), "first": True, "held_s": 0.0}
     # The words go to the crosstalk split, which needs the tracker's spans;
     # with no feed (no diariser, or the matcher off) there is no split, and
     # they're not kept.
@@ -827,7 +865,6 @@ async def stt_stream_relay(ws: WebSocket):
                 _close_reason = "disconnect"
                 try:
                     nonlocal seconds
-                    first = True
                     while True:
                         msg = await ws.receive_json()
                         if msg.get("done"):
@@ -871,9 +908,9 @@ async def stt_stream_relay(ws: WebSocket):
                             "commit": bool(msg.get("commit")),
                             "sample_rate": sr,
                         }
-                        if first and msg.get("previous_text"):
+                        if upstream["first"] and msg.get("previous_text"):
                             payload["previous_text"] = msg["previous_text"]
-                        first = False
+                        upstream["first"] = False
                         if payload["commit"] and chat_id:
                             # Speech just ended - start the ambient recall
                             # NOW, overlapped with ElevenLabs finalizing the
@@ -948,6 +985,11 @@ async def stt_stream_relay(ws: WebSocket):
                                 log.warning("voice check scheduling failed; "
                                             "live transcription continues",
                                             exc_info=True)
+                            # This commit takes any keepalive silence with it.
+                            counts["turns"] += 1
+                            upstream["held_s"] = 0.0
+                        if audio:
+                            upstream["at"] = time.monotonic()
                         await eleven.send(json.dumps(payload))
 
                 except Exception as exc:
@@ -965,6 +1007,8 @@ async def stt_stream_relay(ws: WebSocket):
                 # to the browser, so a pass waiting on them has them before
                 # the browser can send the message the label belongs to.
                 for out in outs:
+                    if out["turn"].get("keepalive"):
+                        continue     # the relay's own commit of silence (#470)
                     tid = out["turn"].get("turn_id")
                     if tid and keep_words:
                         try:
@@ -1039,8 +1083,48 @@ async def stt_stream_relay(ws: WebSocket):
                     if nxt is not None and not nxt.done():
                         nxt.cancel()
 
+            async def keep_alive():
+                # #470: Scribe ends a socket that has heard nothing for about
+                # 15 s, so a quiet stretch gets a sliver of silence every
+                # STT_KEEPALIVE_IDLE_S. Frames the browser sends go up
+                # exactly as before; this only fills the gaps between them.
+                # While no turn is open, the silence is committed once
+                # enough has built up, and that final stays here.
+                nonlocal seconds
+                chunk_s = voice.STT_KEEPALIVE_MS / 1000
+                silence = voice.keepalive_audio()
+                try:
+                    while True:
+                        wait = voice.STT_KEEPALIVE_IDLE_S - (
+                            time.monotonic() - upstream["at"])
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                            continue
+                        commit = (stt_clock["began"] is None
+                                  and upstream["held_s"] + chunk_s
+                                  >= voice.STT_KEEPALIVE_COMMIT_S)
+                        seconds += chunk_s
+                        stt_clock["sent"] += chunk_s
+                        if commit:
+                            finals.commit(None, stt_clock["sent"],
+                                          stt_clock["sent"], keepalive=True)
+                            upstream["held_s"] = 0.0
+                        else:
+                            upstream["held_s"] += chunk_s
+                        upstream["at"] = time.monotonic()
+                        upstream["first"] = False
+                        counts["keepalives"] += 1
+                        await eleven.send(json.dumps({
+                            "message_type": "input_audio_chunk",
+                            "audio_base_64": silence, "commit": commit,
+                            "sample_rate": voice.STT_KEEPALIVE_RATE}))
+                except (websockets.ConnectionClosed, RuntimeError, OSError):
+                    return       # the socket is going; the pumps see it too
+
             up = asyncio.create_task(pump_up())
             down = asyncio.create_task(pump_down())
+            alive = asyncio.create_task(keep_alive())
+            alive.add_done_callback(collect_read)
             # FIRST_COMPLETED, not FIRST_EXCEPTION: pump_down never self-terminates
             # (a session has many commit cycles), so we end when the client closes
             # (pump_up raises/returns) or the upstream drops.
@@ -1061,7 +1145,7 @@ async def stt_stream_relay(ws: WebSocket):
         except Exception:
             pass
     finally:
-        for task in (up, down):
+        for task in (up, down, alive):
             if task and not task.done():
                 task.cancel()
         _pop_capture(sid, "relay_exit")   # #134: the registry never lies - backstop, usually a no-op second pop

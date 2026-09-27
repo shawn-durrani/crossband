@@ -9,7 +9,11 @@ a prewarm failure can no longer break transcription.
 
 #482 item D adds word times: Scribe answers each commit twice, and these
 tests pin one final per commit, the plain-only fallback, turn ids never
-skipped, and the words kept in each turn's own time, across a reconnect."""
+skipped, and the words kept in each turn's own time, across a reconnect.
+
+#470 keeps a quiet socket open: silence fills a long gap, the relay commits
+that silence itself and keeps its final, the next turn keeps its own id and
+its words' times, and every backup-path turn logs why, content-free."""
 
 import asyncio
 import base64
@@ -761,3 +765,187 @@ def test_a_read_that_fails_after_the_relay_moved_on_is_never_logged():
     asyncio.run(main())
     # the unwatched read shows what the callback prevents
     assert logged.count("Task exception was never retrieved") == 1
+
+
+# ---- #470: a quiet socket stays open ----
+#
+# Scribe closes a realtime socket that has heard no audio for about 15 s,
+# with a normal close and no error first (probed 27 September with silence
+# only). The browser streams only while someone speaks, so every quiet
+# stretch ended the socket. The relay now fills a long gap with a sliver of
+# silence, commits that silence itself before Scribe would, and keeps the
+# final to itself. These tests shrink the gap to milliseconds.
+
+class QuietEleven(TimedEleven):
+    """Scribe as the probe found it: silence gets no partial, and a commit
+    of silence gets empty finals, the timed one first as often as not."""
+
+    async def send(self, raw):
+        msg = json.loads(raw)
+        audio = base64.b64decode(msg.get("audio_base_64") or "")
+        if audio and not any(audio) and not msg.get("commit"):
+            self.sent.append(msg)
+            self.sent_s += len(audio) / 2 / msg.get("sample_rate", 16000)
+            return
+        if audio and not any(audio) and msg.get("commit"):
+            self.sent.append(msg)
+            self.sent_s += len(audio) / 2 / msg.get("sample_rate", 16000)
+            self.turn_start = None
+            self.queue.put_nowait(json.dumps(
+                {"message_type": TIMED, "text": "", "words": []}))
+            self.queue.put_nowait(json.dumps({"message_type": PLAIN, "text": ""}))
+            return
+        await super().send(raw)
+
+
+def _keepalives(fake):
+    silence = voice_mod.keepalive_audio()
+    return [m for m in fake.sent if m.get("audio_base_64") == silence]
+
+
+@pytest.fixture
+def quick_keepalive(monkeypatch):
+    monkeypatch.setattr(voice_mod, "STT_KEEPALIVE_IDLE_S", 0.05)
+    monkeypatch.setattr(voice_mod, "STT_KEEPALIVE_COMMIT_S", 0.05)
+
+
+def test_a_quiet_socket_gets_silence_and_the_next_turn_keeps_its_id(
+        only_app, monkeypatch, quick_keepalive, caplog):
+    fake = QuietEleven("both", script=[[(0.1, 0.4, "after"), (0.5, 0.9, "quiet")]])
+    _timed_relay(only_app, monkeypatch, fake)
+    caplog.set_level("INFO", logger="crossband.voice")
+    with TestClient(only_app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            time.sleep(0.6)                 # a quiet stretch
+            kept = _keepalives(fake)
+            assert len(kept) >= 4
+            assert all(m["sample_rate"] == 16000 for m in kept)
+            # The silence was committed by the relay, and those finals
+            # never reached the browser: the next thing down is this
+            # turn's own final, under its own id.
+            assert any(m["commit"] for m in kept)
+            assert _say(ws, 1.0, "t1") == {"final": "after quiet",
+                                           "turn_id": "t1"}
+            # Its words are in its own time, though silence went first.
+            known, entry = crosstalk.take_words("t1")
+            assert known and entry["words"] == [(0.1, 0.4, "after"),
+                                                (0.5, 0.9, "quiet")]
+            ws.send_json({"done": True})
+    close = [r.getMessage() for r in caplog.records
+             if "stt capture close" in r.getMessage()]
+    assert close and "turns=1" in close[0]
+    assert f"keepalives={len(_keepalives(fake))}" in close[0]
+
+
+def test_silence_during_an_open_turn_is_never_committed(
+        app, monkeypatch, quick_keepalive):
+    fake = QuietEleven("both")
+    _timed_relay(app, monkeypatch, fake)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            frames = _speech(0.3)
+            ws.send_json(frames[0])         # a turn opens
+            assert ws.receive_json() == {"partial": "hello"}
+            time.sleep(0.4)                 # and its audio stalls
+            during = _keepalives(fake)
+            assert during and not any(m["commit"] for m in during)
+            for f in frames[1:-1]:
+                ws.send_json(f)
+                assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json(dict(frames[-1], turn_id="t1"))
+            assert ws.receive_json() == {"final": "hello world",
+                                         "turn_id": "t1"}
+            ws.send_json({"done": True})
+
+
+def test_a_busy_socket_sends_no_keepalive(app, monkeypatch):
+    """At the real gap nothing the browser sends in a normal exchange is
+    ever joined by silence: the frames upstream are the browser's own."""
+    fake = QuietEleven("both")
+    _timed_relay(app, monkeypatch, fake)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            for tid in ("t1", "t2"):
+                assert _say(ws, 0.3, tid)["turn_id"] == tid
+            ws.send_json({"done": True})
+    assert _keepalives(fake) == []
+    assert voice_mod.STT_KEEPALIVE_IDLE_S < 15
+
+
+def test_keepalive_audio_is_twenty_ms_of_silence():
+    raw = base64.b64decode(voice_mod.keepalive_audio())
+    assert len(raw) == 16000 * 2 * voice_mod.STT_KEEPALIVE_MS // 1000
+    assert not any(raw)
+    # Committed in batches Scribe accepts (at least 0.3 s), well under the
+    # 36 s it would commit on its own.
+    assert 0.3 <= voice_mod.STT_KEEPALIVE_COMMIT_S < 36
+
+
+def test_pairing_a_timed_final_first_then_its_plain_twin():
+    """Seen live: Scribe answers a commit timed first, then plain. That is
+    one final, and the next commit keeps its own id."""
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    f.commit("t1", 0.0, 1.0)
+    f.commit("t2", 1.0, 2.0)
+    assert _finals(f.timed("", [], 0.0)) == [("t1", "", True)]
+    assert f.plain("", 0.01) == [] and f.wait_left(0.02) is None
+    assert f.commits[0]["turn_id"] == "t2"
+    assert f.plain("two", 1.0) == []
+    assert _finals(f.timed("two", [], 1.02)) == [("t2", "two", True)]
+    assert f.alone == 0 and f.misses == 0
+
+
+def test_pairing_a_keepalive_commit_is_marked():
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    f.commit(None, 5.0, 5.0, keepalive=True)
+    f.commit("t1", 5.0, 6.0)
+    out = f.timed("", [], 0.0) + f.plain("", 0.0)
+    assert [o["turn"].get("keepalive") for o in out] == [True]
+    f.plain("one", 1.0)
+    assert f.timed("one", [], 1.01)[0]["turn"]["turn_id"] == "t1"
+
+
+def test_pairing_a_plain_final_after_a_timed_one_can_be_the_next_commits():
+    """The timed final came alone and the next commit is already waiting:
+    a plain final that doesn't read as its twin is the next commit's."""
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    f.commit("t1", 0.0, 1.0)
+    f.commit("t2", 1.0, 2.0)
+    f.timed("one", [], 0.0)
+    assert f.plain("two", 0.5) == []
+    assert _finals(f.expire(0.9)) == [("t2", "two", False)]
+
+
+def test_each_backup_path_turn_is_logged_with_why_and_no_words(
+        app, monkeypatch, caplog):
+    """#470: how often a turn takes the backup path shows in service.log,
+    one content-free line per turn: the reason the browser gave, from an
+    allowlist, and how long the speech was."""
+    monkeypatch.setattr(voice_router.voice, "provider_for",
+                        lambda cfg: voice_router.voice.PROVIDER_ELEVENLABS)
+    monkeypatch.setattr(voice_router.voice, "transcribe",
+                        lambda data, mime, cfg: ("Sam fixed the gate", "scribe_v2"))
+    caplog.set_level("INFO", logger="crossband.voice")
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        for why in ("late", "reconnect", "Sam fixed the gate", ""):
+            r = c.post(f"/api/chats/{chat['id']}/stt",
+                       files={"file": ("utterance.webm", b"\x1a\x45" * 64,
+                                       "audio/webm")},
+                       data={"duration_ms": "2400", "why": why})
+            assert r.status_code == 200
+    lines = [r.getMessage() for r in caplog.records
+             if r.getMessage().startswith("stt backup path")]
+    assert [ln.split("why=")[1].split()[0] for ln in lines] == [
+        "late", "reconnect", "unknown", "unknown"]
+    assert all("speech_s=2.4" in ln for ln in lines)
+    assert not any("gate" in r.getMessage() for r in caplog.records)
