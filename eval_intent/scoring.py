@@ -29,6 +29,7 @@ def normalise(verdict: dict) -> dict:
         "research": verdict["research"],
         "stronger_model": frozenset(_fold(n) for n in
                                     verdict.get("stronger_model") or []),
+        "media": verdict.get("media") is True,
     }
 
 
@@ -92,7 +93,8 @@ def aggregate(results: list, fixtures: list, silent: dict) -> dict:
             "share": _pct(len(dropped), len(with_intent)),
             "by_axis": {a: sum(1 for f in dropped if a in silent[f.id])
                         for a in ("mode_command", "introductions", "corrections",
-                                  "depth", "research", "stronger_model")},
+                                  "depth", "research", "stronger_model",
+                                  "media")},
             "ids": [f.id for f in dropped],
         },
         "strategies": by_strategy,

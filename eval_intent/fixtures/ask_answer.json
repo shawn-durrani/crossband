@@ -173,5 +173,109 @@
         "Dave"
       ]
     }
+  },
+  {
+    "id": "answer_tv",
+    "category": "ask_answer_media",
+    "asking": true,
+    "text": "That's the TV.",
+    "expected": {
+      "media": true
+    },
+    "notes": "The new voice is a TV: the app ignores it for the rest of the session."
+  },
+  {
+    "id": "answer_radio",
+    "category": "ask_answer_media",
+    "asking": true,
+    "text": "Oh, that's just the radio.",
+    "expected": {
+      "media": true
+    }
+  },
+  {
+    "id": "answer_video",
+    "category": "ask_answer_media",
+    "asking": true,
+    "text": "Ignore that, it's a video on my phone.",
+    "expected": {
+      "media": true
+    }
+  },
+  {
+    "id": "answer_telly",
+    "category": "ask_answer_media",
+    "asking": true,
+    "text": "That was the telly, not a person.",
+    "expected": {
+      "media": true
+    }
+  },
+  {
+    "id": "answer_podcast",
+    "category": "ask_answer_media",
+    "asking": true,
+    "text": "It's a podcast playing in the kitchen.",
+    "expected": {
+      "media": true
+    }
+  },
+  {
+    "id": "answer_other_room_tv",
+    "category": "ask_answer_media",
+    "asking": true,
+    "text": "Don't worry about that voice, it's the TV in the other room.",
+    "expected": {
+      "media": true
+    },
+    "notes": "A wording the prompt's examples don't carry."
+  },
+  {
+    "id": "answer_neg_tv_mention",
+    "category": "ask_answer_media_negative",
+    "asking": true,
+    "text": "We watched a great video about bridges on the TV yesterday.",
+    "expected": {}
+  },
+  {
+    "id": "answer_neg_tv_request",
+    "category": "ask_answer_media_negative",
+    "asking": true,
+    "text": "Can someone turn the TV down a bit?",
+    "expected": {},
+    "notes": "About the TV, but not saying the voice is one."
+  },
+  {
+    "id": "answer_neg_tv_show",
+    "category": "ask_answer_media_negative",
+    "asking": true,
+    "text": "What was that show on TV last night called?",
+    "expected": {}
+  },
+  {
+    "id": "answer_neg_podcast_ask",
+    "category": "ask_answer_media_negative",
+    "asking": true,
+    "text": "Can you recommend a good podcast about history?",
+    "expected": {}
+  },
+  {
+    "id": "answer_neg_not_the_tv",
+    "category": "ask_answer_media_negative",
+    "asking": true,
+    "text": "That's Dave, not the TV.",
+    "expected": {
+      "introductions": [
+        "Dave"
+      ]
+    },
+    "notes": "A person, named, and the TV ruled out."
+  },
+  {
+    "id": "tv_when_not_asking",
+    "category": "ask_answer_media_negative",
+    "text": "Oh, that's the TV.",
+    "expected": {},
+    "notes": "The app isn't asking, so nothing is heard, and the TV is never introduced as a person."
   }
 ]

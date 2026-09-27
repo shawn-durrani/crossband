@@ -93,6 +93,8 @@ test('flag copy is plain English and never claims the label changed', () => {
   const ask = flagCopy({ kind: 'unknown_voice' })
   assert.match(ask, /Someone new is speaking/)
   assert.match(ask, /name/)
+  // #523: a TV can be the new voice, and saying so is an answer too
+  assert.match(ask, /say "that's the TV"/)
   const mm = flagCopy({ kind: 'mismatch', label: 'Shawn', suspected: 'Alex' })
   assert.match(mm, /labelled Shawn/)
   assert.match(mm, /reads more like Alex/)

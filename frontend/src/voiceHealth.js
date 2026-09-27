@@ -135,6 +135,7 @@ export const UNRESOLVED_COPY = {
   no_enrolled: ['no voices learnt yet', 'Nobody has enough voice banked to match against.'],
   listening: ['still listening', 'The app has not heard enough of this voice yet to name it.'],
   new_voice: ['a new voice', 'This voice does not match anyone the app has learnt.'],
+  media: ['the TV or radio', 'Someone said this voice is a TV, radio or recording, so it is not named or learnt this session.'],
 }
 
 export function pulseReadout(lastDecision, sessionActive = false) {

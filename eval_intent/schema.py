@@ -1,9 +1,11 @@
 """One fixture is one user turn and what the app should hear in it, graded
-by hand, across the six axes the merged classifier returns: a room mode
+by hand, across the axes the merged classifier returns: a room mode
 switch, introductions and departures (with aliases), name corrections, a
 reasoning depth change, a research request, and an explicit ask for a
-stronger model. A fixture can also say the app has just asked who a new
-voice is, which is when the live scan tells the model so. Every fixture is
+stronger model, and whether a voice is a TV rather than a person. A
+fixture can also say the app has just asked who a new voice is, which is
+when the live scan tells the model so, and the only time it asks about a
+TV. Every fixture is
 made up: placeholder people, placeholder topics."""
 
 from dataclasses import dataclass, field
@@ -12,7 +14,7 @@ MODE_VALUES = ("on", "off", "none")
 RESEARCH_VALUES = ("more", "none")
 DEPTHS = ("deep", "quick", "max", "normal")
 AXES = ("mode_command", "introductions", "departures", "aliases",
-        "corrections", "depth", "research", "stronger_model")
+        "corrections", "depth", "research", "stronger_model", "media")
 
 
 class FixtureError(ValueError):
@@ -22,7 +24,7 @@ class FixtureError(ValueError):
 def empty_verdict() -> dict:
     return {"mode_command": "none", "introductions": [], "departures": [],
             "aliases": {}, "corrections": [], "depth": [], "research": "none",
-            "stronger_model": []}
+            "stronger_model": [], "media": False}
 
 
 @dataclass
@@ -44,7 +46,7 @@ class Fixture:
         return (e["mode_command"] != "none" or bool(e["introductions"])
                 or bool(e["departures"]) or bool(e["corrections"])
                 or bool(e["depth"]) or e["research"] != "none"
-                or bool(e["stronger_model"]))
+                or bool(e["stronger_model"]) or e["media"])
 
     @staticmethod
     def from_dict(d: dict, source: str = "<unknown>") -> "Fixture":
@@ -71,6 +73,8 @@ class Fixture:
                 raise FixtureError(f"{source}: fixture {d['id']!r} {key} must be a list of names")
         if not isinstance(expected["aliases"], dict):
             raise FixtureError(f"{source}: fixture {d['id']!r} aliases must be a dict")
+        if not isinstance(expected["media"], bool):
+            raise FixtureError(f"{source}: fixture {d['id']!r} media must be true or false")
         for c in expected["corrections"]:
             if not isinstance(c, dict) or not c.get("name"):
                 raise FixtureError(f"{source}: fixture {d['id']!r} has a correction without a name")

@@ -24,6 +24,12 @@ What these tests pin, in order:
 4. THROUGH THE SCAN. With no ask open an introduction does what it always
    did. With one open, the verdict line says ask_answered, content-free,
    and no "nothing changed" line is posted.
+5. "THAT'S THE TV". The voice the ask points at is ignored for the rest of
+   the session: its turns say "media", it is never named, never new again
+   (so never asked about), never seated or saved, and a turn it speaks
+   applies no instruction. The seats read it as background audio, and
+   memory files it as an unknown guest. A tap still names it. The new
+   voice itself saying it marks nothing, and nor does an ask on two voices.
 
 Keyless. The session is installed by hand and the utility model is
 mocked. Synthetic roster: Alex (the owner), Sam, Dave, Mateo.
@@ -517,3 +523,200 @@ def test_the_self_introduced_turn_is_learnt_from_too(app, utility):
     clips = anchors.store().clips_of(pid)
     assert len(clips) == 2
     assert {c["source"] for c in clips} == {"introduction"}
+
+
+# ---------- 5. "that's the TV" ----------
+
+MEDIA = {"clusters": ["session"], "labels": [], "uncertain": [],
+         "source": "session", "unresolved": "media"}
+
+
+def _tv(chat_id, turn):
+    return voice_ask.answer_media(chat_id, voice_ask.open_ask(chat_id), turn,
+                                  CFG)
+
+
+def test_thats_the_tv_ignores_that_voice_for_the_session(app):
+    chat = _chat()
+    asked, later = _new_voice_asked(chat)
+    said = _turn(chat, "t-owner", OWNER)
+    _session(chat, {"t-new": 2, "t-new2": 2, "t-owner": 1})
+    assert _tv(chat, said) == voice_ask.MEDIA_IGNORED
+    assert _labels(asked) == MEDIA and _labels(later) == MEDIA
+    assert _labels(said) == OWNER
+    assert _open_asks(chat) == []
+    assert vss._sessions[chat]["voices"][2][vss.MEDIA] is True
+    # nobody is minted, seated or learnt from
+    assert anchors.store().people() == [] and _roster(chat) == []
+
+
+def test_a_tv_voice_is_never_named_and_never_new_again():
+    """Its evidence would name it Alex, or mark it new, and it stays a TV.
+    The other voice still takes Alex: one person per voice isn't used up."""
+    alex, other = [1.0, 0.0], [0.0, 1.0]
+    people = {"a": {"name": "Alex", "clips": [alex]}}
+    bar = {"threshold": 0.5, "margin": 0.1}
+    voices = {1: {"prints": [(alex, 12.0)], "clean_s": 12.0, vss.MEDIA: True},
+              2: {"prints": [(other, 12.0)], "clean_s": 12.0, vss.MEDIA: True},
+              3: {"prints": [(alex, 3.0)], "clean_s": 3.0}}
+    out = vss.name_voices(voices, people, bar)
+    assert out[1]["state"] == vss.MEDIA and out[1]["name"] == ""
+    assert out[2]["state"] == vss.MEDIA           # would be new, 12 s
+    assert out[3]["state"] == "named" and out[3]["name"] == "Alex"
+
+
+def test_the_calibrated_scorer_keeps_a_tv_a_tv(monkeypatch):
+    from backend import voice_calibration as vc
+    table = {1: {"a": 0.99}, 2: {"a": 0.01}}
+    monkeypatch.setattr(vc, "probability",
+                        lambda fp, secs, snap=None: table[fp[vc.SMALL]])
+    monkeypatch.setattr(vss, "pooled",
+                        lambda prints: prints[0][0] if prints else None)
+    voices = {slot: {"prints": [(slot, 9.0)], "prints_eres": [(slot, 9.0)],
+                     "clean_s": 9.0, vss.MEDIA: True} for slot in (1, 2)}
+    out = vss.name_voices_calibrated(voices, {"a": "Alex"},
+                                     {"calibrated": True})
+    assert out[1]["state"] == out[2]["state"] == vss.MEDIA
+
+
+def test_the_end_of_session_pass_keeps_a_tv_a_tv(app, monkeypatch):
+    """By the session's end the TV's evidence would name it Alex. The pass
+    names every voice once more, and the TV stays a TV on every turn."""
+    alex = [1.0, 0.0]
+    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
+    monkeypatch.setattr(vss, "bank", lambda *a, **k: {
+        "a": {"name": "Alex", "clips": [alex]}})
+    monkeypatch.setattr(vss, "_bar", lambda *a, **k: {
+        "threshold": 0.5, "margin": 0.1, "source": "t"})
+    chat = _chat()
+    first = _turn(chat, "t-tv", MEDIA)
+    last = _turn(chat, "t-tv2", NEW)     # its label landed before the mark
+    sess = {"id": "s1", "opened_at": 0.0, "turns": 2, "filled": {},
+            "turn_voice": [("t-tv", 2), ("t-tv2", 2)],
+            "voices": {2: {"prints": [(alex, 12.0)], "clean_s": 12.0,
+                           vss.MEDIA: True}}}
+    row = vss.end_session(chat, sess, CFG, "idle")
+    assert row["voices"]["2"]["state"] == vss.MEDIA
+    assert row["filled"] == 1
+    assert _labels(first) == MEDIA and _labels(last) == MEDIA
+
+
+def test_a_tap_still_names_a_tv_voice(app):
+    chat = _chat()
+    asked, later = _new_voice_asked(chat)
+    said = _turn(chat, "t-owner", OWNER)
+    _session(chat, {"t-new": 2, "t-new2": 2, "t-owner": 1})
+    assert _tv(chat, said) == voice_ask.MEDIA_IGNORED
+    assert vss.human_named(chat, "t-new", "Dave", "p-dave", CFG)
+    voice = vss._sessions[chat]["voices"][2]
+    assert vss.MEDIA not in voice and voice["human"]["name"] == "Dave"
+    assert _labels(later)["labels"] == ["Dave"]
+
+
+def test_the_pass_labels_a_tv_turn_and_does_nothing_else():
+    from backend import voice_pass
+    plan = {"room_on": False, "solo": False, "present": [], "unlearnt": [],
+            "owner_known": True, "is_owner": lambda n: n == "Alex"}
+    got = {"voice": 2, "state": vss.MEDIA, "name": "", "pid": "",
+           "score": 0.99, "prob": 0.99, "human": False, "method": "multi",
+           "voice_clean_s": 20.0, "clean_spans": [(0.0, 9.0)],
+           "voices_in_turn": 1, "overlap_s": 0.0}
+    d = voice_pass.decide(got, plan)
+    assert d["labels"] == [] and d["unresolved"] == "media"
+    assert d["arm"] is None and d["seat"] is None and d["ask"] is False
+    assert not voice_pass.should_bank(got, {})
+    assert "media" in __import__("backend.diarize").diarize.DEFER_REASONS
+
+
+def test_the_seats_hear_background_audio_and_memory_an_unknown_guest():
+    from backend import providers
+    from backend.memory_client import ingest_speaker
+    msg = {"speaker": "user", "voice_turn_id": "t", "created_at": 0,
+           "voice_labels": json.dumps(MEDIA)}
+    head = providers._user_turn_head(msg, {"user_name": "Alex",
+                                           "room_mode": True})
+    assert head == providers.MEDIA_HEAD
+    assert "not a person" in head and "Alex" not in head
+    assert ingest_speaker(msg, owner_name="Alex") == "guest:unknown"
+
+
+def test_the_new_voice_saying_thats_the_tv_marks_nothing(app):
+    chat = _chat()
+    asked, _ = _new_voice_asked(chat)
+    said = _turn(chat, "t-new3", NEW, audio=2.0)
+    _session(chat, {"t-new": 2, "t-new2": 2, "t-new3": 2})
+    assert _tv(chat, said) == "no_change"
+    assert _labels(asked) == NEW and len(_open_asks(chat)) == 1
+
+
+def test_a_tv_on_a_two_voice_ask_or_no_ask_changes_nothing(app):
+    chat = _chat()
+    asked = _turn(chat, "t-two", TWO, audio=3.0, voices=2)
+    said = _turn(chat, "t-owner", OWNER)
+    _session(chat, {"t-two": 2, "t-owner": 1})
+    assert _tv(chat, said) == "no_change"              # no ask open
+    _ask(chat, asked)
+    assert _tv(chat, said) == "no_change"              # two voices
+    assert _labels(asked) == TWO
+
+
+def test_with_no_session_only_the_asked_turn_is_marked(app):
+    chat = _chat()
+    asked, later = _new_voice_asked(chat)
+    said = _turn(chat, "t-owner", OWNER)
+    assert _tv(chat, said) == voice_ask.MEDIA_IGNORED
+    assert _labels(asked) == MEDIA and _labels(later) == NEW
+
+
+def test_a_tv_is_never_introduced_as_a_person(app):
+    for name in ("TV", "the TV", "Telly", "just the radio", "a video"):
+        assert introductions.media_noun(name), name
+    for name in ("Dave", "Tiv", "Radio Dave", "Mateo"):
+        assert not introductions.media_noun(name), name
+    chat = _chat()
+    introductions.apply_scan(chat, {"introductions": ["TV", "the Radio"],
+                                    "departures": []}, CFG)
+    assert _roster(chat) == [] and _open_asks(chat) == []
+    assert voice_ask.the_name({"introductions": ["TV"]}, "Alex", []) == ""
+
+
+def test_the_scan_answers_the_ask_with_the_tv(app, utility, caplog):
+    chat = _chat()
+    asked, _ = _new_voice_asked(chat)
+    said = _turn(chat, "t-owner", OWNER)
+    _session(chat, {"t-new": 2, "t-new2": 2, "t-owner": 1})
+    utility["verdict"] = {"media": True, "introductions": ["TV"]}
+    with caplog.at_level(logging.INFO):
+        _scan(chat, said, "That's the TV.")
+    assert _labels(asked) == MEDIA
+    assert _roster(chat) == [] and _system_lines(chat) == []
+    lines = [r.getMessage() for r in caplog.records
+             if r.name in ("crossband.introductions", "crossband.voice_ask")]
+    assert any("outcome=media_ignored" in m for m in lines)
+    assert any("new-voice ask answered as a TV" in m for m in lines)
+    for m in lines:
+        assert "TV." not in m, m
+
+
+def test_a_tv_heard_with_no_ask_open_says_nothing_changed(app, utility):
+    chat = _chat()
+    said = _turn(chat, "t-owner", OWNER)
+    utility["verdict"] = {"media": True}
+    _scan(chat, said, "That's the TV.")
+    assert _system_lines(chat) == [
+        "Heard that a voice is a TV or radio, and nothing changed: the app "
+        "wasn't asking about one new voice."]
+
+
+def test_nothing_a_tv_says_is_an_instruction(app, utility, caplog):
+    """A show on the TV says "this is Dave" or "group mode on": once that
+    voice is marked, none of it is applied."""
+    chat = _chat()
+    tv_turn = _turn(chat, "t-tv", MEDIA)
+    utility["verdict"] = {"introductions": ["Dave"], "mode_command": "off"}
+    with caplog.at_level(logging.INFO, logger="crossband.introductions"):
+        _scan(chat, tv_turn, "This is Dave, and it's just me now.")
+    assert _roster(chat) == [] and _system_lines(chat) == []
+    assert any("outcome=media_turn" in r.getMessage()
+               for r in caplog.records)
+    assert "media_turn" in introductions.SCAN_OUTCOMES

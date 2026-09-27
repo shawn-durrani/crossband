@@ -229,13 +229,14 @@ DECISION_LOCAL = "local"
 DECISION_UNRESOLVED = "unresolved"
 
 # The allowlist for what may leave the process as a reason - content-free by
-# construction, like every other value here. The pass writes "listening"
-# and "new_voice"; the older reasons stay because labels already stored on
+# construction, like every other value here. The pass writes "listening",
+# "new_voice" and "media" (a voice someone said is a TV, #523); the older
+# reasons stay because labels already stored on
 # messages carry them, and the projection and the browser still read those.
 DEFER_REASONS = {"too_short", "below_threshold", "ambiguous", "multi",
                  "not_speech", "no_candidates", "unavailable", "disabled",
                  "error", "pending_present", "no_enrolled", "listening",
-                 "new_voice"}
+                 "new_voice", "media"}
 
 
 # Decision history (#304 evidence capture): the single freshest record

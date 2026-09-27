@@ -11,23 +11,29 @@ and nothing else in the prompt changes.
 
   * "that's Dave", said by someone the app has named, or typed, names the
     voice the ask points at;
-  * "I'm Dave", said by the new voice itself, names it the same way.
+  * "I'm Dave", said by the new voice itself, names it the same way;
+  * "that's the TV" (a radio, a video, a podcast) says the voice isn't a
+    person. It is then ignored for the rest of its session: never named,
+    seated, asked about again or learnt from (voice_sessions.media_voice),
+    and its turns carry the unresolved reason "media", which the seats
+    read as background audio.
 
-Either does what the tap does. The turn the ask points at takes the name,
+A name does what the tap does. The turn the ask points at takes the name,
 with the source "introduction", which memory reads as introduced. The
 session voice that spoke it is that person for the rest of the session,
 and its other unnamed turns take the name (voice_sessions.human_named).
 The turn's held audio goes into the person's bank as an introduction,
 when it holds one voice. The introduction's own seating
-(introductions.apply_scan) runs first, as it always has.
+(introductions.apply_scan) runs first, as it always has. When a turn says
+both, the TV wins the ask and any name is an ordinary introduction.
 
 THE RULES, pinned in tests/test_voice_ask.py:
 
   * Only while an ask is open, and only when it points at a turn with one
     voice in it. Otherwise the introduction does what it always did.
   * Exactly one name, after the guards every introduction passes: the
-    owner's name or a spelling of it, an AI participant's name and a
-    relationship word are dropped first.
+    owner's name or a spelling of it, an AI participant's name, a
+    relationship word and a TV are dropped first.
   * Who said it decides what it means (answers_ask). The new voice names
     itself only in words that give the name as its own ("I'm Dave",
     "it's Dave"). Anyone else, a person the app already named or the owner
@@ -35,6 +41,8 @@ THE RULES, pinned in tests/test_voice_ask.py:
     themselves ("that's Dave", "it's Dave", but not "I'm Dave"). A voice
     nobody has named yet might be a second new person, so from one the
     app doesn't guess.
+  * The new voice itself saying "that's the TV" is a person pointing at
+    one, so it marks nothing.
   * Solo never learns or seats, so nothing here runs in solo.
   * Worker threads only, and content-free logs: ids and yes or no. The
     turn's words are read here and never stored or logged.
@@ -50,6 +58,7 @@ log = logging.getLogger("crossband.voice_ask")
 
 ASK_KIND = "unknown_voice"
 ANSWERED = "ask_answered"       # the scan's outcome when a name answered it
+MEDIA_IGNORED = "media_ignored"  # and when "that's the TV" did
 
 SAME = "same"                   # the asked-about voice said it
 OTHER = "other"                 # someone named, or the owner typing
@@ -159,7 +168,8 @@ def the_name(verdict, owner, participants) -> str:
     names = [n for n in verdict.get("introductions") or ()
              if not introductions.owner_alias(n, owner)
              and not introductions.participant_alias(n, participants)
-             and not introductions.relationship_noun(n)]
+             and not introductions.relationship_noun(n)
+             and not introductions.media_noun(n)]
     return names[0] if len(names) == 1 else ""
 
 
@@ -248,3 +258,55 @@ def answer_with_name(chat_id, ask, message_id, verdict, cfg, text="") -> str:
              "session_voice=%s learned=%s", chat_id, who, named, voiced,
              learned)
     return ANSWERED
+
+
+def answer_media(chat_id, ask, message_id, cfg) -> str:
+    """Answer an open ask with "that's the TV" (worker thread): the turn the
+    ask points at, and every other turn its session voice spoke, carry the
+    unresolved reason "media", and the voice is ignored for the rest of the
+    session. With no session voice to follow, only that turn is marked.
+    Returns MEDIA_IGNORED, or "no_change" when the ask points at no
+    single-voice turn or the new voice itself said it."""
+    from . import diarize
+    if not points_at_a_turn(ask) or not message_id:
+        return "no_change"
+    con = db.connect()
+    try:
+        chat = con.execute("SELECT ambient_off FROM chats WHERE id=?",
+                           (chat_id,)).fetchone()
+        asked = _message(con, chat_id, ask["message_id"])
+        turn = _message(con, chat_id, message_id)
+        if not chat or chat["ambient_off"] or not asked or not turn \
+                or not single_voice(asked["voice_labels"]):
+            return "no_change"
+        old = _labels(asked["voice_labels"]) or {}
+        if old.get("corrected"):
+            return "no_change"      # a tap answered it while the model listened
+        who, _ = speaker_of(chat_id, turn, asked)
+        if who == SAME:
+            return "no_change"      # a person pointing at the TV isn't one
+        db.set_message_voice_labels(con, asked["id"], diarize.label_payload(
+            [], clusters=old.get("clusters") or [voice_sessions.SESSION_SOURCE],
+            source=voice_sessions.SESSION_SOURCE,
+            unresolved=voice_sessions.MEDIA))
+        db.resolve_room_flags(con, chat_id, flag_id=ask["id"])
+        db.resolve_room_flags(con, chat_id, message_id=asked["id"])
+    finally:
+        con.close()
+    voiced = voice_sessions.media_voice(chat_id, asked["voice_turn_id"], cfg)
+    log.info("new-voice ask answered as a TV: chat=%s by=%s session_voice=%s",
+             chat_id, who, voiced)
+    return MEDIA_IGNORED
+
+
+def said_by_media(message_id) -> bool:
+    """Was this turn spoken by a voice someone said is a TV (worker
+    thread)? Its label carries the unresolved reason "media"."""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT voice_labels FROM messages WHERE id=?",
+                          (message_id,)).fetchone()
+    finally:
+        con.close()
+    data = _labels(row["voice_labels"]) if row else None
+    return bool(data) and data.get("unresolved") == voice_sessions.MEDIA

@@ -55,6 +55,7 @@ A session voice is in one of these states.
 | Named | one person clears the bar, and nobody else has that voice | their name |
 | Learning | named by elimination at a first meeting | their name, marked learning |
 | New | 4 seconds or more of clean speech that matches nobody | no name, "a new voice" |
+| TV | someone said it's a TV, a radio or a recording | no name, "the TV or radio" |
 
 When a voice is named later in the session, its earlier turns take the
 name too, and the chat updates. A name you set yourself is never
@@ -291,7 +292,9 @@ on the newest turn, or say they don't know yet.
 
 A turn the voice check couldn't name reaches the models as an
 unidentified speaker, never as you. Memory treats it the same way, as
-a doubted guest's turn. Once your own voice is learnt, a spoken turn
+a doubted guest's turn. A turn from a voice someone said is a TV
+reaches them as background audio, a TV or radio and not a person in
+the room, and memory files it as a doubted guest's turn too. Once your own voice is learnt, a spoken turn
 only reads as yours when the check named it as you.
 
 Memory gets the naming's score as the speaker's confidence. With the
@@ -542,6 +545,31 @@ answer it. In solo the app doesn't ask, so there's nothing to answer.
 While the question is open, the small model that reads every turn is
 told the app has asked, so it hears "that's Dave" as the answer. Every
 other turn is read the way it always is.
+
+### When it's the TV
+
+A TV, a radio or a video playing near the microphone can be a new voice
+too, and the app asks about it the same way. Answer "that's the TV",
+"it's just the radio" or "that was a video", out loud or typed. That
+voice is then ignored for the rest of the voice session. It's never
+named, seated, asked about again or learnt from. Anything it says that
+sounds like an instruction, like a show saying "this is Dave", changes
+nothing.
+
+Its turns stay in the chat with no name on them, and its earlier turns
+in the session lose the "new voice" note. The models read them as
+background audio, a TV or radio and not a person in the room, so they
+don't answer it as someone talking to them. A turn where someone talks
+over the TV still shows both voices.
+
+It lasts until the voice session ends, so a TV that's still on in the
+next session may be asked about again. If you got it wrong, tap one of
+its turns and pick a name, and the voice takes that name as with any
+tap. With no diariser there's no session voice to follow, so only the
+turn the question points at is marked. The new voice itself saying
+"that's the TV" marks nothing, since that's a person pointing at one.
+When the app isn't asking, "that's the TV" changes nothing, and a line
+in the chat says so.
 
 ## When a voice is ready
 

@@ -340,6 +340,10 @@ test('the pulse says WHY a turn went unnamed, not just that it did', () => {
   const noise = pulseReadout({ path: 'unresolved', reason: 'not_speech', ms: 12 })
   assert.match(noise.label, /not a voice/)
   assert.match(noise.title, /not speech/)
+  // #523: a voice someone said is a TV reads as one
+  const tv = pulseReadout({ path: 'unresolved', reason: 'media', ms: 30 })
+  assert.match(tv.label, /TV or radio/)
+  assert.match(tv.title, /not named or learnt/)
   // an unknown reason still degrades to something honest
   assert.match(pulseReadout({ path: 'unresolved', reason: 'wat', ms: 1 }).label,
     /not named/)

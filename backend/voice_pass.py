@@ -39,9 +39,10 @@ reads its answer:
 The rules that hold whatever the scores say: the owner's name is never
 learnt by ear as a second person, an AI participant is never a person,
 solo ("just me") never arms, seats, asks or learns, a turn the pass can't
-name is never read as the owner's, and every write goes through the same
-guarded helpers (room_state.arm and seat, the one open ask per chat, the
-label path, anchors.add_clip and its gate).
+name is never read as the owner's, a voice someone said is a TV is never
+named, seated, asked about or learnt from, and every write goes through
+the same guarded helpers (room_state.arm and seat, the one open ask per
+chat, the label path, anchors.add_clip and its gate).
 """
 
 import asyncio
@@ -60,6 +61,7 @@ MISMATCH_MIN_S = 1.5        # a named turn this long gets the cross-check
 
 LISTENING = "listening"     # the unresolved reasons this pass writes
 NEW_VOICE = "new_voice"
+MEDIA = vss.MEDIA           # a voice someone said is a TV or a radio
 
 
 def decide(got, plan):
@@ -77,6 +79,11 @@ def decide(got, plan):
     state = got.get("state")
     name = got.get("name") or ""
     solo = plan.get("solo")
+    if state == MEDIA:
+        # "That's the TV" (#523): no name, no seat, no ask, and the reason
+        # tells the seats it isn't a person in the room.
+        out["unresolved"] = MEDIA
+        return out
     if state == "named" and name:
         out["labels"] = [name]
         if plan.get("is_owner", lambda n: False)(name):

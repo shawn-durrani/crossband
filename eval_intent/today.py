@@ -1,7 +1,7 @@
 """What the live scan heard before the merged call: four phrase lists, each
 gating one prompt, and no research or stronger-model axis at all. The harness runs this path over the
 same fixtures so the merged call is compared against what ships, not
-against nothing."""
+against nothing. It has no path for "that's the TV" either."""
 
 from backend import depth as depth_mod
 from backend import introductions as intro
@@ -40,6 +40,8 @@ def silent_misses(fx: Fixture) -> list:
         out.append("research")
     if e["stronger_model"]:
         out.append("stronger_model")
+    if e["media"]:
+        out.append("media")
     return out
 
 

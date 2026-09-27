@@ -240,8 +240,11 @@ microphones from this household's.
    person, so its words answer nothing. Only while the question is open
    is the model that reads each turn told the app has asked.
 4. You can also answer "that's the TV" or "that's the radio". That
-   voice is then ignored for the rest of the session, and never asked
-   about again.
+   voice is then ignored for the rest of the session: never named,
+   seated, asked about again or learnt from, and nothing it says is
+   applied as an instruction. Its turns carry the reason "media" and no
+   name, and the AIs read them as background audio. A tap on one of its
+   turns still names it.
 5. If nobody answers before the session ends, the audio is dropped.
 6. In solo mode the app never asks. A new voice shows as "someone
    else" and nothing is learnt.
@@ -286,6 +289,7 @@ rule in every mode.
 | Learning | their name, learning this voice |
 | Listening | identity pending |
 | New voice, or someone else in solo | unidentified speaker, a new voice |
+| A voice someone said is a TV | background audio, a TV or radio, not a person in the room |
 | Typed turn | you, as today |
 
 Once your own voice is ready, a spoken turn that isn't named is never
@@ -488,6 +492,10 @@ Live on this install:
   of 0.5, and the hygiene check judges clips with that scorer. After
   each build, a clip still carrying an old score is rescored once, and
   its old score is kept beside the new.
+- "That's the TV" ignores that voice for the rest of the session. Its
+  turns carry the reason "media", and the AIs read them as background
+  audio, not a person in the room. The model that reads each turn is
+  asked about a TV only while the question is open.
 - Deleted: the three routes, their decision tables and live mirrors,
   the early check before a turn ends, the cloud crosstalk split, the
   introduction stash, the window multi-voice check, the extra bar while
@@ -496,8 +504,6 @@ Live on this install:
 
 Not built yet:
 
-- "That's the TV", which would ignore that voice for the rest of the
-  session.
 - Made-up sessions from the household's own clips, and the voice rig
   playing a conversation out of a speaker into the microphone.
 

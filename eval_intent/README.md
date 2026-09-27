@@ -19,10 +19,10 @@ utility model.
 ## What a fixture is
 
 One fixture is one made up user turn and what the app should hear in
-it, graded by hand across six axes: a room mode switch, introductions
-and departures with any alias, name corrections, a thinking depth
-change with a one-off flag, a research request, and an ask for a
-stronger model. A fixture also
+it, graded by hand. The axes are a room mode switch, introductions and
+departures with any alias, name corrections, a thinking depth change
+with a one-off flag, a research request, an ask for a stronger model,
+and whether a voice is a TV. A fixture also
 names the owner, who is known present, who is known by name, and the
 seats, because the prompts take those. An empty expectation means
 the turn is plain chat, or only talks about one of these things.
@@ -41,11 +41,12 @@ name spelt out still is one. All of it is made up. A set built from
 real turns belongs outside the repository.
 
 Some fixtures are marked `asking`. They're turns spoken while the app is
-asking who a new voice is, like "that's Dave" or "I'm Mateo". The live
-scan tells the model when it's asking, and only then, so these fixtures
-get that line in their prompt and every other fixture doesn't. A few
-`asking` fixtures carry other instructions, to show the line changes
-nothing else.
+asking who a new voice is, like "that's Dave", "I'm Mateo" or "that's
+the TV". The live scan tells the model when it's asking, and only then,
+so these fixtures get that line in their prompt and every other fixture
+doesn't. The line also asks whether the voice is a TV, which is graded
+as its own axis, `media`. A few `asking` fixtures carry other
+instructions, to show the line changes nothing else.
 
 ## What it compares
 
