@@ -1119,8 +1119,10 @@ export default class VoiceController {
         this._rebuildSttProcessor()
         this._state('transcribing')
         // #461: the relay never heard this turn, so the batch copy carries
-        // its id and its end of speech for the identity check.
-        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice, 'no_audio')
+        // its id, its end of speech for the identity check, and the piece
+        // before it (#540).
+        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice, 'no_audio',
+                                     cut ? cut.turnId : null)
         return
       }
       if (action === 'salvage') {
@@ -1129,11 +1131,13 @@ export default class VoiceController {
         // still goes, so the end it holds can't run into the next turn,
         // but the ledger never sees it: its words land nowhere.
         this._vlog('stt:straddle', { turnId, speechMs: Math.round(speechMs) })
-        this._sttSend({ commit: true, turn_id: turnId })
+        this._sttSend(cut ? { commit: true, turn_id: turnId, after: cut.turnId }
+                          : { commit: true, turn_id: turnId })
         this._cut = null
         this._watchHandoff(turnId)
         this._state('transcribing')
-        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice, 'reconnect')
+        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice, 'reconnect',
+                                     cut ? cut.turnId : null)
         return
       }
       const tooShort = speechMs < MIN_SPEECH_MS
@@ -1167,7 +1171,8 @@ export default class VoiceController {
             // Realtime never answered in time. The batch recorder ran the
             // whole time - salvage its copy; the ledger has already
             // consumed the commit, so a late realtime final drops.
-            this._salvageUtterance(speechMs, turnId, dispatch, lastVoice, 'late')
+            this._salvageUtterance(speechMs, turnId, dispatch, lastVoice, 'late',
+                                   cut ? cut.turnId : null)
           }
         }, sttCommitTimeoutMs(speechMs))
       } else if (cause === 'gap') {
@@ -1342,10 +1347,14 @@ export default class VoiceController {
     }
   }
 
-  async _salvageUtterance(speechMs, turnId = null, dispatch = 'send', endedAt = null, why = '') {
+  // `after` is the piece before this one when a long turn was cut (#469).
+  // The backup copy names it too (#540), so the server links the pieces
+  // even when the relay heard no audio for this one.
+  async _salvageUtterance(speechMs, turnId = null, dispatch = 'send', endedAt = null, why = '',
+                          after = null) {
     // #455: the copy's own words start after what realtime delivered.
     const piece = this._trackPiece(turnId, dispatch, {
-      speechMs, endedAt, why, fromMs: copyFrom(this._heard, this.recStarted),
+      speechMs, endedAt, why, after, fromMs: copyFrom(this._heard, this.recStarted),
     })
     const rec = this.recorder
     const chunks = this.recChunks
