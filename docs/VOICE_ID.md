@@ -357,6 +357,30 @@ pauses, so a clip you play back on the Voices page sounds as it was
 recorded. A clip with less than a second of speech in it is used
 whole.
 
+### When a voice settles
+
+Once a voice is established, its bank settles and stops churning. With
+`voice_calibrated_scorer` on, established means the readiness test in
+[When a voice is ready](#when-a-voice-is-ready) says the voice is
+ready. With the test off, or before its first check has finished, it
+means the bank has enough speech and at least 10 clips from at least
+two days.
+
+A settled bank takes an automatic clip at most once a week. The clip
+has to come from a day the bank doesn't hold yet, or score better than
+the weakest automatic clip of its length. It then takes that clip's
+place, so the bank doesn't grow. When a length still has room, the
+clip fills the gap, and that uses up the week's turn too. Every other
+automatic clip is refused. The refusal is counted with the person's
+other refusals under the reason "voice is settled", and the voice
+dock's learning line calls the voice settled.
+
+A clip from an introduction, a correction or a recording you make on
+the Voices page always goes in, settled or not, and so does a clip
+you move into the bank. An automatic clip never pushes out a clip a human
+stood behind. A bank that isn't established keeps learning by
+rotation, as it always has.
+
 ## Teaching it a voice yourself
 
 A named turn adds to its person's bank only when the match clears the
@@ -634,8 +658,8 @@ service that remembers from one conversation to the next. With membro
 set up (`MEMORY_AUTH_TOKEN` in the environment), a background pass
 uploads accepted clips to membro's person records, pulls in people
 this install doesn't hold, and obeys forget marks. A bank that isn't
-full gets clips back from membro, a few each pass, and each one keeps
-the day it was recorded, so it rejoins that day's session. The pass
+full or settled gets clips back from membro, a few each pass, and each
+one keeps the day it was recorded, so it rejoins that day's session. The pass
 then asks the hygiene guard to check them. Forgetting a person
 in either app deletes the stored audio in both. The pass runs at
 startup, after rounds, and the moment you forget someone, always on a
@@ -657,6 +681,37 @@ correction that named them. The other record in a merge they won is
 forgotten too, and a clip moved into them is deleted at its source.
 Merging two people settles them the same way, and a waiting
 correction that named the merged-away person now names the survivor.
+
+### What membro keeps
+
+Membro keeps a copy of the clips each bank holds. When rotation drops
+a clip, when a settled bank replaces one, or when the hygiene guard
+sets one aside, the next pass deletes membro's copy too. The drop
+travels in the same record as your own deletes, so a rebuild can't
+bring it back, and a clip still waiting to be deleted there is never
+handed back to a bank. Membro writes down why each one went, as
+rotation, settled or set aside. If membro loses its copy of a clip a
+bank still holds, the next pass uploads it again.
+
+A clip the hygiene guard sets aside stays on this computer, out of
+matching. If a later check puts it back in use, the next pass uploads
+it again. Membro doesn't keep set-aside clips, because a rebuild from
+membro has no way to know they were set aside and would match with
+them straight away. The cost is small. If this computer's data were
+lost while a clip was set aside, that clip would be gone, and it was
+the doubtful one.
+
+A pass that hands clips back from membro deletes nothing there. If a
+clip it hands back pushes another out of the bank, membro keeps that
+one until you delete it on membro's side.
+
+Each pass also sends membro the list of clips every bank holds, by
+their content hash. Membro's People page counts, for each person, the
+stored clips that aren't on the list, and deletes them only when you
+press the button there. Any clip membro holds that no bank does counts
+there, whatever dropped it. The list needs membro's memory contract
+1.8. An older membro gets no list, and every drop still
+reaches it.
 
 ## Scale bounds
 

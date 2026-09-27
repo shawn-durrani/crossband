@@ -306,17 +306,23 @@ export function learningLines(people, learning) {
       if (!name) return null
       // At capacity the bank stops growing and starts REFRESHING: a better
       // clip evicts a worse one. Saying "still learning" there would be a
-      // lie, and saying nothing was the old silence this fixes.
-      const what = l.at_capacity ? 'refreshing' : 'still learning'
+      // lie, and saying nothing was the old silence this fixes. A SETTLED
+      // bank (the backend's settle rule) takes at most one new clip a week,
+      // so "refreshing" would overstate it too.
+      const what = l.settled ? 'settled'
+        : l.at_capacity ? 'refreshing' : 'still learning'
       const clips = `${l.clips || 0} clip${l.clips === 1 ? '' : 's'}`
       return {
         name,
         label: `${name} · ${what} · ${clips}`,
         title: `${clips}, ${Math.round(l.seconds || 0)}s banked, last learned `
           + `${learningAge(l.last_learned_age_s)}. `
-          + (l.at_capacity
-            ? 'The bank is full, so new clips replace weaker ones rather than adding.'
-            : 'New clips are still being added as this voice is heard.'),
+          + (l.settled
+            ? 'This voice is settled: it takes at most one new clip a week, '
+              + 'from a new day or better than its weakest.'
+            : l.at_capacity
+              ? 'The bank is full, so new clips replace weaker ones rather than adding.'
+              : 'New clips are still being added as this voice is heard.'),
       }
     })
     .filter(Boolean)

@@ -114,6 +114,9 @@ def voice_health(request: Request, chat_id: int | None = None):
             "short_clips": p.get("short_clips", 0),
             "sufficient": bool(p.get("sufficient")),
             "at_capacity": bool(p.get("at_capacity")),
+            # A settled bank takes at most one automatic clip a week
+            # (anchors.settle_offer), so "refreshing" would overstate it.
+            "settled": bool(p.get("settled")),
             "last_learned_age_s": (round(now_ts - last, 1)
                                    if last else None),
             # #312: refusals are part of learning health - a bank that

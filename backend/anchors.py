@@ -24,8 +24,11 @@ below SUFFICIENT_SECONDS of accepted clip audio a person's anchor is not used
 for identification at all - their turns stay uncertain, and downstream
 attribution treats them accordingly. The quality gate keeps junk out (too
 short, too quiet), and the keep-best-N policy refreshes anchors as better
-speech arrives. A tap-to-correct feeds its utterance in as ground truth
-(source='correction'), which both fixes the label and improves the anchor.
+speech arrives, until the voice settles (settle_offer): then an automatic
+clip gets in at most once a week. A tap-to-correct feeds its utterance in
+as ground truth (source='correction'), which both fixes the label and
+improves the anchor. A clip that leaves the kept set leaves membro too
+(_record_drop), so the durable home holds what the bank holds.
 
 Everything blocking runs on worker threads via the callers (the diarization
 pass, the introduction scan) - nothing here is awaited by any live path.
@@ -100,6 +103,26 @@ SPEECH_SPAN_CACHE_MAX = 512
 # screen instead of needing a shell on the box.
 REFUSAL_KEEP = 50          # refusal timestamps kept per person
 REFUSAL_WINDOW_S = 7 * 86400  # the "recently refused" window the UI reads
+# A settled voice (the owner, 27 September: "only keep the best, and once
+# that has been established it shouldn't change much"). Once a bank is
+# established (bank_established), an automatic clip gets in at most once
+# per SETTLE_WINDOW_S, and only when it comes from a capture day the bank
+# doesn't hold yet or beats the weakest automatic clip it replaces
+# (settle_offer). Human-backed clips always go in, and a bank that isn't
+# established learns as it always has. With the calibrated scorer running,
+# its readiness verdict decides (set_readiness_source); otherwise a
+# sufficient bank of SETTLE_MIN_CLIPS active clips from SETTLE_MIN_DAYS
+# capture days or more counts as established.
+SETTLE_MIN_CLIPS = 10
+SETTLE_MIN_DAYS = 2
+SETTLE_WINDOW_S = 7 * 86400
+SETTLED_REASON = "voice is settled"
+# Drop rows (a clip rotation, the settle rule or the hygiene audit took out
+# of the kept set, sent on so membro deletes its copy) waiting for membro,
+# bounded: past the cap the oldest drop row goes, and membro's copy then
+# waits for the owner's press on its People page instead. The owner's own
+# corrections are never trimmed.
+DROP_ROWS_MAX = 500
 
 
 def configure_sufficiency(sufficient_seconds=None, min_short_clips=None):
@@ -298,6 +321,92 @@ def is_short_ready(clips: list) -> bool:
     interjections have something like themselves to match."""
     live = active_clips(clips)
     return sum(1 for c in live if is_short(c)) >= MIN_SHORT_CLIPS
+
+
+# ---------- a settled voice (the settle rule, see SETTLE_* above) ----------
+
+# The readiness lookup the calibrated scorer registers while its worker
+# runs: person_id -> True / False from its last build, or None before the
+# first build finishes. None registered, or None answered, means the
+# fallback rule in bank_established decides.
+_readiness_source = None
+
+
+def set_readiness_source(fn) -> None:
+    """Register (or with None, remove) the calibrated scorer's readiness
+    lookup. voice_calibration.start and stop call this."""
+    global _readiness_source
+    _readiness_source = fn
+
+
+def readiness_verdict(person_id):
+    """True or False from the calibrated scorer's last build, or None when
+    it isn't running or hasn't built yet. Never raises."""
+    src = _readiness_source
+    if src is None:
+        return None
+    try:
+        verdict = src(person_id)
+    except Exception:
+        log.debug("readiness lookup failed", exc_info=True)
+        return None
+    return None if verdict is None else bool(verdict)
+
+
+def capture_days(clips: list) -> set:
+    """The capture days a set of clips covers, the way the readiness test
+    counts them (voice_calibration.capture_day, the local calendar date)."""
+    from .voice_calibration import capture_day
+    return {capture_day(c.get("added_at")) for c in clips or []}
+
+
+def bank_established(clips: list, verdict=None) -> bool:
+    """Has this bank settled? `verdict` is readiness_verdict for the
+    person: the calibrated scorer's answer wins whenever it has one.
+    Without it, a bank is established when it's sufficient and holds
+    SETTLE_MIN_CLIPS active clips or more from SETTLE_MIN_DAYS capture
+    days or more. Quarantined clips count for nothing."""
+    if verdict is not None:
+        return bool(verdict)
+    live = active_clips(clips)
+    return (is_sufficient(clips) and len(live) >= SETTLE_MIN_CLIPS
+            and len(capture_days(live)) >= SETTLE_MIN_DAYS)
+
+
+def settle_offer(clips: list, candidate: dict, now: float,
+                 last_at=None) -> tuple:
+    """What an established bank does with one automatic clip.
+
+    Returns (True, victim) to take it, where `victim` is the automatic
+    clip it replaces, or None when the clip's length class has room. It
+    returns (False, None) to refuse it, which happens when:
+
+    - the bank already took an automatic clip in the last
+      SETTLE_WINDOW_S (`last_at`, the person's settled_clip_at);
+    - the class is full and every clip in it is protected, since an
+      automatic clip never displaces a clip a human stood behind;
+    - the class is full and the clip is from a capture day the bank
+      already holds, and doesn't score above the weakest automatic clip
+      in its class.
+
+    The weakest clip is the lowest quality score, oldest on a tie. Pure:
+    the caller applies the answer."""
+    if last_at and now - float(last_at) < SETTLE_WINDOW_S:
+        return False, None
+    live = active_clips(clips)
+    short = is_short(candidate)
+    same = [c for c in live if is_short(c) == short]
+    cap = KEEP_SHORT_CLIPS if short else KEEP_CLIPS
+    if len(same) < cap:
+        return True, None
+    automatic = [c for c in same if not clip_protected(c)]
+    if not automatic:
+        return False, None
+    weakest = min(automatic, key=_quality)
+    new_day = not (capture_days([candidate]) & capture_days(live))
+    if new_day or candidate.get("score", 0) > weakest.get("score", 0):
+        return True, weakest
+    return False, None
 
 
 VOUCH_SOURCES = ("introduction", "correction")
@@ -579,6 +688,10 @@ class AnchorStore:
                 .get("last_reason", ""),
                 "close_to": list(close.get(pid, [])),
                 "sufficient": is_sufficient(all_clips),
+                # The settle rule: an established bank takes at most one
+                # automatic clip a week (bank_established, settle_offer).
+                "settled": bank_established(all_clips,
+                                            readiness_verdict(pid)),
                 # #83: has a human ever stood behind this bank, does it
                 # need the owner's ear, and is identification paused until
                 # then (only for crossings observed post-#83).
@@ -719,6 +832,62 @@ class AnchorStore:
             return hashlib.sha256((self.root / fname).read_bytes()).hexdigest()
         except OSError:
             return None
+
+    def _record_drop(self, data: dict, person_id: str, clip: dict, why: str,
+                     always: bool = False) -> None:
+        """Send on a clip that left the kept set, so membro deletes its copy
+        and a rebuild or restore can't bring it back. `why` is "rotation",
+        "settled" (the settle rule replaced it) or "set-aside" (the hygiene
+        audit quarantined it). It rides the ledger as an ordinary delete
+        row, so _settle_corrections and the replay treat it exactly as they
+        treat the owner's delete. Call it before the clip's file goes.
+
+        Recorded only when membro can hold the clip: the person has a
+        membro slug, or a pending move into them names this clip. A clip
+        already sent on when the audit set it aside isn't sent twice.
+        `always` is for merge_people, whose merged-away person is already
+        off the index, and whose rows _settle_corrections sorts out."""
+        if clip.get("left_membro"):
+            return
+        sha = clip.get("membro_sha") or self._clip_sha(clip["file"])
+        if not sha:
+            return
+        rows = data.get("pending_corrections") or []
+        person = data["people"].get(person_id) or {}
+        if not (always or person.get("membro_slug") or any(
+                c.get("kind") == "move" and c.get("to") == person_id
+                and c.get("sha") == sha for c in rows)):
+            return
+        self._record_correction(data, {"kind": "delete", "from": person_id,
+                                       "sha": sha, "why": why})
+        rows = data["pending_corrections"]
+        drops = [i for i, c in enumerate(rows) if c.get("why")]
+        if len(drops) > DROP_ROWS_MAX:
+            gone = set(drops[:len(drops) - DROP_ROWS_MAX])
+            data["pending_corrections"] = [
+                c for i, c in enumerate(rows) if i not in gone]
+            log.warning("voice clip drop rows over %d waiting for membro; "
+                        "the oldest %d wait for the owner's press there "
+                        "instead", DROP_ROWS_MAX, len(gone))
+
+    def kept_shas(self, person_id: str) -> list | None:
+        """The content addresses of the clips this person's bank matches
+        with, sorted: the manifest person_sync sends membro, so its People
+        page can count the stored clips this install no longer uses. A
+        clip pulled from membro goes by its stamp (#310), any other by its
+        file's hash. Quarantined clips are left out, since membro doesn't
+        hold them. None for an unknown person."""
+        with self._lock:
+            data = self._load()
+        person = data["people"].get(person_id)
+        if person is None:
+            return None
+        out = set()
+        for c in active_clips(person.get("clips", [])):
+            sha = c.get("membro_sha") or self._clip_sha(c["file"])
+            if sha:
+                out.add(sha)
+        return sorted(out)
 
     def pending_corrections(self) -> list:
         with self._lock:
@@ -885,6 +1054,17 @@ class AnchorStore:
             quarantined = [c for c in merged
                            if c.get("quarantined")][:QUARANTINE_MAX]
             kept = select_keep(active_clips(merged)) + quarantined
+            # Clips the union no longer keeps leave membro too. The merged-
+            # away person's rows go in ahead of the settling below, which
+            # rewrites them like any other delete out of them.
+            kept_ids = {id(c) for c in kept}
+            for c in survivor.get("clips", []):
+                if id(c) not in kept_ids:
+                    self._record_drop(data, survivor_id, c, "rotation")
+            for c in gone.get("clips", []):
+                if id(c) not in kept_ids:
+                    self._record_drop(data, gone_id, c, "rotation",
+                                      always=True)
             survivor["clips"] = kept
             # #33 slice 3: a merged-away person with a durable record must
             # merge there too, or its stale clips rebuild one day. The rows
@@ -952,7 +1132,17 @@ class AnchorStore:
         may already hold. When the same bytes are already in this person's
         bank, nothing new is written and True comes back, and a clip an
         automated path banked takes this source, so a human now stands
-        behind it."""
+        behind it.
+
+        An automatic clip offered to an established bank goes through the
+        settle rule first (settle_offer): refused with SETTLED_REASON, or
+        taken in place of the weakest automatic clip. A clip membro hands
+        back (`membro_sha`) restores the bank and isn't new learning, so
+        the rule leaves it alone. Every clip that leaves the kept set here
+        is sent on to membro (_record_drop), except during a restore: a
+        pass that brings clips back from membro deletes nothing there, and
+        what loses its place waits for the owner's press on membro's
+        People page."""
         from . import voiceid
         pcm = trim_clip(voiceid.trim_dead_air(pcm or b"", sample_rate),
                         sample_rate)
@@ -960,6 +1150,8 @@ class AnchorStore:
         if not accepts_clip(q):
             self._record_refusal(person_id, source, q)
             return False
+        settle = source not in VOUCH_SOURCES and not membro_sha
+        verdict = readiness_verdict(person_id) if settle else None
         with self._lock:
             data = self._load()
             person = data["people"].get(person_id)
@@ -976,7 +1168,6 @@ class AnchorStore:
                         person["vouched_by"] = source
                     self._save(data)
                 return True
-            fname = self._write_clip(pcm, sample_rate, person_id)
             clips = person.get("clips", [])
             was_sufficient = is_sufficient(clips)
             now = time.time()
@@ -984,10 +1175,22 @@ class AnchorStore:
                 at = float(added_at) if added_at else now
             except (TypeError, ValueError):
                 at = now
-            entry = {"file": fname, "seconds": q["seconds"],
+            entry = {"seconds": q["seconds"],
                      "rms": q["rms"], "score": q["score"],
                      "sample_rate": sample_rate, "source": source,
                      "added_at": at if 0 < at <= now else now}
+            victim = None
+            if settle and bank_established(clips, verdict):
+                took, victim = settle_offer(clips, entry, now,
+                                            person.get("settled_clip_at"))
+                if not took:
+                    self._note_refusal(person, SETTLED_REASON)
+                    self._save(data)
+                    log.info("anchor clip refused: person=%s source=%s "
+                             "reason=%s", person_id, source, SETTLED_REASON)
+                    return False
+                person["settled_clip_at"] = now
+            entry["file"] = self._write_clip(pcm, sample_rate, person_id)
             if membro_sha:
                 entry["membro_sha"] = str(membro_sha)
             if score is not None:
@@ -995,13 +1198,21 @@ class AnchorStore:
                     entry["match_score"] = round(float(score), 4)
                 except (TypeError, ValueError):
                     pass
-            clips.append(entry)
+            before = list(clips)
+            clips = [c for c in clips if c is not victim] + [entry]
             # Keep-best-N ranks ACTIVE clips only (#28 PR-B): quarantined
             # clips are set aside, not competing, and the keep policy may
             # neither evict them nor be crowded out by them.
             quarantined = [c for c in clips if c.get("quarantined")]
             kept = select_keep(active_clips(clips))
             person["clips"] = kept + quarantined
+            kept_ids = {id(c) for c in person["clips"]}
+            if not membro_sha:
+                for c in before:
+                    if id(c) not in kept_ids:
+                        self._record_drop(
+                            data, person_id, c,
+                            "settled" if c is victim else "rotation")
             # #83: person-level provenance, rotation-proof. A bank is
             # VOUCHED the moment a human stands behind a clip in it -
             # introduction or owner correction - even if that clip is later
@@ -1018,7 +1229,7 @@ class AnchorStore:
             self._save(data)
             kept_files = {c["file"] for c in kept} | {c["file"]
                                                       for c in quarantined}
-            for c in clips:
+            for c in before + [entry]:
                 if c["file"] not in kept_files:
                     self._delete_file(c["file"])
         return True
@@ -1056,14 +1267,19 @@ class AnchorStore:
             person = data["people"].get(person_id)
             if person is None:
                 return
-            rec = person.setdefault(
-                "clip_refusals", {"recent": [], "last_reason": "",
-                                  "total": 0})
-            rec["recent"] = ((rec.get("recent") or [])[-(REFUSAL_KEEP - 1):]
-                             + [time.time()])
-            rec["last_reason"] = reason
-            rec["total"] = int(rec.get("total") or 0) + 1
+            self._note_refusal(person, reason)
             self._save(data)
+
+    @staticmethod
+    def _note_refusal(person: dict, reason: str) -> None:
+        """Count one refusal on the person's record, with its reason. The
+        caller holds the lock and saves."""
+        rec = person.setdefault(
+            "clip_refusals", {"recent": [], "last_reason": "", "total": 0})
+        rec["recent"] = ((rec.get("recent") or [])[-(REFUSAL_KEEP - 1):]
+                         + [time.time()])
+        rec["last_reason"] = reason
+        rec["total"] = int(rec.get("total") or 0) + 1
 
     def clips_of(self, person_id: str) -> list | None:
         """One person's clip METADATA for the audition panel (#68): file
@@ -1105,6 +1321,21 @@ class AnchorStore:
                 for c in (person or {}).get("clips", [])
                 if c.get("membro_sha")}
 
+    def drop_membro_stamp(self, person_id: str, fname: str) -> bool:
+        """Forget a clip's membro address (#310's stamp) when membro no
+        longer holds it, so person_sync uploads the local bytes and every
+        later correction names the clip by their hash. True when a stamp
+        went."""
+        with self._lock:
+            data = self._load()
+            person = data["people"].get(person_id) or {}
+            clip = next((c for c in person.get("clips", [])
+                         if c.get("file") == fname), None)
+            if clip is None or not clip.pop("membro_sha", None):
+                return False
+            self._save(data)
+        return True
+
     def clip_path(self, person_id: str, fname: str) -> Path | None:
         """Resolve a clip file token to its on-disk path, ONLY when the index
         says that clip belongs to that person - the client's file token is
@@ -1144,6 +1375,9 @@ class AnchorStore:
                 return False
             src["clips"] = [c for c in src["clips"] if c.get("file") != fname]
             clip.pop("quarantined", None)
+            # A set-aside clip left membro when the audit set it aside
+            # (set_hygiene). Active again, the push sends it back.
+            clip.pop("left_membro", None)
             clip["moved_from"] = person_id
             clip["moved_at"] = time.time()
             dst.setdefault("clips", []).append(clip)
@@ -1516,7 +1750,16 @@ class AnchorStore:
         Every clip not named is reinstated, so the audit's output IS the
         quarantine state. `close_pairs`: [(pid_a, pid_b, cosine), ...].
         Set-aside clips past QUARANTINE_MAX per person are deleted for real
-        (oldest first) - set aside is not a licence to hoard audio."""
+        (oldest first) - set aside is not a licence to hoard audio.
+
+        Membro holds only the clips a bank matches with. A clip the audit
+        sets aside is sent on for deletion there (_record_drop, "set-aside")
+        and loses its membro stamp, so if a later audit reinstates it, the
+        next sync pass uploads it again from the bytes kept here. A rebuild
+        from membro has no quarantine flags, so holding set-aside clips
+        there would bring them back as live matching audio. A clip deleted
+        for real past the cap is sent on too, unless it went when it was
+        set aside."""
         norm = {}
         for pid, files in (quarantine or {}).items():
             if isinstance(files, dict):
@@ -1530,11 +1773,17 @@ class AnchorStore:
                 bad = norm.get(pid, {})
                 kept, evict = [], []
                 for c in person.get("clips", []):
+                    was = bool(c.get("quarantined"))
                     c["quarantined"] = c["file"] in bad
                     if c["quarantined"]:
                         c["quarantine_reason"] = bad[c["file"]]
+                        if not was:
+                            self._record_drop(data, pid, c, "set-aside")
+                            c.pop("membro_sha", None)
+                            c["left_membro"] = True
                     else:
                         c.pop("quarantine_reason", None)
+                        c.pop("left_membro", None)
                     kept.append(c)
                 q = [c for c in kept if c["quarantined"]]
                 if len(q) > QUARANTINE_MAX:
@@ -1542,6 +1791,8 @@ class AnchorStore:
                     evict = q[:len(q) - QUARANTINE_MAX]
                     gone = {c["file"] for c in evict}
                     kept = [c for c in kept if c["file"] not in gone]
+                    for c in evict:
+                        self._record_drop(data, pid, c, "rotation")
                 person["clips"] = kept
                 for c in evict:
                     self._delete_file(c["file"])
