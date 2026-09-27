@@ -258,6 +258,22 @@ priced or billed changes with it, and
 [docs/COST_TELEMETRY.md](COST_TELEMETRY.md) has the before-and-after
 workflow.
 
+At `INFO` the log also shows how voice turns were transcribed. When a
+live transcription session ends, its `stt capture close` line counts the
+turns it carried. A turn sent the slower backup way gets a
+`stt backup path` line with a one-word reason. Neither line holds
+anything anyone said.
+
+- `batch` means live transcription was off for that turn.
+- `reconnecting` means its connection was being reopened as the turn ended.
+- `reconnect` means the connection was replaced while the turn was spoken.
+- `late` means live transcription didn't answer in time.
+- `rescue` means live transcription failed while the turn waited for its words.
+- `no_audio` means the turn's audio never reached live transcription.
+
+A few backup lines in an evening is normal. If they start to rival the
+turns counted on the close lines, the live path has broken somewhere.
+
 ## Not on macOS?
 
 The same idea works with

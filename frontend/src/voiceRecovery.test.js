@@ -101,3 +101,18 @@ test('frames flowed: commit, regardless of length', () => {
 test('a short zero-frame blip commits exactly as today (drop-commit swallows it)', () => {
   assert.equal(realtimeCommitAction({ framesSent: 0, speechMs: 200, minSpeechMs: 500 }), 'commit')
 })
+
+// #470: the realtime socket was replaced while the person was talking, so
+// realtime holds only the end of what they said. The recorder holds it all.
+test('a real utterance spoken across a socket change is salvaged', () => {
+  assert.equal(realtimeCommitAction({ framesSent: 40, speechMs: 1800, minSpeechMs: 500,
+                                      socketChanged: true }), 'salvage')
+  // a dead feed still rebuilds first
+  assert.equal(realtimeCommitAction({ framesSent: 0, speechMs: 1800, minSpeechMs: 500,
+                                      socketChanged: true }), 'salvage-rebuild')
+  // a blip commits as ever, and so does a turn on one socket throughout
+  assert.equal(realtimeCommitAction({ framesSent: 4, speechMs: 200, minSpeechMs: 500,
+                                      socketChanged: true }), 'commit')
+  assert.equal(realtimeCommitAction({ framesSent: 40, speechMs: 1800, minSpeechMs: 500,
+                                      socketChanged: false }), 'commit')
+})

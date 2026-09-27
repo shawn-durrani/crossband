@@ -131,6 +131,11 @@ export default class VoiceController {
     this.roomMode = false
     this.sttWs = null
     this.sttProc = null
+    // #470: which realtime socket this is (each open takes the next
+    // number), and the one the utterance in progress began streaming on:
+    // -1 when none was open then, null when no utterance has begun.
+    this._sttGen = 0
+    this._utterGen = null
     this.sttStreaming = false // true while inside a user utterance (sending PCM)
     this._utterFrames = 0     // PCM frames actually SENT this utterance
     this._pcmPre = []         // small pre-onset PCM ring so the start isn't clipped
@@ -311,6 +316,7 @@ export default class VoiceController {
   _openSttStream() {
     if (this.sttWs || !this.audioCtx || !this.micSource) return
     const ws = new WebSocket(`${wsBase()}/api/voice/stt-stream`)
+    this._sttGen++
     ws.onopen = () => {
       try {
         ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: TARGET_RATE }))
@@ -513,7 +519,7 @@ export default class VoiceController {
       // Thinking until the batch transcript is back.
       this._vlog('stt:rescue', { turnId: rescue.turnId, dispatch: rescue.dispatch,
                                  commits: inFlight.length })
-      this._salvageUtterance(rescue.speechMs, rescue.turnId, rescue.dispatch)
+      this._salvageUtterance(rescue.speechMs, rescue.turnId, rescue.dispatch, null, 'rescue')
     } else if (this.active && this.state === 'transcribing') {
       this._state(this.roundActive ? 'working' : 'listening')
     }
@@ -536,6 +542,9 @@ export default class VoiceController {
     // counted.
     this._utterFrames = 0
     this._strandedSent = false  // a fresh utterance re-arms the stall beacon
+    // #470: the socket this utterance's audio starts on. One still
+    // connecting drops what it's sent, so it doesn't count as open.
+    this._utterGen = this.sttWs?.readyState === WebSocket.OPEN ? this._sttGen : -1
     if (!this.sttRealtime || !this.sttWs || this.sttStreaming) return
     this.sttStreaming = true
     for (const c of this._pcmPre) this._sttSend({ audio: c })
@@ -1034,8 +1043,12 @@ export default class VoiceController {
       // Realtime path: close the utterance with a commit; the transcript comes
       // back asynchronously on the socket (onmessage -> sendText).
       this.sttStreaming = false
-      if (realtimeCommitAction({ framesSent: this._utterFrames, speechMs,
-                                 minSpeechMs: MIN_SPEECH_MS }) === 'salvage-rebuild') {
+      const action = realtimeCommitAction({
+        framesSent: this._utterFrames, speechMs, minSpeechMs: MIN_SPEECH_MS,
+        socketChanged: this._utterGen != null && this._utterGen !== this._sttGen,
+      })
+      this._utterGen = null
+      if (action === 'salvage-rebuild') {
         // The VAD heard a real utterance but the processor sent ZERO frames,
         // so the capture graph is dead (iOS kills it across playback route
         // changes). Committing would transcribe nothing and lose the
@@ -1049,7 +1062,20 @@ export default class VoiceController {
         this._state('transcribing')
         // #461: the relay never heard this turn, so the batch copy carries
         // its id and its end of speech for the identity check.
-        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice)
+        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice, 'no_audio')
+        return
+      }
+      if (action === 'salvage') {
+        // #470: the realtime socket was replaced while this was spoken, so
+        // it heard only the end. The recorder heard all of it. The commit
+        // still goes, so the end it holds can't run into the next turn,
+        // but the ledger never sees it: its words land nowhere.
+        this._vlog('stt:straddle', { turnId, speechMs: Math.round(speechMs) })
+        this._sttSend({ commit: true, turn_id: turnId })
+        this._cut = null
+        this._watchHandoff(turnId)
+        this._state('transcribing')
+        await this._salvageUtterance(speechMs, turnId, 'send', lastVoice, 'reconnect')
         return
       }
       const tooShort = speechMs < MIN_SPEECH_MS
@@ -1082,7 +1108,7 @@ export default class VoiceController {
             // Realtime never answered in time. The batch recorder ran the
             // whole time - salvage its copy; the ledger has already
             // consumed the commit, so a late realtime final drops.
-            this._salvageUtterance(speechMs, turnId, dispatch, lastVoice)
+            this._salvageUtterance(speechMs, turnId, dispatch, lastVoice, 'late')
           }
         }, sttCommitTimeoutMs(speechMs))
       } else if (cause === 'gap') {
@@ -1096,9 +1122,11 @@ export default class VoiceController {
     // #453: a cut piece's batch call is tracked before the first await, so
     // a pause that ends the turn while it's out makes it the last piece.
     const tooShort = speechMs < MIN_SPEECH_MS
+    // #470: realtime off for this turn, or its socket being reopened.
+    const why = this.sttRealtime ? 'reconnecting' : 'batch'
     const piece = this._trackPiece(turnId, continuation && !tooShort ? 'buffer' : 'send',
                                    { speechMs, endedAt: lastVoice,
-                                     after: cut ? cut.turnId : null })
+                                     after: cut ? cut.turnId : null, why })
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
@@ -1189,7 +1217,8 @@ export default class VoiceController {
     try {
       const res = await fetch(`/api/chats/${this.getChatId()}/stt`,
                               { method: 'POST',
-                                body: batchSttForm(blob, speechMs, turnId, copy, piece.after) })
+                                body: batchSttForm(blob, speechMs, turnId, copy, piece.after,
+                                                   piece.why) })
       const data = await res.json().catch(() => ({}))
       if (this._batchPiece === piece) this._batchPiece = null
       dispatch = piece.dispatch || 'send'
@@ -1217,7 +1246,8 @@ export default class VoiceController {
       if (dispatch === 'send') {
         handoffStage(this._handoff, turnId || this._trace.current()?.turnId, STAGE_HELD)
       }
-      this.heldUtterances.push({ blob, speechMs, turnId, copy, after: piece.after })
+      this.heldUtterances.push({ blob, speechMs, turnId, copy, after: piece.after,
+                                 why: piece.why })
       this.onHeld?.(this.heldUtterances.length)
       this._startHeldRetry()
       return false
@@ -1228,7 +1258,8 @@ export default class VoiceController {
   // A cut piece's call ('buffer') is remembered while it's out, so a long
   // turn that ends meanwhile can make it the last piece (_endLongTurn).
   // #461: `speech` is { speechMs, endedAt } when the turn's place in the
-  // recording is known, which is what lets it send an identity copy.
+  // recording is known, which is what lets it send an identity copy. #470:
+  // and `why`, the word the server logs for a turn on this path.
   _trackPiece(turnId, dispatch, speech = {}) {
     const piece = { turnId, dispatch, ...speech }
     if (dispatch === 'buffer') this._batchPiece = piece
@@ -1251,8 +1282,8 @@ export default class VoiceController {
     }
   }
 
-  async _salvageUtterance(speechMs, turnId = null, dispatch = 'send', endedAt = null) {
-    const piece = this._trackPiece(turnId, dispatch, { speechMs, endedAt })
+  async _salvageUtterance(speechMs, turnId = null, dispatch = 'send', endedAt = null, why = '') {
+    const piece = this._trackPiece(turnId, dispatch, { speechMs, endedAt, why })
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
@@ -1272,7 +1303,8 @@ export default class VoiceController {
       const item = this.heldUtterances[0]
       if (!item) { this.onHeld?.(0); return }
       try {
-        const body = batchSttForm(item.blob, item.speechMs, item.turnId, item.copy, item.after)
+        const body = batchSttForm(item.blob, item.speechMs, item.turnId, item.copy, item.after,
+                                  item.why)
         const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body })
         const data = await res.json().catch(() => ({}))
         // Reached the server: this item is done either way (HTTP errors

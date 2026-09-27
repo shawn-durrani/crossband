@@ -81,8 +81,9 @@ export function identityWav(samples, srcRate, win) {
 // turn id can't be matched to the message it becomes, so neither goes
 // alone, and the server checks nothing for that turn. A piece of a long
 // turn also names the piece before it (`after`, #469), so the server
-// names the turn from all its pieces.
-export function batchSttForm(blob, speechMs, turnId, copy, after = null) {
+// names the turn from all its pieces. `why` is one word saying why the
+// turn took this path (#470), which the server logs.
+export function batchSttForm(blob, speechMs, turnId, copy, after = null, why = '') {
   const fd = new FormData()
   fd.append('file', blob, 'utterance.webm')
   fd.append('duration_ms', String(Math.round(speechMs)))
@@ -91,5 +92,6 @@ export function batchSttForm(blob, speechMs, turnId, copy, after = null) {
     fd.append('pcm', copy, 'turn.wav')
     if (after) fd.append('after', after)
   }
+  if (why) fd.append('why', why)
   return fd
 }

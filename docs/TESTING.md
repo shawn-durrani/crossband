@@ -78,6 +78,17 @@ turn waiting changes nothing else. When the last piece of a long turn
 comes back empty, the pieces already heard are still sent. The suite
 drives the real voice client through each case.
 
+Live transcription stays connected through a quiet room. ElevenLabs
+closes a realtime connection that hears no audio for about 15 seconds.
+The relay sends it 20 milliseconds of silence whenever the browser has
+sent nothing for five seconds. It commits that silence itself before
+ElevenLabs would, and keeps the answer, so the next turn keeps its own
+id. A turn spoken while the connection was replaced goes from the backup
+recording, since realtime heard only its end. Every turn that takes the
+backup path tells the server why. The suites run the relay against a
+fake transcriber with the wait cut to milliseconds, and the voice client
+through a replaced socket.
+
 A long turn ends on the same pause as a short one. The app cuts speech
 into pieces about 12 seconds in and joins them into one message, and a
 cut can land on the pause at the end of a turn. After a cut, the usual

@@ -158,6 +158,9 @@ test('a recording the browser cannot decode goes as it always did', async () => 
   await speak(ctrl)
   await settle()
   assert.equal(forms.length, 1)
-  assert.deepEqual([...forms[0].keys()], ['file', 'duration_ms'])
+  // No turn id and no copy. The one addition is why it took this path
+  // (#470), a word the server logs.
+  assert.deepEqual([...forms[0].keys()], ['file', 'duration_ms', 'why'])
+  assert.equal(forms[0].get('why'), 'batch')
   assert.equal(sent.length, 1)
 })
