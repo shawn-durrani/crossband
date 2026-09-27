@@ -27,6 +27,11 @@ What these tests pin, in order:
    anchor store.
 8. THE ROUTE. /api/voice/people carries each person's readiness and the
    test's state beside the unchanged `sufficient`.
+9. SAVE-TIME SCORES AND THE HYGIENE AUDIT (#523). Each clip gets the
+   chance its voice is its own person; the worker rescores older cosines
+   into that once and touches nothing else; and the hygiene audit judges
+   clips with this scorer after each build, with the same verdict every
+   time, while other callers leave it to the worker.
 
 Keyless and offline. Voices are synthetic tones: each person has a pitch
 and each capture day a faint room tone, and the fake speaker models read
@@ -796,6 +801,188 @@ def test_the_people_route_carries_readiness(tmp_path, monkeypatch):
                                             for p in body["people"]])
     for name in PITCH:
         assert name not in raw
+
+
+# ── 9. save-time scores and the hygiene audit ──────────────────────────────
+
+def _stray(store, alex):
+    """A turn of Sam's saved under Alex; returns its file."""
+    had = {c["file"] for c in store.clips_of(alex)}
+    assert store.add_clip(alex, voice("Sam", 6, 1, take=40), SR,
+                          "accumulated", added_at=D0 + 86400 + 3600)
+    new, = {c["file"] for c in store.clips_of(alex)} - had
+    return new
+
+
+def _scored(store, pid, score, unit=None):
+    """Give each of a person's clips a save-time score, as a bank saved
+    before the redesign carries its cosines."""
+    data = store._load()
+    for c in data["people"][pid]["clips"]:
+        c["match_score"] = score
+        if unit:
+            c["match_unit"] = unit
+    store._save(data)
+
+
+def test_each_clip_gets_the_chance_its_voice_is_its_person(store, fake):
+    """#523: a build scores every clip whole against every bank, with the
+    clips cut from its own turn left out of its own, the way a voice is
+    named. A clip of the right person clears the trust bar, and a stray
+    is unlikely to be the person it's filed under."""
+    pids = {n: bank(store, n, HOUSEHOLD[n]) for n in ("Alex", "Sam", "Mateo")}
+    dave = bank(store, "Dave", [(9, 0)])            # one clip: nothing left
+    stray = _stray(store, pids["Alex"])
+    trust = vc.build(ON)["clip_trust"]
+    for name in ("Alex", "Sam"):
+        for c in store.clips_of(pids[name]):
+            if c["file"] != stray:
+                assert trust[c["file"]] >= anchors.TRUST_PROB_BAR, name
+    assert trust[stray] < vc.NEW_BAR
+    assert all(c["file"] in trust for c in store.clips_of(pids["Mateo"]))
+    assert not any(c["file"] in trust for c in store.clips_of(dave))
+    assert all(0.0 <= p <= 1.0 for p in trust.values())
+
+
+def test_the_worker_rescores_old_scores_once_and_changes_nothing_else(
+        household, fake):
+    """#523: after a build, every clip still carrying a cosine takes its
+    probability, stamped, with the cosine kept beside it. A clip already
+    in the new units, or with no score, is left alone, and no clip is
+    added, deleted, moved or set aside. A later build rewrites nothing."""
+    store = anchors.store()
+    _scored(store, household["Alex"], 0.61)
+    _scored(store, household["Sam"], 0.997, "calibrated")
+    before = {pid: store.clips_of(pid) for pid in household.values()}
+    vc._build_once(ON, threading.Event())
+    people = store._load()["people"]
+    alex = people[household["Alex"]]["clips"]
+    assert all(c["match_unit"] == "calibrated"
+               and c["legacy_match_score"] == 0.61
+               and c["match_score"] >= anchors.TRUST_PROB_BAR for c in alex)
+    assert all(c["match_score"] == 0.997 and "legacy_match_score" not in c
+               for c in people[household["Sam"]]["clips"])
+    assert all("match_score" not in c
+               for c in people[household["Dave"]]["clips"])
+    assert {pid: store.clips_of(pid) for pid in household.values()} == before
+    first = {c["file"]: c["match_score"] for c in alex}
+    store.add_clip(household["Sam"], voice("Sam", 6, 2, take=7), SR,
+                   "accumulated", added_at=D0 + 2 * 86400)
+    vc._build_once(ON, threading.Event())           # a new build
+    again = store._load()["people"][household["Alex"]]["clips"]
+    assert {c["file"]: c["match_score"] for c in again} == first
+
+
+def test_rescored_scores_lift_a_pause_that_only_the_units_caused(
+        household, fake):
+    """A genuine voice whose human-backed clips have rotated out, saved at
+    cosines under the old bar: paused while its scores are cosines, and
+    working once they read as the chance it's them."""
+    store = anchors.store()
+    alex = household["Alex"]
+    data = store._load()
+    data["people"][alex]["vouched_at"] = 1.0
+    store._save(data)
+    _scored(store, alex, 0.55)
+    person = store._load()["people"][alex]
+    assert anchors.bank_trust(person) == "low"
+    assert anchors.identification_paused(person)
+    vc._build_once(ON, threading.Event())
+    person = store._load()["people"][alex]
+    assert anchors.bank_trust(person) == "high"
+    assert not anchors.identification_paused(person)
+
+
+def _prints(v):
+    v = np.asarray(v, dtype=np.float64)
+    return {m: v / np.linalg.norm(v) for m in vc.MODELS}
+
+
+def test_contaminated_is_the_naming_scorer_asking_who_it_sounds_like():
+    A, S = _prints([1, 0, 0]), _prints([0, 1, 0])
+    banks = {"alex": [("a1", A), ("a2", A), ("x", S)],
+             "sam": [("s1", S), ("s2", S)]}
+    assert vc.contaminated(banks) == {"alex": ["x"]}
+    # a clip with nothing left in its own bank is never judged
+    assert vc.contaminated({"alex": [("a1", A)], "sam": [("s1", S)]}) == {}
+    # a slice cut from the same turn can't vouch for it: the family
+    # leaves its own bank together
+    X = _prints([0, 0.4, math.sqrt(1 - 0.16)])      # 0.4 from Sam
+    banks = {"alex": [("a1", A), ("x", X), ("x-short", X)],
+             "sam": [("s1", S), ("s2", S)]}
+    assert vc.contaminated(banks) == {}
+    assert vc.contaminated(banks, {"x-short": "x"}) == \
+        {"alex": ["x", "x-short"]}
+    assert vc.contaminated({}) == {}
+
+
+def test_the_audit_runs_on_this_scorer_after_a_build(household, fake,
+                                                     monkeypatch):
+    """#523: with a build ready, the hygiene audit judges clips with the
+    scorer that names voices, and the old matcher's fingerprint isn't
+    used. The verdict doesn't depend on the last one, so a re-audit of the
+    same banks comes out the same."""
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "_embed", lambda *a: pytest.fail(
+        "the audit used the old matcher's fingerprint"))
+    store = anchors.store()
+    alex = household["Alex"]
+    stray = _stray(store, alex)
+    vc._build_once(ON, threading.Event())
+
+    def aside():
+        return {c["file"]: c["quarantine_reason"]
+                for pid in household.values()
+                for c in store.clips_of(pid) if c["quarantined"]}
+    assert aside() == {stray: "contaminated"}
+    vc._build_once(ON, threading.Event())           # the bank changed
+    voiceid._audit_fingerprint = None               # forget the last audit
+    assert voiceid.audit_banks(ON) is True
+    assert aside() == {stray: "contaminated"}
+    # with the setting off, the old matcher's rule is back
+    assert vc.audit_snapshot(OFF) is None
+    assert vc.audit_snapshot(ON) is vc.current()
+
+
+def test_an_audit_that_cant_fingerprint_a_clip_changes_nothing(
+        household, fake, monkeypatch):
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    vc._build_once(ON, threading.Event())
+    store = anchors.store()
+    first = store.clips_of(household["Alex"])[0]["file"]
+    store.set_hygiene({household["Alex"]: [first]}, [])
+    monkeypatch.setattr(vc, "clip_prints", lambda *a: None)
+    assert voiceid.audit_banks(ON) is False
+    row = next(c for c in store.clips_of(household["Alex"])
+               if c["file"] == first)
+    assert row["quarantined"] is True               # not reinstated blind
+
+
+def test_other_callers_leave_the_audit_to_the_worker(household, monkeypatch):
+    """While the worker runs, a bank change's caller doesn't audit on its
+    own thread: the change asked the worker for a build, and the worker
+    audits after it."""
+    monkeypatch.setattr(vc, "embed", fake_embed_factory())
+    monkeypatch.setattr(vc, "models_state", lambda cfg: "ready")
+    monkeypatch.setattr(vc, "DEBOUNCE_S", 0.01)
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    ran = []
+    real = voiceid.audit_banks
+
+    def counting(cfg, sample_rate=16000):
+        ran.append(threading.current_thread().name)
+        return real(cfg, sample_rate)
+    monkeypatch.setattr(voiceid, "audit_banks", counting)
+    assert vc.start(ON) is True
+    assert _wait(lambda: vc.current() is not None and ran)
+    store = anchors.store()
+    stray = _stray(store, household["Alex"])
+    assert voiceid.audit_banks_if_changed(ON) is False  # left to the worker
+    assert _wait(lambda: any(c["quarantined"] for c in store.clips_of(
+        household["Alex"]) if c["file"] == stray))
+    assert set(ran) == {"voice-calibration"}
+    vc.stop()
+    assert _calibration_threads() == []
 
 
 # ── the real model (skips without the file) ────────────────────────────────

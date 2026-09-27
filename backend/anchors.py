@@ -420,6 +420,20 @@ VOUCH_SOURCES = ("introduction", "correction")
 # (medians 0.61) was paused again by the one clip it banked after the
 # audition, so a new chat couldn't name that person at all (#499).
 TRUST_SCORE_BAR = 0.60
+# The units a save-time score is in (#523). A clip the calibrated scorer
+# saved carries the chance its voice was that person, stamped
+# `match_unit` CALIBRATED_UNIT. A clip with no stamp carries a cosine:
+# the whole-turn matcher's from before the voice redesign, or the
+# fallback scorer's since. While the calibrated scorer runs, its worker
+# rescores those once in its own units (voice_calibration.rescore_trust)
+# and keeps the old number beside the new as `legacy_match_score`.
+CALIBRATED_UNIT = "calibrated"
+# The bar in those units: more likely than not that the clip is the
+# person it's filed under, the same 0.5 a named voice has to hold to keep
+# its name. The banking bar (0.99 over a whole session's speech) is far
+# above what one clip reaches on its own, and a bar there would pause
+# genuine voices, as 0.65 did on the old scale.
+TRUST_PROB_BAR = 0.5
 
 
 def bank_vouched(person: dict) -> bool:
@@ -452,11 +466,14 @@ def bank_trust(person: dict) -> str:
       itself - a polluted bank grades its own donor highly;
     - 'high' / 'low': vouched once, but accumulation has replaced every
       human-backed clip. The save-time scores of the survivors decide:
-      a median at TRUST_SCORE_BAR or above keeps working (flagged), below
-      it identification pauses for the owner's ear. Clips banked before
-      scores were recorded carry none and are left out; with no scored
-      clip at all the verdict is 'high', because pausing the installed
-      base on upgrade would be a regression, not a safeguard (#83's own
+      a median at the bar or above keeps working (flagged), below it
+      identification pauses for the owner's ear. Each score is measured
+      against the bar for its units (_trust_margin), so a bank holding
+      both kinds is judged fairly, and a bank of one kind is judged
+      exactly as its median against its bar. Clips banked before scores
+      were recorded carry none and are left out; with no scored clip at
+      all the verdict is 'high', because pausing the installed base on
+      upgrade would be a regression, not a safeguard (#83's own
       lesson)."""
     clips = person.get("clips", [])
     if surviving_human_clip(clips):
@@ -468,11 +485,20 @@ def bank_trust(person: dict) -> str:
                  default=0)
     if confirmed and confirmed >= newest:
         return "human"
-    scored = [c["match_score"] for c in active_clips(clips)
-              if c.get("match_score") is not None]
-    if not scored:
+    margins = [_trust_margin(c) for c in active_clips(clips)
+               if c.get("match_score") is not None]
+    if not margins:
         return "high"
-    return "high" if statistics.median(scored) >= TRUST_SCORE_BAR else "low"
+    return "high" if statistics.median(margins) >= 0 else "low"
+
+
+def _trust_margin(clip: dict) -> float:
+    """How far a clip's save-time score clears the trust bar for its units
+    (#523): TRUST_PROB_BAR for a calibrated probability, TRUST_SCORE_BAR
+    for an older cosine. Negative below the bar."""
+    bar = TRUST_PROB_BAR if clip.get("match_unit") == CALIBRATED_UNIT \
+        else TRUST_SCORE_BAR
+    return float(clip["match_score"]) - bar
 
 
 def needs_audition(person: dict) -> bool:
@@ -1085,7 +1111,7 @@ class AnchorStore:
 
     def add_clip(self, person_id: str, pcm: bytes, sample_rate: int,
                  source: str, score=None, membro_sha=None,
-                 added_at=None, dedupe=False) -> bool:
+                 added_at=None, dedupe=False, score_unit=None) -> bool:
         """Offer one utterance's audio as an anchor clip. Trims the dead
         air off both ends (#310), applies the quality gate, the 10s cap
         and the keep-best-N refresh; evicted clips have their files
@@ -1097,6 +1123,8 @@ class AnchorStore:
         them yet. `score` (#221) is the MATCH score this clip banked at,
         recorded at write time like every provenance stamp: it is what a
         bank that outlives its human backing is later judged by.
+        `score_unit` (#523) is CALIBRATED_UNIT when `score` is the
+        calibrated scorer's probability, and None for a cosine.
         `membro_sha` (#310): for a clip pulled from membro, the durable
         home's content address for it. The local bytes are trimmed here,
         so they stop hashing to that address - corrections and the push
@@ -1174,6 +1202,9 @@ class AnchorStore:
                     entry["match_score"] = round(float(score), 4)
                 except (TypeError, ValueError):
                     pass
+                else:
+                    if score_unit:
+                        entry["match_unit"] = str(score_unit)
             before = list(clips)
             clips = [c for c in clips if c is not victim] + [entry]
             # Keep-best-N ranks ACTIVE clips only (#28 PR-B): quarantined
@@ -1704,6 +1735,46 @@ class AnchorStore:
             data = self._load()
         return [tuple(p) for p in data.get("close_pairs") or []
                 if isinstance(p, (list, tuple)) and len(p) >= 2]
+
+    # -- save-time scores in the calibrated scorer's units (#523) --
+
+    def set_trust_scores(self, probs: dict) -> dict:
+        """Move older save-time scores into the calibrated scorer's units.
+        `probs` is {clip filename: the chance its voice is the person it's
+        filed under}, from voice_calibration.rescore_trust.
+
+        Only a clip that carries a match score without the CALIBRATED_UNIT
+        stamp changes. Its score moves to `legacy_match_score`, the
+        probability takes its place, and the stamp marks it done, so a
+        second run finds nothing to change. Nothing else is touched: no
+        clip is deleted, moved or set aside, and a clip with no score
+        stays without one. Returns content-free counts: {"clips",
+        "people"} changed."""
+        changed, people = 0, 0
+        with self._lock:
+            data = self._load()
+            for person in data["people"].values():
+                hit = False
+                for c in person.get("clips", []):
+                    if c.get("match_score") is None \
+                            or c.get("match_unit") == CALIBRATED_UNIT \
+                            or c.get("file") not in probs:
+                        continue
+                    try:
+                        prob = round(float(probs[c["file"]]), 4)
+                    except (TypeError, ValueError):
+                        continue
+                    if not 0.0 <= prob <= 1.0:
+                        continue
+                    c["legacy_match_score"] = c["match_score"]
+                    c["match_score"] = prob
+                    c["match_unit"] = CALIBRATED_UNIT
+                    changed += 1
+                    hit = True
+                people += hit
+            if changed:
+                self._save(data)
+        return {"clips": changed, "people": people}
 
 
 # Change listeners (#482 stage 2): called after every index save, so a

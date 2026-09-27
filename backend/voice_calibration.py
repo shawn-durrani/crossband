@@ -65,13 +65,22 @@ anchors.set_readiness_source), and a ready bank takes at most one
 automatic clip a week (anchors.settle_offer). That is the one place a
 verdict reaches banking. It never names a turn.
 
+AFTER A BUILD (#523), the worker makes the store's two derived verdicts
+speak this scorer's language: every clip still carrying an old cosine
+as its save-time score is rescored once as a probability (rescore_trust,
+which the trust bar reads), and the hygiene audit judges clips with this
+scorer instead of the old matcher's centroids (contaminated). See
+"trust scores and the hygiene audit" below.
+
 THE RULES, pinned in tests/test_voice_calibration.py:
 
   * Off by default (`voice_calibrated_scorer`). Off means no thread, no
     download and no work, and the route reports state "off".
   * Background only. One daemon thread builds at startup and after any
     bank change (an anchors change listener, debounced). Request threads
-    only read the last finished snapshot.
+    only read the last finished snapshot. A build itself never writes to
+    the anchor store; the rescore and the audit after it are the
+    worker's only writes, and neither deletes, moves or adds a clip.
   * The live path goes first. Every embedding waits, briefly and
     boundedly, for a voice check in flight, and holds the live matcher's
     lock for one embedding at a time, through voiceid._embed.
@@ -339,14 +348,10 @@ def capture_day(added_at) -> int:
         return datetime.date.fromtimestamp(0).toordinal()
 
 
-def leave_out_units(clips) -> list:
-    """Each clip's (day, family, fit group, readiness unit), in order.
-
-    The family is the clip a harvested short clip was cut from (or the clip
-    itself), and a harvested clip takes that clip's day. The fit group is
-    the whole day for a person with clips from two days or more, and the
-    family for a person with one day. The readiness unit is always the
-    person's day."""
+def family_roots(clips) -> list:
+    """Each clip's family, as the index of the clip it was cut from: a
+    harvested short clip's parent (harvest_parents), followed up to the
+    top, or the clip itself."""
     parents = harvest_parents(clips)
 
     def root(i):
@@ -356,7 +361,18 @@ def leave_out_units(clips) -> list:
             i = parents[i]
         return i
 
-    roots = [root(i) for i in range(len(clips))]
+    return [root(i) for i in range(len(clips))]
+
+
+def leave_out_units(clips) -> list:
+    """Each clip's (day, family, fit group, readiness unit), in order.
+
+    The family is the clip a harvested short clip was cut from (or the clip
+    itself), and a harvested clip takes that clip's day. The fit group is
+    the whole day for a person with clips from two days or more, and the
+    family for a person with one day. The readiness unit is always the
+    person's day."""
+    roots = family_roots(clips)
     days = [capture_day(clips[r]["added_at"]) for r in roots]
     days_of: dict = {}
     for c, d in zip(clips, days):
@@ -578,7 +594,8 @@ def fit_snapshot(clips) -> dict:
     p_person = clip_person[p_clip] if len(p_clip) else np.zeros(0, int)
     p_group = group_code[p_clip] if len(p_clip) else np.zeros(0, int)
     p_unit = unit_code[p_clip] if len(p_clip) else np.zeros(0, int)
-    fit_scores, unit_scores, banks = [], [], {}
+    family_code = _codes([u["family"] for u in units])
+    fit_scores, unit_scores, trust_scores, banks = [], [], [], {}
     for model in MODELS:
         C = (np.stack([c["entry"]["prints"][model]["whole"] for c in clips])
              if clips else np.zeros((0, 1), np.float32))
@@ -589,6 +606,10 @@ def fit_snapshot(clips) -> dict:
                                       p_group, group_code))
         unit_scores.append(bank_scores(Q, C, clip_person, n_people,
                                        p_unit, unit_code))
+        # Each whole clip against every bank, with its own family left out
+        # of its own bank: the clip's trust score (see clip_trust below).
+        trust_scores.append(bank_scores(C, C, clip_person, n_people,
+                                        family_code, family_code))
         for p in people:
             banks.setdefault(p, {})[model] = C[clip_person == pidx[p]]
     F_fit = np.mean(fit_scores, axis=0) if len(p_clip) else \
@@ -649,7 +670,30 @@ def fit_snapshot(clips) -> dict:
     return {"people": n_people, "clips": len(clips), "pieces": int(len(p_clip)),
             "calibrated": b_all is not None,
             "calibration": None if b_all is None else [float(x) for x in b_all],
-            "banks": banks, "readiness": readiness, "unknown": unknown}
+            "banks": banks, "readiness": readiness, "unknown": unknown,
+            "clip_trust": clip_trust(clips, clip_person, trust_scores,
+                                     b_all, n_people)}
+
+
+def clip_trust(clips, clip_person, trust_scores, b, n_people) -> dict:
+    """{clip file: the chance its voice is the person it's filed under},
+    the save-time score rescore_trust writes (#523). Each clip is scored
+    whole, the way a voice is named: against every bank, with the clips
+    cut from its own turn left out of its own, at its own seconds of
+    speech and the prior of 1 in N+1. A clip with nothing left in its own
+    bank to compare with gets no entry."""
+    if b is None or not len(clips):
+        return {}
+    fused = np.mean(trust_scores, axis=0)
+    secs = np.array([c["entry"]["seconds"] for c in clips], dtype=np.float64)
+    probs = apply_calibration(b, fused, np.repeat(secs[:, None], n_people,
+                                                  axis=1), n_people)
+    out = {}
+    for i, c in enumerate(clips):
+        p = probs[i, clip_person[i]]
+        if np.isfinite(p):
+            out[c["file"]] = round(float(p), 4)
+    return out
 
 
 def _codes(keys):
@@ -779,6 +823,163 @@ def status(cfg) -> dict:
                    pieces=snap["pieces"], unknown=dict(snap["unknown"]),
                    ms=dict(snap["ms"]))
     return out
+
+
+# ================= trust scores and the hygiene audit (#523) =================
+#
+# Two jobs this scorer takes over from the old matcher once a build is
+# ready, both run by the worker after its build (_after_build):
+#
+#   * Save-time scores. A clip saved before this scorer named voices
+#     carries a cosine, and the trust bar (anchors.bank_trust) can't
+#     compare a cosine with a probability. rescore_trust writes each such
+#     clip's clip_trust once, stamped with its units, and keeps the old
+#     number beside it. A clip already in these units is never touched.
+#   * The hygiene audit (voiceid.audit_banks). A stored clip is set aside
+#     when it scores higher against another person's clips than against
+#     the rest of its own person's, on this scorer's two-model score. At
+#     the same seconds of speech the calibration turns a higher score into
+#     a higher chance, so that's the naming's own question. Every clip is
+#     judged against every clip, set aside or not, so the verdicts don't
+#     depend on the last audit's, and the clips cut from one turn leave
+#     its own bank together, since a slice can't vouch for its own turn.
+
+WHOLE_CACHE_MAX = 512      # whole-clip fingerprints kept outside a build
+_whole_cache: dict = {}    # (file, sha, versions) -> {model: vector}
+
+
+def rescore_trust(snap) -> dict:
+    """Write the snapshot's clip_trust as the save-time score of every
+    clip still scored in cosine units (anchors.set_trust_scores). Only
+    rewrites derived numbers: no clip is deleted, moved or set aside.
+    Idempotent, since a rescored clip carries the units stamp. Returns
+    content-free counts."""
+    probs = (snap or {}).get("clip_trust") or {}
+    if not probs:
+        return {"clips": 0, "people": 0}
+    done = anchors.store().set_trust_scores(probs)
+    if done["clips"]:
+        log.info("voice trust scores recomputed: clips=%d people=%d",
+                 done["clips"], done["people"])
+    return done
+
+
+def audit_snapshot(cfg):
+    """The snapshot the hygiene audit judges with, or None when the audit
+    keeps the old matcher's rule: the setting is off, or no calibrated
+    build has finished."""
+    if not enabled(cfg):
+        return None
+    snap = current()
+    return snap if snap and snap.get("calibrated") else None
+
+
+def audits_on_worker(cfg) -> bool:
+    """Does the worker run the hygiene audit after its builds? True while
+    it runs and can still build. A bank change kicks a build, so a caller
+    elsewhere leaves the audit to it and never embeds on its own thread."""
+    if not enabled(cfg):
+        return False
+    with _lock:
+        thread = _worker["thread"]
+        state = _status["state"]
+    return bool(thread is not None and thread.is_alive()
+                and state not in ("unavailable", "failed", "off"))
+
+
+def clip_prints(fname, pcm, cfg):
+    """{model: unit vector} of one whole clip's speech, the same
+    fingerprints a build makes: from the build's cache when the clip was
+    in it, else embedded here and kept in a small cache of their own (a
+    set-aside clip is never in a build). None when a model can't embed."""
+    key = (fname, hashlib.sha256(pcm).hexdigest(),
+           voiceid.SPEECH_ONLY_VERSION, PIECES_VERSION)
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is not None and all(m in entry["prints"] for m in MODELS):
+            return {m: entry["prints"][m]["whole"] for m in MODELS}
+        hit = _whole_cache.get(key)
+    if hit is not None:
+        return hit
+    speech = voiceid.speech_only(pcm, SAMPLE_RATE)
+    out = {}
+    for model in MODELS:
+        vec = embed(model, speech, SAMPLE_RATE, cfg)
+        if vec is None:
+            return None
+        out[model] = _unit(vec)
+    with _cache_lock:
+        _whole_cache[key] = out
+        while len(_whole_cache) > WHOLE_CACHE_MAX:
+            _whole_cache.pop(next(iter(_whole_cache)))
+    return out
+
+
+def clip_families(clips) -> dict:
+    """{file: the file of the clip it was cut from, or itself}, for the
+    audit. `clips`: [{"pid", "file", "added_at", "source", "pcm"}]."""
+    roots = family_roots(clips)
+    return {c["file"]: clips[r]["file"] for c, r in zip(clips, roots)}
+
+
+def contaminated(banks, families=None) -> dict:
+    """Which stored clips sound more like someone else than their own
+    person, on this scorer's fused two-model score. Pure.
+
+    `banks` is {pid: [(file, {model: unit vector})]} and `families`
+    {file: family key}. A clip's score against its own person leaves its
+    family out of their bank, and a clip with nothing left to compare
+    with is never judged. Against everyone else it's scored with their
+    whole bank. Returns {pid: [file, ...]} for people with contaminated
+    clips."""
+    families = families or {}
+    rows = [(pid, fname, prints)
+            for pid, clips in sorted((banks or {}).items())
+            for fname, prints in clips]
+    if not rows:
+        return {}
+    people = sorted({pid for pid, _, _ in rows})
+    pidx = {p: i for i, p in enumerate(people)}
+    clip_person = np.array([pidx[pid] for pid, _, _ in rows], dtype=int)
+    family = _codes([(pid, families.get(fname, fname))
+                     for pid, fname, _ in rows])
+    per = []
+    for model in MODELS:
+        M = np.stack([_unit(prints[model]) for _, _, prints in rows])
+        per.append(bank_scores(M, M, clip_person, len(people), family,
+                               family))
+    fused = np.mean(per, axis=0)
+    out = {}
+    for i, (pid, fname, _) in enumerate(rows):
+        own = fused[i, clip_person[i]]
+        others = np.delete(fused[i], clip_person[i])
+        others = others[np.isfinite(others)]
+        if np.isfinite(own) and others.size and others.max() > own:
+            out.setdefault(pid, []).append(fname)
+    return out
+
+
+def _after_build(cfg, snap):
+    """What the worker does once a build is published: rescore the
+    save-time scores still in cosine units, then run the hygiene audit on
+    this scorer. Each step logs its own failure and never stops the
+    worker."""
+    try:
+        rescore_trust(snap)
+    except Exception:
+        log.warning("voice calibration: trust scores not recomputed; "
+                    "they're tried again after the next build")
+        log.debug("trust rescore failure detail", exc_info=True)
+    _audit(cfg)
+
+
+def _audit(cfg):
+    """The hygiene audit, from the worker. It runs only when the banks
+    have changed since the last audit (voiceid.audit_banks_if_changed)."""
+    try:
+        voiceid.audit_banks_if_changed(cfg, on_worker=True)
+    except Exception:
+        log.debug("voice calibration audit failure detail", exc_info=True)
 
 
 # ================= ERes2Net's extractor =======================================
@@ -940,6 +1141,9 @@ def _build_once(cfg, stop_event):
     if snap is not None and snap["fingerprint"] == bank_fingerprint(index):
         with _lock:
             _status.update(state="ready")
+        # A set-aside clip deleted, say: no build, but the audit's banks
+        # changed.
+        _audit(cfg)
         return
     with _lock:
         _status.update(state="building")
@@ -956,6 +1160,7 @@ def _build_once(cfg, stop_event):
              snap["calibrated"], snap["unknown"]["named"],
              snap["unknown"]["pieces"], snap["ms"]["embed"],
              snap["ms"]["fit"])
+    _after_build(cfg, snap)
 
 
 # ================= log once ===================================================
@@ -985,4 +1190,5 @@ def _reset_for_tests():
         _eres.update(state="cold", ex=None)
     with _cache_lock:
         _cache.clear()
+        _whole_cache.clear()
     _warned.clear()

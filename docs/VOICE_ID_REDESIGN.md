@@ -484,6 +484,10 @@ Live on this install:
 - Answering the question out loud ("that's Dave", or the new voice
   saying "I'm Dave") names the voice, relabels its turns and saves its
   held audio as introduced, as tapping a turn does.
+- Stored trust scores are in the calibrated scorer's units, with a bar
+  of 0.5, and the hygiene check judges clips with that scorer. After
+  each build, a clip still carrying an old score is rescored once, and
+  its old score is kept beside the new.
 - Deleted: the three routes, their decision tables and live mirrors,
   the early check before a turn ends, the cloud crosstalk split, the
   introduction stash, the window multi-voice check, the extra bar while
@@ -494,8 +498,6 @@ Not built yet:
 
 - "That's the TV", which would ignore that voice for the rest of the
   session.
-- Stored trust scores recomputed in the new units, and the hygiene
-  check on the new scorer.
 - Made-up sessions from the household's own clips, and the voice rig
   playing a conversation out of a speaker into the microphone.
 

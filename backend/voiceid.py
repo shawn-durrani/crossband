@@ -14,7 +14,9 @@ with, and the pieces around it:
   * the whole-turn matcher (identify_utterance), still asked two narrow
     questions: whether a tap-to-correct turn is the owner's own voice, and
     whether an introduction's voice is someone remembered;
-  * the bank hygiene audit, run after every bank change.
+  * the bank hygiene audit, run after every bank change: on the
+    calibrated scorer once its build is ready (backend/voice_calibration.py,
+    whose worker then runs it), and on this model's centroids until then.
 
 THE CORE LAW, absolute: this adds ZERO latency to the live voice path. It runs
 ONLY inside never-awaited fire-and-forget work and owner endpoints; nothing a
@@ -1027,9 +1029,18 @@ _clip_voiced_cache: dict = {}  # clip filename -> voiced fraction (#219)
 
 def audit_banks(cfg, sample_rate=16000):
     """One hygiene audit (#28 PR-B): embed every stored clip (cached per
-    file - clip files never change once written), quarantine clips sitting
-    closer to another person's centroid than their own, flag close centroid
+    file - clip files never change once written), quarantine clips that
+    sound more like another person than their own, flag close centroid
     pairs, and persist all of it through the anchor store.
+
+    Which rule judges a clip (#523): with the calibrated scorer's build
+    ready (voice_calibration.audit_snapshot), the scorer that names voices
+    judges it (voice_calibration.contaminated: a higher two-model score
+    against another person's clips than against the rest of its own).
+    Otherwise the old matcher's rule (quarantine_verdicts: closer to
+    another person's centroid than to its own). Close pairs stay on the
+    matcher's centroids either way, because the whole-turn matcher is what
+    widens its margin for them.
 
     The speech test rides the same sweep (#219): the pairwise rules cannot
     see a NOISE clip - it is near nobody's centroid, and a mostly-taken-over
@@ -1044,12 +1055,17 @@ def audit_banks(cfg, sample_rate=16000):
         ex = _get_extractor(cfg)
         if ex is None:
             return False
+        from . import voice_calibration as vc
+        snap = vc.audit_snapshot(cfg)
         store = anchors.store()
         bank = store.bank_clips(sample_rate)
         per_person = {}
         noise = {}
+        prints_of, families = {}, {}
         for pid, info in bank.items():
             clips = []
+            if snap is not None:
+                families.update(_audit_families(store, pid, info["clips"]))
             for fname, pcm in info["clips"]:
                 voiced = _clip_voiced_cache.get(fname)
                 if voiced is None:
@@ -1059,6 +1075,17 @@ def audit_banks(cfg, sample_rate=16000):
                         _clip_voiced_cache.pop(next(iter(_clip_voiced_cache)))
                 if voiced < SPEECH_MIN_VOICED_FRACTION:
                     noise.setdefault(pid, []).append(fname)
+                    continue
+                if snap is not None:
+                    # Both models' fingerprints, the ones the naming uses.
+                    # A clip a model can't fingerprint leaves every bank
+                    # as it was, and the next audit tries again.
+                    prints = vc.clip_prints(fname, pcm, cfg)
+                    if prints is None:
+                        return False
+                    prints_of.setdefault(pid, []).append((fname, prints))
+                    clips.append((fname, [float(x)
+                                          for x in prints[vc.SMALL]]))
                     continue
                 emb = _clip_emb_cache.get(fname)
                 if emb is None:
@@ -1074,7 +1101,10 @@ def audit_banks(cfg, sample_rate=16000):
                 clips.append((fname, emb))
             if clips:
                 per_person[pid] = clips
-        quarantine = quarantine_verdicts(per_person)
+        if snap is not None:
+            quarantine = vc.contaminated(prints_of, families)
+        else:
+            quarantine = quarantine_verdicts(per_person)
         reasons = {}
         for pid, files in quarantine.items():
             reasons.setdefault(pid, {}).update(
@@ -1087,8 +1117,9 @@ def audit_banks(cfg, sample_rate=16000):
              for pid, clips in per_person.items()}))
         store.set_hygiene(reasons, pairs)
         if reasons or pairs:
-            log.info("voiceid audit: quarantined=%d not_speech=%d "
+            log.info("voiceid audit: rule=%s quarantined=%d not_speech=%d "
                      "close_pairs=%d",
+                     "calibrated" if snap is not None else "matcher",
                      sum(len(v) for v in quarantine.values()),
                      sum(len(v) for v in noise.values()), len(pairs))
         return True
@@ -1098,14 +1129,42 @@ def audit_banks(cfg, sample_rate=16000):
         return False
 
 
-def audit_banks_if_changed(cfg):
+def _audit_families(store, pid, clips):
+    """{file: family key} for one person's clips (#523): a harvested short
+    clip belongs to the clip it was cut from, so the calibrated rule
+    leaves both out of the bank when it judges either."""
+    from . import voice_calibration as vc
+    meta = {c["file"]: c for c in store.clips_of(pid) or ()}
+    rows = [{"pid": pid, "file": fname, "pcm": pcm,
+             "added_at": float((meta.get(fname) or {}).get("added_at") or 0),
+             "source": (meta.get(fname) or {}).get("source", "")}
+            for fname, pcm in clips]
+    return vc.clip_families(rows)
+
+
+def _audit_rule(cfg) -> str:
+    """Which rule audit_banks would use now: part of the audit's memo, so
+    the first calibrated build re-audits banks the old rule judged."""
+    from . import voice_calibration as vc
+    return "calibrated" if vc.audit_snapshot(cfg) is not None else "matcher"
+
+
+def audit_banks_if_changed(cfg, on_worker=False):
     """Run the audit only when the clip-file sets actually changed since the
     last one - the 'on every anchor-bank change' trigger, made idempotent so
     every add_clip call site can call it unconditionally. Serialised: two
-    passes finishing together audit once."""
+    passes finishing together audit once.
+
+    With the calibrated scorer's worker running (#523), every caller but
+    the worker leaves the audit to it: the bank change that brought the
+    caller here also asked the worker for a build, and the worker audits
+    after it (`on_worker`), on its own thread and past the cool-down."""
     global _audit_fingerprint, _audit_last_ran
+    from . import voice_calibration as vc
+    if not on_worker and vc.audits_on_worker(cfg):
+        return False
     try:
-        fp = anchors.store().clip_fingerprint()
+        fp = (_audit_rule(cfg), anchors.store().clip_fingerprint())
     except Exception:
         log.debug("voiceid audit fingerprint failed", exc_info=True)
         return False
@@ -1114,7 +1173,8 @@ def audit_banks_if_changed(cfg):
             return False
         # #133: inside the cool-down window, defer - the changed
         # fingerprint keeps the debt on the books for the next call.
-        if time.monotonic() - _audit_last_ran < AUDIT_MIN_INTERVAL_S:
+        if not on_worker and \
+                time.monotonic() - _audit_last_ran < AUDIT_MIN_INTERVAL_S:
             return False
         # Do NOT spend the attempt while the matcher is cold (#28, tenth
         # field test): the first anchor change of a process almost always
