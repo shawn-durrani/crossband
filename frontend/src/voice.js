@@ -1,5 +1,6 @@
-import { captureConstraints, captureProfileName } from './captureProfile.js'
+import { captureConstraints } from './captureProfile.js'
 import { batchSttForm, clipWindow, identityWav } from './identityClip.js'
+import { Resampler, TARGET_RATE } from './resample.js'
 import { sidToKill } from './micRegistry.js'
 import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
@@ -393,21 +394,14 @@ export default class VoiceController {
   // Room mode toggle: remember the choice for (re)opened STT sockets and tell
   // a live one via a control frame (no audio key, so the server treats it as
   // ours alone and sends nothing upstream). Works mid-session both ways.
-  // The capture experiment (#28 phase 4) rides the same edge: room mode
-  // re-asks the live mic track for the room profile (noise suppression and
-  // auto gain off, so the quieter second voice stops being "cleaned" away),
-  // solo mode re-asks for the tuned solo profile. Best-effort by design - a
-  // browser that refuses applyConstraints keeps the profile it has, and
-  // capture never breaks over it.
+  // The mic itself is left alone: every mode captures with the same setting
+  // (#505, captureProfile.js).
   setRoomMode(on) {
     on = !!on
     if (on === this.roomMode) return
     this.roomMode = on
-    this.stream?.getAudioTracks().forEach((t) => {
-      try { t.applyConstraints?.(captureConstraints(on))?.catch(() => {}) } catch { /* */ }
-    })
     if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
-      this._sttSend({ room_mode: on, capture_profile: captureProfileName(on) })
+      this._sttSend({ room_mode: on })
     }
   }
   setSilenceMs(ms) { this.silenceMs = Math.max(400, Math.min(6000, ms || DEFAULT_SILENCE_MS)) }
@@ -436,12 +430,8 @@ export default class VoiceController {
     const ws = new WebSocket(`${wsBase()}/api/voice/stt-stream`)
     ws.onopen = () => {
       try {
-        ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: 16000,
-                                 room_mode: this.roomMode,
-                                 // Which mic profile this session captures
-                                 // with (#28 phase 4) - the relay logs it
-                                 // content-free for field comparisons.
-                                 capture_profile: captureProfileName(this.roomMode) }))
+        ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: TARGET_RATE,
+                                 room_mode: this.roomMode }))
       } catch { /* */ }
     }
     ws.onmessage = (e) => {
@@ -556,11 +546,16 @@ export default class VoiceController {
 
   // Tap the same mic source the VAD uses; the node's output is silent (never
   // written). Split out so a dead processor can be rebuilt in place.
+  // #505: each processor has its own resampler, which carries the filter's
+  // input across callbacks so chunk edges don't click. A callback that sends
+  // nothing breaks the stream, so the next one starts the filter afresh
+  // instead of splicing onto audio from before the gap.
   _attachSttProcessor() {
     const proc = this.audioCtx.createScriptProcessor(4096, 1, 1)
+    const resampler = new Resampler(this.audioCtx.sampleRate)
     proc.onaudioprocess = (ev) => {
-      if (!this.sttRealtime || this.muted) return
-      const chunk = this._pcm16Base64(ev.inputBuffer.getChannelData(0), this.audioCtx.sampleRate)
+      if (!this.sttRealtime || this.muted) { resampler.reset(); return }
+      const chunk = this._pcm16Base64(resampler.push(ev.inputBuffer.getChannelData(0)))
       if (!chunk) return
       if (this.sttStreaming) {
         this._sttSend({ audio: chunk })
@@ -646,7 +641,7 @@ export default class VoiceController {
   _sttSend(obj) {
     const ws = this.sttWs
     if (ws && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify({ sample_rate: 16000, ...obj })) } catch { /* */ }
+      try { ws.send(JSON.stringify({ sample_rate: TARGET_RATE, ...obj })) } catch { /* */ }
     }
   }
 
@@ -666,14 +661,13 @@ export default class VoiceController {
     this._pcmPre = []
   }
 
-  // Downsample Float32 mic audio to 16 kHz, encode PCM16 mono, base64.
-  _pcm16Base64(input, srcRate) {
-    const ratio = srcRate / 16000
-    const outLen = Math.floor(input.length / ratio)
-    if (outLen <= 0) return null
-    const pcm = new Int16Array(outLen)
-    for (let i = 0; i < outLen; i++) {
-      const s = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)] || 0))
+  // 16 kHz Float32 samples (resample.js) -> PCM16 mono, base64.
+  _pcm16Base64(samples) {
+    const n = samples.length
+    if (n <= 0) return null
+    const pcm = new Int16Array(n)
+    for (let i = 0; i < n; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i] || 0))
       pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff
     }
     const bytes = new Uint8Array(pcm.buffer)
@@ -739,12 +733,10 @@ export default class VoiceController {
     this._primeAudio()
     this._unlockHandler = () => { this._primeAudio(); this._resumeCtx() }
     window.addEventListener('pointerdown', this._unlockHandler)
-    // Capture profile (#28 phase 4): solo sessions ask for exactly what they
-    // always did; a session starting IN room mode asks with noise
-    // suppression and auto gain off, so single-voice tuning cannot muffle
-    // the second speaker. The decision table lives in captureProfile.js.
+    // #505: one mic setting in every mode (captureProfile.js), so a voice
+    // sounds the same to the checks whichever mode it was heard in.
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: captureConstraints(this.roomMode),
+      audio: captureConstraints(),
     })
     if (liveSession !== this) {
       // Stopped, or replaced by another session, while the browser was

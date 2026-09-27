@@ -13,7 +13,9 @@
 // itself, half a second before it, which is what the relay's own copy
 // holds, and a short tail after it.
 
-export const IDENTITY_RATE = 16000
+import { TARGET_RATE, resample } from './resample.js'
+
+export const IDENTITY_RATE = TARGET_RATE
 export const PRE_ROLL_MS = 500
 export const TAIL_MS = 300
 // The server keeps no more than two minutes of one turn.
@@ -38,9 +40,9 @@ export function clipWindow({ speechMs, endedAt, stoppedAt } = {}) {
 // Float32 samples at `srcRate` -> a WAV file as a Uint8Array at
 // IDENTITY_RATE, cut to `win` from clipWindow. Null when nothing of the
 // turn is left, as when the recording began after the turn ended. The
-// decimation is the one the realtime stream uses (voice.js
-// _pcm16Base64), so both paths hand the matcher the same kind of audio,
-// and the voices it learnt from the stream still match.
+// resampler is the one the realtime stream uses (resample.js, #505), so
+// both paths hand the matcher the same kind of audio, and the voices it
+// learnt from the stream still match.
 export function identityWav(samples, srcRate, win) {
   if (!samples || !samples.length || !(srcRate > 0) || !win) return null
   const toSamples = (ms) => Math.max(0, Math.round((ms / 1000) * srcRate))
@@ -48,8 +50,8 @@ export function identityWav(samples, srcRate, win) {
   const start = Math.max(0, end - toSamples(win.keepMs))
   if (end <= start) return null
   const tail = samples.subarray ? samples.subarray(start, end) : samples.slice(start, end)
-  const ratio = srcRate / IDENTITY_RATE
-  const n = Math.floor(tail.length / ratio)
+  const pcm = resample(tail, srcRate, IDENTITY_RATE)
+  const n = pcm.length
   if (n <= 0) return null
   const out = new Uint8Array(44 + n * 2)
   const view = new DataView(out.buffer)
@@ -68,7 +70,7 @@ export function identityWav(samples, srcRate, win) {
   ascii(36, 'data')
   view.setUint32(40, n * 2, true)
   for (let i = 0; i < n; i++) {
-    const s = Math.max(-1, Math.min(1, tail[Math.floor(i * ratio)] || 0))
+    const s = Math.max(-1, Math.min(1, pcm[i] || 0))
     view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true)
   }
   return out
