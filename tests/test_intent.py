@@ -33,6 +33,10 @@ and "heard but changed nothing" wording, tested without a model.
    research wordings and says research is never a model change. Whether
    the model obeys is measured by eval_intent's research and model
    fixtures.
+8. #540: "Heading to the shops, back in ten" was read as room mode off in
+   every run. The prompt now says going out or stepping away for a while
+   isn't "off", with wordings other than the fixture's own, so the fixture
+   stays a fair test. Measured by eval_intent's plain_shops.
 """
 
 import json
@@ -115,6 +119,15 @@ def test_merged_prompt_makes_both_directions_need_a_plain_statement():
     assert "alone now" in p
     assert "we're just talking" in p and "the opposite of alone" in p
     assert "When unsure, \"none\"" in p
+
+
+def test_merged_prompt_says_stepping_out_is_not_room_mode_off():
+    p = intent.build_merged_prompt("hello", "Alex", ["Claude"], [], [])
+    assert "going out or stepping away for a while" in p
+    assert "be right back" in p
+    assert "doesn't say the owner is alone" in p
+    # The graded fixture's own words stay out of the prompt.
+    assert "shops" not in p and "back in ten" not in p
 
 
 def test_merged_prompt_says_a_spelt_out_word_is_no_correction():
