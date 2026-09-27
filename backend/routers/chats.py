@@ -501,7 +501,8 @@ async def _send(chat_id: int, body: SendIn, request: Request):
             # can read it. A miss (check not finished) is simply today's
             # behaviour: the pass labels the row a moment later and the
             # browser updates live.
-            voice_labels = diarize.claim_label(turn_id) if turn_id else None
+            voice_labels = diarize.claim_label(turn_id, body.text) \
+                if turn_id else None
             user_msg = db.insert_message(con, chat_id, "user", body.text,
                                          attachment_ids=body.attachment_ids,
                                          voice_turn_id=turn_id or "",

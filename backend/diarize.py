@@ -210,10 +210,12 @@ def park_label(turn_id, payload):
         _label_event(k, LABEL_EVICTED, (now - at) * 1000)
 
 
-def claim_label(turn_id):
+def claim_label(turn_id, content=None):
     """Claim a parked label at insert time (single-use). None when the check
     has not finished yet - the pass then labels the row the old way, exactly
-    as before, so this is a fast path and never a dependency."""
+    as before, so this is a fast path and never a dependency. With the
+    message's `content`, a crosstalk split that doesn't read as that text is
+    dropped here, as the pass's own write drops it (fit_to_message)."""
     entry = _PENDING_LABELS.pop(turn_id or "", None)
     if not entry:
         return None
@@ -223,7 +225,8 @@ def claim_label(turn_id):
         _label_event(turn_id, LABEL_EXPIRED_AT_CLAIM, wait_s * 1000)
         return None
     _label_event(turn_id, LABEL_CLAIMED, wait_s * 1000)
-    return payload
+    return fit_to_message(payload, content) if content is not None \
+        else payload
 
 
 MISMATCH_MIN_WORDS = 4  # don't cross-check a grunt
@@ -668,6 +671,18 @@ def segments_align(segments, content) -> bool:
         return False
     joined = _norm_text(" ".join(s.get("text") or "" for s in segments))
     return bool(joined) and joined == _norm_text(content)
+
+
+def fit_to_message(payload, content):
+    """The payload as it may be stored on a message with this text (pure):
+    a crosstalk split whose words don't read as the message is dropped and
+    the marker stands alone (segments_align). One rule for both writes,
+    the claim at insert and the pass's own, so carries_payload compares
+    like with like."""
+    if payload and payload.get("segments") \
+            and not segments_align(payload["segments"], content):
+        return {k: v for k, v in payload.items() if k != "segments"}
+    return payload
 
 
 def carries_payload(raw, payload) -> bool:
@@ -1209,6 +1224,13 @@ async def _live_pass(chat_id, pcm, sample_rate, commit_ts, session, cfg,
         except Exception:
             log.info("unresolved marker failed: chat=%s", chat_id)
             log.debug("unresolved marker failure detail", exc_info=True)
+        return
+    from . import voice_session_shadow
+    if voice_session_shadow.only_enabled(cfg):
+        # #482 item D: with the session naming on, crosstalk is split on
+        # this computer (backend/crosstalk.py) and the cloud split never
+        # runs. Unreachable today (the switch sends every turn to
+        # voice_pass), and pinned so that a future route can't reach it.
         return
     log.info("diarize pass (crosstalk trigger): chat=%s score=%.3f",
              chat_id, verdict.get("score", 0.0))
@@ -2150,6 +2172,7 @@ def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
                 return _NO_ROW_YET  # the /send race - worth a fast retry
             if target["id"] in session.labelled_ids:
                 return None  # this session already labelled it
+            payload = fit_to_message(payload, target.get("content"))
             if target.get("voice_labels"):
                 if carries_payload(target["voice_labels"], payload):
                     # #461: /send claimed THIS pass's parked label inside
@@ -2167,9 +2190,7 @@ def _attach_labels(chat_id, commit_ts, payload, session, turn_id=None):
             target = pick_target(rows, session.labelled_ids)
             if not target:
                 return None
-        if payload.get("segments") and not segments_align(
-                payload["segments"], target.get("content")):
-            payload = {k: v for k, v in payload.items() if k != "segments"}
+            payload = fit_to_message(payload, target.get("content"))
         db.set_message_voice_labels(con, target["id"], payload)
         session.labelled_ids.add(target["id"])
         return target["id"]

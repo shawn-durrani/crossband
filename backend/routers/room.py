@@ -691,10 +691,14 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
         con.close()
     # #482 stage 3: the voice that spoke this turn is that person for the
     # rest of the session, and its other unnamed turns take the name now.
+    # Not for a two-voice turn (#482 item D): the tap names the turn but
+    # doesn't say which of its voices it meant, and naming the wrong one
+    # would carry the mistake through the rest of the session.
     try:
         from .. import voice_session_shadow
-        voice_session_shadow.human_named(chat_id, row["voice_turn_id"], name,
-                                         pid, cfg)
+        if old.get("crosstalk") is not True:
+            voice_session_shadow.human_named(chat_id, row["voice_turn_id"],
+                                             name, pid, cfg)
     except Exception:
         log.debug("session naming hand-off failed", exc_info=True)
     if learned:

@@ -71,9 +71,9 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadF
 from fastapi import WebSocketDisconnect
 from pydantic import BaseModel
 
-from .. import (config, db, diagnostics, diarize, engine, room_state,
-                seat_trace, tts_models, voice, voice_session_shadow,
-                voice_trace)
+from .. import (config, crosstalk, db, diagnostics, diarize, engine,
+                room_state, seat_trace, tts_models, voice,
+                voice_session_shadow, voice_trace)
 
 router = APIRouter(tags=["voice"])
 
@@ -701,7 +701,13 @@ async def stt_stream_relay(ws: WebSocket):
     THE INVARIANT, pinned by tests/test_room_mode.py: the frames sent
     upstream to ElevenLabs are byte-for-byte identical with room mode on,
     off, or never mentioned, and nothing in this handler ever awaits the
-    diarization task - the live path cannot be slowed or broken by it."""
+    diarization task - the live path cannot be slowed or broken by it.
+
+    Word times (#482 item D): the socket asks Scribe for them, so each
+    commit is answered twice. voice.CommitFinals pairs the two answers so
+    the browser still gets one {final, turn_id} per commit, and the words
+    go to backend/crosstalk.py in the turn's own time, for the local split
+    of a turn two people spoke in. Pinned by tests/test_stt_relay.py."""
     if not _ws_local(ws):
         await ws.close(code=4403)
         return
@@ -752,7 +758,17 @@ async def stt_stream_relay(ws: WebSocket):
     # here - the single place commit and final meet - lets every final go
     # back down stamped with the id of the commit it belongs to, and the
     # client can enforce only-one-wins per utterance instead of guessing.
-    commit_turn_fifo: list = []
+    # #482 item D: the FIFO lives in CommitFinals, which also pairs Scribe's
+    # two answers to one commit (plain, then with word times) so the browser
+    # still gets exactly one final per commit and each id is used once.
+    finals = voice.CommitFinals()
+    # Scribe's clock: seconds of audio sent upstream on this socket, and
+    # where the current turn began on it. Each commit is recorded with both
+    # ends, so its word times can be read in the turn's own time.
+    stt_clock = {"sent": 0.0, "began": None}
+    # The words go to the crosstalk split, which only the session naming's
+    # pass reads; with it off they're not kept at all.
+    keep_words = voice_session_shadow.only_enabled(cfg)
     # Room-mode session state (utterance tee + label bookkeeping). Constructed
     # unconditionally. Phase 2 (#28): the tee itself now runs on EVERY
     # session - a bounded local buffer append per frame, still nothing on the
@@ -832,7 +848,7 @@ async def stt_stream_relay(ws: WebSocket):
             log.warning("room-mode seed failed; session continues", exc_info=True)
     try:
         async with websockets.connect(
-            voice.stt_ws_url(keyterm_names),
+            voice.stt_ws_url(keyterm_names, timestamps=True),
             additional_headers={"xi-api-key": voice.api_key()},
             max_size=16 * 1024 * 1024,
         ) as eleven:
@@ -893,6 +909,9 @@ async def stt_stream_relay(ws: WebSocket):
                             try:
                                 raw = base64.b64decode(audio)
                                 seconds += len(raw) / 2 / sr
+                                if stt_clock["began"] is None:
+                                    stt_clock["began"] = stt_clock["sent"]
+                                stt_clock["sent"] += len(raw) / 2 / sr
                                 # The tee: a local buffer append of bytes the
                                 # metering above already decoded. Nothing here
                                 # touches the upstream payload below. Always on
@@ -940,6 +959,12 @@ async def stt_stream_relay(ws: WebSocket):
                                 log.warning("recall prewarm failed; transcription "
                                             "continues without it", exc_info=True)
                         if payload["commit"]:
+                            # Where this turn sits on Scribe's clock: from
+                            # its first audio to the commit (#482 item D).
+                            turn_on_stt = (
+                                stt_clock["sent"] if stt_clock["began"] is None
+                                else stt_clock["began"], stt_clock["sent"])
+                            stt_clock["began"] = None
                             # Commit boundary = utterance boundary: slice the teed
                             # audio. With room mode effective (the client's toggle
                             # OR the server-side flag an introduction flipped -
@@ -970,7 +995,7 @@ async def stt_stream_relay(ws: WebSocket):
                                     if room.speculative else None
                                 commit_turn_id = (str(msg.get("turn_id") or "")
                                                   .strip()[:64] or None)
-                                commit_turn_fifo.append(commit_turn_id)
+                                finals.commit(commit_turn_id, *turn_on_stt)
                                 # Before the check is scheduled, so the
                                 # turn's live result slot exists when the
                                 # check asks for it (#482 stage 3).
@@ -1010,27 +1035,79 @@ async def stt_stream_relay(ws: WebSocket):
                     # draining upstream after this; the registry must not
                     # wait for it (the outer finally stays as the backstop).
                     _pop_capture(sid, _close_reason)
+            async def send_finals(outs):
+                # One CommitFinals decision at a time, in order. The words
+                # are handed to the crosstalk split BEFORE the final goes
+                # to the browser, so a pass waiting on them has them before
+                # the browser can send the message the label belongs to.
+                for out in outs:
+                    tid = out["turn"].get("turn_id")
+                    if tid and keep_words:
+                        try:
+                            if out["words"] is not None:
+                                crosstalk.put_words(tid, out["words"],
+                                                    out["turn"])
+                            elif out["text"] is not None:
+                                crosstalk.no_words(tid)
+                        except Exception:
+                            log.debug("word times not kept", exc_info=True)
+                    if out["text"] is None:
+                        continue     # this commit's final already went out
+                    final = {"final": out["text"]}
+                    if tid:
+                        final["turn_id"] = tid
+                    await ws.send_json(final)
+
             async def pump_down():
                 nonlocal last_partial
+                # Read upstream one message at a time, so a plain final held
+                # for its timed twin can go out on its own once
+                # TIMED_FINAL_WAIT_S passes with nothing else arriving. The
+                # read in flight is never cancelled by that wait; it's the
+                # same read on the next lap.
+                messages = eleven.__aiter__()
+                nxt = None
                 try:
-                    async for raw in eleven:
+                    while True:
+                        if nxt is None:
+                            nxt = asyncio.ensure_future(messages.__anext__())
+                        done, _ = await asyncio.wait(
+                            {nxt}, timeout=finals.wait_left(time.monotonic()))
+                        if not done:
+                            await send_finals(finals.expire(time.monotonic()))
+                            continue
+                        got, nxt = nxt, None
+                        try:
+                            raw = got.result()
+                        except StopAsyncIteration:
+                            await send_finals(finals.close())
+                            return
+                        except Exception:
+                            # The upstream died: a final it was holding
+                            # still reaches the browser.
+                            with contextlib.suppress(Exception):
+                                await send_finals(finals.close())
+                            raise
                         data = json.loads(raw)
                         mt = data.get("message_type")
                         if mt == "partial_transcript":
                             last_partial = data.get("text", "")
                             await ws.send_json({"partial": data.get("text", "")})
-                        elif mt in ("committed_transcript", "committed_transcript_with_timestamps"):
-                            out = {"final": data.get("text", "")}
-                            tid = commit_turn_fifo.pop(0) if commit_turn_fifo \
-                                else None
-                            if tid:
-                                out["turn_id"] = tid
-                            await ws.send_json(out)
+                        elif mt == voice.PLAIN_FINAL:
+                            await send_finals(finals.plain(
+                                data.get("text", ""), time.monotonic()))
+                        elif mt == voice.TIMED_FINAL:
+                            await send_finals(finals.timed(
+                                data.get("text", ""), data.get("words"),
+                                time.monotonic()))
                         elif mt == "error" or data.get("error"):
                             await ws.send_json({"error": data.get("message") or
                                                 data.get("error") or "stt error"})
                 except (WebSocketDisconnect, RuntimeError):
                     return
+                finally:
+                    if nxt is not None and not nxt.done():
+                        nxt.cancel()
 
             up = asyncio.create_task(pump_up())
             down = asyncio.create_task(pump_down())
@@ -1058,6 +1135,11 @@ async def stt_stream_relay(ws: WebSocket):
             if task and not task.done():
                 task.cancel()
         _pop_capture(sid, "relay_exit")   # #134: the registry never lies - backstop, usually a no-op second pop
+        if finals.alone:
+            # Content-free: how many commits' finals went out with no word
+            # times, so a Scribe that stopped sending them shows in the log.
+            log.info("stt finals without word times: chat=%s count=%d",
+                     chat_id, finals.alone)
         if seconds:
             con = db.connect()
             db.log_voice_usage(con, chat_id, "stt", seconds, voice.voice_cost("stt", seconds, cfg))

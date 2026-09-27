@@ -5,7 +5,11 @@ import, and the relay died with NameError on the FIRST commit frame - no
 test exercised the relay's message loop at all ("thin hook, covered by
 review" - it wasn't). These tests run the real handler: init → audio →
 commit → final transcript back, with the prewarm observed firing, and prove
-a prewarm failure can no longer break transcription."""
+a prewarm failure can no longer break transcription.
+
+#482 item D adds word times: Scribe answers each commit twice, and these
+tests pin one final per commit, the plain-only fallback, turn ids never
+skipped, and the words kept in each turn's own time, across a reconnect."""
 
 import asyncio
 import base64
@@ -378,3 +382,337 @@ def test_two_sessions_in_one_chat_are_both_visible(app, relay):
                 assert len(live) == 2          # the doubled-turn mess, visible
                 b.send_json({"done": True})
             a.send_json({"done": True})
+
+
+# ---- #482 item D: word times, and still one final per commit ----
+#
+# With word times asked for, Scribe answers each commit twice: the plain
+# `committed_transcript`, then `committed_transcript_with_timestamps` with
+# every word's start and end, counted from the first audio on the socket.
+# The browser must still get one final per commit, each commit's turn id
+# used once, and a commit that only ever gets the plain answer must not
+# lose its final. The words go to the crosstalk split in the turn's own
+# time, before the final goes out.
+
+from backend import crosstalk, voice as voice_mod  # noqa: E402
+
+PLAIN, TIMED = voice_mod.PLAIN_FINAL, voice_mod.TIMED_FINAL
+
+
+class TimedEleven(FakeEleven):
+    """Scribe with word times on. For each commit it sends the plain final
+    and then the timed one, each word's times counted from the first audio
+    on THIS socket, as the real one does. `script` holds each commit's words
+    as [(start, end, text)] in turn time. `mode` picks the answer: "both"
+    (Scribe today), "plain" (never a timed final), "timed" (the timed final
+    alone) or "late" (the timed final only after `late_s`)."""
+
+    def __init__(self, mode="both", script=(), late_s=0.0):
+        super().__init__()
+        self.mode = mode
+        self.script = list(script)
+        self.late_s = late_s
+        self.sent_s = 0.0
+        self.turn_start = None
+
+    async def send(self, raw):
+        msg = json.loads(raw)
+        self.sent.append(msg)
+        audio = base64.b64decode(msg.get("audio_base_64") or "")
+        if audio:
+            if self.turn_start is None:
+                self.turn_start = self.sent_s
+            self.sent_s += len(audio) / 2 / msg.get("sample_rate", 16000)
+        if not msg.get("commit"):
+            if audio:
+                self.queue.put_nowait(json.dumps(
+                    {"message_type": "partial_transcript", "text": "hello"}))
+            return
+        start = self.sent_s if self.turn_start is None else self.turn_start
+        self.turn_start = None
+        words = self.script.pop(0) if self.script else [
+            (0.0, 0.2, "hello"), (0.3, 0.5, "world")]
+        text = " ".join(w for _, _, w in words)
+        wire = []
+        for i, (a, b, w) in enumerate(words):
+            if i:
+                wire.append({"text": " ", "start": a + start, "end": a + start,
+                             "type": "spacing", "speaker_id": None})
+            wire.append({"text": w, "start": round(a + start, 3),
+                         "end": round(b + start, 3), "type": "word",
+                         "speaker_id": None, "logprob": -0.1,
+                         "characters": None, "channel_index": 0})
+        plain = json.dumps({"message_type": PLAIN, "text": text})
+        timed = json.dumps({"message_type": TIMED, "text": text,
+                            "language_code": "en", "words": wire})
+        if self.mode in ("both", "plain", "late"):
+            self.queue.put_nowait(plain)
+        if self.mode in ("both", "timed"):
+            self.queue.put_nowait(timed)
+        if self.mode == "late":
+            asyncio.get_running_loop().call_later(
+                self.late_s, self.queue.put_nowait, timed)
+
+
+def _timed_relay(app, monkeypatch, *fakes):
+    """The relay on TimedEleven sockets: each connection takes the next fake
+    (a reconnect is a new socket with its own clock). Returns the URLs."""
+    urls = []
+    queue = list(fakes)
+
+    def connect(url, **kw):
+        urls.append(url)
+        return queue.pop(0)
+
+    voice_router._captures.clear()
+    monkeypatch.setattr(voice_router.websockets, "connect", connect)
+    monkeypatch.setattr(voice_router.voice, "enabled", lambda: True)
+    monkeypatch.setattr(voice_router.voice, "api_key", lambda: "test-key")
+    monkeypatch.setattr(voice_router.engine, "prewarm_recall",
+                        lambda *a, **kw: None)
+    app.state.allowed_hosts = {"testserver", "127.0.0.1", "localhost", "::1"}
+    monkeypatch.setattr(auth, "GATE_LOOPBACK_HOSTS",
+                        auth.GATE_LOOPBACK_HOSTS | {"testserver"})
+    return urls
+
+
+def _speech(seconds):
+    """Frames of `seconds` of audio, in tenths of a second."""
+    n = int(round(seconds * 10))
+    chunk = base64.b64encode(b"\x01\x00" * 1600).decode()
+    return [{"audio": chunk, "sample_rate": 16000, "commit": i == n - 1}
+            for i in range(n)]
+
+
+def _say(ws, seconds, turn_id):
+    """One turn: its audio, the commit, and the final that comes back."""
+    frames = _speech(seconds)
+    for f in frames[:-1]:
+        ws.send_json(f)
+        assert ws.receive_json() == {"partial": "hello"}
+    ws.send_json(dict(frames[-1], turn_id=turn_id))
+    return ws.receive_json()
+
+
+@pytest.fixture
+def only_app(tmp_path, monkeypatch):
+    """The app with the session naming on, its tracker and pass stubbed out:
+    these tests are about the relay's finals and words only."""
+    from backend import diarize, voice_session_shadow as vss
+    settings = Settings(data_dir=str(tmp_path / "data"),
+                        memory_url="http://127.0.0.1:1",
+                        diarize_shadow_url="http://127.0.0.1:8910",
+                        voice_session_shadow=True, voice_session_live=True,
+                        voice_session_only=True)
+    monkeypatch.setattr(vss, "feed", lambda *a, **k: None)
+    monkeypatch.setattr(vss, "end_turn", lambda *a, **k: None)
+    monkeypatch.setattr(diarize, "schedule_turn_check", lambda *a, **k: None)
+    return create_app(settings)
+
+
+def test_word_times_are_asked_for_and_each_commit_gets_one_final(
+        app, monkeypatch):
+    urls = _timed_relay(app, monkeypatch, TimedEleven("both"))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            for tid in ("t1", "t2", "t3"):
+                assert _say(ws, 0.3, tid) == {"final": "hello world",
+                                               "turn_id": tid}
+            # No second final is queued behind the third: the next thing
+            # down is the next frame's partial.
+            ws.send_json(_speech(0.2)[0])
+            assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json({"done": True})
+    assert "include_timestamps=true" in urls[0]
+    assert "keyterms=User" in urls[0]
+
+
+def test_a_commit_that_only_gets_the_plain_final_still_gets_it(
+        only_app, monkeypatch):
+    """Older behaviour, or an error on the timed side: the plain final goes
+    out on its own after a short wait, with its own turn id, and a pass
+    waiting on the words is told there are none."""
+    monkeypatch.setattr(voice_mod, "TIMED_FINAL_WAIT_S", 0.05)
+    _timed_relay(only_app, monkeypatch, TimedEleven("plain"))
+    with TestClient(only_app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            for tid in ("t1", "t2", "t3"):
+                assert _say(ws, 0.3, tid) == {"final": "hello world",
+                                               "turn_id": tid}
+                assert crosstalk.take_words(tid) == (True, None)
+            ws.send_json({"done": True})
+
+
+def test_a_late_timed_final_never_becomes_a_second_final(only_app,
+                                                         monkeypatch):
+    """The plain final went out alone; its twin arrives after that. It is
+    recognised as the twin: no second final, the next commit keeps its own
+    id, and the words still reach the split for the right turn."""
+    monkeypatch.setattr(voice_mod, "TIMED_FINAL_WAIT_S", 0.05)
+    _timed_relay(only_app, monkeypatch, TimedEleven("late", late_s=0.3))
+    with TestClient(only_app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            assert _say(ws, 0.3, "t1") == {"final": "hello world",
+                                           "turn_id": "t1"}
+            time.sleep(0.5)                 # the late twin lands
+            ws.send_json(_speech(0.2)[0])
+            assert ws.receive_json() == {"partial": "hello"}
+            known, entry = crosstalk.take_words("t1")
+            assert known and [w[2] for w in entry["words"]] == [
+                "hello", "world"]
+            assert _say(ws, 0.3, "t2") == {"final": "hello world",
+                                           "turn_id": "t2"}
+            ws.send_json({"done": True})
+
+
+def test_a_timed_final_on_its_own_is_the_commits_final(app, monkeypatch):
+    _timed_relay(app, monkeypatch, TimedEleven("timed"))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            for tid in ("t1", "t2"):
+                assert _say(ws, 0.3, tid) == {"final": "hello world",
+                                               "turn_id": tid}
+            ws.send_json({"done": True})
+
+
+def test_words_are_kept_in_turn_time_before_the_final_goes_out(
+        only_app, monkeypatch):
+    """Scribe counts from the first audio on the socket, not from each
+    commit. The relay records where each turn began on that clock, so the
+    second turn's words start near zero, and they're in place by the time
+    the browser has the final."""
+    fake = TimedEleven("both", script=[
+        [(0.1, 0.4, "first"), (0.5, 0.9, "turn")],
+        [(0.1, 0.3, "second")]])
+    _timed_relay(only_app, monkeypatch, fake)
+    with TestClient(only_app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            assert _say(ws, 1.0, "t1")["turn_id"] == "t1"
+            assert crosstalk.take_words("t1") == (True, {
+                "words": [(0.1, 0.4, "first"), (0.5, 0.9, "turn")],
+                "stt_s": 1.0})
+            assert _say(ws, 0.5, "t2")["turn_id"] == "t2"
+            assert crosstalk.take_words("t2") == (True, {
+                "words": [(0.1, 0.3, "second")], "stt_s": 0.5})
+            ws.send_json({"done": True})
+    # the socket's own clock did run on: the fake sent 1.1 s for "second"
+    assert fake.sent_s == pytest.approx(1.5)
+
+
+def test_a_reconnected_socket_starts_its_own_clock(only_app, monkeypatch):
+    """A new socket counts from zero again. Each turn is read against the
+    socket it was committed on, so a reconnect changes nothing."""
+    _timed_relay(only_app, monkeypatch,
+                 TimedEleven("both", script=[[(0.2, 0.6, "before")]]),
+                 TimedEleven("both", script=[[(0.2, 0.6, "after")]]))
+    with TestClient(only_app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        for tid, seconds in (("t1", 1.5), ("t2", 0.8)):
+            with c.websocket_connect("/api/voice/stt-stream") as ws:
+                ws.send_json({"chat_id": chat["id"]})
+                assert ws.receive_json()["session"]
+                assert _say(ws, seconds, tid)["turn_id"] == tid
+                ws.send_json({"done": True})
+            known, entry = crosstalk.take_words(tid)
+            assert known and entry["words"][0][:2] == (0.2, 0.6)
+            assert entry["stt_s"] == seconds
+
+
+def test_words_are_not_kept_with_the_session_naming_off(app, monkeypatch):
+    _timed_relay(app, monkeypatch, TimedEleven("both"))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            assert _say(ws, 0.3, "t1")["turn_id"] == "t1"
+            ws.send_json({"done": True})
+    assert crosstalk.take_words("t1") == (False, None)
+
+
+# The pairing itself, pure: CommitFinals with a clock the test holds.
+
+def _finals(outs):
+    return [(o["turn"]["turn_id"], o["text"], o["words"] is not None)
+            for o in outs]
+
+
+def test_pairing_the_timed_final_is_the_one_final():
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    f.commit("t1", 0.0, 1.0)
+    f.commit("t2", 1.0, 2.0)
+    assert f.plain("one", 0.0) == [] and f.wait_left(0.1) == \
+        pytest.approx(0.2)
+    assert _finals(f.timed("one", [], 0.02)) == [("t1", "one", True)]
+    assert f.wait_left(0.5) is None
+    assert f.plain("two", 1.0) == []
+    assert _finals(f.timed("two", [], 1.02)) == [("t2", "two", True)]
+    assert f.commits == [] and f.alone == 0
+
+
+def test_pairing_a_plain_final_alone_goes_out_after_the_wait():
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    f.commit("t1", 0.0, 1.0)
+    assert f.plain("one", 0.0) == []
+    assert f.expire(0.2) == []
+    assert _finals(f.expire(0.3)) == [("t1", "one", False)]
+    # its twin, late: the words, and no second final
+    assert _finals(f.timed("one", [], 0.4)) == [("t1", None, True)]
+    assert f.alone == 1
+
+
+def test_pairing_a_held_final_is_never_lost():
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    for tid in ("t1", "t2", "t3"):
+        f.commit(tid, 0.0, 1.0)
+    f.plain("one", 0.0)
+    # the next commit's plain final arrives first: the held one goes out
+    assert _finals(f.plain("two", 0.1)) == [("t1", "one", False)]
+    # the upstream closes: the one held now goes out too
+    assert _finals(f.close()) == [("t2", "two", False)]
+    assert f.commits[0]["turn_id"] == "t3"
+
+
+def test_pairing_stops_waiting_once_word_times_keep_missing():
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    for tid in ("t1", "t2", "t3"):
+        f.commit(tid, 0.0, 1.0)
+    f.plain("one", 0.0)
+    f.expire(1.0)
+    f.plain("two", 2.0)
+    f.expire(3.0)
+    # two misses in a row: the third goes out at once, with no wait
+    assert _finals(f.plain("three", 4.0)) == [("t3", "three", False)]
+    assert f.wait_left(4.0) is None
+
+
+def test_pairing_a_different_timed_final_with_a_commit_waiting_is_that_commits():
+    """A plain final went out alone and the next commit is already waiting:
+    a timed final that doesn't read as the one owed belongs to the next
+    commit, so it isn't swallowed."""
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    f.commit("t1", 0.0, 1.0)
+    f.commit("t2", 1.0, 2.0)
+    f.plain("one", 0.0)
+    f.expire(0.5)
+    assert _finals(f.timed("two", [], 0.6)) == [("t2", "two", True)]
+
+
+def test_pairing_a_final_with_no_commit_carries_no_turn_id():
+    f = voice_mod.CommitFinals(wait_s=0.3)
+    assert _finals(f.timed("stray", [], 0.0)) == [(None, "stray", True)]

@@ -137,7 +137,7 @@ a default install records it.
 | `voice_id_model_sha256` | `""` | Overrides the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched once to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
 | `diarize_shadow_url` | `""` | The address of a diariser on this computer that the shadow test splits each voice turn with, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty turns that part off. [The shadow test](#the-shadow-test). |
 | `voice_session_shadow` | `false` | Adds the session test to the shadow test: it follows each voice through the whole voice session and names each voice from everything it has said. Needs `diarize_shadow_url` and a diariser with session routes. [The session test](#the-session-test). |
-| `voice_session_only` | `false` | Lets the session naming name every spoken turn, in every mode, and stops the matcher's own passes. Needs `voice_session_live`. [Letting the session name every turn](VOICE_ID.md#letting-the-session-name-every-turn). |
+| `voice_session_only` | `false` | Lets the session naming name every spoken turn, in every mode, and stops the matcher's own passes. Two voices in one turn are then split on your computer. Needs `voice_session_live`. [Letting the session name every turn](VOICE_ID.md#letting-the-session-name-every-turn). |
 | `voice_session_live` | `false` | Runs the session test live. The app sends your audio to the diariser while you talk, and a turn the voice check can't name takes its session voice's name before the AIs read it. Needs `voice_session_shadow`. [The session test](#the-session-test). |
 | `voice_session_labels` | `false` | Lets the session test fill in names. A voice turn today's naming left unnamed takes the name the session test gave its voice. It never replaces a name, and nothing else changes. Needs `voice_session_shadow`. [The session test](#the-session-test). |
 | `voice_shadow_model` | `""` | A second speaker model the shadow test scores beside the live one. It knows `titanet_large`, about 100MB, downloaded once and checked against a pinned hash, and only while this is set. Empty turns that part off. [The shadow test](#the-shadow-test). |
@@ -230,7 +230,8 @@ per setting and compare the saved clips.
 
 A known voice is named on your computer in a fraction of a second, and
 a voice the matcher can't place stays unnamed. The only ElevenLabs
-batch call left runs when voices overlap, to split the crosstalk.
+batch call left runs when voices overlap, to split the crosstalk. With
+`voice_session_only` on, that split runs on your computer too.
 
 With `voice_id_enabled` false, or the `sherpa-onnx` wheel or the model
 file absent, turns are not named and the room never arms on its own.

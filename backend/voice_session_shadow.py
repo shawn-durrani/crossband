@@ -153,9 +153,11 @@ def _resolve(turn_id, result):
 
 
 def wait_turn(turn_id, timeout=LIVE_WAIT_S):
-    """The live result for one turn: {"voice", "state", "name", "score"},
-    or None when there is none within `timeout` (blocking; call it off the
-    event loop)."""
+    """The live result for one turn: the main voice's {"voice", "state",
+    "name", "score", ...}, plus every voice heard in the turn and the spans
+    in turn time for the crosstalk split (see _name_turn), or None when
+    there is none within `timeout` (blocking; call it off the event
+    loop)."""
     tid = str(turn_id or "")[:64]
     if not tid:
         return None
@@ -379,12 +381,16 @@ def name_single_turn(chat_id, pcm, sample_rate, cfg):
         lambda seg: embed_live(seg, sample_rate, cfg),
         (lambda seg: embed_eres_live(seg, sample_rate, cfg)))
     v = named.get(0) or {}
+    whole = [{"slot": 0, "start": 0.0, "end": round(secs, 3),
+              "overlap": False}]
     return {"voice": 0, "state": v.get("state", "listening"),
             "name": v.get("name", ""), "pid": v.get("pid", ""),
             "score": v.get("score"), "prob": v.get("prob"), "human": False,
             "method": method, "voice_clean_s": secs,
             "clean_spans": [(0.0, secs)], "voices_in_turn": 1,
-            "overlap_s": 0.0, "single": True}
+            "overlap_s": 0.0, "single": True,
+            "voices": turn_voices(whole, named), "spans": whole,
+            "turn_s": round(secs, 3)}
 
 
 def _live_candidates(chat_id):
@@ -944,7 +950,9 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
     move the tracker's spans into turn time, fingerprint the clean ones,
     name every session voice, fill in unnamed turns when that's on, and
     put it all on `row`. Returns the turn's main voice as {"voice",
-    "state", "name", "score"}, or None when no voice spoke."""
+    "state", "name", "score", ...} with every voice heard in the turn
+    ("voices"), the spans in turn time and the turn's length ("turn_s"),
+    or None when no voice spoke."""
     seconds = len(pcm) / 2 / sample_rate
     spans, ready = [], {}
     for s in raw_spans:
@@ -1021,7 +1029,32 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             "clean_spans": clean,
             "voices_in_turn": len({s["slot"] for s in spans}),
             "overlap_s": round(sum(s["end"] - s["start"] for s in spans
-                                   if s["overlap"]), 3)}
+                                   if s["overlap"]), 3),
+            # #482 item D: what the crosstalk split reads. Every voice heard
+            # in the turn with its name and seconds, the spans in turn
+            # time, and how much audio the turn held (its clock, for lining
+            # up Scribe's word times). Content-free, like the rows.
+            "voices": turn_voices(spans, named),
+            "spans": [dict(s) for s in spans],
+            "turn_s": round(seconds, 3)}
+
+
+def turn_voices(spans, named):
+    """{slot: {"state", "name", "pid", "score", "prob", "human", "seconds",
+    "first"}} for every voice heard in one turn's spans (turn time):
+    `seconds` is its time in the turn, overlap included, and `first` when
+    it first spoke."""
+    out = {}
+    for s in spans:
+        v = named.get(s["slot"]) or {}
+        entry = out.setdefault(s["slot"], {
+            "state": v.get("state", "listening"), "name": v.get("name", ""),
+            "pid": v.get("pid", ""), "score": v.get("score"),
+            "prob": v.get("prob"), "human": bool(v.get("human")),
+            "seconds": 0.0, "first": s["start"]})
+        entry["seconds"] = round(entry["seconds"] + s["end"] - s["start"], 3)
+        entry["first"] = min(entry["first"], s["start"])
+    return out
 
 
 def _name_all(sess, candidates, sample_rate, cfg, pending, embed_fn,

@@ -17,7 +17,10 @@ The app puts a name on a turn only when the voice check on your own
 computer is sure. That check is called the matcher. When it isn't sure,
 the turn stays unnamed, and no cloud service is asked to guess instead.
 The only cloud transcription left in room mode runs when two people
-talk over each other, to work out which words were whose.
+talk over each other, to work out which words were whose. When
+[the session names every turn](#letting-the-session-name-every-turn),
+that split happens on your computer as well, and no voice clips leave
+it.
 
 ## How the room switches on and off
 
@@ -212,14 +215,50 @@ Here's what happens to each turn.
    saved yet, a new voice is named as them and marked learning.
 6. Anything else is labelled "still listening", and fills in once the
    voice is named.
-7. When a voice is named at 0.99 or more, with 8 seconds of clean
+7. When a second voice spoke for a second or more, the turn is
+   labelled with every voice in it and marked as two voices at once.
+   The room follows the voice that spoke most on its own.
+8. When a voice is named at 0.99 or more, with 8 seconds of clean
    speech behind it, the turn's longest clean stretch is saved to that
    person's voice, at most 3 times per voice per session. A turn with
    two voices in it is never saved.
 
 Solo still labels and never arms, seats, asks or saves. Naming a turn
 by hand names its voice for the rest of the session, and the voice's
-other unnamed turns take the name at once.
+other unnamed turns take the name at once. A turn with two voices in it
+is the exception. Tapping its name changes that turn's label, but it
+can't say which of the voices you meant, so no voice takes the name.
+
+### When two people talk at once
+
+With the session naming every turn, a turn with two voices in it is
+split on your computer. The live transcription sends the start and end
+of every word, and each word goes to the voice speaking at that moment.
+Under the turn you see who said which words, like "Alex: are we going /
+Sam: yes soon".
+
+- A word spoken while both voices were going goes to the turn's main
+  speaker, marked unsure, because one microphone can't tell whose it
+  was.
+- A voice that's still being listened to shows as "Voice 2" with a
+  question mark. The AIs read it as an unidentified speaker, never as
+  you.
+- The note under the turn says some words may be missing. On one
+  microphone the quieter voice's words often are.
+- Memory never files a two-voice turn under anyone's name, whoever
+  spoke.
+
+The word times and the voice tracker each count time from their own
+start, and either can restart on its own. The app lines them up at the
+end of the turn, the one moment both heard together. If the tracker
+heard less of the turn than the transcription did, or the word times
+don't come, the turn keeps the two-voices note without the split. A long
+turn sent in pieces keeps just the note too, because the split covers
+only its last piece.
+
+The turn waits up to a second for its word times. They come with the
+transcript itself, so the split is normally ready before the message is
+saved, and the AIs read it with the turn.
 
 ## Starting from nothing
 
@@ -624,9 +663,9 @@ correction that named the merged-away person now names the survivor.
 - The roster holds 6 people at once by default (`room_roster_max`),
   and the cap frees as people leave. It's a product choice, and
   nothing technical forces it.
-- The transcription service that splits crosstalk can tell apart up
-  to 32 voices in one request. The roster cap keeps real sessions
-  nowhere near that.
+- When the matcher's own passes split crosstalk, the transcription
+  service can tell apart up to 32 voices in one request. The roster
+  cap keeps real sessions nowhere near that.
 - One Crossband instance belongs to one person, and everything about
   memory, spend and trust assumes it. Guests are remembered voices
   with names, never co-owners. That's how the whole fleet is built,
