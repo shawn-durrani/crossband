@@ -18,6 +18,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import stat
 import tarfile
 import time
 from pathlib import Path
@@ -122,6 +123,61 @@ def configure(data_dir, backup_keep: int = 14, mirror_dir: str = "", mirror_keep
     BACKUP_KEEP = backup_keep
     MIRROR_DIR = Path(mirror_dir) if mirror_dir else None
     MIRROR_KEEP = mirror_keep
+
+
+def _owner_only(path, st) -> bool:
+    """Drop group and other access from one entry (0644 -> 0600, 0755 ->
+    0700). True when it changed anything. Never raises."""
+    if not st.st_mode & 0o077:
+        return False
+    try:
+        os.chmod(path, stat.S_IMODE(st.st_mode) & 0o700)
+        return True
+    except OSError:
+        return False
+
+
+def secure_data_dir() -> int:
+    """Make the data directory owner-only, contents included, and keep it
+    that way (#542). Called by init() and by every script that writes into
+    it.
+
+    A Mac home folder is readable by the `staff` group, which every local
+    account belongs to, so a 0644 file under it can be read by anyone else
+    who uses the machine. The chats, their snapshots, attachments, voice
+    dumps and the service log are all private.
+
+    Two parts. The process umask becomes 0o077, so every file and folder
+    this process makes from here on is owner-only from its first byte:
+    the database, a snapshot, an attachment, a dump. SQLite gives the -wal
+    and -shm files the database's own mode, so they follow. Then anything
+    already in the directory that the group or others can read loses those
+    bits, which repairs what an older build, a restore or a copy by hand
+    left behind (launchd creates service.log before the app starts, for
+    one). Symlinks are skipped: chmod would follow them out of the
+    directory. Best-effort, like the .env tightening: a permissions failure
+    never stops the app starting. Returns how many entries it tightened,
+    and logs only that count."""
+    os.umask(0o077)
+    try:
+        os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
+        tightened = int(bool(os.stat(DATA_DIR).st_mode & 0o077))
+        os.chmod(DATA_DIR, 0o700)
+    except OSError:
+        return 0
+    for root, dirs, files in os.walk(DATA_DIR):
+        for name in dirs + files:
+            path = os.path.join(root, name)
+            try:
+                st = os.lstat(path)
+            except OSError:
+                continue
+            if not stat.S_ISLNK(st.st_mode):
+                tightened += _owner_only(path, st)
+    if tightened:
+        log.warning("data directory: %d file(s) and folder(s) other "
+                    "accounts could read are now owner-only", tightened)
+    return tightened
 
 
 SCHEMA = """
@@ -735,6 +791,7 @@ def init(settings=None):
     The ladder is the block of `if <= version` steps below, each additive and
     each safe to re-run on a database that already has the column. See
     SCHEMA_HISTORY above it for what every version added."""
+    secure_data_dir()  # owner-only before anything below writes a file
     backup_database()  # pre-init snapshot, every startup (no-op on first run)
     con = connect()
     # WAL: survives abrupt power-off/kill without corruption, and lets readers
