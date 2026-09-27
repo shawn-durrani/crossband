@@ -78,6 +78,15 @@ router = APIRouter(tags=["voice"])
 
 log = logging.getLogger("crossband.voice")
 
+
+def collect_read(task):
+    """Done-callback for an upstream read the relay may stop waiting on:
+    collect its exception, so a read that fails after the relay moved on
+    (the browser left, or the upstream closed without a close frame) is
+    never logged by asyncio as "Task exception was never retrieved"."""
+    if not task.cancelled():
+        task.exception()
+
 PREFERRED_VOICES = ["Adam", "Rachel", "Antoni", "Bella", "Josh", "Domi", "Elli", "Sam"]
 
 
@@ -975,6 +984,12 @@ async def stt_stream_relay(ws: WebSocket):
                     while True:
                         if nxt is None:
                             nxt = asyncio.ensure_future(messages.__anext__())
+                            # A read that fails after this pump has stopped
+                            # waiting (the browser left, or the upstream
+                            # closed without a close frame) still has its
+                            # exception collected, so asyncio never logs
+                            # "Task exception was never retrieved".
+                            nxt.add_done_callback(collect_read)
                         done, _ = await asyncio.wait(
                             {nxt}, timeout=finals.wait_left(time.monotonic()))
                         if not done:

@@ -733,3 +733,31 @@ def test_pairing_a_different_timed_final_with_a_commit_waiting_is_that_commits()
 def test_pairing_a_final_with_no_commit_carries_no_turn_id():
     f = voice_mod.CommitFinals(wait_s=0.3)
     assert _finals(f.timed("stray", [], 0.0)) == [(None, "stray", True)]
+
+
+def test_a_read_that_fails_after_the_relay_moved_on_is_never_logged():
+    """27 September: 17 'Task exception was never retrieved' errors, each a
+    Scribe read that failed (closed without a close frame) after the relay
+    had stopped waiting on it. collect_read collects such a read."""
+    import gc
+    import websockets
+    logged = []
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(lambda l, ctx: logged.append(ctx["message"]))
+
+        async def failing_read():
+            raise websockets.ConnectionClosedError(None, None)
+
+        watched = asyncio.ensure_future(failing_read())
+        watched.add_done_callback(voice_router.collect_read)
+        unwatched = asyncio.ensure_future(failing_read())
+        await asyncio.sleep(0.01)
+        del watched, unwatched
+        gc.collect()
+        await asyncio.sleep(0)
+
+    asyncio.run(main())
+    # the unwatched read shows what the callback prevents
+    assert logged.count("Task exception was never retrieved") == 1
