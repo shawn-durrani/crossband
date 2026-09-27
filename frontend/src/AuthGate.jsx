@@ -6,8 +6,9 @@ import { gateView } from './lockState'
 /* The gate around the whole app (#25). App.jsx stays untouched: this wrapper
    probes /api/auth/session before mounting it, swaps in the LockScreen while
    locked, and re-locks the moment any API call comes back 401 (logout in
-   another tab, session expiry, a restart). On an unenrolled install the app
-   runs exactly as before, with a slim banner offering to set the password. */
+   another tab, session expiry, a password reset). On an unenrolled install
+   the app runs exactly as before, with a slim banner offering to set the
+   password. */
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null)

@@ -27,7 +27,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -79,6 +79,7 @@ SCHEMA_VERSION = 31
 #        ElevenLabs voice model, and which one spoke each traced turn)
 #   v31  participants.tts_v3_accent_tag (a seat's own Eleven v3 accent tag,
 #        #493)
+#   v32  auth_sessions (browser sign-ins kept across restarts, hashed, #471)
 
 # v29's columns (#254), shared by the migration step and nothing else: the
 # CREATE TABLE in SCHEMA spells the same list out for a fresh database.
@@ -468,6 +469,15 @@ CREATE TABLE IF NOT EXISTS voice_turn_traces(
   speaker TEXT NOT NULL DEFAULT '',    -- participant slug for per-speaker stages
   created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS auth_sessions(
+  -- One row per browser sign-in (#471), so a restart signs nobody out.
+  -- Only the SHA-256 of the cookie's random id is kept, never the id, so
+  -- a copy of this file can't sign anyone in. Backups carry no rows.
+  sid_hash TEXT PRIMARY KEY,
+  created_at REAL NOT NULL,
+  expires_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_voice_traces_turn ON voice_turn_traces(turn_id);
 CREATE INDEX IF NOT EXISTS idx_voice_traces_created ON voice_turn_traces(created_at);
 CREATE INDEX IF NOT EXISTS idx_guest_jobs_chat ON guest_jobs(chat_id);
@@ -571,6 +581,7 @@ def _backup_database():
     try:
         with dst:
             src.backup(dst)
+        _drop_sign_ins(dst)
     finally:
         src.close()
         dst.close()
@@ -595,6 +606,22 @@ def _backup_database():
     _mirror_snapshot(dest)
     _backup_voice_anchors(dest.name.replace("chat-", "").replace(".db", ""))
     return str(dest)
+
+
+def _drop_sign_ins(snap) -> None:
+    """A snapshot keeps the auth_sessions table and none of its rows (#471).
+    Restoring a backup then signs every browser out, rather than bringing
+    back a sign-in that was revoked after the snapshot was taken, such as a
+    stolen cookie a reset had killed. secure_delete zeroes the freed pages,
+    so the snapshot holds no trace of the hashes either. A database older
+    than the table (the pre-init snapshot on the first start after an
+    upgrade) has nothing to drop."""
+    if not snap.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='auth_sessions'").fetchone():
+        return
+    snap.execute("PRAGMA secure_delete = ON")
+    with snap:
+        snap.execute("DELETE FROM auth_sessions")
 
 
 # How often the backup timer wakes to ask whether a snapshot is due. The
@@ -837,6 +864,8 @@ def init(settings=None):
     # executescript below; no ALTER, nothing to backfill.
     # v10: utility_usage - likewise a NEW table, created by the
     # executescript below; no ALTER, nothing to backfill.
+    # v32: auth_sessions - likewise a NEW table. It starts empty, so the
+    # first start on it signs every browser out once, as any restart did.
     if 1 <= version <= 10:  # v11: utility_usage.provenance -
         # persist cost provenance AT WRITE TIME instead of recomputing it from
         # the live rate card at read time, matching every other cost source

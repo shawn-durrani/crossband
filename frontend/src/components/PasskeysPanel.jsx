@@ -67,7 +67,7 @@ export default function PasskeysPanel() {
   }
 
   async function remove(id) {
-    if (!confirm('Remove this passkey? It will stop unlocking crossband; your password still works.')) return
+    if (!confirm('Remove this passkey? It will stop unlocking crossband, and every other browser signed in here is signed out. Your password still works.')) return
     try {
       await api.webauthnRemove(id)
       load()

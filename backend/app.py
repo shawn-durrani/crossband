@@ -225,15 +225,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     memory = MemoryClient(settings.memory_url)
 
     # Browser gate (#25): membro's credential model, enrolment-activated (see
-    # backend/auth.py for the posture and its stated tradeoff). The secret and
-    # session store live on app.state; the enrolled flag is cached here and
-    # updated by the setup/reset handlers, so the per-request check costs a
-    # dict lookup, not a database read.
+    # backend/auth.py for the posture and its stated tradeoff). The secret
+    # lives on app.state; the enrolled flag is cached here and updated by the
+    # setup/reset handlers, so no request reads the verifier row. Sign-ins
+    # live in the database (#471), so a restart keeps them; the ones that ran
+    # out while the app was down go now.
     import secrets as _secrets
     recovery_secret = settings.recovery_secret or _secrets.token_urlsafe(24)
     _con = db.connect()
     try:
         auth_enrolled = auth.is_enrolled(_con)
+        auth.prune_expired_sessions(_con)
+        _con.commit()
     finally:
         _con.close()
     for line in auth.startup_lines(enrolled=auth_enrolled,
@@ -372,7 +375,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.allowed_hosts = allowed_hosts
     app.state.funnel_exposed = None   # set by the Funnel check (#363)
     app.state.recovery_secret = recovery_secret
-    app.state.auth_sessions = {}
     app.state.auth_enrolled = auth_enrolled
     app.state.webauthn_pending = {}  # in-flight passkey ceremonies (#25 slice 2)
 
