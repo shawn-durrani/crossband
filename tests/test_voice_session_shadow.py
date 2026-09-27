@@ -802,3 +802,48 @@ def test_clean_spans_are_fingerprinted_while_the_turn_runs(live,
     got = vss.wait_turn("t1", timeout=3)
     assert got is not None and got["voice_clean_s"] == 1.0
     assert calls == [SR * 2]              # once, during the turn
+
+
+# ---------- 11. what the crosstalk split reads (#482 item D) ----------
+
+def test_the_live_result_lists_every_voice_with_its_spans_in_turn_time(live):
+    """A turn after 1 s of earlier audio: the spans come back in session
+    time and the result gives them in turn time, with every voice heard,
+    its seconds and when it first spoke, and the turn's length. Names,
+    numbers and times only."""
+    live.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                   [{"slot": 1, "start": 1.0, "end": 2.6},
+                    {"slot": 1, "start": 2.6, "end": 2.9, "overlap": True},
+                    {"slot": 2, "start": 2.6, "end": 2.9, "overlap": True},
+                    {"slot": 2, "start": 2.9, "end": 4.0}]]
+    for chunk in _chunks(1.0):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t1", LIVE_CFG)
+    assert vss.wait_turn("t1", timeout=3)["voices_in_turn"] == 1
+    for chunk in _chunks(3.0):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t2", LIVE_CFG)
+    got = vss.wait_turn("t2", timeout=3)
+    assert got["turn_s"] == 3.0
+    assert got["spans"] == [
+        {"slot": 1, "start": 0.0, "end": 1.6, "overlap": False},
+        {"slot": 1, "start": 1.6, "end": 1.9, "overlap": True},
+        {"slot": 2, "start": 1.6, "end": 1.9, "overlap": True},
+        {"slot": 2, "start": 1.9, "end": 3.0, "overlap": False}]
+    assert {slot: (v["seconds"], v["first"], v["state"])
+            for slot, v in got["voices"].items()} == {
+        1: (1.9, 0.0, "named"), 2: (1.4, 1.6, "listening")}
+    assert got["voices"][1]["name"] == "Alex"
+    allowed = {"state", "name", "pid", "score", "prob", "human", "seconds",
+               "first"}
+    assert all(set(v) == allowed for v in got["voices"].values())
+
+
+def test_a_turn_named_on_its_own_is_one_voice(fakes, monkeypatch):
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
+    monkeypatch.setattr(vss, "embed_eres_live", lambda pcm, sr, cfg: None)
+    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
+    got = vss.name_single_turn(3, _turn(2.0), SR, dict(CFG))
+    assert list(got["voices"]) == [0] and got["turn_s"] == 2.0
+    from backend import crosstalk
+    assert crosstalk.listed_voices(got) == [0]

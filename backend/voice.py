@@ -5,6 +5,7 @@ Every synthesized character and transcribed second is logged to voice_usage."""
 import base64
 import json
 import os
+import re
 
 import httpx
 
@@ -55,15 +56,123 @@ def clean_keyterms(names) -> list:
     return out
 
 
-def stt_ws_url(keyterms=None) -> str:
+def stt_ws_url(keyterms=None, timestamps=False) -> str:
     """The realtime STT connection URL, with keyterm biasing when there are
-    names to bias towards. No keyterms = the exact historical URL, so a
-    session with nobody to name connects byte-for-byte as it always has."""
-    terms = clean_keyterms(keyterms)
-    if not terms:
+    names to bias towards, and word times when `timestamps` is set (#482
+    item D: the relay asks for them so crosstalk can be split locally).
+    Neither = the exact historical URL."""
+    query = [("keyterms", t) for t in clean_keyterms(keyterms)]
+    if timestamps:
+        query.append(("include_timestamps", "true"))
+    if not query:
         return STT_WS_URL
     from urllib.parse import urlencode
-    return STT_WS_URL + "?" + urlencode([("keyterms", t) for t in terms])
+    return STT_WS_URL + "?" + urlencode(query)
+
+
+# ---- one final per commit (#482 item D) ----
+#
+# With word times asked for, Scribe answers each commit twice, in this
+# order: `committed_transcript` (the text) and then
+# `committed_transcript_with_timestamps` (the same text, plus every word
+# with its start and end in seconds, counted from the first audio sent on
+# the socket). The browser must still get exactly one final per commit, and
+# each commit's turn id must be used exactly once, so CommitFinals pairs the
+# two: the timed final is the one that goes out, and the plain one is held
+# until its twin arrives. A plain final whose twin doesn't come within
+# TIMED_FINAL_WAIT_S goes out on its own, without word times, so a commit
+# is never lost. After TIMED_MISSES_TO_STOP such misses in a row the relay
+# stops waiting for the rest of the socket's life, so a Scribe that has
+# stopped sending word times costs a wait twice, not on every turn.
+
+PLAIN_FINAL = "committed_transcript"
+TIMED_FINAL = "committed_transcript_with_timestamps"
+TIMED_FINAL_WAIT_S = 0.3
+TIMED_MISSES_TO_STOP = 2
+
+
+def _same_text(a, b) -> bool:
+    """Do two finals read the same, case, punctuation and spacing aside?"""
+    def norm(t):
+        return " ".join(re.sub(r"[^\w]+", " ", (t or "").casefold()).split())
+    return norm(a) == norm(b)
+
+
+class CommitFinals:
+    """Pairs each commit with its final (pure: no sockets, no clock of its
+    own; the relay passes `now`). The relay calls commit() at each commit
+    frame, and plain(), timed() and expire() as Scribe answers. Each of
+    those returns what to do, in order, as a list of
+    {"turn", "text", "words"}: `turn` is the commit ({"turn_id", "start",
+    "end"}, the seconds of audio sent on the socket when the turn began
+    and when it was committed), `text` the final to send the browser (None
+    when this commit's final already went out), and `words` Scribe's word
+    list, or None when there are no word times for it."""
+
+    def __init__(self, wait_s=TIMED_FINAL_WAIT_S):
+        self.wait_s = wait_s
+        self.commits = []     # commits still waiting for their final, in order
+        self.pending = None   # a plain final held for its timed twin
+        self.owed = None      # a commit whose plain final went out alone
+        self.misses = 0       # plain finals in a row that went out alone
+        self.alone = 0        # finals sent without word times, all told
+
+    def commit(self, turn_id, start, end):
+        self.commits.append({"turn_id": turn_id, "start": start, "end": end})
+
+    def _next(self):
+        if self.commits:
+            return self.commits.pop(0)
+        return {"turn_id": None, "start": None, "end": None}
+
+    def plain(self, text, now):
+        out = self._release()
+        self.owed = None
+        self.pending = {"turn": self._next(), "text": text,
+                        "until": now + self.wait_s}
+        if self.misses >= TIMED_MISSES_TO_STOP:
+            out += self._release()
+        return out
+
+    def timed(self, text, words, now):
+        words = words if isinstance(words, list) else []
+        if self.pending is not None:
+            turn = self.pending["turn"]
+            self.pending = None
+            self.misses = 0
+            return [{"turn": turn, "text": text, "words": words}]
+        owed, self.owed = self.owed, None
+        if owed is not None and (not self.commits
+                                 or _same_text(owed["text"], text)):
+            # The late twin of a final that already went out: its words
+            # still belong to that commit, and nothing goes to the browser.
+            return [{"turn": owed["turn"], "text": None, "words": words}]
+        # A commit Scribe answered with the timed final alone.
+        return [{"turn": self._next(), "text": text, "words": words}]
+
+    def expire(self, now):
+        if self.pending is not None and now >= self.pending["until"]:
+            return self._release()
+        return []
+
+    def close(self):
+        """The upstream ended: a held final goes out now."""
+        return self._release()
+
+    def wait_left(self, now):
+        """Seconds until the held final must go out, or None."""
+        if self.pending is None:
+            return None
+        return max(0.0, self.pending["until"] - now)
+
+    def _release(self):
+        if self.pending is None:
+            return []
+        held, self.pending = self.pending, None
+        self.misses += 1
+        self.alone += 1
+        self.owed = {"turn": held["turn"], "text": held["text"]}
+        return [{"turn": held["turn"], "text": held["text"], "words": None}]
 
 
 def api_key():

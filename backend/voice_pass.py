@@ -12,9 +12,17 @@ the pass mostly reads its answer:
      is named on its own as one voice, with the same scorer.
   2. Decide, as a pure rule (`decide`), from that answer and the chat's
      room state: the label, and whether to arm the room, seat someone, or
-     ask who a new voice is.
-  3. Deliver the label through the one label path, then act.
-  4. Save the turn's clean speech to the named person's bank when the
+     ask who a new voice is. The room follows the main voice.
+  3. When a second voice spoke for a second or more (#482 item D), the
+     label is crosstalk instead: it names every voice and splits the words
+     between them on this computer (backend/crosstalk.py). Only such a
+     turn waits for Scribe's word times, at most crosstalk.WORDS_WAIT_S.
+     They come with the final the browser sends the message on, and the
+     relay hands them over first, so the label is normally parked before
+     the message is saved and the seats read the split, not a single name
+     that would pass one person's words off as another's.
+  4. Deliver the label through the one label path, then act.
+  5. Save the turn's clean speech to the named person's bank when the
      naming is near certain (BANK_PROB) and the voice has BANK_MIN_CLEAN_S
      of clean speech behind it, at most BANK_PER_SESSION clips per voice
      per session, never from a turn with two voices in it.
@@ -30,7 +38,7 @@ import asyncio
 import logging
 import time
 
-from . import db, voice_session_shadow as vss
+from . import crosstalk, db, voice_session_shadow as vss
 
 log = logging.getLogger("crossband.voice_pass")
 
@@ -202,12 +210,25 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
                 vss.name_single_turn, chat_id, pcm, sample_rate, cfg)
         plan = await diarize._in_voice_thread(_plan, chat_id, cfg)
         decision = decide(got, plan)
-        payload = diarize.label_payload(
-            decision["labels"], clusters=(vss.SESSION_SOURCE,),
-            uncertain=decision["uncertain"], source=vss.SESSION_SOURCE,
-            score=(got or {}).get("score") if decision["labels"] else None,
-            owner=decision["owner"], learning=decision["learning"],
-            unresolved=decision["unresolved"])
+        listed = crosstalk.listed_voices(got)
+        if len(listed) >= 2:
+            # Two voices: the label names each and splits the words by the
+            # tracker's spans. The words ride the same Scribe answer as the
+            # final the browser is waiting for, and the relay hands them
+            # over before it sends that final, so they are here (or known
+            # to be missing) before /send can save the message.
+            words = await crosstalk.await_words(turn_id) if turn_id \
+                else None
+            payload = crosstalk.label(got, listed, words,
+                                      source=vss.SESSION_SOURCE)
+        else:
+            payload = diarize.label_payload(
+                decision["labels"], clusters=(vss.SESSION_SOURCE,),
+                uncertain=decision["uncertain"], source=vss.SESSION_SOURCE,
+                score=(got or {}).get("score") if decision["labels"]
+                else None,
+                owner=decision["owner"], learning=decision["learning"],
+                unresolved=decision["unresolved"])
         ms = (time.perf_counter() - t0) * 1000
         diarize.record_decision(
             chat_id, diarize.DECISION_LOCAL if decision["labels"]
@@ -225,10 +246,11 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
             banked = await diarize._in_voice_thread(_bank, chat_id, got, pcm,
                                                     sample_rate)
         log.info("voice pass: chat=%s ms=%.0f state=%s method=%s single=%s "
-                 "arm=%s ask=%s banked=%s", chat_id, ms,
+                 "arm=%s ask=%s banked=%s voices=%d split=%s", chat_id, ms,
                  (got or {}).get("state", "none"),
                  (got or {}).get("method", "-"), bool((got or {}).get(
-                     "single")), decision["arm"], decision["ask"], banked)
+                     "single")), decision["arm"], decision["ask"], banked,
+                 len(listed), bool(payload.get("segments")))
     except Exception:
         log.info("voice pass failed: chat=%s", chat_id)
         log.debug("voice pass failure detail", exc_info=True)
