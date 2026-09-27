@@ -3,11 +3,10 @@
 Per named person, this module accumulates several seconds of clean
 single-speaker speech across utterances - deliberately not just the first two
 seconds ever heard - and keeps a bounded, varied set of clips (#477: up to
-ten long and five short, ranked across sessions). Those clips are what get
-prepended to every diarization request (the anchor prefix), which is the only
-thing that makes per-request cluster labels comparable across utterances and
-across sessions: a known person is re-identified the moment they speak in a
-later session, with no introduction needed.
+ten long and five short, ranked across sessions). Those clips are what the
+local voice matcher enrols from (enrollment_clips), so a known person is
+re-identified the moment they speak in a later session, with no
+introduction needed.
 
 Privacy posture, matching the rest of the data directory:
 
@@ -16,8 +15,9 @@ Privacy posture, matching the rest of the data directory:
   gate's secrets.
 - Anchors are DELETABLE: forget() removes the person's clip files from disk
   and drops the index entry. The roster UI's "forget" button lands here.
-- Nothing here is ever sent anywhere except inside a diarization request the
-  operator's own room mode already makes.
+- Clip audio is matched on this machine. It leaves the store only for the
+  owner's own ear (the Voices page plays a clip back) and for membro, the
+  durable home person sync keeps each bank in (person_sync.py).
 
 Sufficiency is a REQUIREMENT, not an accident (owner decision on the issue):
 below SUFFICIENT_SECONDS of accepted clip audio a person's anchor is not used
@@ -71,8 +71,8 @@ SHORT_CLIP_MAX_SECONDS = 2.0
 # an everyday voice, so a bank forgot other rooms, microphones and moods
 # within a fortnight. Ten and five hold at most about 110s of audio per
 # person (around 3.5MB at 16kHz), and every cost that grows with them is
-# bounded: the audit embeds each clip once per process, the prefix still
-# takes about 2.5s per person, and enrolment still averages ENROLL_CLIPS.
+# bounded: the audit embeds each clip once per process, and enrolment
+# still averages ENROLL_CLIPS.
 KEEP_CLIPS = 10            # LONG clips kept per person
 KEEP_SHORT_CLIPS = 5       # SHORT clips kept per person, a class of their own
 # Which clips rotation keeps (#477): a bank is ranked for variety across
@@ -83,11 +83,9 @@ KEEP_SHORT_CLIPS = 5       # SHORT clips kept per person, a class of their own
 SESSION_GAP_S = 2 * 3600
 MIN_SHORT_CLIPS = 2        # short clips needed for sufficiency (configurable)
 SUFFICIENT_SECONDS = 6.0   # accepted seconds needed before identification is trusted
-PREFIX_PERSON_SECONDS = 2.5  # roughly how much of each person rides the prefix
 ENROLL_CLIPS = 3           # best N clips averaged into a local voice-id embedding (#28 part 2)
 MAX_PREFERRED_CHARS = 40   # display-name bound, matching the roster's
 MERGED_NAMES_MAX = 8       # spellings one person answers to, bounded (#28)
-PREFIX_CACHE_MAX = 8       # built-prefix snapshots kept per store (#28)
 # Quarantined clips (#28 PR-B, the hygiene guard): clips the pairwise audit
 # set aside are KEPT ON DISK but excluded from matching. Bounded per person;
 # past the cap the oldest set-aside clip is deleted for real. Sized to one
@@ -202,7 +200,7 @@ def is_short(clip: dict) -> bool:
 
 def active_clips(clips: list) -> list:
     """The clips that actually take part in matching: everything the hygiene
-    guard (#28 PR-B) has not set aside. Every gate - sufficiency, the prefix,
+    guard (#28 PR-B) has not set aside. Every gate - sufficiency,
     enrolment, the UI's seconds - counts these and only these."""
     return [c for c in clips or [] if not c.get("quarantined")]
 
@@ -490,12 +488,12 @@ def needs_audition(person: dict) -> bool:
 
 
 def identification_paused(person: dict) -> bool:
-    """Excluded from the anchor prefix and matcher enrolment until the
-    owner auditions (#83/#221). For a never-vouched bank this applies only
-    when the sufficiency CROSSING was observed (the stamp exists only
-    post-#83): a pre-existing sufficient bank keeps working while it
-    awaits the owner's ear, because pausing the whole installed base on
-    upgrade would be a regression, not a safeguard. A LOW-TRUST bank
+    """Excluded from matcher enrolment until the owner auditions
+    (#83/#221). For a never-vouched bank this applies only when the
+    sufficiency CROSSING was observed (the stamp exists only post-#83): a
+    pre-existing sufficient bank keeps working while it awaits the
+    owner's ear, because pausing the whole installed base on upgrade
+    would be a regression, not a safeguard. A LOW-TRUST bank
     (#221) needs no stamp: low trust can only arise from match scores
     recorded after this shipped, so it cannot shock the installed base."""
     if not needs_audition(person):
@@ -539,15 +537,6 @@ class AnchorStore:
     def __init__(self, root: Path):
         self.root = Path(root)
         self._lock = threading.Lock()
-        # Built-prefix cache (#28, night test 4): (person_ids, sample_rate)
-        # -> (index fingerprint at build time, (pcm, segments)). Guarded by
-        # _lock; a stale fingerprint simply misses, so correctness never
-        # depends on eviction.
-        self._prefix_cache: OrderedDict = OrderedDict()
-        # In-process mutation counter, bumped by every _save: the half of
-        # the fingerprint that never depends on filesystem timestamp
-        # granularity (the on-disk mtime/size half covers other processes).
-        self._gen = 0
         # (clip file, bytes, rate) -> speech spans, for enrolment (#477).
         self._span_cache: OrderedDict = OrderedDict()
 
@@ -581,20 +570,7 @@ class AnchorStore:
             json.dump(data, f, indent=1, sort_keys=True)
         os.chmod(tmp, 0o600)
         os.replace(tmp, self._index_path())
-        self._gen += 1  # every mutation invalidates the built-prefix cache
         _notify_change()
-
-    def _index_fingerprint(self):
-        """Cheap change detector for build_prefix's cache: the in-process
-        generation counter (bumped by every _save) plus the index file's
-        mtime_ns and size (which every atomic _save rewrites - so a mutation
-        by ANOTHER process misses too). One stat call, no file read."""
-        try:
-            st = os.stat(self._index_path())
-            disk = (st.st_mtime_ns, st.st_size)
-        except OSError:
-            disk = None
-        return (self._gen, disk)
 
     def _write_clip(self, pcm: bytes, sample_rate: int, person_id: str) -> str:
         from .diarize import pcm16_wav
@@ -1395,10 +1371,10 @@ class AnchorStore:
     def delete_clip(self, person_id: str, fname: str) -> bool:
         """Delete ONE clip from a person's bank (#68): the owner heard it
         and it is wrong. The file goes from disk, the index entry goes, and
-        everything derived - sufficiency, capacity, the anchor prefix -
-        recomputes from what remains on its next read. Deleting the last
-        clip leaves the person known but unlearnt (anchor pending), exactly
-        the state a fresh introduction produces."""
+        everything derived - sufficiency, capacity, enrolment - recomputes
+        from what remains on its next read. Deleting the last clip leaves
+        the person known but unlearnt (anchor pending), exactly the state
+        a fresh introduction produces."""
         with self._lock:
             data = self._load()
             person = data["people"].get(person_id)
@@ -1460,87 +1436,6 @@ class AnchorStore:
         except OSError:
             log.warning("anchor clip already gone: %s", fname)
 
-    # -- the prefix --
-
-    def build_prefix(self, person_ids: list, sample_rate: int):
-        """Concatenated anchor audio for the given people, plus the segment
-        map [(person_id, name, start_s, end_s), ...] the identification pass
-        uses to read the diarizer's prefix clusters back into names.
-
-        Only SUFFICIENT people contribute (below the bar, identification must
-        stay uncertain rather than guess off thin evidence), and only clips
-        recorded at the requested sample rate (in practice everything is 16k;
-        a mismatched clip is skipped rather than resampled badly). Per person,
-        best clips first up to ~PREFIX_PERSON_SECONDS.
-
-        Cached per roster snapshot (#28, night test 4): every diarization
-        pass used to re-read the same clip files from disk. The built prefix
-        is now kept keyed on (person ids, sample rate) and validated against
-        the index fingerprint - a hit reads NO clip files, and any anchor
-        mutation (add, refresh, forget, rename - anything that rewrites the
-        index) or roster change misses and rebuilds. Bounded to
-        PREFIX_CACHE_MAX snapshots; segments are copied on the way in and
-        out, so callers can never corrupt a cached entry."""
-        key = (tuple(person_ids), sample_rate)
-        with self._lock:
-            fingerprint = self._index_fingerprint()
-            hit = self._prefix_cache.get(key)
-            if hit and hit[0] == fingerprint:
-                self._prefix_cache.move_to_end(key)
-                pcm, segments = hit[1]
-                return pcm, [dict(s) for s in segments]
-            data = self._load()
-        pcm_parts = []
-        segments = []
-        cursor = 0.0
-        for pid in person_ids:
-            person = data["people"].get(pid)
-            if not person:
-                continue
-            # Quarantined clips never ride the prefix (#28 PR-B): a clip the
-            # hygiene audit judged closer to someone else's voice would seed
-            # exactly the cross-matching it was set aside to prevent.
-            clips = [c for c in active_clips(person.get("clips", []))
-                     if c.get("sample_rate") == sample_rate]
-            if not is_sufficient(clips):
-                continue
-            take = []
-            got = 0.0
-            for c in sorted(clips, key=lambda c: c["score"], reverse=True):
-                if got >= PREFIX_PERSON_SECONDS:
-                    break
-                take.append(c)
-                got += c["seconds"]
-            if not take:
-                continue
-            part = b""
-            for c in take:
-                try:
-                    part += self._read_clip_pcm(c["file"])
-                except OSError:
-                    log.warning("anchor clip unreadable: %s", c["file"])
-            if not part:
-                continue
-            cap = int(PREFIX_PERSON_SECONDS * sample_rate) * 2
-            part = part[:cap]
-            seconds = len(part) / 2 / sample_rate
-            pcm_parts.append(part)
-            segments.append({"person_id": pid, "name": person.get("name", pid),
-                            "start": round(cursor, 3),
-                            "end": round(cursor + seconds, 3)})
-            cursor += seconds
-        prefix = b"".join(pcm_parts)
-        with self._lock:
-            # Stored under the PRE-BUILD fingerprint: a mutation that landed
-            # while we were reading clips changed the fingerprint, so this
-            # entry can never satisfy the next lookup - it just misses.
-            self._prefix_cache[key] = (fingerprint,
-                                       (prefix, [dict(s) for s in segments]))
-            self._prefix_cache.move_to_end(key)
-            while len(self._prefix_cache) > PREFIX_CACHE_MAX:
-                self._prefix_cache.popitem(last=False)
-        return prefix, segments
-
     def retract_utterance_clips(self, person_id: str, pcm: bytes) -> int:
         """Remove the clips ONE utterance banked to this person (#220): an
         introduction turn's own words named someone else, so the audio the
@@ -1593,11 +1488,14 @@ class AnchorStore:
                          max_clips: int = ENROLL_CLIPS) -> dict:
         """Per-person clip PCM for the local voice-id matcher (#28 part 2):
         the raw store data the offline matcher averages into one embedding per
-        person. Mirrors build_prefix's gates - only SUFFICIENT people, only
-        clips recorded at the requested sample rate, best clips first - but
-        keeps the clips SEPARATE (per-clip embeddings are L2-normalised and
-        averaged; a hard-cut concatenation would embed the seams, not the
-        voice) and reads at most `max_clips` per person.
+        person. Only SUFFICIENT people count (below the bar, identification
+        must stay uncertain rather than guess off thin evidence), and only
+        clips recorded at the requested sample rate (in practice everything
+        is 16k; a mismatched clip is skipped rather than resampled badly),
+        best clips first. The clips stay SEPARATE (per-clip embeddings are
+        L2-normalised and averaged; a hard-cut concatenation would embed
+        the seams, not the voice), and at most `max_clips` are read per
+        person.
 
         Each clip comes back speech-only (#477): voiceid.speech_only leaves
         its long pauses out, so the fingerprint is of the voice and not the
@@ -1609,9 +1507,8 @@ class AnchorStore:
         matcher keys its embedding cache on it, so identification re-embeds a
         person ONLY when their kept clip set actually changes (anchor
         accumulation that displaces a clip) or the speech rule does, not
-        on every store save the way the coarse index fingerprint would - the
-        same 'invalidate only on real change' intent as build_prefix's cache,
-        one level finer. No audio leaves the process; this is read only."""
+        on every store save. No audio leaves the process; this is read
+        only."""
         from . import voiceid
         with self._lock:
             data = self._load()
