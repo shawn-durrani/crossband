@@ -12,7 +12,7 @@ suites with crossband's wrinkles:
 - A successful assertion mints the same opaque session a password login
   mints; failed, replayed, and counter-regressed assertions mint nothing.
 - Credentials persist across a restart; in-flight ceremonies do not; removal
-  never locks the owner out.
+  never locks the owner out, and it signs out every other browser (#471).
 
 Keyless and offline: the "authenticator" is a software P-256 passkey built
 on py_webauthn's own dependencies, byte-identical in layout to a platform
@@ -302,6 +302,30 @@ def test_removal_stops_unlocking_password_remains(app):
                              headers={"Origin": LOCAL_ORIGIN}).status_code == 400
     assert _client(app).post("/api/auth/login",
                              json={"password": PASSWORD}).status_code == 200
+
+
+def test_removal_signs_out_every_other_browser(app):
+    """Sign-ins outlive a restart now (#471), so removing the passkey of a
+    lost phone has to end that phone's sign-in itself. The browser doing the
+    removal gets a fresh sign-in, the way a reset does."""
+    owner = _owner(app)
+    pk, _ = _enrol_passkey(owner)
+    phone = _client(app)
+    assert _passkey_login(phone, pk).status_code == 200
+    before = owner.cookies.get("cb_session")
+    cid = owner.get("/api/webauthn/credentials").json()["credentials"][0]["id"]
+    r = owner.post("/api/webauthn/credentials/remove", json={"id": cid})
+    assert r.status_code == 200
+    assert owner.cookies.get("cb_session") != before
+    assert owner.get("/api/state").status_code == 200
+    assert phone.get("/api/state").status_code == 401
+    old = _client(app)
+    old.cookies.set("cb_session", before)
+    assert old.get("/api/state").status_code == 401
+    # a miss revokes nothing
+    assert owner.post("/api/webauthn/credentials/remove",
+                      json={"id": "nope"}).status_code == 404
+    assert owner.get("/api/state").status_code == 200
 
 
 def test_stored_record_is_public_material_only(app):

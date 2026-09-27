@@ -503,11 +503,11 @@ export default function App() {
   }
 
   // A voice session ends with the app that started it. The lock screen
-  // replaces the whole app when a request comes back unauthorised, which
-  // every server restart causes, since sign-ins live in the server's
-  // memory. The session used to live on unseen: its mic stayed open
-  // behind the lock screen, and once voice was started again every turn
-  // was sent twice (25 Sep). A session still asking for the mic stops
+  // replaces the whole app when a request comes back unauthorised: after
+  // a sign-out elsewhere, an expiry or a reset, and until #471 after every
+  // server restart. The session used to live on unseen: its mic stayed
+  // open behind the lock screen, and once voice was started again every
+  // turn was sent twice (25 Sep). A session still asking for the mic stops
   // too. voice.js also ends any older session when a new one starts, so
   // this is the first of two locks.
   useEffect(() => () => { voiceRef.current?.stop() }, [])

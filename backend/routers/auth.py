@@ -134,9 +134,9 @@ def setup(body: SetupBody, request: Request, response: Response) -> dict:
 
 @router.post("/api/auth/reset")
 def reset(body: SetupBody, request: Request, response: Response) -> dict:
-    """Recovery-gated replacement of the password. Revokes EVERY outstanding
-    session: a reset is a recovery action, and a stolen cookie must die with
-    the old password."""
+    """Recovery-gated replacement of the password, and the only way to
+    change it. Revokes EVERY outstanding session: a reset is a recovery
+    action, and a stolen cookie must die with the old password."""
     return _set_password(body, request, response, revoke_first=True)
 
 
@@ -437,10 +437,16 @@ def webauthn_label(body: dict) -> dict:
 
 @router.post("/api/webauthn/credentials/remove",
              dependencies=[Depends(require_session)])
-def webauthn_remove(body: dict, request: Request) -> dict:
+def webauthn_remove(body: dict, request: Request, response: Response) -> dict:
     """POST, not DELETE, so the cross-site middleware guard covers it like
     every other write. Removal can never lock the owner out: the password
-    always remains."""
+    always remains.
+
+    Removing a passkey signs out every browser but this one (#471). You
+    remove a passkey when a phone is lost, and its sign-in has to go with
+    it. A restart used to do that; now sign-ins outlive restarts, so the
+    removal does it. The caller gets a fresh sign-in, the way a reset
+    does."""
     con = db.connect()
     try:
         removed = passkeys.remove_credential(con, str((body or {}).get("id", "")))
@@ -448,4 +454,6 @@ def webauthn_remove(body: dict, request: Request) -> dict:
         con.close()
     if not removed:
         raise HTTPException(status_code=404, detail="no passkey with that id")
+    auth.revoke_all_sessions(request.app)
+    auth.attach_session_cookie(response, auth.mint_session(request.app))
     return {"ok": True}

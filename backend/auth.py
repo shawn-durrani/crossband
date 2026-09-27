@@ -13,9 +13,15 @@ settled:
   a process that cannot read .env or the terminal cannot enrol itself a
   password and let itself in.
 - Sessions are opaque, expiring, server-revocable ids in an httpOnly
-  SameSite=Strict cookie. In-memory on purpose: a restart logs every
-  browser out, matching membro, and keeps auth state out of the database
-  beyond the one verifier row.
+  SameSite=Strict cookie. They live in the auth_sessions table, so a
+  restart or a deploy signs nobody out (#471, owner decision 2026-09-27).
+  The table holds only the SHA-256 of each id, never the id itself, so a
+  copy of the database or a backup can't sign anyone in. Plain SHA-256 is
+  enough because the id is 256 random bits: there is nothing to guess, so
+  a salt or a slow hash would add cost and no safety, and a key would have
+  to live on the same disk. Looking up by hash also keeps the comparison
+  off the secret. Sign-out revokes one; a reset or a passkey removal
+  revokes every one, and backups carry none (db._backup_database).
 
 The gate is ENROLMENT-ACTIVATED: before a password exists, loopback keeps
 exactly today's behaviour (open API, nagged by the startup banner), because
@@ -109,28 +115,64 @@ def check_owner_password(con, password: str) -> bool:
     return verify_password(password, db.get_setting(con, VERIFIER_KEY, ""))
 
 
-# ---- sessions (in-memory on app.state, revocable, expiring) ----
+# ---- sessions (stored hashed, revocable, expiring) ----
+#
+# `app` is unused since sessions moved into the database; the voice relays'
+# socket guard calls session_ok(app, sid), so every function keeps the shape.
+
+# Far longer than any id this module mints (43 characters), so a giant
+# cookie is refused before it is hashed or looked up.
+_MAX_SID_LEN = 256
+
+
+def _sid_hash(sid: str) -> str:
+    return hashlib.sha256(sid.encode("utf-8")).hexdigest()
+
+
+def prune_expired_sessions(con, now: float | None = None) -> int:
+    """Delete every expired row; the caller commits. Runs at startup and on
+    every sign-in, so the table never grows past the live sign-ins."""
+    cur = con.execute("DELETE FROM auth_sessions WHERE expires_at < ?",
+                      (time.time() if now is None else now,))
+    return cur.rowcount
+
 
 def mint_session(app) -> str:
     """A fresh random opaque sid, never derived from anything the client
-    sent (no fixation)."""
+    sent (no fixation). Only its hash is stored."""
     sid = secrets.token_urlsafe(32)
-    app.state.auth_sessions[sid] = time.time() + SESSION_TTL_S
+    now = time.time()
+    con = db.connect()
+    try:
+        prune_expired_sessions(con, now)
+        con.execute("INSERT INTO auth_sessions(sid_hash, created_at, "
+                    "expires_at) VALUES(?, ?, ?)",
+                    (_sid_hash(sid), now, now + SESSION_TTL_S))
+        con.commit()
+    finally:
+        con.close()
     return sid
 
 
 def session_ok(app, sid: str | None) -> bool:
-    """True only for a sid this process minted that hasn't expired; lazily
-    evicts the expired so the store never grows unbounded."""
-    if not sid:
+    """True only for a sid this app minted, not revoked, not expired. An
+    expired row is deleted on sight."""
+    if not sid or len(sid) > _MAX_SID_LEN:
         return False
-    exp = app.state.auth_sessions.get(sid)
-    if exp is None:
-        return False
-    if exp < time.time():
-        app.state.auth_sessions.pop(sid, None)
-        return False
-    return True
+    h = _sid_hash(sid)
+    con = db.connect()
+    try:
+        row = con.execute("SELECT expires_at FROM auth_sessions "
+                          "WHERE sid_hash = ?", (h,)).fetchone()
+        if row is None:
+            return False
+        if row["expires_at"] < time.time():
+            con.execute("DELETE FROM auth_sessions WHERE sid_hash = ?", (h,))
+            con.commit()
+            return False
+        return True
+    finally:
+        con.close()
 
 
 def request_session_ok(request) -> bool:
@@ -151,13 +193,27 @@ def machine_token_ok(request) -> bool:
 
 
 def revoke_session(app, sid: str | None) -> None:
-    app.state.auth_sessions.pop(sid or "", None)
+    if not sid or len(sid) > _MAX_SID_LEN:
+        return
+    con = db.connect()
+    try:
+        con.execute("DELETE FROM auth_sessions WHERE sid_hash = ?",
+                    (_sid_hash(sid),))
+        con.commit()
+    finally:
+        con.close()
 
 
 def revoke_all_sessions(app) -> None:
-    """Reset semantics: a recovery-gated password change invalidates every
-    outstanding session, so a stolen cookie dies with the old password."""
-    app.state.auth_sessions.clear()
+    """Reset semantics: a recovery-gated password change, or a passkey
+    removal, invalidates every outstanding session, so a stolen cookie dies
+    with the credential. A restart used to do this as a side effect."""
+    con = db.connect()
+    try:
+        con.execute("DELETE FROM auth_sessions")
+        con.commit()
+    finally:
+        con.close()
 
 
 def attach_session_cookie(response, sid: str) -> None:

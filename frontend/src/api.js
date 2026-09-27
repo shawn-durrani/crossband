@@ -1,5 +1,5 @@
 // The browser gate (#25): when any API call comes back 401, the session
-// died (logout elsewhere, expiry, a restart) - AuthGate registers a handler
+// died (logout elsewhere, expiry, a reset) - AuthGate registers a handler
 // here so the whole app falls back to the lock screen instead of each
 // caller surfacing its own cryptic error.
 let onUnauthorized = null

@@ -80,6 +80,10 @@ The app backs up its database and its learnt voices on its own, into
 folder are settings, and [docs/CONFIG.md](CONFIG.md#backups) lists
 them.
 
+A restart keeps every browser signed in, because the app keeps
+sign-ins in its database. A backup leaves them out, so after you
+restore one, every browser signs in again.
+
 ## Keeping the Mac reachable while you're away
 
 When the Mac that runs the app goes to sleep, it drops off your

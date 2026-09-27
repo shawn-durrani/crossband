@@ -24,7 +24,16 @@ inside it. The gate knows three credentials, each with its own job.
   shown only before enrolment.
 
 A session is an opaque id that expires and that the server can revoke.
-It travels in an httpOnly cookie with SameSite set to Strict.
+It travels in an httpOnly cookie with SameSite set to Strict. The app
+keeps each session in its database, so a restart or a deploy doesn't
+sign you out. It stores only a SHA-256 hash of the id, never the id
+itself, so a copy of the database can't sign anyone in. A session lasts
+24 hours.
+
+Signing out ends that session. Resetting the password or removing a
+passkey ends every session, and the browser that did it gets a fresh
+one. Backups carry no sessions, so restoring one signs every browser
+out.
 
 The gate wakes up when the owner enrols a password. Until then the
 loopback API stays open, and the startup banner says so on every start,

@@ -522,7 +522,7 @@ def test_v30_to_v31_lands_every_seat_on_the_app_tag(tmp_path):
     db.init()
     con = db.connect()
     try:
-        assert con.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 31
+        assert con.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
         row = con.execute("SELECT tts_model, tts_v3_accent_tag FROM participants").fetchone()
         assert tuple(row) == ("eleven_v3", "")
     finally:
