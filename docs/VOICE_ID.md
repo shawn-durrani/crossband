@@ -36,8 +36,9 @@ happens, in order.
    session, for up to 8 voices. That's a session voice. A voice that
    comes back after a long quiet keeps its number.
 4. Every stretch of 0.8 seconds or more where one voice speaks alone is
-   fingerprinted and added to that session voice. Speech where two
-   people overlap never is.
+   fingerprinted and added to that session voice, after the
+   [span check](#the-span-check). Speech where two people overlap never
+   is.
 5. After each turn, every session voice is named from all its
    fingerprints so far, one person per voice. A short reply is named
    from everything that voice has said, not from one second of audio.
@@ -75,6 +76,27 @@ With no diariser, each piece is named on its own and the turn joins
 what they found. Pieces named as one person give the turn that name.
 Pieces named as different people, or as someone and a new voice, make
 it a two-voice turn. A piece that's still listening counts for nobody.
+
+### The span check
+
+The diariser sometimes splits one person into two voices, when their
+voice changes, or gives a stretch of one person's speech to someone
+else's voice. Before a stretch is added to a session voice, the app
+compares its fingerprint with every session voice's. A score says how
+alike two fingerprints are, where 1 is identical. The stretch moves to
+another voice only when all of these hold:
+
+- that voice has 6 seconds or more of clean speech behind it
+- the stretch scores 0.7 or more against it
+- it beats every other voice by 0.25 or more, including the voice the
+  diariser gave it
+
+A voice the diariser has only just started has nothing to compare, so
+a stretch of a split voice can move to the person it plainly is. The
+bar is strict, and a normal session moves nothing. A moved stretch
+counts for the voice it moved to, and the turn is labelled by that
+voice. The session rows at `GET /api/voice/sessions?rows=true` list
+every move with its scores.
 
 ### How a voice is named
 

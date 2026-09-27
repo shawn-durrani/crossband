@@ -20,7 +20,9 @@ answer for every spoken turn:
      passes the speech gates, is fingerprinted with TitaNet-Small and,
      once the calibrated scorer has loaded it, ERes2Net, and added to that
      session voice's evidence. A span the tracker calls final while the
-     person is still talking is fingerprinted then.
+     person is still talking is fingerprinted then. Before it's added,
+     THE SPAN CHECK may move it to the session voice it plainly sounds
+     like.
   3. After each turn every session voice is named from its pooled
      fingerprints, one person per voice: by the calibrated two-model
      scorer when its snapshot is ready (backend/voice_calibration.py),
@@ -47,6 +49,25 @@ whose voices disagree never give one name, and a piece too short to
 judge adds nothing. A piece the feed didn't answer is named on its own,
 and the pass then joins what each piece heard by the same rules
 (join_pieces), counting only the voices a piece named or found new.
+
+THE SPAN CHECK. The tracker can split one person into two voices, when
+their voice changes, or give one person's span to another voice. Each
+clean span's fingerprint is compared with every session voice's pooled
+fingerprint (the cosine, averaged over TitaNet-Small and ERes2Net where
+both have one), before the span is added. It moves to another voice
+only when all of these hold, so a normal session moves nothing:
+
+  * that voice has SPAN_MOVE_MIN_S of clean speech behind it;
+  * the span scores SPAN_MOVE_SIM or more against it;
+  * it beats every other voice with any evidence, the tracker's own
+    included, by SPAN_MOVE_MARGIN or more. A voice the tracker has only
+    just started has no evidence to compare, which is how a split shows.
+
+A moved span is that voice's from then on: its evidence, and the turn's
+spans, so the turn is labelled by it. The turn's row lists each move
+(`moved`: times, from, to, both scores and the lead) and, for the spans
+that stayed, the most any scored higher against another voice than its
+own (`span_lead`, below zero in a normal session). Numbers only.
 
 THE RULES, pinned in tests/test_voice_sessions.py:
 
@@ -110,6 +131,12 @@ FEED_CHUNK_BYTES = int(0.25 * 16000) * 2   # audio pushed at a time
 FEED_QUEUE_MAX = 4000           # chunks held before new ones are dropped
 RESULTS_MAX = 256               # turns whose result is remembered
 MAX_PIECES = 8                  # pieces of one long turn joined, newest kept
+# THE SPAN CHECK's bar, in cosine units. Strict on purpose: the tracker is
+# right about 99 times in 100, and a wrong move feeds one person's speech
+# into another's evidence.
+SPAN_MOVE_MIN_S = 6.0           # clean speech behind a voice a span joins
+SPAN_MOVE_SIM = 0.7             # the span's score against that voice
+SPAN_MOVE_MARGIN = 0.25         # its lead over every other voice
 # The multi scorer (#477): a person's score is the mean of their best
 # MULTI_TOP_K clip scores, so one lucky clip can't carry a name alone. A
 # bank with fewer clips uses what it has.
@@ -788,6 +815,55 @@ def pooled(prints):
     return voiceid.l2_normalize([v / total for v in acc])
 
 
+def pool_of(voice, key="prints"):
+    """A session voice's pooled fingerprint for one model ("prints" for
+    TitaNet-Small, "prints_eres" for ERes2Net), kept on the voice until it
+    gains a fingerprint, so a turn pools each voice once."""
+    prints = voice.get(key) or []
+    kept = voice.setdefault("pools", {})
+    if key in kept and kept[key][0] == len(prints):
+        return kept[key][1]
+    pool = pooled(prints)
+    kept[key] = (len(prints), pool)
+    return pool
+
+
+def span_home(voices, slot, emb, emb_e=None):
+    """THE SPAN CHECK for one clean span the tracker gave to `slot`, before
+    it's added: (the voice it plainly belongs to or None, the scores). The
+    scores are {"sim": its score against the best other voice, "own": its
+    score against its own voice, or None with no evidence there, "gap":
+    how far that best voice leads every rival}, or {} when no other voice
+    has any evidence. Pure: nothing is moved here."""
+    sims = {}
+    for other, v in voices.items():
+        if (v.get("clean_s") or 0.0) <= 0.0:
+            continue
+        pool = pool_of(v)
+        if pool is None:
+            continue
+        score = voiceid.cosine(emb, pool)
+        pool_e = pool_of(v, "prints_eres") if emb_e is not None else None
+        if pool_e is not None:
+            score = (score + voiceid.cosine(emb_e, pool_e)) / 2
+        sims[other] = score
+    others = [(score, other) for other, score in sims.items()
+              if other != slot]
+    if not others:
+        return None, {}
+    best_sim, best = max(others, key=lambda so: (so[0], -so[1]))
+    rivals = [score for other, score in sims.items() if other != best]
+    gap = best_sim - max(rivals) if rivals else None
+    scores = {"sim": round(best_sim, 3),
+              "own": round(sims[slot], 3) if slot in sims else None,
+              "gap": round(gap, 3) if gap is not None else None}
+    if (voices[best].get("clean_s") or 0.0) < SPAN_MOVE_MIN_S \
+            or best_sim < SPAN_MOVE_SIM \
+            or (gap is not None and gap < SPAN_MOVE_MARGIN):
+        return None, scores
+    return best, scores
+
+
 def topk_mean(query, clips, k=None):
     """A person's multi score: the mean of the query's best `k` cosines
     against that person's clip embeddings, or of all of them when there
@@ -875,7 +951,7 @@ def name_voices_calibrated(voices, allowed, snapshot):
         clean = v.get("clean_s") or 0.0
         entry = {"state": "listening", "name": "", "pid": "", "score": None,
                  "second": None, "prob": None, "clean_s": round(clean, 2)}
-        ps, pe = pooled(v.get("prints")), pooled(v.get("prints_eres"))
+        ps, pe = pool_of(v), pool_of(v, "prints_eres")
         if ps is not None and pe is not None:
             got = vc.probability({vc.SMALL: ps, vc.ERES: pe}, clean,
                                  snapshot) or {}
@@ -927,7 +1003,7 @@ def name_voices(voices, people, bar):
     margin = bar.get("margin", 0.0)
     scores = {}
     for slot, v in voices.items():
-        pool = pooled(v.get("prints"))
+        pool = pool_of(v)
         if pool is None:
             continue
         scores[slot] = {pid: s for pid, s in (
@@ -1275,7 +1351,7 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             got = (precomputed or {}).get(_span_key(s))
             if got is not None:
                 ready[(s["slot"], round(a, 3), round(b, 3))] = got
-    embedded = 0
+    embedded, moved, leads = 0, [], []
     for s in spans:
         # Every voice heard is on the table, even one heard only over
         # someone else: it listens with no evidence.
@@ -1296,6 +1372,15 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
                                      and emb is not None) else None
         if emb is None:
             continue
+        home, scores = span_home(sess["voices"], s["slot"], emb, emb_e)
+        if home is None and scores.get("own") is not None:
+            leads.append(round(scores["sim"] - scores["own"], 3))
+        if home is not None:
+            # THE SPAN CHECK: the span is that voice's, for its evidence
+            # and for the turn's spans.
+            moved.append({"start": s["start"], "end": s["end"],
+                          "from": s["slot"], "to": home, **scores})
+            s["slot"] = home
         v = sess["voices"][s["slot"]]
         v["prints"].append((emb, secs))
         v["clean_s"] += secs
@@ -1330,6 +1415,10 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         embedded=embedded, people=n_people, method=method, filled=filled)
     if earlier:
         row["pieces"] = len(earlier) + 1
+    if moved:
+        row["moved"] = moved
+    if leads:
+        row["span_lead"] = max(leads)
     if main is None:
         return None
     voice = named.get(main) or {}

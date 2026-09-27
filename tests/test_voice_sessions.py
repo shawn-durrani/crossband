@@ -43,6 +43,11 @@ What these tests pin, in order:
    new turn stands alone, and tap-to-correct names the turn's voice.
    Pieces named on their own are joined by their verdicts by the same
    rules, and the links are bounded.
+12. THE SPAN CHECK. A clean span that plainly sounds like another session
+   voice moves there before it's added, which catches the tracker mixing
+   two people or splitting one. The bar is strict: enough evidence behind
+   the voice it joins, a high score, and a clear lead over every rival.
+   A normal session moves nothing, and every move is on the row.
 
 Keyless and offline: the diariser and the speaker model are fakes.
 Synthetic roster (Alex, Sam).
@@ -523,7 +528,7 @@ def test_the_feed_never_writes_to_the_store(fakes, monkeypatch):
 ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
             "session", "turn", "offset", "spans", "main", "main_state",
             "main_name", "voices", "bar", "embedded", "people", "ms",
-            "filled", "method", "error", "pieces"}
+            "filled", "method", "error", "pieces", "moved", "span_lead"}
 
 
 def test_rows_are_content_free_and_owner_only(fakes):
@@ -1189,3 +1194,139 @@ def test_the_links_are_bounded_and_never_loop(app):
     for i in range(vss.RESULTS_MAX + 10):
         vss.note_piece(f"x{i}")
     assert len(vss._pieces) == vss.RESULTS_MAX
+
+
+# ---------- 12. the span check ----------
+
+def _ev(emb, secs, eres=None):
+    """A session voice with `secs` of clean speech behind it."""
+    v = {"prints": [(emb, secs)], "clean_s": secs}
+    if eres is not None:
+        v["prints_eres"] = [(eres, secs)]
+    return v
+
+
+EMPTY = {"prints": [], "clean_s": 0.0}
+
+
+def test_a_span_given_to_the_wrong_voice_moves_to_its_own():
+    """The tracker mixing two people: one of Sam's spans comes back under
+    Alex's voice."""
+    voices = {0: _ev(ALEX, 10.0), 1: _ev(SAM, 10.0)}
+    home, scores = vss.span_home(voices, 0, SAM)
+    assert home == 1
+    assert scores == {"sim": 1.0, "own": 0.0, "gap": 1.0}
+
+
+def test_a_split_voice_with_no_evidence_yet_moves_to_the_voice_it_is():
+    """The tracker splitting one person: Alex's voice changes and the
+    tracker starts a new voice for it. The new voice has nothing to
+    compare, so the bar and the lead over the rest decide."""
+    voices = {0: _ev(ALEX, 10.0), 1: _ev(SAM, 10.0), 3: dict(EMPTY)}
+    home, scores = vss.span_home(voices, 3, ALEX)
+    assert home == 0 and scores["own"] is None and scores["gap"] == 1.0
+
+
+def test_the_span_check_bar_is_strict():
+    near = voiceid.l2_normalize
+    # the voice it would join has too little speech behind it
+    assert vss.span_home({0: _ev(ALEX, 5.9), 1: _ev(SAM, 10.0)}, 1,
+                         ALEX)[0] is None
+    # not close enough to it: 0.65
+    home, scores = vss.span_home({0: _ev(ALEX, 10.0), 1: _ev(SAM, 10.0)},
+                                 1, near([0.65, 0.0, 0.76, 0.0]))
+    assert home is None and scores["sim"] == 0.65
+    # its own voice is too close behind: a lead of 0.2
+    home, scores = vss.span_home({0: _ev(ALEX, 10.0), 1: _ev(SAM, 10.0)},
+                                 1, near([0.8, 0.6, 0.0, 0.0]))
+    assert home is None and scores["gap"] == pytest.approx(0.2, abs=1e-3)
+    # two voices it sounds like: plainly neither
+    also_alex = near([0.95, 0.0, 0.31, 0.0])
+    assert vss.span_home({0: _ev(ALEX, 10.0), 2: _ev(also_alex, 10.0),
+                          1: _ev(SAM, 10.0)}, 1, ALEX)[0] is None
+    # a span that sounds like its own voice stays, and says by how much
+    home, scores = vss.span_home({0: _ev(ALEX, 10.0), 1: _ev(SAM, 10.0)},
+                                 1, SAM)
+    assert home is None and scores["gap"] == -1.0
+    # nobody else to go to
+    assert vss.span_home({1: _ev(SAM, 10.0)}, 1, ALEX) == (None, {})
+    assert (vss.SPAN_MOVE_MIN_S, vss.SPAN_MOVE_SIM,
+            vss.SPAN_MOVE_MARGIN) == (6.0, 0.7, 0.25)
+
+
+def test_the_span_check_averages_both_models_where_both_have_prints():
+    """TitaNet-Small says Sam plainly, ERes2Net says it's between the two:
+    the average (0.75 against Sam, 0.35 against Alex) still moves it. With
+    ERes2Net saying Alex, it stays."""
+    between = voiceid.l2_normalize([0.4, 0.0, 0.0, 0.5])
+    voices = {0: _ev(ALEX, 10.0, eres=[1.0, 0.0, 0.0, 0.0]),
+              1: _ev(SAM, 10.0, eres=[0.0, 0.0, 0.0, 1.0])}
+    home, scores = vss.span_home(voices, 0, SAM, between)
+    assert home == 1 and scores["sim"] == pytest.approx(
+        (1.0 + voiceid.cosine(between, [0, 0, 0, 1.0])) / 2, abs=1e-3)
+    assert vss.span_home(voices, 0, SAM, [1.0, 0.0, 0.0, 0.0])[0] is None
+
+
+def test_a_pool_is_kept_until_the_voice_gains_a_fingerprint():
+    v = _ev(ALEX, 2.0)
+    first = vss.pool_of(v)
+    assert vss.pool_of(v) is first
+    v["prints"].append((SAM, 2.0))
+    assert vss.pool_of(v) is not first
+    assert vss.pool_of(v, "prints_eres") is None
+
+
+def test_the_feed_moves_a_mixed_up_span_and_names_the_turn_by_it(
+        fakes, monkeypatch):
+    seq = [ALEX, SAM, SAM]
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: seq.pop(0))
+    fakes.script = [[{"slot": 0, "start": 0.0, "end": 10.0}],
+                    [{"slot": 1, "start": 10.0, "end": 20.0}],
+                    [{"slot": 0, "start": 20.0, "end": 23.0}]]
+    _live(3, "t1", 10.0)
+    _live(3, "t2", 10.0)
+    got = _live(3, "t3", 3.0)
+    assert (got["voice"], got["name"]) == (1, "Sam")
+    row = _row("t3")
+    assert row["moved"] == [{"start": 0.0, "end": 3.0, "from": 0, "to": 1,
+                             "sim": 1.0, "own": 0.0, "gap": 1.0}]
+    assert row["spans"][0]["slot"] == 1
+    voices = vss._sessions[3]["voices"]
+    assert (voices[0]["clean_s"], voices[1]["clean_s"]) == (10.0, 13.0)
+
+
+def test_the_feed_folds_a_split_voice_back_into_its_person(fakes,
+                                                          monkeypatch):
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
+    fakes.script = [[{"slot": 0, "start": 0.0, "end": 10.0}],
+                    [{"slot": 5, "start": 10.0, "end": 13.0}]]
+    _live(3, "t1", 10.0)
+    got = _live(3, "t2", 3.0)
+    assert (got["voice"], got["name"], got["voices_in_turn"]) == (0, "Alex",
+                                                                  1)
+    assert _row("t2")["moved"][0]["from"] == 5
+    assert vss._sessions[3]["voices"][5]["clean_s"] == 0.0
+
+
+def test_a_normal_session_moves_nothing(fakes, monkeypatch):
+    """Two people, each heard as themselves with ordinary variation, and a
+    newcomer whose voice is nobody's: nothing moves, and the rows say by
+    how much each span preferred its own voice."""
+    alex_ish = [voiceid.l2_normalize([1.0, 0.1 * i, 0.05, 0.0])
+                for i in range(3)]
+    sam_ish = [voiceid.l2_normalize([0.1 * i, 1.0, 0.0, 0.05])
+               for i in range(3)]
+    dave = voiceid.l2_normalize([0.2, 0.1, 1.0, 0.0])
+    seq = [alex_ish[0], sam_ish[0], alex_ish[1], sam_ish[1], dave,
+           alex_ish[2], sam_ish[2]]
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: seq.pop(0))
+    slots = [0, 1, 0, 1, 2, 0, 1]
+    fakes.script = [[{"slot": slot, "start": 4.0 * i, "end": 4.0 * i + 4.0}]
+                    for i, slot in enumerate(slots)]
+    for i in range(len(slots)):
+        _live(3, f"t{i}", 4.0)
+    rows = [_row(f"t{i}") for i in range(len(slots))]
+    assert not any("moved" in r for r in rows)
+    leads = [r["span_lead"] for r in rows if "span_lead" in r]
+    assert leads and max(leads) < 0
+    assert vss._sessions[3]["voices"][2]["clean_s"] == 4.0
