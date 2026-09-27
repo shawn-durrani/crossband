@@ -356,6 +356,13 @@ test('learning lines distinguish still-growing from refreshing', () => {
   assert.match(sam.label, /Sam · refreshing · 8 clips/)
   assert.match(sam.title, /2h ago/)
   assert.match(sam.title, /replace weaker ones/)
+  // a settled bank says so, full or not
+  const [settled] = learningLines(people, {
+    p2: { clips: 15, seconds: 90, at_capacity: true, settled: true,
+          last_learned_age_s: 86400 * 3 },
+  })
+  assert.match(settled.label, /Sam · settled · 15 clips/)
+  assert.match(settled.title, /one new clip a week/)
   // no snapshot, no invented lines
   assert.deepEqual(learningLines(people, null), [])
   assert.deepEqual(learningLines(people, { p9: {} }), [])

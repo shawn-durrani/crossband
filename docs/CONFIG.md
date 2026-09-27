@@ -402,6 +402,10 @@ before.
   with guests present to the chat it was made in, so once you approve
   it, it's recalled only in that chat. A save made with only you in the
   room is recalled in every chat.
+- 1.8: the clips each remembered voice keeps, sent on every sync pass.
+  The list goes by content hash. Membro's People page counts the stored
+  clips missing from it and deletes them when you press its button. A clip the app drops is deleted in membro with the reason it
+  went, as [VOICE_ID.md](VOICE_ID.md#what-membro-keeps) sets out.
 
 On a 1.3 membro the marker never appears, the eraser link falls back to
 the browser's own host on port 8901, and the watermark route is never
@@ -411,7 +415,9 @@ process. On a 1.5 membro the chat named on a recall is ignored, so a
 guest's facts surface in every chat as they did before. On a 1.6
 membro the chat named on a save is ignored. A save made with guests
 present is still held for review, and once you approve it, it's
-recalled in every chat.
+recalled in every chat. On a 1.7 membro the list of kept clips isn't
+sent, so its People page can't count the clips the app doesn't keep.
+The drops still delete membro's copies, and the reason is ignored.
 
 ## The coding guest and GitHub
 

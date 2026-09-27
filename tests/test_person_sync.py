@@ -23,7 +23,17 @@ slice-1 routes), the contract under test:
 - no token, or membro unreachable, is a clean logged no-op - crossband
   behaves exactly as it did before membro existed;
 - membro refusing the bearer (401) is named as a refusal at WARNING, once
-  until the outcome changes, never as "unreachable" (workbench#61).
+  until the outcome changes, never as "unreachable" (workbench#61);
+- a clip that leaves a bank (rotation, the settle rule, the hygiene audit
+  setting it aside) leaves membro too, as a delete row whose reason rides
+  along, and a clip a pending row names is never restored, so a drop
+  can't come back through the restore;
+- a set-aside clip is never uploaded, and one the audit reinstates goes
+  back up from the local bytes, as does a kept clip membro lost;
+- a settled bank takes nothing back from membro;
+- membro 1.8 gets each person's kept-set manifest after the restore; a
+  1.7 membro, or one whose version can't be read, gets none, and every
+  drop still reaches it.
 """
 
 import base64
@@ -65,6 +75,10 @@ class FakeMembro:
         self.fail_forget = False         # 500 every forget POST when set
         self.refuse = False              # 401 every GET: a stale bearer
         self.refuse_anchor_lists = False  # 401 on the clip lists only
+        self.contract = None             # /v1/health's version; None is 404
+        self.manifests = {}              # slug -> the last manifest body
+        self.deletes = []                # (slug, sha, reason) per delete
+        self.fail_deletes = False        # 500 every clip DELETE when set
 
         fake = self
 
@@ -74,8 +88,12 @@ class FakeMembro:
 
             def do_DELETE(self):
                 fake.requests.append(("DELETE", self.path))
-                parts = self.path.strip("/").split("/")
+                path, _, query = self.path.partition("?")
+                parts = path.strip("/").split("/")
                 if len(parts) == 5 and parts[3] == "anchors":
+                    if fake.fail_deletes:
+                        self._json({"error": "boom"}, 500)
+                        return
                     rows = fake.anchors.get(parts[2], [])
                     row = next((a for a in rows if a["id"] == int(parts[4])),
                                None)
@@ -83,9 +101,25 @@ class FakeMembro:
                         self._json({"error": "no clip"}, 404)
                         return
                     rows.remove(row)
+                    reason = dict(p.split("=", 1) for p in query.split("&")
+                                  if "=" in p).get("reason")
+                    fake.deletes.append((parts[2], row["sha256"], reason))
                     self._json({"deleted": True, "file_removed": True})
                 else:
                     self._json({"error": "nope"}, 404)
+
+            def do_PUT(self):
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n) or b"{}")
+                fake.requests.append(("PUT", self.path, body))
+                parts = self.path.strip("/").split("/")
+                if (fake.contract and len(parts) == 4
+                        and parts[3] == "manifest"
+                        and parts[2] in fake.persons):
+                    fake.manifests[parts[2]] = body
+                    self._json({"stored": len(body.get("sha256", []))})
+                else:
+                    self._json({"detail": "Not Found"}, 404)
 
             def _json(self, obj, code=200):
                 body = json.dumps(obj).encode()
@@ -97,7 +131,13 @@ class FakeMembro:
             def do_GET(self):
                 fake.requests.append(("GET", self.path))
                 parts = self.path.split("?")[0].strip("/").split("/")
-                if fake.refuse:
+                if parts == ["v1", "health"]:
+                    if fake.contract:
+                        self._json({"status": "ok",
+                                    "contract_version": fake.contract})
+                    else:
+                        self._json({"detail": "Not Found"}, 404)
+                elif fake.refuse:
                     self._json({"error": "owner token required"}, 401)
                 elif parts[:2] == ["v1", "persons"] and len(parts) == 2:
                     self._json({"persons": list(fake.persons.values())})
@@ -143,11 +183,14 @@ class FakeMembro:
                     if any(a["sha256"] == sha for a in rows):
                         self._json({"deduped": True})
                         return
-                    rows.append({"id": len(rows) + 1, "sha256": sha,
+                    # ids never repeat, even after a delete (the clip
+                    # tests below delete and upload in one person)
+                    aid = 1000 + len(fake.requests)
+                    rows.append({"id": aid, "sha256": sha,
                                  "source": body.get("source", ""),
                                  "captured_at": body.get("captured_at", 0),
                                  "data": data})
-                    self._json({"deduped": False, "anchor_id": len(rows)})
+                    self._json({"deduped": False, "anchor_id": aid})
                 elif len(parts) == 6 and parts[5] == "move":
                     rows = fake.anchors.get(parts[2], [])
                     row = next((a for a in rows if a["id"] == int(parts[4])),
@@ -861,3 +904,199 @@ def test_a_clip_deleted_along_a_chain_of_rows_stays_gone(app, membro):
     assert again["restored_clips"] == 0 and again["pushed_clips"] == 0
     assert len(store.clips_of(alex)) == 2
     assert gone_sha not in set(store.membro_stamps(alex).values())
+
+
+# ── a clip that leaves a bank leaves membro too (the settle-rule change) ──
+
+def _shas(store, pid):
+    """{local clip file: the sha membro knows it by} for one person."""
+    stamps = store.membro_stamps(pid)
+    return {c["file"]: stamps.get(c["file"]) or hashlib.sha256(
+        (store.root / c["file"]).read_bytes()).hexdigest()
+        for c in store.clips_of(pid)}
+
+
+def _full_sitting(store, name):
+    """Ten long automatic clips from one sitting: a full bank that isn't
+    established, so rotation runs as it always has."""
+    pid = store.ensure_person(name)
+    for i in range(anchors.KEEP_CLIPS):
+        assert store.add_clip(pid, _pcm(3.0 + 0.1 * i), 16000,
+                              source="accumulated")
+    return pid
+
+
+def _puts(membro):
+    return [r for r in membro.requests if r[0] == "PUT"]
+
+
+def test_a_rotated_out_clip_leaves_membro_with_its_reason(app, membro):
+    membro.contract = "1.8"
+    store = anchors.store()
+    pid = _full_sitting(store, "Alex")
+    person_sync.sync_once(membro.url, force=True)
+    assert len(membro.anchors[pid]) == anchors.KEEP_CLIPS
+    before = _shas(store, pid)
+
+    assert store.add_clip(pid, _pcm(5.0), 16000, source="accumulated")
+    (gone,) = set(before) - {c["file"] for c in store.clips_of(pid)}
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1 and store.pending_corrections() == []
+    assert membro.deletes == [(pid, before[gone], "rotation")]
+    held = {a["sha256"] for a in membro.anchors[pid]}
+    assert held == set(_shas(store, pid).values())  # membro holds the bank
+    assert sorted(held) == membro.manifests[pid]["sha256"]
+
+
+def test_a_dropped_clip_never_comes_back_through_the_restore(app, membro):
+    """Drop, then thin the bank so the restore runs. While membro can't
+    take the delete, the clip it names is never offered back; once the
+    delete lands, membro no longer holds it. Two passes, as for every
+    no-resurrection case."""
+    store = anchors.store()
+    pid = _full_sitting(store, "Alex")
+    person_sync.sync_once(membro.url, force=True)
+    before = _shas(store, pid)
+    assert store.add_clip(pid, _pcm(5.0), 16000, source="accumulated")
+    (dropped,) = set(before) - {c["file"] for c in store.clips_of(pid)}
+    owner = next(f for f in before if f != dropped)    # one membro holds
+    assert store.delete_clip(pid, owner)       # thinned: the restore runs
+
+    membro.fail_deletes = True
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 0 and len(store.pending_corrections()) == 2
+    assert out["restored_clips"] == 0              # named: not offered
+    assert before[dropped] in {a["sha256"] for a in membro.anchors[pid]}
+    assert not _file_gets(membro)
+
+    membro.fail_deletes = False
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 2 and store.pending_corrections() == []
+    assert before[dropped] not in {a["sha256"] for a in membro.anchors[pid]}
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["restored_clips"] == 0
+    assert before[dropped] not in set(_shas(store, pid).values())
+
+
+def test_the_manifest_follows_the_restore_and_leaves_set_aside_clips_out(
+        app, membro):
+    membro.contract = "1.8"
+    store = anchors.store()
+    pid = store.ensure_person("Alex")
+    for secs in (2.0, 2.2):
+        assert store.add_clip(pid, _pcm(secs), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    wav = pcm16_wav(_pcm(2.6), 16000)
+    extra = hashlib.sha256(wav).hexdigest()
+    membro.anchors[pid].append({"id": 7, "sha256": extra,
+                                "source": "accumulated", "data": wav})
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["restored_clips"] == 1
+    body = membro.manifests[pid]
+    assert body["client"] == person_sync.SOURCE_APP
+    assert extra in body["sha256"] and len(body["sha256"]) == 3
+    put = max(i for i, r in enumerate(membro.requests) if r[0] == "PUT")
+    got = max(i for i, r in enumerate(membro.requests)
+              if r[0] == "GET" and r[1].endswith("/file"))
+    assert got < put                               # the manifest came last
+
+    aside = next(f for f, s in _shas(store, pid).items() if s != extra)
+    aside_sha = _shas(store, pid)[aside]
+    store.set_hygiene({pid: {aside: "contaminated"}}, [])
+    person_sync.sync_once(membro.url, force=True)
+    assert (pid, aside_sha, "set-aside") in membro.deletes
+    assert aside_sha not in membro.manifests[pid]["sha256"]
+    assert aside_sha not in {a["sha256"] for a in membro.anchors[pid]}
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["pushed_clips"] == 0              # never uploaded again
+
+    store.set_hygiene({}, [])                      # reinstated
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["pushed_clips"] == 1
+    assert aside_sha in membro.manifests[pid]["sha256"]
+    assert aside_sha in {a["sha256"] for a in membro.anchors[pid]}
+
+
+@pytest.mark.parametrize("contract", ["1.7", None])
+def test_an_older_membro_gets_no_manifest_and_still_takes_the_drops(
+        app, membro, contract):
+    membro.contract = contract
+    store = anchors.store()
+    pid = _full_sitting(store, "Sam")
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["pushed_clips"] == anchors.KEEP_CLIPS
+    before = _shas(store, pid)
+    assert store.add_clip(pid, _pcm(5.0), 16000, source="accumulated")
+    (gone,) = set(before) - {c["file"] for c in store.clips_of(pid)}
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["replayed"] == 1
+    assert before[gone] not in {a["sha256"] for a in membro.anchors[pid]}
+    assert _puts(membro) == [] and membro.manifests == {}
+
+
+def test_a_settled_bank_takes_nothing_back(app, membro, monkeypatch):
+    store = anchors.store()
+    pid = store.ensure_person("Dave")
+    for secs in (2.0, 2.2, 2.4):
+        assert store.add_clip(pid, _pcm(secs), 16000, source="introduction")
+    person_sync.sync_once(membro.url, force=True)
+    wav = pcm16_wav(_pcm(2.6), 16000)
+    membro.anchors[pid].append({"id": 9, "sha256": hashlib.sha256(
+        wav).hexdigest(), "source": "accumulated", "data": wav})
+    monkeypatch.setattr(anchors, "_readiness_source",
+                        lambda person_id: person_id == pid)
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["restored_clips"] == 0 and not _file_gets(membro)
+
+
+def test_a_restore_that_displaces_a_clip_deletes_nothing_in_membro(
+        app, membro):
+    """A pass that brings clips back never deletes anything in membro.
+    The clip the restored one displaced stays there, off the manifest,
+    for the owner's press on membro's People page."""
+    membro.contract = "1.8"
+    store = anchors.store()
+    pid = _full_sitting(store, "Mateo")        # long class full, no short
+    person_sync.sync_once(membro.url, force=True)
+    before = _shas(store, pid)
+    wav = pcm16_wav(_pcm(6.0), 16000)
+    membro.anchors[pid].append({"id": 5, "sha256": hashlib.sha256(
+        wav).hexdigest(), "source": "accumulated", "data": wav})
+
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["restored_clips"] == 1
+    (displaced,) = set(before) - {c["file"] for c in store.clips_of(pid)}
+    assert store.pending_corrections() == [] and membro.deletes == []
+    assert before[displaced] in {a["sha256"] for a in membro.anchors[pid]}
+    assert before[displaced] not in membro.manifests[pid]["sha256"]
+
+
+def test_a_kept_clip_membro_lost_goes_back_up(app, membro):
+    """A clip pulled from membro goes by membro's address. If membro loses
+    its copy while the bank still keeps the clip (deleted there by hand,
+    or pressed away as unused in the moment between a restore and the
+    manifest), the local bytes go back up once, under their own hash."""
+    padded = (b"\x00\x00" * 8000 + _pcm(2.0) + b"\x00\x00" * 32000)
+    wav = pcm16_wav(padded, 16000)
+    membro.persons["alex-remote"] = {
+        "slug": "alex-remote", "display_name": "Alex",
+        "name_owner_set": False, "forgotten_at": None,
+        "updated_at": 50.0, "aliases": [], "clip_count": 1}
+    membro.anchors["alex-remote"] = [{
+        "id": 1, "sha256": hashlib.sha256(wav).hexdigest(),
+        "source": "accumulated", "data": wav}]
+    person_sync.sync_once(membro.url, force=True)
+    store = anchors.store()
+    pid = store.find_by_name("Alex")["person_id"]
+    assert store.membro_stamps(pid)
+
+    membro.anchors["alex-remote"].clear()          # membro lost it
+    out = person_sync.sync_once(membro.url, force=True)
+    assert out["pushed_clips"] == 1 and out["restored_clips"] == 0
+    assert store.membro_stamps(pid) == {}
+    (fname,) = [c["file"] for c in store.clips_of(pid)]
+    local = hashlib.sha256((store.root / fname).read_bytes()).hexdigest()
+    assert [a["sha256"] for a in membro.anchors["alex-remote"]] == [local]
+    again = person_sync.sync_once(membro.url, force=True)
+    assert again["pushed_clips"] == 0

@@ -5,7 +5,8 @@ Groundwork for the voice identity redesign (docs/VOICE_ID_REDESIGN.md:
 ready"). NOTHING HERE NAMES A TURN. Live naming, labels and banking still
 run through voiceid.identify_utterance and the old sufficiency bar. This
 module builds, in the background, the scorer the next stage will name
-voices with, and a readiness verdict per person for the Voices page.
+voices with, and a readiness verdict per person for the Voices page and
+the settle rule (see READINESS).
 
 THE SCORER, the configuration the stage 1 naming spike recommended:
 
@@ -57,6 +58,12 @@ fitted without that day's pieces. A person whose clips all come from one
 day can't pass: with the day left out there's nothing left to name them
 by. Seconds count speech only, never pauses. Quarantined clips count for
 nothing, anywhere.
+
+A ready voice is settled. While the worker runs, the anchor store reads
+each person's verdict from the last build (ready_for, registered with
+anchors.set_readiness_source), and a ready bank takes at most one
+automatic clip a week (anchors.settle_offer). That is the one place a
+verdict reaches banking. It never names a turn.
 
 THE RULES, pinned in tests/test_voice_calibration.py:
 
@@ -696,6 +703,18 @@ def current():
         return _snapshot
 
 
+def ready_for(person_id):
+    """The readiness verdict the settle rule reads (anchors.bank_established):
+    True or False from the last finished build, or None before the first
+    build, so the rule's fallback decides until then. Registered with the
+    anchor store while the worker runs. Reads only."""
+    snap = current()
+    if snap is None:
+        return None
+    found = snap["readiness"].get(person_id)
+    return bool(found and found.get("ready"))
+
+
 def readiness(cfg) -> dict:
     """{person_id: readiness} from the last snapshot, or {} while off or
     not built yet. A copy, content-free."""
@@ -851,6 +870,7 @@ def start(cfg) -> bool:
             _worker["thread"] = thread
             _status.update(state="waiting", error="")
         anchors.add_change_listener(_on_bank_change)
+        anchors.set_readiness_source(ready_for)
         thread.start()
         return True
     except Exception:
@@ -862,6 +882,8 @@ def stop():
     """Stop the worker (app shutdown). A build in flight stops at its next
     embedding."""
     anchors.remove_change_listener(_on_bank_change)
+    if anchors._readiness_source is ready_for:
+        anchors.set_readiness_source(None)
     with _lock:
         thread = _worker["thread"]
         _worker["thread"] = None

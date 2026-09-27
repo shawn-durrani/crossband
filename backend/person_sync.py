@@ -23,16 +23,31 @@ forgets someone - see `kick`):
    what cannot land yet stays for the next pass. A forget replayed this
    way is membro's own one-press forget: the audio goes there too and
    that person's approved facts return to review.
+   The ledger also carries DROPS: a clip rotation, the settle rule or
+   the hygiene audit took out of a bank goes as an ordinary delete row
+   with a `why` (anchors._record_drop), so membro deletes its copy the
+   same way and a rebuild can't bring it back. The replay passes the
+   `why` on as the delete's `reason`, which membro 1.8 journals and an
+   older membro ignores.
 4. PUSH clips: per mapped person, membro's stored sha256 list is
    diffed against the local clip files and missing ones are uploaded.
    Content-addressing makes re-runs no-ops, so the first pass after
-   deploy IS the backfill of the installed base. The same diff runs in
-   REVERSE (#311): anchors membro holds that this install does not are
-   downloaded and offered back through the ordinary acceptance path,
-   but only while the person's bank wants more - a local bank thinned
+   deploy IS the backfill of the installed base. A clip the hygiene
+   audit set aside is never uploaded: membro holds only the clips a
+   bank matches with. The same diff runs in REVERSE (#311): anchors
+   membro holds that this install does not are downloaded and offered
+   back through the ordinary acceptance path, but only while the
+   person's bank wants more and hasn't settled - a local bank thinned
    by rotation, eviction or a since-fixed gate refills from the
-   archive that exists precisely for this.
-5. The pass records the newest change stamp it saw, so the next pull
+   archive that exists precisely for this. A clip a pending correction
+   names is never offered back.
+5. MANIFEST (contract 1.8): per mapped person, the content addresses of
+   the clips the bank keeps (anchors.kept_shas), sent last so it covers
+   what the restore just brought back. Membro's People page counts the
+   stored clips missing from it as no longer used, and deletes them
+   only when the owner presses the button there. An older membro, or
+   one whose version can't be read, gets no manifest.
+6. The pass records the newest change stamp it saw, so the next pull
    is a delta.
 
 Membro down, or no MEMORY_AUTH_TOKEN, means the pass logs once and does
@@ -56,11 +71,15 @@ import httpx
 
 from . import anchors, db
 from .introductions import _participant_names, participant_alias
+# The historical wire value membro keys this app on (memory_client.py says
+# why it never changes). Clips, people and manifests all go under it.
+from .memory_client import SOURCE_APP
 
 log = logging.getLogger("crossband.person_sync")
 
 DEBOUNCE_S = 120           # post-round passes at most this often
 RESTORE_MAX_PER_PASS = 4   # anchor downloads per person per pass (#311)
+MANIFEST_MINOR = 8         # membro contract 1.8 takes the kept-set manifest
 _RESTORE_OFFERED_MAX = 4096
 # "warned" holds the outcome last reported (False: nothing said yet, or a
 # pass has completed since), so each distinct outcome speaks once.
@@ -174,6 +193,21 @@ def kick(memory_url: str) -> threading.Thread:
     return t
 
 
+def _contract_minor(client, base) -> int:
+    """Membro's contract minor version from its open health route, or 0
+    when it can't be read or the major isn't 1. Only the manifest keys on
+    it: everything else this pass sends works on any 1.x membro."""
+    try:
+        r = client.get(f"{base}/v1/health")
+        if r.status_code != 200:
+            return 0
+        major, minor = str(r.json().get("contract_version") or "").split(
+            ".")[:2]
+        return int(minor) if int(major) == 1 else 0
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return 0
+
+
 def _find_anchor(client, base, slug, sha):
     """Membro's anchor id for these bytes under this person, or None when the
     person's clip list genuinely lacks it. A person membro no longer holds
@@ -243,8 +277,12 @@ def _replay_corrections(client, base, store) -> int:
                 if aid is None:
                     done.append(corr["cid"])
                     continue
+                # A drop (anchors._record_drop) says why it left the bank;
+                # membro 1.8 journals the reason, an older one ignores it.
                 r = client.delete(
-                    f"{base}/v1/persons/{from_slug}/anchors/{aid}")
+                    f"{base}/v1/persons/{from_slug}/anchors/{aid}",
+                    params={"reason": corr["why"]} if corr.get("why")
+                    else None)
                 if r.status_code in (200, 404, 410):
                     done.append(corr["cid"])
             elif kind == "merge":
@@ -373,7 +411,7 @@ def _run(base: str, token: str) -> dict:
                     "slug": pid,
                     "display_name": p["preferred_name"] or p["name"],
                     "aliases": [p["name"]] + list(p["merged_names"] or []),
-                    "origin_client": "multi-model-chat"})
+                    "origin_client": SOURCE_APP})
                 if cr.status_code != 200:
                     # a refusal (alias conflict, model-label backstop) is
                     # membro doing its job - log it, sync the rest
@@ -384,6 +422,11 @@ def _run(base: str, token: str) -> dict:
                 out["pushed_people"] += 1
 
         out["replayed"] = _replay_corrections(client, base, store)
+        minor = _contract_minor(client, base)
+        # A clip a correction still names is never offered back: a delete
+        # membro couldn't take yet must not return through the restore.
+        pending = {c.get("sha") for c in store.pending_corrections()
+                   if c.get("sha")}
 
         for p in syncable:
             pid = p["person_id"]
@@ -398,20 +441,29 @@ def _run(base: str, token: str) -> dict:
             stamps = store.membro_stamps(pid)
             local = set(stamps.values())
             for c in (store.clips_of(pid) or []):
-                if c["file"] in stamps:
+                stamp = stamps.get(c["file"])
+                if stamp and (stamp in have or stamp in pending):
                     # Pulled from membro (#310): the canonical copy already
                     # sits there under the stamped sha, and the local bytes
                     # are trimmed, so re-hashing would mint a variant
                     # anchor on every pass.
                     continue
+                if stamp and not c.get("quarantined"):
+                    # Membro lost its copy of a clip this bank still keeps:
+                    # deleted there by hand, or counted as unused and
+                    # deleted in the moment between a restore and the
+                    # manifest. The local bytes go back up, and the clip
+                    # goes by their own hash from now on.
+                    store.drop_membro_stamp(pid, c["file"])
+                    local.discard(stamp)
                 path = store.clip_path(pid, c["file"])
                 if path is None:
                     continue
                 data = path.read_bytes()
                 sha = hashlib.sha256(data).hexdigest()
                 local.add(sha)
-                if sha in have:
-                    continue
+                if sha in have or c.get("quarantined"):
+                    continue          # already there, or set aside
                 up = client.post(
                     f"{base}/v1/persons/{slug}/anchors", json={
                         "data_b64": base64.b64encode(data).decode(),
@@ -419,7 +471,7 @@ def _run(base: str, token: str) -> dict:
                         "score": c.get("score", 0),
                         "source": c.get("source", ""),
                         "captured_at": c.get("added_at", 0),
-                        "client": "multi-model-chat"})
+                        "client": SOURCE_APP})
                 if up.status_code == 200:
                     out["pushed_clips"] += 1
             # RESTORE (#311): the reverse diff. Only while the bank wants
@@ -429,34 +481,20 @@ def _run(base: str, token: str) -> dict:
             # speech gate and the trim included) and lands stamped with
             # membro's own address, so it is never pushed back as a
             # variant and corrections still reach the durable copy.
-            if p["sufficient"] and p["at_capacity"]:
-                continue
-            fetched = 0
-            for a in remote:
-                if fetched >= RESTORE_MAX_PER_PASS:
-                    break
-                sha = a.get("sha256")
-                if (not sha or sha in local
-                        or (pid, sha) in _restore_offered):
-                    continue
-                f = client.get(
-                    f"{base}/v1/persons/{slug}/anchors/{a['id']}/file")
-                if f.status_code != 200:
-                    continue          # transient: next pass retries
-                fetched += 1
-                try:
-                    pcm, rate = _wav_to_pcm(f.content)
-                except (wave.Error, ValueError):
-                    _remember_offered(pid, sha)
-                    continue
-                _remember_offered(pid, sha)
-                # The clip keeps the time it was first captured (#477),
-                # so rotation ranks it with the day it was spoken.
-                if store.add_clip(pid, pcm, rate,
-                                  source=a.get("source") or "accumulated",
-                                  membro_sha=sha,
-                                  added_at=a.get("captured_at")):
-                    out["restored_clips"] += 1
+            # A settled bank takes nothing back either: it's best-of by
+            # the settle rule, which a restore would sidestep.
+            if not (p.get("settled")
+                    or (p["sufficient"] and p["at_capacity"])):
+                out["restored_clips"] += _restore(
+                    client, base, store, pid, slug, remote, local, pending)
+            # MANIFEST (contract 1.8), last, so it covers what the restore
+            # just brought back.
+            if minor >= MANIFEST_MINOR:
+                shas = store.kept_shas(pid)
+                if shas is not None:
+                    client.put(f"{base}/v1/persons/{slug}/manifest",
+                               json={"client": SOURCE_APP,
+                                     "sha256": shas})
 
         store.set_sync_watermark(newest)
         _state["warned"] = False
@@ -465,3 +503,35 @@ def _run(base: str, token: str) -> dict:
         return out
     finally:
         client.close()
+
+
+def _restore(client, base, store, pid, slug, remote, local, pending) -> int:
+    """RESTORE (#311) for one person: up to RESTORE_MAX_PER_PASS anchors
+    membro holds that this bank doesn't, offered back through add_clip.
+    Returns how many were taken."""
+    restored = 0
+    fetched = 0
+    for a in remote:
+        if fetched >= RESTORE_MAX_PER_PASS:
+            break
+        sha = a.get("sha256")
+        if (not sha or sha in local or sha in pending
+                or (pid, sha) in _restore_offered):
+            continue
+        f = client.get(f"{base}/v1/persons/{slug}/anchors/{a['id']}/file")
+        if f.status_code != 200:
+            continue          # transient: next pass retries
+        fetched += 1
+        try:
+            pcm, rate = _wav_to_pcm(f.content)
+        except (wave.Error, ValueError):
+            _remember_offered(pid, sha)
+            continue
+        _remember_offered(pid, sha)
+        # The clip keeps the time it was first captured (#477), so
+        # rotation ranks it with the day it was spoken.
+        if store.add_clip(pid, pcm, rate,
+                          source=a.get("source") or "accumulated",
+                          membro_sha=sha, added_at=a.get("captured_at")):
+            restored += 1
+    return restored

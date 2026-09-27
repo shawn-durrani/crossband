@@ -255,7 +255,9 @@ microphones from this household's.
    or they confirm it.
 4. The kept clips rotate as they do today: 10 long and 5 short per
    person, spread across days, with introduced and corrected clips kept
-   first.
+   first. Once a voice is ready it settles: an automatic clip gets in
+   at most once a week, and only from a new day or better than the
+   weakest automatic clip, which it replaces.
 5. A bank that nobody has vouched for still waits for your ear before
    it can name anyone, in every path.
 
