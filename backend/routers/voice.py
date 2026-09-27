@@ -964,13 +964,6 @@ async def stt_stream_relay(ws: WebSocket):
                                 stt_clock["sent"] if stt_clock["began"] is None
                                 else stt_clock["began"], stt_clock["sent"])
                             stt_clock["began"] = None
-                            # Commit boundary = utterance boundary: slice the teed
-                            # audio and fire the voice check on it. create_task
-                            # only - NEVER awaited here; the commit frame below
-                            # goes upstream exactly as it always has, and a
-                            # failure to even schedule must not break live
-                            # transcription (same posture as the prewarm hook).
-                            #
                             # The commit frame's `turn_id` (#28 phase 3) is the
                             # client's voice-trace correlation id - the SAME id
                             # its /send will persist on the user message, which
@@ -978,26 +971,34 @@ async def stt_stream_relay(ws: WebSocket):
                             # alone: it is not part of the upstream payload
                             # built above, so the ElevenLabs byte stream stays
                             # identical whether or not it is sent.
+                            commit_turn_id = (str(msg.get("turn_id") or "")
+                                              .strip()[:64] or None)
+                            # A piece of a long turn names the piece before
+                            # it (#469), so the check names the turn from
+                            # all its pieces. Ours alone, like the turn id.
+                            after = (str(msg.get("after") or "")
+                                     .strip()[:64] or None)
+                            # Recorded first, outside the try below: Scribe
+                            # answers every commit frame that goes up, so a
+                            # commit left out of the FIFO would hand each
+                            # later answer the turn id before it (#540).
+                            finals.commit(commit_turn_id, *turn_on_stt)
+                            # Before the check is scheduled, so the turn's
+                            # result slot exists when the check asks for it
+                            # (#482).
+                            try:
+                                voice_sessions.end_turn(
+                                    chat_id, commit_turn_id, cfg, after=after)
+                            except Exception:
+                                pass
+                            # Commit boundary = utterance boundary: slice the teed
+                            # audio and fire the voice check on it. create_task
+                            # only - NEVER awaited here; the commit frame below
+                            # goes upstream exactly as it always has, and a
+                            # failure to even schedule must not break live
+                            # transcription (same posture as the prewarm hook).
                             try:
                                 pcm, pcm_sr = room.take_utterance()
-                                commit_turn_id = (str(msg.get("turn_id") or "")
-                                                  .strip()[:64] or None)
-                                # A piece of a long turn names the piece
-                                # before it (#469), so the check names the
-                                # turn from all its pieces. Ours alone, like
-                                # the turn id.
-                                after = (str(msg.get("after") or "")
-                                         .strip()[:64] or None)
-                                finals.commit(commit_turn_id, *turn_on_stt)
-                                # Before the check is scheduled, so the
-                                # turn's result slot exists when the check
-                                # asks for it (#482).
-                                try:
-                                    voice_sessions.end_turn(
-                                        chat_id, commit_turn_id, cfg,
-                                        after=after)
-                                except Exception:
-                                    pass
                                 # One check for every voiced turn (#461,
                                 # #482), shared with the batch /stt path, in
                                 # every mode: the check reads the room from
