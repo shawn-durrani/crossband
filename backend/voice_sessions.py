@@ -31,6 +31,8 @@ answer for every spoken turn:
      no name, or a name this module wrote, take the name (FILLING IN).
   5. One content-free row per turn records the turn's spans and main
      voice and every session voice's state.
+  6. When the tracking session ends, THE END-OF-SESSION PASS names every
+     voice once more and relabels any turn whose name changed.
 
 With no diariser configured, or with it down, no feed answers and the
 pass names the turn on its own as one voice (name_single_turn), with the
@@ -69,6 +71,20 @@ spans, so the turn is labelled by it. The turn's row lists each move
 that stayed, the most any scored higher against another voice than its
 own (`span_lead`, below zero in a normal session). Numbers only.
 
+THE END-OF-SESSION PASS. A tracking session ends after SESSION_IDLE_S of
+quiet (the feed thread exits, or the next turn finds it stale) or when
+the diariser URL changes. Before it's closed, on the feed thread and
+after any turn in hand has its answer, every session voice is named once
+more over every fingerprint the session collected, and fill_labels
+writes the names onto the session's turns, the last turn included.
+Only a turn whose name changes is written. A turn whose voice ends the
+session unnamed keeps the label it has: the pass writes names and never
+takes one off, so a doubt at the end can't erase a name a turn earned
+on its own evidence. A session dropped because the diariser failed gets
+no pass, and its turns keep their labels. One content-free row records
+the pass: why the session ended, its turns, every voice's final state,
+which voices' names changed and how many turns were relabelled.
+
 THE RULES, pinned in tests/test_voice_sessions.py:
 
   * The diariser URL must name this machine, or the feed stays off.
@@ -89,7 +105,10 @@ FILLING IN, rules pinned in the same test file:
     or the pass wrote (source "session"). A turn a person corrected or
     confirmed, a crosstalk turn and a label that doesn't parse are never
     touched, and neither is the turn being named right now: the pass
-    labels that one, and it may hold two voices.
+    labels that one, and it may hold two voices. The end-of-session pass
+    fills the session's last turn too.
+  * A turn that already carries the name as a sure label isn't written
+    again, so only a change reaches the chat.
   * Nothing else happens: no seat, no saved clip, no ask.
   * The owner's own name (or a spelling of it) is written with the owner
     marker, as the pass writes it.
@@ -611,6 +630,7 @@ class _Feed:
         # names it: {"session", "last", "pieces": [{"offset", "spans"}]}
         # with each piece's spans in its own turn time (LONG TURNS).
         self.chain = None
+        self.ended = []                 # (session, why) awaiting their pass
         self.thread = threading.Thread(
             target=self._run, daemon=True,
             name=f"voice-session-feed-{chat_id}")
@@ -639,6 +659,8 @@ class _Feed:
                         self._push()
                 elif kind == "end":
                     self._end(value)
+                    # After the turn has its answer, never before it.
+                    self._finish_ended()
         finally:
             self.alive = False
             with _lock:
@@ -646,13 +668,25 @@ class _Feed:
                     _feeds.pop(self.chat_id, None)
                 sess = _sessions.pop(self.chat_id, None)
             if sess:
+                self.ended.append((sess, "idle"))
+            self._finish_ended()
+
+    def _finish_ended(self):
+        """THE END-OF-SESSION PASS for every session that ended, then its
+        close (feed thread)."""
+        while self.ended:
+            sess, why = self.ended.pop(0)
+            try:
+                end_session(self.chat_id, sess, self.cfg, why)
+            finally:
                 _close(sess)
 
     def _session(self):
         base = diariser_url(self.cfg)
         if not base:
             raise _SessionError("no_diariser")
-        return _session_for(self.chat_id, base, time.time())
+        return _session_for(self.chat_id, base, time.time(),
+                            ended=self.ended)
 
     def _push(self):
         if not self.pending or self.broken:
@@ -1215,14 +1249,21 @@ def _close(sess):
         pass            # the diariser expires idle sessions itself
 
 
-def _session_for(chat_id, base, now):
+def _session_for(chat_id, base, now, ended=None):
     """This chat's open tracking session, opening one when there is none,
-    it went quiet for SESSION_IDLE_S, or the diariser URL changed."""
+    it went quiet for SESSION_IDLE_S, or the diariser URL changed. A
+    session that ended is added to `ended` as (session, why) for the
+    feed to finish (THE END-OF-SESSION PASS), or closed at once with no
+    list."""
     with _lock:
         sess = _sessions.get(chat_id)
     if sess and (now - sess["last_at"] > SESSION_IDLE_S
                  or sess["base"] != base):
-        _close(sess)
+        if ended is None:
+            _close(sess)
+        else:
+            ended.append((sess, "idle" if sess["base"] == base
+                          else "diariser_changed"))
         sess = None
     if sess is None:
         payload = _call("POST", f"{base}/sessions")
@@ -1389,6 +1430,7 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         embedded += 1
     named, bar, n_people, method = _name_all(
         sess, candidates, sample_rate, cfg, embed_fn, eres_fn)
+    sess["named"] = named               # for the end-of-session pass
     # The whole turn: every piece's spans, end to end, in the first
     # piece's time. A turn of one piece is just this piece.
     base = earlier[0]["offset"] if earlier else offset
@@ -1527,7 +1569,13 @@ def fill_labels(chat_id, sess, named, cfg, skip=""):
                     or done.get(turn_id) == name or turn_id == skip:
                 continue
             msg = db.get_message_by_voice_turn(con, chat_id, turn_id)
-            if not msg or not fillable(_labels_of(msg["voice_labels"])):
+            old = _labels_of(msg["voice_labels"]) if msg else None
+            if not msg or not fillable(old):
+                continue
+            if old.get("labels") == [name] and not (
+                    old.get("uncertain") or old.get("learning")
+                    or old.get("unresolved")):
+                done[turn_id] = name        # already says so
                 continue
             is_owner = bool(owner) and introductions.owner_alias(name, owner)
             db.set_message_voice_labels(con, msg["id"], diarize.label_payload(
@@ -1538,6 +1586,44 @@ def fill_labels(chat_id, sess, named, cfg, skip=""):
     finally:
         con.close()
     return count
+
+
+def end_session(chat_id, sess, cfg, why):
+    """THE END-OF-SESSION PASS (the feed thread, before the session is
+    closed): name every session voice once more over every fingerprint
+    the session collected, and relabel each turn whose name changed,
+    through fill_labels' rules with no turn skipped. Writes one
+    content-free row and returns it, or None for a session with no turns
+    to label. Never raises."""
+    if not sess or not sess.get("turn_voice"):
+        return None
+    t0 = time.perf_counter()
+    row = {"v": ROW_VERSION, "at": round(time.time(), 3), "chat_id": chat_id,
+           "turn_id": "", "message_id": None, "session": sess.get("id"),
+           "end": why, "turns": sess.get("turns", 0)}
+    try:
+        named, bar, n_people, method = _name_all(
+            sess, _live_candidates(chat_id), SAMPLE_RATE, cfg,
+            lambda seg: embed_live(seg, SAMPLE_RATE, cfg),
+            lambda seg: embed_eres_live(seg, SAMPLE_RATE, cfg))
+        last = sess.get("named") or {}
+        row.update(
+            voices={str(k): v for k, v in sorted(named.items())},
+            renamed=sorted(slot for slot, v in named.items()
+                           if v.get("name") != (last.get(slot) or {})
+                           .get("name")),
+            method=method, people=n_people,
+            filled=fill_labels(chat_id, sess, named, cfg))
+        sess["named"] = named
+    except Exception:
+        log.debug("end-of-session pass failed", exc_info=True)
+        row["error"] = "error"
+    row["ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    try:
+        write_row(row)
+    except Exception:
+        log.debug("end-of-session row failed", exc_info=True)
+    return row
 
 
 # ================= the rows file ============================================
@@ -1620,6 +1706,12 @@ def view(rows) -> dict:
             final[row["session"]] = row.get("voices") or {}
     lines, tally = [], collections.Counter()
     for row in rows:
+        if row.get("end"):
+            # THE END-OF-SESSION PASS, not a turn: its naming is the
+            # session's final one above.
+            tally["sessions_ended"] += 1
+            tally["relabelled_at_end"] += row.get("filled") or 0
+            continue
         if row.get("error"):
             tally["errors"] += 1
             continue
