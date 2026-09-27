@@ -12,8 +12,9 @@
 // on still gets one stitched turn; a short turn keeps its timing; mute and
 // a too-short tail end a cut turn too; the batch path behaves the same;
 // an earlier piece's words no longer switch off the next piece's backup
-// or move the screen off Thinking; and the diagnostics hold ids, never
-// words.
+// or move the screen off Thinking; each piece after a cut names the piece
+// before it, so the server names the turn from all its pieces (#469); and
+// the diagnostics hold ids, never words.
 // Run: node --test frontend/src/voiceLongTurn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -38,7 +39,7 @@ class FakeWebSocket {
     const m = JSON.parse(s)
     if (m.audio) { this.audioFrames++; return }
     this.sent.push(m)
-    if (m.commit) relay.heard(this, m.turn_id)
+    if (m.commit) relay.heard(this, m.turn_id, m.after)
   }
   close() { this.readyState = 3 }
 }
@@ -65,9 +66,9 @@ const relay = {
   silent: new Set(),
   queue: [],
   commits: [],
-  heard(ws, turnId) {
+  heard(ws, turnId, after) {
     const i = this.commits.length
-    this.commits.push({ turnId, at: Date.now() - START })
+    this.commits.push({ turnId, after, at: Date.now() - START })
     if (this.silent.has(i)) return
     this.queue.push({ ws, turnId, due: Date.now() + this.latencyMs, text: PIECES[i] || '' })
   },
@@ -375,6 +376,42 @@ test('without realtime, the pause can end the turn while the cut piece is still 
   await s.runUntil(40000, talk)
   assert.equal(s.sent.length, 1)
   assert.equal(s.ctrl.state, 'listening')
+})
+
+test('each piece after a cut names the piece before it, and a new turn names none', async () => {
+  const s = liveSession()
+  // A 25-second turn, the pause that ends it, then a short turn of its own.
+  const talk = speech([500, 25500], [30000, 32000])
+  await s.runUntil(40000, talk)
+  const n = relay.commits.length
+  assert.ok(n >= 3, 'two pieces and the short turn')
+  assert.equal(relay.commits[0].after, undefined, 'the first piece starts the turn')
+  for (let i = 1; i < n - 1; i++) {
+    assert.equal(relay.commits[i].after, relay.commits[i - 1].turnId)
+  }
+  assert.equal(relay.commits[n - 1].after, undefined, 'the next turn stands alone')
+  assert.equal(s.sent[0].turnId, relay.commits[n - 2].turnId)
+})
+
+test('a too-short tail after a cut names the cut piece it follows', async () => {
+  const s = liveSession()
+  const talk = (t) => speech([500, 11500])(t) || (t >= 12600 && t < 12900)
+  await s.runUntil(30000, talk)
+  assert.equal(relay.commits.length, 2)
+  assert.equal(relay.commits[1].after, relay.commits[0].turnId)
+})
+
+test('without realtime, a too-short tail after a cut sends the turn under the cut piece', async () => {
+  const s = liveSession({ realtime: false })
+  // The tail is never uploaded, so it was never checked. The turn goes
+  // under the id of the piece that was, whose check named every piece.
+  const talk = (t) => speech([500, 11500])(t) || (t >= 12600 && t < 12900)
+  await s.runUntil(30000, talk)
+  assert.equal(sttPosts().length, 1, 'only the cut piece was uploaded')
+  const upload = snapshot().find((e) => e.tag === 'stt:batch')
+  const cutId = JSON.parse(upload.data).turnId
+  assert.ok(cutId)
+  assert.deepEqual(s.sent.map((m) => [m.text, m.turnId]), [[BATCH, cutId]])
 })
 
 test("an earlier piece's words no longer switch off the next piece's backup", async () => {

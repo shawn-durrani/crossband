@@ -116,3 +116,16 @@ test('the upload carries the copy and the turn id together, or neither', () => {
   assert.deepEqual([...batchSttForm(rec, 900, 't1', null).keys()], ['file', 'duration_ms'])
   assert.deepEqual([...batchSttForm(rec, 900, null, copy).keys()], ['file', 'duration_ms'])
 })
+
+test('a piece of a long turn names the piece before it, with its copy (#469)', () => {
+  const rec = new Blob(['webm'], { type: 'audio/webm' })
+  const copy = new Blob([identityWav(new Float32Array(1600).fill(0.1), 16_000,
+                                    { keepMs: 1000, dropMs: 0 })],
+                        { type: 'audio/wav' })
+  const piece = batchSttForm(rec, 1500, 't2', copy, 't1')
+  assert.deepEqual([...piece.keys()], ['file', 'duration_ms', 'turn_id', 'pcm', 'after'])
+  assert.equal(piece.get('after'), 't1')
+  // the link means nothing without the checked copy it belongs to
+  assert.deepEqual([...batchSttForm(rec, 900, 't2', null, 't1').keys()], ['file', 'duration_ms'])
+  assert.ok(!batchSttForm(rec, 900, 't2', copy).has('after'))
+})

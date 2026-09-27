@@ -34,6 +34,20 @@ With no diariser configured, or with it down, no feed answers and the
 pass names the turn on its own as one voice (name_single_turn), with the
 same scorer and no session behind it.
 
+LONG TURNS. The browser cuts a long turn into pieces, each committed with
+its own turn id, and the message carries one of them: the last piece's,
+or the last cut piece's when the turn ended in the pause after it. Each
+piece after the first names the piece before it (`after`), so a turn's
+pieces are known the moment each one is committed. The feed answers a
+piece with the voice its pieces had together: every piece's spans, end
+to end, with each session voice named as it stands now. The main voice
+is the one with the most time alone across the pieces, and a second
+voice that spoke a second or more makes it a two-voice turn, so pieces
+whose voices disagree never give one name, and a piece too short to
+judge adds nothing. A piece the feed didn't answer is named on its own,
+and the pass then joins what each piece heard by the same rules
+(join_pieces), counting only the voices a piece named or found new.
+
 THE RULES, pinned in tests/test_voice_sessions.py:
 
   * The diariser URL must name this machine, or the feed stays off.
@@ -95,6 +109,7 @@ LIVE_WAIT_S = 0.8               # longest the pass waits for a name
 FEED_CHUNK_BYTES = int(0.25 * 16000) * 2   # audio pushed at a time
 FEED_QUEUE_MAX = 4000           # chunks held before new ones are dropped
 RESULTS_MAX = 256               # turns whose result is remembered
+MAX_PIECES = 8                  # pieces of one long turn joined, newest kept
 # The multi scorer (#477): a person's score is the mean of their best
 # MULTI_TOP_K clip scores, so one lucky clip can't carry a name alone. A
 # bank with fewer clips uses what it has.
@@ -199,6 +214,12 @@ def _recovered(key, msg):
 
 _feeds: dict = {}               # chat_id -> _Feed
 _results: "collections.OrderedDict" = collections.OrderedDict()
+# turn id -> {"after": the piece before it, "verdict", "seconds"}
+_pieces: "collections.OrderedDict" = collections.OrderedDict()
+
+
+def _turn_key(turn_id):
+    return str(turn_id or "")[:64]
 
 
 def _result_slot(turn_id):
@@ -272,12 +293,14 @@ def feed(chat_id, pcm, sample_rate, cfg):
     _feed_for(chat_id, cfg).put(("audio", bytes(pcm)))
 
 
-def end_turn(chat_id, turn_id, cfg):
+def end_turn(chat_id, turn_id, cfg, after=None):
     """The relay's commit: the turn so far is done. Opens the turn's result
-    slot at once, so the pass can wait on it."""
+    slot at once, so the pass can wait on it. `after` is the piece before
+    this one when a long turn was cut (LONG TURNS)."""
+    tid = _turn_key(turn_id) or None
+    note_piece(tid, after)
     if not chat_id or not enabled(cfg):
         return
-    tid = str(turn_id or "")[:64] or None
     if tid:
         _result_slot(tid)
     with _lock:
@@ -285,7 +308,76 @@ def end_turn(chat_id, turn_id, cfg):
     if f is None:
         _resolve(tid, None)
         return
-    f.put(("end", tid))
+    f.put(("end", (tid, _turn_key(after) or None)))
+
+
+def note_piece(turn_id, after=None):
+    """Record which piece a committed turn follows (the relay and the batch
+    path, as each piece arrives). No `after` starts a turn of its own,
+    and never unlinks a piece the relay already linked."""
+    tid, prev = _turn_key(turn_id), _turn_key(after)
+    if not tid:
+        return
+    with _lock:
+        entry = _pieces.pop(tid, None) or {}
+        entry["after"] = (prev if prev != tid else None) or entry.get("after")
+        _pieces[tid] = entry
+        while len(_pieces) > RESULTS_MAX:
+            _pieces.popitem(last=False)
+
+
+def pieces_before(turn_id):
+    """The ids of the pieces before this one in its long turn, oldest
+    first, at most MAX_PIECES - 1 of them. [] for a turn of one piece."""
+    out, seen = [], {_turn_key(turn_id)}
+    with _lock:
+        prev = (_pieces.get(_turn_key(turn_id)) or {}).get("after")
+        while prev and prev not in seen and len(out) < MAX_PIECES - 1:
+            out.append(prev)
+            seen.add(prev)
+            prev = (_pieces.get(prev) or {}).get("after")
+    return list(reversed(out))
+
+
+_VERDICT_KEYS = ("state", "name", "pid", "score", "prob", "human")
+
+
+def piece_voices(got, seconds):
+    """Every voice one piece's answer heard in that piece, each with its
+    naming, its seconds in the piece and the method, for joining pieces.
+    [] with no answer."""
+    if not got:
+        return []
+    voices = got.get("piece_voices") or got.get("voices")
+    if not voices:
+        voices = {got.get("voice", 0): dict(got, seconds=seconds)}
+    return [dict({k: v.get(k) for k in _VERDICT_KEYS},
+                 seconds=v.get("seconds") or 0.0, method=got.get("method"))
+            for v in voices.values()]
+
+
+def join_pieces(turn_id, got, seconds):
+    """The pass's answer for one piece, joined with the pieces before it
+    when the feed's answer doesn't already cover them all (LONG TURNS).
+    Remembers what this piece heard for the pieces after it. Returns `got`
+    unchanged for a turn of one piece."""
+    tid = _turn_key(turn_id)
+    if not tid:
+        return got
+    heard = piece_voices(got, seconds)
+    with _lock:
+        entry = _pieces.pop(tid, None) or {"after": None}
+        entry.update(voices=heard, seconds=float(seconds or 0.0))
+        _pieces[tid] = entry
+        while len(_pieces) > RESULTS_MAX:
+            _pieces.popitem(last=False)
+    before = pieces_before(tid)
+    if len(before) + 1 <= ((got or {}).get("pieces") or 1):
+        return got
+    with _lock:
+        earlier = [(_pieces[t]["seconds"], _pieces[t]["voices"])
+                   for t in before if "voices" in (_pieces.get(t) or {})]
+    return join_verdicts(earlier + [(seconds, heard)], got)
 
 
 def _feed_for(chat_id, cfg):
@@ -488,6 +580,10 @@ class _Feed:
         self.turn_start = None          # session time the turn began at
         self.broken = False             # the session failed mid-turn
         self.early = {}                 # span key -> fingerprints so far
+        # The long turn the last piece belongs to, for a next piece that
+        # names it: {"session", "last", "pieces": [{"offset", "spans"}]}
+        # with each piece's spans in its own turn time (LONG TURNS).
+        self.chain = None
         self.thread = threading.Thread(
             target=self._run, daemon=True,
             name=f"voice-session-feed-{chat_id}")
@@ -592,7 +688,12 @@ class _Feed:
                               "each voice turn is named on its own until it "
                               "answers", reason)
 
-    def _end(self, turn_id):
+    def _end(self, value):
+        turn_id, after = value if isinstance(value, tuple) else (value, None)
+        # This piece joins the long turn only when it names the last piece.
+        chain = self.chain if after and self.chain \
+            and self.chain["last"] == after else None
+        self.chain = None
         t0 = time.perf_counter()
         pcm = bytes(self.turn_pcm)
         result = None
@@ -606,14 +707,19 @@ class _Feed:
             if self.broken:
                 raise _SessionError(_stats.get("diariser") or "error")
             if not pcm or self.turn_start is None:
+                if chain and turn_id:   # no audio: the pieces carry on
+                    self.chain = dict(chain, last=turn_id)
                 return
             sess = self._session()
+            if chain and chain["session"] != sess["id"]:
+                chain = None
             got = clean_spans(_call(
                 "POST", f"{sess['base']}/sessions/{sess['id']}/end-turn"))
             if got is None:
                 raise _SessionError("bad_response")
             sess["last_at"] = time.time()
             sess["turns"] += 1
+            earlier = chain["pieces"] if chain else []
             result = _name_turn(
                 self.chat_id, sess, turn_id, pcm, SAMPLE_RATE,
                 self.spans + got, self.turn_start, self.cfg,
@@ -621,7 +727,13 @@ class _Feed:
                 lambda seg: embed_live(seg, SAMPLE_RATE, self.cfg), row,
                 eres_fn=lambda seg: embed_eres_live(seg, SAMPLE_RATE,
                                                     self.cfg),
-                precomputed=dict(self.early))
+                precomputed=dict(self.early), earlier=earlier)
+            if turn_id:
+                piece = {"offset": self.turn_start,
+                         "spans": row.get("spans") or []}
+                self.chain = {"session": sess["id"], "last": turn_id,
+                              "pieces": (earlier + [piece])[
+                                  -(MAX_PIECES - 1):]}
             with _lock:
                 _stats["diariser"] = "ok"
             _recovered("session", "the tracking sessions answer again")
@@ -858,6 +970,67 @@ def name_voices(voices, people, bar):
     return out
 
 
+def join_verdicts(pieces, got=None):
+    """One long turn's answer from what its pieces heard, for pieces named
+    on their own (LONG TURNS). `pieces` is [(seconds, voices)] oldest
+    first, `voices` each piece's piece_voices. A voice named as someone
+    counts for that person, and a voice found new counts for "new". A
+    voice still listening counts for nobody, and so does a piece with no
+    answer. Each person, and "new", is one voice of the answer with its
+    seconds, and the main voice is the one with the most, its score the
+    length-weighted mean of its pieces'. A second voice is listed as
+    crosstalk lists any. With no voice counting, `got` comes back as it
+    was. The joined answer saves no clip: its clean spans are empty."""
+    groups, index, spans, t = [], {}, [], 0.0
+    for secs, voices in pieces:
+        secs = max(0.0, float(secs or 0.0))
+        start, t = t, t + secs
+        for v in voices or ():
+            state = v.get("state")
+            if state == "named" and (v.get("pid") or v.get("name")):
+                key = ("named", v.get("pid") or v["name"].casefold())
+            elif state == "new":
+                key = ("new",)
+            else:
+                continue
+            heard = min(secs, max(0.0, float(v.get("seconds") or 0.0)))
+            if key not in index:
+                index[key] = len(groups)
+                groups.append({"state": state, "name": v.get("name") or "",
+                               "pid": v.get("pid") or "", "human": False,
+                               "method": v.get("method"), "seconds": 0.0,
+                               "first": start, "sums": {}})
+            g = groups[index[key]]
+            g["seconds"] += heard
+            g["human"] = g["human"] or bool(v.get("human"))
+            for k in ("score", "prob"):
+                if v.get(k) is not None:
+                    total, weight = g["sums"].get(k, (0.0, 0.0))
+                    g["sums"][k] = (total + v[k] * heard, weight + heard)
+            spans.append({"slot": index[key], "start": round(start, 3),
+                          "end": round(start + heard, 3), "overlap": False})
+    if not groups:
+        return got
+    voices = {}
+    for i, g in enumerate(groups):
+        mean = {k: (round(total / weight, 4) if weight > 0 else None)
+                for k, (total, weight) in g["sums"].items()}
+        voices[i] = {"state": g["state"], "name": g["name"], "pid": g["pid"],
+                     "score": mean.get("score"), "prob": mean.get("prob"),
+                     "human": g["human"], "seconds": round(g["seconds"], 3),
+                     "first": round(g["first"], 3)}
+    main = max(voices, key=lambda i: (voices[i]["seconds"], -i))
+    m = voices[main]
+    return {"voice": main, "state": m["state"], "name": m["name"],
+            "pid": m["pid"], "score": m["score"], "prob": m["prob"],
+            "human": m["human"],
+            "method": groups[main]["method"] or (got or {}).get("method"),
+            "voice_clean_s": m["seconds"], "clean_spans": [],
+            "voices_in_turn": len(voices), "overlap_s": 0.0, "single": True,
+            "voices": voices, "spans": spans, "turn_s": round(t, 3),
+            "pieces": len(pieces)}
+
+
 def clean_spans(payload, limit=MAX_SPANS):
     """The diariser's spans as checked dicts, or None when the answer isn't
     the documented shape. Accepts {"spans": [...]} or a bare list."""
@@ -1079,13 +1252,19 @@ def _bar(people, candidates, sample_rate, cfg):
 
 def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
                cfg, candidates, embed_fn, row, eres_fn=None,
-               precomputed=None):
+               precomputed=None, earlier=()):
     """The naming step for one turn of the feed: move the tracker's spans
     into turn time, fingerprint the clean ones, name every session voice,
     fill in unnamed turns, and put it all on `row`. Returns the turn's
     main voice as {"voice", "state", "name", "score", ...} with every
     voice heard in the turn ("voices"), the spans in turn time and the
-    turn's length ("turn_s"), or None when no voice spoke."""
+    turn's length ("turn_s"), or None when no voice spoke.
+
+    `earlier` holds the long turn's pieces before this one, each
+    {"offset", "spans"} (LONG TURNS). The answer then covers every piece:
+    its spans and length run from the first piece's start, and "pieces"
+    counts them. Only this piece's audio is fingerprinted, and its clean
+    spans (for saving a clip) stay in this piece's own time."""
     seconds = len(pcm) / 2 / sample_rate
     spans, ready = [], {}
     for s in raw_spans:
@@ -1125,7 +1304,14 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         embedded += 1
     named, bar, n_people, method = _name_all(
         sess, candidates, sample_rate, cfg, embed_fn, eres_fn)
-    main = main_voice(spans)
+    # The whole turn: every piece's spans, end to end, in the first
+    # piece's time. A turn of one piece is just this piece.
+    base = earlier[0]["offset"] if earlier else offset
+    whole = [{**s, "start": round(s["start"] + p["offset"] - base, 3),
+              "end": round(s["end"] + p["offset"] - base, 3)}
+             for p in list(earlier) + [{"offset": offset, "spans": spans}]
+             for s in p["spans"]]
+    main = main_voice(whole)
     if main is not None and turn_id:
         sess["turn_voice"].append((str(turn_id), main))
         del sess["turn_voice"][:-TURNS_KEPT]
@@ -1142,6 +1328,8 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         voices={str(k): v for k, v in sorted(named.items())},
         bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
         embedded=embedded, people=n_people, method=method, filled=filled)
+    if earlier:
+        row["pieces"] = len(earlier) + 1
     if main is None:
         return None
     voice = named.get(main) or {}
@@ -1154,16 +1342,20 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             "human": bool(voice.get("human")), "method": method,
             "voice_clean_s": voice.get("clean_s") or 0.0,
             "clean_spans": clean,
-            "voices_in_turn": len({s["slot"] for s in spans}),
-            "overlap_s": round(sum(s["end"] - s["start"] for s in spans
+            "voices_in_turn": len({s["slot"] for s in whole}),
+            "overlap_s": round(sum(s["end"] - s["start"] for s in whole
                                    if s["overlap"]), 3),
             # What the crosstalk split reads (#482 item D). Every voice
             # heard in the turn with its name and seconds, the spans in
             # turn time, and how much audio the turn held (its clock, for
             # lining up Scribe's word times). Content-free, like the rows.
-            "voices": turn_voices(spans, named),
-            "spans": [dict(s) for s in spans],
-            "turn_s": round(seconds, 3)}
+            "voices": turn_voices(whole, named),
+            "spans": [dict(s) for s in whole],
+            "turn_s": round(offset + seconds - base, 3),
+            "pieces": len(earlier) + 1,
+            # What this piece alone heard, for joining it with pieces the
+            # feed didn't answer (join_pieces).
+            "piece_voices": turn_voices(spans, named)}
 
 
 def turn_voices(spans, named):
@@ -1366,6 +1558,7 @@ def _reset_for_tests():
             f.alive = False
         _feeds.clear()
         _results.clear()
+        _pieces.clear()
         _sessions.clear()
         _clip_cache.clear()
         _anchor_cache.clear()

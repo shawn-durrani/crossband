@@ -37,6 +37,12 @@ What these tests pin, in order:
    starts one.
 10. WHAT THE CROSSTALK SPLIT READS. Every voice heard in a turn, with its
    spans in turn time.
+11. LONG TURNS (#469). A piece that names the piece before it answers for
+   the whole turn: its voices over every piece, end to end. Pieces whose
+   voices disagree list both, a piece too short to judge adds nothing, a
+   new turn stands alone, and tap-to-correct names the turn's voice.
+   Pieces named on their own are joined by their verdicts by the same
+   rules, and the links are bounded.
 
 Keyless and offline: the diariser and the speaker model are fakes.
 Synthetic roster (Alex, Sam).
@@ -125,13 +131,14 @@ def _chunks(seconds, size=0.1):
     return [pcm[i:i + step] for i in range(0, len(pcm), step)]
 
 
-def _live(chat_id, turn_id, seconds, cfg=CFG):
+def _live(chat_id, turn_id, seconds, cfg=CFG, after=None):
     """One turn through the feed, as the relay drives it: every chunk as it
-    arrives, then the commit. Returns the turn's result once its row is
-    written too (the pass gets the result first, then the row lands)."""
+    arrives, then the commit (naming the piece before it, `after`, when a
+    long turn was cut). Returns the turn's result once its row is written
+    too (the pass gets the result first, then the row lands)."""
     for chunk in _chunks(seconds):
         vss.feed(chat_id, chunk, SR, cfg)
-    vss.end_turn(chat_id, turn_id, cfg)
+    vss.end_turn(chat_id, turn_id, cfg, after=after)
     got = vss.wait_turn(turn_id, timeout=3)
     assert _wait_for(lambda: _row(turn_id))
     return got
@@ -516,7 +523,7 @@ def test_the_feed_never_writes_to_the_store(fakes, monkeypatch):
 ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
             "session", "turn", "offset", "spans", "main", "main_state",
             "main_name", "voices", "bar", "embedded", "people", "ms",
-            "filled", "method", "error"}
+            "filled", "method", "error", "pieces"}
 
 
 def test_rows_are_content_free_and_owner_only(fakes):
@@ -807,8 +814,8 @@ def test_the_relay_feeds_every_chunk_and_ends_the_turn_before_the_check(
     order = []
     monkeypatch.setattr(vss, "feed", lambda chat_id, pcm, sr, cfg:
                         order.append(("feed", len(pcm))))
-    monkeypatch.setattr(vss, "end_turn", lambda chat_id, tid, cfg:
-                        order.append(("end", tid)))
+    monkeypatch.setattr(vss, "end_turn", lambda chat_id, tid, cfg, after:
+                        order.append(("end", tid, after)))
     monkeypatch.setattr(diarize, "schedule_turn_check",
                         lambda *a, **k: order.append(("check",
                                                       k.get("turn_id"))))
@@ -821,9 +828,15 @@ def test_the_relay_feeds_every_chunk_and_ends_the_turn_before_the_check(
             ws.receive_json()
             ws.send_json(dict(_frame(commit=True), turn_id="t9"))
             ws.receive_json()
+            # the next piece of a long turn names the piece before it
+            ws.send_json(dict(_frame(commit=True), turn_id="t10", after="t9"))
+            ws.receive_json()
             ws.send_json({"done": True})
-    assert order == [("feed", 320), ("feed", 320), ("end", "t9"),
-                     ("check", "t9")]
+    assert order == [("feed", 320), ("feed", 320), ("end", "t9", None),
+                     ("check", "t9"), ("feed", 320), ("end", "t10", "t9"),
+                     ("check", "t10")]
+    # the link is ours alone: nothing about it goes to the transcriber
+    assert all("after" not in m for m in fake.sent)
 
 
 def test_the_async_wait_polls_without_a_thread():
@@ -963,3 +976,216 @@ def test_a_turn_named_on_its_own_is_one_voice(fakes):
     assert got["single"] is True and got["voices_in_turn"] == 1
     from backend import crosstalk
     assert crosstalk.listed_voices(got) == [0]
+
+
+# ---------- 11. a long turn is named from all its pieces (#469) ----------
+
+def test_a_short_last_piece_takes_the_voice_its_pieces_had(fakes,
+                                                           monkeypatch):
+    """The 25 September shape: a long remark cut into a 12 s piece and a
+    tail too short to track. The message carries the tail's id, and the
+    tail used to come back with no answer, so the whole turn read "still
+    listening". The tail now answers with the voice of the whole turn."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 12.0}], []]
+    assert _live(3, "t1", 12.0)["name"] == "Sam"
+    got = _live(3, "t2", 0.4, after="t1")
+    assert (got["state"], got["name"], got["voice"]) == ("named", "Sam", 1)
+    assert got["pieces"] == 2 and got["voices_in_turn"] == 1
+    assert got["turn_s"] == 12.4
+    assert got["spans"] == [{"slot": 1, "start": 0.0, "end": 12.0,
+                             "overlap": False}]
+    assert got["clean_spans"] == []     # none of Sam's speech in the tail
+    row = _row("t2")
+    assert row["pieces"] == 2 and row["main_name"] == "Sam"
+    assert "pieces" not in _row("t1")
+
+
+def test_pieces_whose_voices_disagree_make_a_two_voice_turn(fakes,
+                                                            monkeypatch):
+    """Sam speaks the first piece and Alex the second, each clearly. The
+    turn never gets one name: it lists both voices, by their time in the
+    whole turn, which makes it crosstalk."""
+    from backend import crosstalk
+    seq = [SAM, ALEX]
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: seq.pop(0))
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 10.0}],
+                    [{"slot": 2, "start": 10.0, "end": 16.0}]]
+    _live(3, "t1", 10.0)
+    got = _live(3, "t2", 6.0, after="t1")
+    assert crosstalk.listed_voices(got) == [1, 2]
+    assert {s: (v["name"], v["seconds"], v["first"])
+            for s, v in got["voices"].items()} == {
+        1: ("Sam", 10.0, 0.0), 2: ("Alex", 6.0, 10.0)}
+    assert got["voices_in_turn"] == 2 and got["voice"] == 1
+    # the clean spans are this piece's own, of the turn's main voice, and
+    # Sam isn't in this piece (a two-voice turn saves no clip anyway)
+    assert got["clean_spans"] == []
+
+
+def test_a_piece_too_short_to_judge_changes_nothing(fakes, monkeypatch):
+    """Half a second of another voice at the end of a long turn is too
+    short to fingerprint or to list: the turn stays Sam's alone."""
+    from backend import crosstalk
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 12.0}],
+                    [{"slot": 2, "start": 12.0, "end": 12.5}]]
+    _live(3, "t1", 12.0)
+    got = _live(3, "t2", 0.5, after="t1")
+    assert got["name"] == "Sam" and crosstalk.listed_voices(got) == [1]
+
+
+def test_a_turn_joins_only_the_piece_it_names(fakes, monkeypatch):
+    """A new turn names no piece and stands alone, and so does a piece
+    naming a turn that isn't the last one the feed saw."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 12.0}], [], []]
+    _live(3, "t1", 12.0)
+    assert _live(3, "t2", 0.4) is None
+    assert _live(3, "t3", 0.4, after="t1") is None
+
+
+def test_three_pieces_run_end_to_end(fakes, monkeypatch):
+    """A 30 s monologue in three pieces: each piece's answer covers every
+    piece so far, in the first piece's time, whichever id the message
+    ends up carrying."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 12.0}],
+                    [{"slot": 1, "start": 12.0, "end": 24.0}],
+                    [{"slot": 1, "start": 24.0, "end": 30.0}]]
+    _live(3, "t1", 12.0)
+    assert _live(3, "t2", 12.0, after="t1")["turn_s"] == 24.0
+    got = _live(3, "t3", 6.0, after="t2")
+    assert got["pieces"] == 3 and got["turn_s"] == 30.0
+    assert [(s["start"], s["end"]) for s in got["spans"]] == [
+        (0.0, 12.0), (12.0, 24.0), (24.0, 30.0)]
+    assert got["voices"][1]["seconds"] == 30.0
+    assert got["clean_spans"] == [(0.0, 6.0)]   # this piece's own time
+    assert got["piece_voices"][1]["seconds"] == 6.0
+
+
+def test_a_piece_the_feed_failed_is_joined_by_what_each_piece_heard(
+        fakes, monkeypatch):
+    """The feed named the first piece, then failed on the tail. The pass
+    names the tail on its own (nothing, it's too short) and joins it with
+    what the first piece heard."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 12.0}]]
+    first = _live(3, "t1", 12.0)
+    assert vss.join_pieces("t1", first, 12.0) is first   # the pass's call
+    fakes.fail_on = "/end-turn"
+    assert _live(3, "t2", 0.4, after="t1") is None
+    got = vss.join_pieces("t2", None, 0.4)
+    assert (got["name"], got["pieces"], got["clean_spans"]) == ("Sam", 2, [])
+
+
+def test_naming_a_long_turn_by_hand_names_the_voice_of_its_pieces(
+        app, fakes, monkeypatch):
+    """Tap-to-correct on a long turn whose message carries its short tail's
+    id names the voice that spoke the turn, not nobody."""
+    monkeypatch.setattr(vss, "embed_live",
+                        lambda pcm, sr, cfg: [0.0, 0.0, 1.0, 0.0])
+    chat = _chat(app)
+    fakes.script = [[{"slot": 4, "start": 0.0, "end": 12.0}], []]
+    _live(chat, "t1", 12.0)
+    _live(chat, "t2", 0.4, after="t1")
+    assert vss.human_named(chat, "t2", "Dave", "p-dave", CFG)
+    assert vss._sessions[chat]["voices"][4]["human"]["name"] == "Dave"
+
+
+# What pieces named on their own heard (no diariser, or it failed).
+
+def _v(state="named", name="Sam", score=0.95, pid=None, seconds=0.0):
+    return {"state": state, "name": name if state == "named" else "",
+            "pid": (pid or f"p-{name}") if state == "named" else "",
+            "score": score, "prob": score, "human": False,
+            "method": "calibrated", "seconds": seconds}
+
+
+def _p(seconds, *voices):
+    """One piece: its length, and each voice it heard for all of it."""
+    return (seconds, [dict(v, seconds=v["seconds"] or seconds)
+                      for v in voices])
+
+
+def test_verdicts_that_agree_name_the_turn_weighted_by_length():
+    got = vss.join_verdicts([_p(12.0, _v(score=0.95)), _p(6.0, _v(score=0.99)),
+                             _p(8.0, _v("listening", score=0.4)),
+                             (0.3, [])])
+    assert (got["state"], got["name"], got["pid"]) == ("named", "Sam",
+                                                       "p-Sam")
+    assert got["prob"] == pytest.approx((12 * 0.95 + 6 * 0.99) / 18,
+                                        abs=1e-4)
+    assert got["voices_in_turn"] == 1 and got["pieces"] == 4
+    assert got["turn_s"] == 26.3 and got["clean_spans"] == []
+
+
+def test_verdicts_that_disagree_never_give_one_name():
+    from backend import crosstalk
+    for pieces in ([_p(10.0, _v()), _p(6.0, _v(name="Alex"))],
+                   [_p(10.0, _v()), _p(6.0, _v("new", score=0.02))],
+                   # one piece that heard two voices keeps both
+                   [_p(10.0, _v()), _p(8.0, _v(seconds=6.0),
+                                       _v(name="Alex", seconds=2.0))]):
+        got = vss.join_verdicts(pieces)
+        assert got["name"] == "Sam" and got["voices_in_turn"] == 2
+        assert crosstalk.listed_voices(got) == [0, 1]
+    # the longer voice leads
+    got = vss.join_verdicts([_p(3.0, _v()), _p(9.0, _v(name="Alex"))])
+    assert got["name"] == "Alex" and crosstalk.listed_voices(got) == [1, 0]
+
+
+def test_verdicts_with_nothing_judged_leave_the_answer_as_it_was():
+    mine = {"state": "listening"}
+    assert vss.join_verdicts([_p(12.0, _v("listening")), (0.4, [])],
+                             mine) is mine
+    assert vss.join_verdicts([], None) is None
+    got = vss.join_verdicts([_p(5.0, _v("new", score=0.01)),
+                             _p(5.0, _v("new", score=0.03))])
+    assert got["state"] == "new" and got["voices_in_turn"] == 1
+
+
+def test_what_a_piece_heard():
+    assert vss.piece_voices(None, 3.0) == []
+    one = vss.piece_voices({"voice": 0, "state": "named", "name": "Sam",
+                            "pid": "p-Sam", "score": 0.9, "method": "multi"},
+                           3.0)
+    assert one == [{"state": "named", "name": "Sam", "pid": "p-Sam",
+                    "score": 0.9, "prob": None, "human": None,
+                    "seconds": 3.0, "method": "multi"}]
+    # a feed's answer over several pieces gives this piece's voices only
+    got = {"voices": {1: _v(seconds=20.0)}, "method": "calibrated",
+           "piece_voices": {1: _v(seconds=0.4)}}
+    assert [v["seconds"] for v in vss.piece_voices(got, 0.4)] == [0.4]
+
+
+def test_pieces_named_on_their_own_are_joined_by_the_pass(app):
+    """No feed answered either piece: the pass joins what each piece was
+    named, through the links the relay recorded as the pieces arrived."""
+    vss.end_turn(3, "t1", {})             # no diariser: links only
+    vss.end_turn(3, "t2", {}, after="t1")
+    assert vss.pieces_before("t2") == ["t1"]
+    first = vss.join_pieces("t1", dict(_v(), voice=0, single=True), 12.0)
+    assert first["name"] == "Sam" and "pieces" not in first
+    got = vss.join_pieces("t2", None, 0.4)
+    assert (got["state"], got["name"], got["pieces"]) == ("named", "Sam", 2)
+    # a feed's answer that already covers every piece is left alone
+    covered = {"state": "named", "name": "Sam", "pieces": 2}
+    assert vss.join_pieces("t2", covered, 0.4) is covered
+    # a turn of its own is its own answer
+    vss.note_piece("t9")
+    assert vss.join_pieces("t9", None, 0.4) is None
+
+
+def test_the_links_are_bounded_and_never_loop(app):
+    vss.note_piece("a", "b")
+    vss.note_piece("b", "a")
+    assert vss.pieces_before("a") == ["b"]
+    for i in range(1, 20):
+        vss.note_piece(f"p{i}", f"p{i - 1}")
+    assert len(vss.pieces_before("p19")) == vss.MAX_PIECES - 1
+    vss.note_piece("p19")                 # a later copy without the link
+    assert vss.pieces_before("p19")       # keeps it
+    for i in range(vss.RESULTS_MAX + 10):
+        vss.note_piece(f"x{i}")
+    assert len(vss._pieces) == vss.RESULTS_MAX

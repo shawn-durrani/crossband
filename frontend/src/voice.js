@@ -1058,8 +1058,10 @@ export default class VoiceController {
       // (the /send carries the same id). A dropped short utterance still
       // commits with its id but never enters the ledger, so its final finds
       // no commit to win and attaches nowhere - the structural version of
-      // the old drop flag.
-      this._sttSend({ commit: true, turn_id: turnId })
+      // the old drop flag. A piece after a cut names the piece before it
+      // (#469), so the check names the turn from all its pieces.
+      this._sttSend(cut ? { commit: true, turn_id: turnId, after: cut.turnId }
+                        : { commit: true, turn_id: turnId })
       if (!tooShort) {
         onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send', speechMs)
         // Only a real end of turn is a hand-off; a capped segment buffers.
@@ -1095,14 +1097,17 @@ export default class VoiceController {
     // a pause that ends the turn while it's out makes it the last piece.
     const tooShort = speechMs < MIN_SPEECH_MS
     const piece = this._trackPiece(turnId, continuation && !tooShort ? 'buffer' : 'send',
-                                   { speechMs, endedAt: lastVoice })
+                                   { speechMs, endedAt: lastVoice,
+                                     after: cut ? cut.turnId : null })
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
     piece.stoppedAt = Date.now()
     this._startRecorder()
     if (tooShort) {
-      if (cause === 'gap') this._endLongTurn(turnId, cut)
+      // A tail too short to upload was never checked, so the turn goes
+      // under the cut piece's id, whose check named all the pieces (#469).
+      if (cause === 'gap') this._endLongTurn(cut ? cut.turnId : turnId, cut)
       return
     }
     if (!continuation) this._watchHandoff(turnId)
@@ -1183,7 +1188,8 @@ export default class VoiceController {
     let dispatch
     try {
       const res = await fetch(`/api/chats/${this.getChatId()}/stt`,
-                              { method: 'POST', body: batchSttForm(blob, speechMs, turnId, copy) })
+                              { method: 'POST',
+                                body: batchSttForm(blob, speechMs, turnId, copy, piece.after) })
       const data = await res.json().catch(() => ({}))
       if (this._batchPiece === piece) this._batchPiece = null
       dispatch = piece.dispatch || 'send'
@@ -1211,7 +1217,7 @@ export default class VoiceController {
       if (dispatch === 'send') {
         handoffStage(this._handoff, turnId || this._trace.current()?.turnId, STAGE_HELD)
       }
-      this.heldUtterances.push({ blob, speechMs, turnId, copy })
+      this.heldUtterances.push({ blob, speechMs, turnId, copy, after: piece.after })
       this.onHeld?.(this.heldUtterances.length)
       this._startHeldRetry()
       return false
@@ -1266,7 +1272,7 @@ export default class VoiceController {
       const item = this.heldUtterances[0]
       if (!item) { this.onHeld?.(0); return }
       try {
-        const body = batchSttForm(item.blob, item.speechMs, item.turnId, item.copy)
+        const body = batchSttForm(item.blob, item.speechMs, item.turnId, item.copy, item.after)
         const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body })
         const data = await res.json().catch(() => ({}))
         // Reached the server: this item is done either way (HTTP errors

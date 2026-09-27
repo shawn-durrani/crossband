@@ -455,6 +455,10 @@ Live on this install:
   Clips are saved from a voice named at 0.99 or more with 8 seconds of
   clean speech. Memory gets the probability as confidence.
 - Crosstalk is split on the Mac from Scribe's word times.
+- A long turn sent in pieces is labelled from all its pieces together.
+  Each piece names the piece before it, pieces with different voices
+  make a two-voice turn, and a last piece too short to judge adds
+  nothing.
 - Deleted: the three routes, their decision tables and live mirrors,
   the early check before a turn ends, the cloud crosstalk split, the
   introduction stash, the window multi-voice check, the extra bar while
