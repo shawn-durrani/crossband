@@ -455,6 +455,10 @@ Live on this install:
   Clips are saved from a voice named at 0.99 or more with 8 seconds of
   clean speech. Memory gets the probability as confidence.
 - Crosstalk is split on the Mac from Scribe's word times.
+- The span check: a clean span that plainly sounds like another session
+  voice moves there before it's added. Plainly means that voice has 6
+  seconds or more of clean speech, the span scores 0.7 or more against
+  it by cosine, and it leads every other voice by 0.25 or more.
 - A long turn sent in pieces is labelled from all its pieces together.
   Each piece names the piece before it, pieces with different voices
   make a two-voice turn, and a last piece too short to judge adds
@@ -470,8 +474,7 @@ Not built yet:
 - A spoken answer to the ask naming the voice, relabelling its turns
   and saving its held audio. Tapping a turn does all three. And "that's
   the TV".
-- The check that moves a span to the session voice it plainly belongs
-  to, and the naming pass at the end of a session.
+- The naming pass at the end of a session.
 - Stored trust scores recomputed in the new units, and the hygiene
   check on the new scorer.
 
