@@ -2,8 +2,11 @@
 // controller. A spoken turn runs through voice.js's own commit, final and
 // send paths with fake browser parts, and the test watches what reaches the
 // network. Pins: a turn the server never saves triggers exactly one save;
-// a normal turn triggers none; repeated stalls are rate-limited; and
-// nothing that was said reaches the saved bundle or the stall beacon.
+// a normal turn triggers none; repeated stalls are rate-limited; a sound
+// under a second whose transcript came back empty is reported without a
+// save, so the page's saves are kept for real stalls (the owner's call,
+// 28 September); and nothing that was said reaches the saved bundle or
+// the stall beacon.
 // Run: node --test frontend/src/voiceStallCapture.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test } from 'node:test'
@@ -87,11 +90,11 @@ function liveSession() {
   return { ctrl, ws, sent }
 }
 
-// One spoken turn: about two seconds of speech, then the pause that ends
-// it. Returns the turn id the commit carried.
-async function speak(ctrl, ws) {
+// One spoken turn: about two seconds of speech, or `speechMs`, then the
+// pause that ends it. Returns the turn id the commit carried.
+async function speak(ctrl, ws, speechMs = 2000) {
   const now = Date.now()
-  ctrl.speechStart = now - 4100
+  ctrl.speechStart = now - 2100 - speechMs
   ctrl.lastVoice = now - 2100
   ctrl._utterFrames = 40
   await ctrl._finalizeUtterance('gap')
@@ -158,6 +161,37 @@ test('an empty transcript is a stall too, and says so', async () => {
   ctrl._checkHandoffs(Date.now() + HANDOFF_STALL_MS + 1)
   await Promise.all(saves)
   assert.equal(JSON.parse(beacons()[0].body).stage, 'empty')
+  assert.equal(dumps().length, 1)
+})
+
+test('a sound under a second that came back empty is reported and saves nothing', async () => {
+  const { ctrl, ws, sent } = liveSession()
+  const turnId = await speak(ctrl, ws, 600)
+  transcribe(ws, turnId, '')
+  assert.equal(sent.length, 0)
+  ctrl._checkHandoffs(Date.now() + HANDOFF_STALL_MS + 1)
+  await Promise.all(saves)
+  assert.equal(beacons().length, 1, 'the server log still hears of it')
+  const beacon = JSON.parse(beacons()[0].body)
+  assert.equal(beacon.stage, 'empty')
+  assert.equal(beacon.speech_ms, 600)
+  assert.equal(dumps().length, 0)
+  // The page's saves are still there for a real stall.
+  const next = await speak(ctrl, ws)
+  transcribe(ws, next)
+  ctrl._checkHandoffs(Date.now() + HANDOFF_STALL_MS + 1)
+  await Promise.all(saves)
+  assert.equal(dumps().length, 1)
+  assert.equal(JSON.parse(dumps()[0].body).trigger, 'handoff_stalled')
+})
+
+test('a sound under a second that stalls for another reason still saves', async () => {
+  const { ctrl, ws } = liveSession()
+  const turnId = await speak(ctrl, ws, 600)
+  transcribe(ws, turnId)
+  ctrl._checkHandoffs(Date.now() + HANDOFF_STALL_MS + 1)
+  await Promise.all(saves)
+  assert.equal(JSON.parse(beacons()[0].body).stage, 'sent')
   assert.equal(dumps().length, 1)
 })
 

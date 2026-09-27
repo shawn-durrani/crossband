@@ -34,16 +34,26 @@ export const STAGE_SENT = 'sent'                 // words went to /send, not con
 // A session where nothing ever confirms must not grow the watch forever.
 export const MAX_WATCHED = 16
 
+// A sound shorter than this whose transcript came back empty stalls like
+// any turn, since nothing is sent, but nothing was lost either: it was a
+// cough, a door or a word too short to hear. Its stall is still reported,
+// and it doesn't use up one of the page's automatic diagnostics saves,
+// which are kept for real stalls (the owner's call, 28 September).
+export const SHORT_SOUND_MS = 1000
+
 export function newHandoffWatch() {
   return { turns: [] }
 }
 
 // The app decided a turn ended and began handing it off. A repeated or
-// missing id is ignored.
-export function handoffBegan(watch, turnId, now) {
+// missing id is ignored. `speechMs` is how long the turn's speech ran, or
+// null when the caller doesn't know it.
+export function handoffBegan(watch, turnId, now, speechMs = null) {
   if (!turnId || watch.turns.some((t) => t.turnId === turnId)) return
+  const ms = typeof speechMs === 'number' && Number.isFinite(speechMs)
+    ? Math.round(speechMs) : null
   watch.turns.push({ turnId, since: Number(now), stage: STAGE_TRANSCRIBING,
-                     reported: false })
+                     speechMs: ms, reported: false })
   while (watch.turns.length > MAX_WATCHED) watch.turns.shift()
 }
 
@@ -79,7 +89,16 @@ export function takeStalledHandoffs(watch, now) {
     const waited = Number(now) - t.since
     if (!Number.isFinite(waited) || waited <= HANDOFF_STALL_MS) continue
     t.reported = true
-    out.push({ turnId: t.turnId, stage: t.stage, waitedMs: Math.round(waited) })
+    out.push({ turnId: t.turnId, stage: t.stage, waitedMs: Math.round(waited),
+               speechMs: t.speechMs ?? null })
   }
   return out
+}
+
+// Whether a stall from takeStalledHandoffs should ask for an automatic
+// diagnostics save. Every stall does, except a sound under SHORT_SOUND_MS
+// whose transcript came back empty. A turn of unknown length still does.
+export function stallWorthSaving(stall) {
+  const short = stall?.speechMs != null && stall.speechMs < SHORT_SOUND_MS
+  return !(stall?.stage === STAGE_EMPTY && short)
 }

@@ -1,14 +1,17 @@
 // #304: the hand-off watch behind the automatic diagnostics save. Pins: a
 // turn the server never confirms reports once, past the bound and not
 // before; a confirmed turn never reports; the stage it stopped at rides
-// the report; the watch is bounded and a session end clears it.
+// the report; the watch is bounded and a session end clears it. And, the
+// owner's call of 28 September: a sound under a second whose transcript
+// came back empty doesn't ask for an automatic save.
 // Run: node --test frontend/src/handoffWatch.test.js
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  HANDOFF_STALL_MS, MAX_WATCHED, STAGE_EMPTY, STAGE_SENT, STAGE_TRANSCRIBING,
+  HANDOFF_STALL_MS, MAX_WATCHED, SHORT_SOUND_MS, STAGE_EMPTY, STAGE_FAILED,
+  STAGE_HELD, STAGE_SENT, STAGE_TRANSCRIBING,
   handoffBegan, handoffConfirmed, handoffStage, newHandoffWatch,
-  resetHandoffWatch, takeStalledHandoffs,
+  resetHandoffWatch, stallWorthSaving, takeStalledHandoffs,
 } from './handoffWatch.js'
 
 const T0 = 1_000_000
@@ -20,7 +23,7 @@ test('a turn the server never confirms reports once, past the bound', () => {
                    'at the bound itself it is still a slow turn')
   const stalled = takeStalledHandoffs(w, T0 + HANDOFF_STALL_MS + 1)
   assert.deepEqual(stalled, [{ turnId: 'turn-a', stage: STAGE_TRANSCRIBING,
-                               waitedMs: HANDOFF_STALL_MS + 1 }])
+                               waitedMs: HANDOFF_STALL_MS + 1, speechMs: null }])
   // One stall, one report, however often the VAD tick asks afterwards.
   assert.deepEqual(takeStalledHandoffs(w, T0 + HANDOFF_STALL_MS * 5), [])
 })
@@ -97,4 +100,27 @@ test('garbage clocks never report a stall', () => {
   for (const now of [NaN, undefined, 'soon']) {
     assert.deepEqual(takeStalledHandoffs(w, now), [], String(now))
   }
+})
+
+test('the length of the speech rides the report', () => {
+  const w = newHandoffWatch()
+  handoffBegan(w, 'turn-h', T0, 640.4)
+  handoffBegan(w, 'turn-i', T0, 'long')
+  const [h, i] = takeStalledHandoffs(w, T0 + HANDOFF_STALL_MS + 1)
+  assert.equal(h.speechMs, 640)
+  assert.equal(i.speechMs, null, 'a length that is not a number is unknown')
+})
+
+test('a sound under a second that came back empty asks for no save', () => {
+  const stall = (stage, speechMs) => ({ turnId: 't', stage, waitedMs: 31000, speechMs })
+  assert.equal(stallWorthSaving(stall(STAGE_EMPTY, 600)), false)
+  assert.equal(stallWorthSaving(stall(STAGE_EMPTY, SHORT_SOUND_MS - 1)), false)
+  // A second or more, or any other stage, is a stall worth a file.
+  assert.equal(stallWorthSaving(stall(STAGE_EMPTY, SHORT_SOUND_MS)), true)
+  assert.equal(stallWorthSaving(stall(STAGE_EMPTY, 4000)), true)
+  for (const stage of [STAGE_TRANSCRIBING, STAGE_FAILED, STAGE_HELD, STAGE_SENT]) {
+    assert.equal(stallWorthSaving(stall(stage, 600)), true, stage)
+  }
+  // A turn whose length the watch never heard still saves.
+  assert.equal(stallWorthSaving(stall(STAGE_EMPTY, null)), true)
 })
