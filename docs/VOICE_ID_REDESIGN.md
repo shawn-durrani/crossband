@@ -516,6 +516,10 @@ Live on this install:
 
 Not built yet:
 
+- A check on a turn too short to fingerprint. Today it takes its
+  voice's name, so a one-word reply the tracker files under the wrong
+  voice is named wrong. Whether to check it, and how, is the owner's
+  call.
 - Made-up sessions from the household's own clips, and the voice rig
   playing a conversation out of a speaker into the microphone.
 
