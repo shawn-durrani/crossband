@@ -525,11 +525,23 @@ def embed_eres_live(pcm, sample_rate, cfg):
         return None
 
 
+def voice_of_turn(chat_id, turn_id):
+    """The session voice that spoke most of a turn in the chat's open
+    session, or None: no session, or the turn isn't one of its turns."""
+    tid = str(turn_id or "")[:64]
+    if not tid:
+        return None
+    with _lock:
+        sess = _sessions.get(chat_id)
+        pairs = list(sess.get("turn_voice") or ()) if sess else []
+    return next((s for t, s in reversed(pairs) if t == tid), None)
+
+
 def human_named(chat_id, turn_id, name, person_id, cfg):
-    """A person named a turn by hand: the session voice that spoke it is
-    that person from now on, and its other turns in the session that
-    carry no name or a session name take it at once. True when a session
-    voice took the name."""
+    """A person named a turn, by tapping it or answering the ask out loud:
+    the session voice that spoke it is that person from now on, and its
+    other turns in the session that carry no name or a session name take
+    it at once. True when a session voice took the name."""
     tid = str(turn_id or "")[:64]
     if not tid or not person_id:
         return False
@@ -537,8 +549,7 @@ def human_named(chat_id, turn_id, name, person_id, cfg):
         sess = _sessions.get(chat_id)
     if not sess:
         return False
-    slot = next((s for t, s in reversed(sess.get("turn_voice") or [])
-                 if t == tid), None)
+    slot = voice_of_turn(chat_id, tid)
     voice = sess["voices"].get(slot) if slot is not None else None
     if voice is None:
         return False

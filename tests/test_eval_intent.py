@@ -202,6 +202,25 @@ def test_merged_prompt_carries_the_context_and_the_message():
     assert prompt.endswith(fx.text)
 
 
+def test_a_fixture_spoken_while_the_app_is_asking_says_so_in_its_prompt():
+    """#523: the harness sends what the live scan sends. A fixture marked
+    `asking` gets the asking note, and every other fixture doesn't."""
+    from backend.intent import ASKING_NOTE
+    seen = {}
+
+    async def caller(prompt, axis="merged"):
+        seen[prompt.rsplit("Message: ", 1)[-1]] = ASKING_NOTE in prompt
+        from backend.llm_util import UtilityCompletion
+        return UtilityCompletion(text="{}")
+
+    fixtures = [_fx("answer_thats_dave"), _fx("plain_recipe")]
+    assert [f.asking for f in fixtures] == [True, False]
+    for fx in fixtures:
+        asyncio.run(runner.run_one(fx, "merged", caller, {}, "m"))
+    assert seen == {"That's Dave.": True,
+                    "What's a good recipe for banana bread?": False}
+
+
 def test_parse_merged_uses_the_apps_parsers_and_degrades_to_nothing():
     text = json.dumps({"mode_command": "off", "introductions": ["Sam"], "departures": [],
                        "aliases": {"Sam": "Sammy"},

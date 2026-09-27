@@ -863,6 +863,8 @@ SCAN_OUTCOMES = (
                             # the command stopped automatic re-arming in a
                             # room that was already off
     "ask_raised",           # relationship-only, no remembered match: asking
+    "ask_answered",         # an introduction named the voice an open "who's
+                            # this?" ask points at (#523, voice_ask.py)
     "roster_grew",          # already armed; people were added
     "roster_shrank",        # a departure freed roster slots
     "name_corrected",       # a spoken correction set a preferred name
@@ -933,7 +935,9 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
     then the introduction/departure outcome, then the correction, then the
     depth change, then research mode; the rare turn that confirms on
     several axes at once ("group mode on - this is Dave") applies all of
-    them under the one verdict line. A confirmed instruction that changed
+    them under the one verdict line. An introduction heard while a "who's
+    this?" ask is open can also answer it, naming the voice the ask points
+    at (backend/voice_ask.py, #523). A confirmed instruction that changed
     nothing on every axis it touched posts one plain system line saying so
     (intent.nothing_changed_line) - a miss must never be silent again (#258).
     The exception is a correction in a turn that spells a word out with
@@ -941,11 +945,17 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
     was never an instruction, so it is set aside, logged and not posted.
     Every failure ends here (log only)."""
     try:
+        from . import voice_ask
         seats = await asyncio.to_thread(_all_participant_names)
         present = await asyncio.to_thread(_present_names, chat_id)
         known = await asyncio.to_thread(_correction_known_names, chat_id)
+        # #523: while a "who's this?" ask points at a turn, the model is
+        # told, so "that's Dave" is heard as the answer it is.
+        asking = voice_ask.points_at_a_turn(
+            await asyncio.to_thread(voice_ask.open_ask, chat_id))
         prompt = intent.build_merged_prompt(
-            text, cfg.get("user_name", "User"), seats, present, known)
+            text, cfg.get("user_name", "User"), seats, present, known,
+            asking=asking)
         reply = await llm_util.utility_complete_logged(
             chat_id, "intent_scan", prompt, cfg, max_tokens=300)
         verdict = intent.parse_merged(reply, text)
@@ -969,8 +979,16 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             if result != "no_change":
                 outcome = result
         if verdict["introductions"] or verdict["departures"]:
+            # #523: an open "who's this?" ask may be what this names. It is
+            # read again now, because the introduction closes it.
+            ask = await asyncio.to_thread(voice_ask.open_ask, chat_id) \
+                if asking and verdict["introductions"] else None
             result = await asyncio.to_thread(apply_scan, chat_id, verdict,
                                              cfg, text, message_id)
+            if ask is not None:
+                result = await asyncio.to_thread(
+                    voice_ask.answer_with_name, chat_id, ask, message_id,
+                    verdict, cfg, text) or result
             outcomes["introductions"] = result
             if outcome is None:
                 outcome = result

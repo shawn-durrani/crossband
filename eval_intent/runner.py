@@ -48,7 +48,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 async def run_one(fx, strategy: str, caller, cfg, model: str) -> Result:
     if strategy == "merged":
         prompt = build_merged_prompt(fx.text, fx.user_name, fx.seats,
-                                     fx.present, fx.known)
+                                     fx.present, fx.known, asking=fx.asking)
         done = await caller(prompt, "merged")
         cost = price_utility_call(model, done, cfg)[0] if done.text is not None else 0.0
         # The turn goes to the parser too, for the live scan's rule on words

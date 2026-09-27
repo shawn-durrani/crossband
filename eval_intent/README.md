@@ -40,6 +40,13 @@ Z-O-O-S a word?". Those are never a name correction, while a person's
 name spelt out still is one. All of it is made up. A set built from
 real turns belongs outside the repository.
 
+Some fixtures are marked `asking`. They're turns spoken while the app is
+asking who a new voice is, like "that's Dave" or "I'm Mateo". The live
+scan tells the model when it's asking, and only then, so these fixtures
+get that line in their prompt and every other fixture doesn't. A few
+`asking` fixtures carry other instructions, to show the line changes
+nothing else.
+
 ## What it compares
 
 The `merged` strategy is the path the app runs, one call per turn. It

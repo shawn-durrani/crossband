@@ -30,6 +30,7 @@ voice_sessions.py - follows each voice through a voice session on the
 diarize.py      - schedules the check and writes its label on the turn
 crosstalk.py    - splits a two-voice turn's words by voice, from the
                   tracker's spans and the live transcript's word times
+voice_ask.py    - answers "who's this?" from what someone says
 voiceid.py      - the speaker model and the matcher; anchors.py is the
                   clip store, introductions.py the phrase and seating layer
 voice_calibration.py - the calibrated scorer and voice readiness

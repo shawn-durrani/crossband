@@ -2,8 +2,9 @@
 by hand, across the six axes the merged classifier returns: a room mode
 switch, introductions and departures (with aliases), name corrections, a
 reasoning depth change, a research request, and an explicit ask for a
-stronger model. Every fixture is made up: placeholder people, placeholder
-topics."""
+stronger model. A fixture can also say the app has just asked who a new
+voice is, which is when the live scan tells the model so. Every fixture is
+made up: placeholder people, placeholder topics."""
 
 from dataclasses import dataclass, field
 
@@ -34,6 +35,7 @@ class Fixture:
     present: list = field(default_factory=list)
     known: list = field(default_factory=list)
     seats: list = field(default_factory=lambda: ["Claude", "GPT"])
+    asking: bool = False    # the app has just asked who a new voice is
     notes: str = ""
 
     @property
@@ -83,4 +85,5 @@ class Fixture:
                        present=list(d.get("present") or []),
                        known=list(d.get("known") or []),
                        seats=list(d.get("seats") or ["Claude", "GPT"]),
+                       asking=d.get("asking") is True,
                        notes=d.get("notes") or "")
