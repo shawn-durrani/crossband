@@ -293,4 +293,6 @@ Whether the models say anything useful. Conversation quality, tool
 choice and answer accuracy are judged by the eval harnesses in
 `eval_critic/`, `eval_silence/`, `eval_attribution/`, `eval_recall/` and
 `eval_intent/`, and by use,
-never by unit tests. Green CI means the machinery keeps its promises.
+never by unit tests. Whether the app names the right voice is measured
+the same way, by the voice rig in `eval_voice/`. Green CI means the
+machinery keeps its promises.

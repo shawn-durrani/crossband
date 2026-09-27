@@ -22,3 +22,7 @@ CLAUDE.local.md
 # people, places, and projects, so it is personal data in its own right and
 # must never be committed. Committed template: secret-scan-local.example.
 .secret-scan-local
+# The voice rig's cache: rendered speech, mixes, generated scripts, the
+# shared voice models and each run's throwaway data folder. All synthetic,
+# never committed.
+eval_voice/cache/

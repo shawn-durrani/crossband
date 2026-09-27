@@ -105,6 +105,11 @@ page says what it costs and what it touches.
   hear what you meant, and does it hear at least as much as a baseline
   of fixed phrase lists? Made-up turns, the utility model, API spend
   per run.
+- [eval_voice/README.md](../eval_voice/README.md): the voice naming
+  question. Does the app put the right name on each spoken turn, over
+  noise and when two people talk at once? Made-up conversations in
+  synthetic voices, played into a second copy of the app that can't
+  reach your data. ElevenLabs spend the first time a line is spoken.
 
 ## Safety, security, history
 
