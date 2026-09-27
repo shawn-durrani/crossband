@@ -822,6 +822,35 @@ def keep_name_corrections(corrections, text) -> list:
                    for f in (corr.get("name"), corr.get("also")) if f)]
 
 
+
+# Someone stepping out and coming back ("back in ten", "be right back",
+# "won't be long") isn't the owner saying they're alone now (#540). The model
+# read "heading to the shops, back in ten" as room mode off in every run, and
+# every wording added to the shared prompt moved how other phrases were heard
+# ("go deeper on this one" stopped reading as research). So the rule is
+# applied to the verdict, in code, and the prompt stays as it was.
+_BACK_SOON_RE = re.compile(
+    r"\bback (?:soon|shortly|in (?:a (?:bit|sec|second|minute|moment|tick|"
+    r"jiffy|few)|an? hour|half an hour|\d+|one|two|three|four|five|ten|"
+    r"fifteen|twenty|thirty|forty|sixty)\b)|\bbe right back\b|\bbrb\b|"
+    r"\bwon'?t be (?:long|a (?:minute|sec|second|tick))\b",
+    re.IGNORECASE)
+_ALONE_RE = re.compile(r"\b(?:alone|on my own|by myself)\b", re.IGNORECASE)
+
+
+def keep_disarm(direction, text) -> str:
+    """The room-mode verdict for a turn, with "off" dropped when the turn
+    only says someone is stepping out and will be back soon (#540). A turn
+    that also says off plainly (solo mode, room mode by name, just me now,
+    or being alone) keeps it. Pure."""
+    if direction != COMMAND_DISARM:
+        return direction
+    head = (text or "")[:1200]
+    if _BACK_SOON_RE.search(head) and not (
+            _COMMAND_RE.search(head) or _ALONE_RE.search(head)):
+        return ""
+    return direction
+
 def resolve_correction_target(who, owner, people, roster_names,
                               recent_speaker=""):
     """WHO does a confirmed correction rename? Returns the person's identity

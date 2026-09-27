@@ -185,8 +185,10 @@ def parse_merged(text, message="") -> dict:
 
     `message` is the turn the reply is about. With it, a correction in a
     turn that spells a word out has to be marked as a name by the turn
-    itself (introductions.keep_name_corrections, #494). The live scan and
-    the harness both pass it, so both measure the same rule."""
+    itself (introductions.keep_name_corrections, #494), and a room-mode
+    "off" in a turn that only says someone will be back soon is
+    dropped (introductions.keep_disarm, #540). The live scan and the
+    harness both pass it, so both measure the same rules."""
     from . import depth as depth_mod
     from . import introductions as intro
     out = empty_verdict()
@@ -194,7 +196,8 @@ def parse_merged(text, message="") -> dict:
     if data is None:
         return out
     mode = {intro.COMMAND_ARM: "on", intro.COMMAND_DISARM: "off", "": "none"}
-    out["mode_command"] = mode[intro.parse_command_verdict(text)]
+    out["mode_command"] = mode[intro.keep_disarm(
+        intro.parse_command_verdict(text), message)]
     names = intro.parse_verdict(text)
     out["introductions"] = names["introductions"]
     out["departures"] = names["departures"]

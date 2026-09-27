@@ -33,6 +33,11 @@ and "heard but changed nothing" wording, tested without a model.
    research wordings and says research is never a model change. Whether
    the model obeys is measured by eval_intent's research and model
    fixtures.
+8. #540: "Heading to the shops, back in ten" was read as room mode off in
+   every run. Wording added to the prompt fixed it but moved other phrases,
+   so a rule in code drops an "off" from a turn that only says someone will
+   be back soon, and the prompt stays byte-identical. Measured by
+   eval_intent's plain_shops.
 """
 
 import json
@@ -116,6 +121,40 @@ def test_merged_prompt_makes_both_directions_need_a_plain_statement():
     assert "we're just talking" in p and "the opposite of alone" in p
     assert "When unsure, \"none\"" in p
 
+
+def test_back_soon_drops_room_mode_off():
+    reply = json.dumps({"mode_command": "off"})
+    for text in ("Popping out for milk, back in 5.",
+                 "Off to the gym, be right back.",
+                 "Won't be long, just grabbing the post.",
+                 "Heading out, back shortly."):
+        assert intent.parse_merged(reply, text)["mode_command"] == "none", \
+            text
+
+
+def test_a_plain_off_survives_back_soon():
+    reply = json.dumps({"mode_command": "off"})
+    for text in ("Solo mode, back in a bit.",
+                 "Room mode off, I'll be back soon.",
+                 "It's just me now, back in an hour.",
+                 "Everyone's gone, I'm on my own, back soon."):
+        assert intent.parse_merged(reply, text)["mode_command"] == "off", \
+            text
+
+
+def test_back_soon_only_touches_off():
+    on = json.dumps({"mode_command": "on"})
+    assert intent.parse_merged(on, "Group mode, back in ten")[
+        "mode_command"] == "on"
+    off = json.dumps({"mode_command": "off"})
+    # "back in" without a time is not stepping out.
+    assert intent.parse_merged(off, "Everyone's gone home, I'm back in "
+                               "my office.")["mode_command"] == "off"
+
+
+def test_the_prompt_is_unchanged_by_the_back_soon_rule():
+    p = intent.build_merged_prompt("hello", "Alex", ["Claude"], [], [])
+    assert "back soon" not in p and "be right back" not in p
 
 def test_merged_prompt_says_a_spelt_out_word_is_no_correction():
     p = intent.build_merged_prompt("hello", "Alex", ["Claude"], [], [])
