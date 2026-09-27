@@ -82,10 +82,7 @@ def build_merged_prompt(text: str, user_name: str, seat_names: list,
         "('group mode please', 'we're in group mode now' mean on). \"off\" "
         "needs an unambiguous statement: solo mode or room mode off by "
         "name, or the owner saying they are alone now ('it's just me "
-        "now', 'everyone's gone home'). Someone saying they are going out "
-        "or stepping away for a while ('popping out for milk', 'off to the "
-        "gym, see you soon', 'be right back') doesn't say the owner is "
-        "alone, so it's not \"off\". Any other kind of 'mode' "
+        "now', 'everyone's gone home'). Any other kind of 'mode' "
         "('eavesdropping mode', 'quiet mode', 'listening mode') is a hold "
         "back request, not room mode. Introducing a person, saying "
         "someone is here, or people talking among themselves ('we're "
@@ -188,8 +185,10 @@ def parse_merged(text, message="") -> dict:
 
     `message` is the turn the reply is about. With it, a correction in a
     turn that spells a word out has to be marked as a name by the turn
-    itself (introductions.keep_name_corrections, #494). The live scan and
-    the harness both pass it, so both measure the same rule."""
+    itself (introductions.keep_name_corrections, #494), and a room-mode
+    "off" in a turn that only says someone will be back soon is
+    dropped (introductions.keep_disarm, #540). The live scan and the
+    harness both pass it, so both measure the same rules."""
     from . import depth as depth_mod
     from . import introductions as intro
     out = empty_verdict()
@@ -197,7 +196,8 @@ def parse_merged(text, message="") -> dict:
     if data is None:
         return out
     mode = {intro.COMMAND_ARM: "on", intro.COMMAND_DISARM: "off", "": "none"}
-    out["mode_command"] = mode[intro.parse_command_verdict(text)]
+    out["mode_command"] = mode[intro.keep_disarm(
+        intro.parse_command_verdict(text), message)]
     names = intro.parse_verdict(text)
     out["introductions"] = names["introductions"]
     out["departures"] = names["departures"]
