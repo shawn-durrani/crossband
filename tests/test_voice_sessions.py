@@ -67,6 +67,12 @@ What these tests pin, in order:
    isn't its voice's person: the voice keeps its name, and the turn is
    never filled or named by hand as the voice's. A right short reply
    keeps its name. It runs on no other turn, and the bar is stated.
+16. JOINING TWO VOICES (#540). Two session voices whose pooled speech
+   plainly is one person are joined once each has speech of its own: the
+   kept voice takes the other's evidence, turns and later spans, and the
+   joined voice's unnamed turns take the name. The bar is strict, two
+   voices that spoke at once or carry two names never join, and a normal
+   two-person session joins nothing.
 
 Keyless and offline: the diariser and the speaker model are fakes.
 Synthetic roster (Alex, Sam, Dave).
@@ -551,7 +557,7 @@ ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
             "session", "turn", "offset", "spans", "main", "main_state",
             "main_name", "voices", "bar", "embedded", "people", "ms",
             "filled", "method", "error", "pieces", "moved", "span_lead", "end", "turns",
-            "renamed"}
+            "renamed", "joined", "short_check"}
 
 
 def test_rows_are_content_free_and_owner_only(fakes):
@@ -1923,3 +1929,217 @@ def test_the_short_check_runs_on_no_other_turn(fakes, calibrated,
     fakes.script = [[{"slot": 1, "start": 13.1, "end": 13.5}]]
     _live(3, "t6", 1.0)
     assert len(calls) == 2 and "short_check" not in _row("t6")
+
+
+# ---------- 16. joining two voices ----------
+
+def test_a_person_the_tracker_split_in_two_is_joined(app, fakes,
+                                                     monkeypatch):
+    """Sam's voice has 4 s, too little for the span check to move a span
+    to it, and the tracker starts a second voice for her. Once the second
+    has 3 s of its own, the two are joined: its turns take Sam's name,
+    and the tracker's later spans for it count for Sam's voice."""
+    near = voiceid.l2_normalize
+    seq = [near([0.05, 1.0, 0.0, 0.0]), near([0.0, 1.0, 0.08, 0.0]),
+           near([0.0, 1.0, 0.0, 0.1]), near([0.1, 1.0, 0.0, 0.0])]
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: seq.pop(0))
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 4.0}],
+                    [{"slot": 2, "start": 4.0, "end": 5.0}],
+                    [{"slot": 2, "start": 5.0, "end": 8.0}],
+                    [{"slot": 2, "start": 8.0, "end": 10.0}]]
+    assert _live(chat, "t1", 4.0)["name"] == "Sam"
+    mid = _msg(chat, "t2", UNNAMED)
+    assert _live(chat, "t2", 1.0)["state"] == "listening"
+    assert "joined" not in _row("t2")               # 1 s: too little
+    got = _live(chat, "t3", 3.0)
+    assert (got["voice"], got["name"]) == (1, "Sam")
+    join = _row("t3")["joined"]
+    assert [(j["from"], j["to"]) for j in join] == [(2, 1)]
+    assert join[0]["sim"] >= vss.JOIN_SIM and join[0]["lead"] is None
+    sess = vss._sessions[chat]
+    assert set(sess["voices"]) == {1} and sess["voices"][1]["clean_s"] == 8.0
+    assert vss.voice_of_turn(chat, "t2") == 1
+    assert _labels(mid)["labels"] == ["Sam"]         # filled in
+    got = _live(chat, "t4", 2.0)                     # slot 2 is Sam's now
+    assert (got["voice"], got["name"]) == (1, "Sam")
+    assert "joined" not in _row("t4") and set(sess["voices"]) == {1}
+
+
+def test_a_normal_two_person_session_never_joins(fakes, monkeypatch):
+    """Alex and Sam, each heard as themselves with ordinary variation, in
+    long and short turns, and a newcomer who sounds closer to Alex (0.6)
+    than any two people on the voice rig (0.47 at most): nothing joins."""
+    near = voiceid.l2_normalize
+    alex = [near([1.0, 0.1 * (i % 3), 0.05 * i, 0.0]) for i in range(6)]
+    sam = [near([0.1 * (i % 3), 1.0, 0.0, 0.05 * i]) for i in range(6)]
+    newcomer = near([0.6, 0.0, 0.0, 0.8])
+    seq = [alex[0], sam[0], alex[1], sam[1], newcomer, alex[2], sam[2],
+           newcomer, alex[3], sam[3], alex[4], newcomer, sam[4]]
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: seq.pop(0))
+    turns = [[(1, 3.0)], [(2, 4.0)], [(1, 2.0)], [(2, 1.5)], [(3, 4.0)],
+             [(1, 4.0)], [(2, 2.0), (1, 0.5)], [(3, 3.0)], [(1, 3.0)],
+             [(2, 3.0)], [(1, 5.0)], [(3, 2.0)], [(2, 4.0)]]
+    fakes.script, t = [], 0.0
+    for spans in turns:
+        fakes.script.append([])
+        for slot, secs in spans:
+            fakes.script[-1].append({"slot": slot, "start": t,
+                                     "end": t + secs})
+            t += secs
+    for i, spans in enumerate(turns):
+        _live(3, f"t{i}", sum(secs for _, secs in spans))
+    assert not any("joined" in _row(f"t{i}") for i in range(len(turns)))
+    assert set(vss._sessions[3]["voices"]) == {1, 2, 3}
+    assert seq == []
+
+
+def test_the_join_bar_and_its_guards():
+    """Pure: which pair joins, and every guard that stops one."""
+    near = voiceid.l2_normalize
+    sam, sam2 = near([0.0, 1.0, 0.1, 0.0]), near([0.1, 1.0, 0.0, 0.0])
+    voices = {1: _ev(sam, 4.0), 2: _ev(sam2, 3.0)}
+    keep, gone, scores = vss.join_pair(voices, {})
+    assert (keep, gone) == (1, 2) and scores["sim"] >= 0.98
+    # too little speech on either side
+    assert vss.join_pair({1: _ev(sam, 4.0), 2: _ev(sam2, 2.9)}, {}) is None
+    # not alike enough: 0.69 is under 0.7, and 0.71 clears it
+    assert vss.join_pair({1: _ev(sam, 4.0),
+                          2: _ev(near([0.0, 0.69, 0.0, 0.724]), 4.0)},
+                         {}) is None
+    assert vss.join_pair({1: _ev(sam, 4.0),
+                          2: _ev(near([0.0, 0.715, 0.0, 0.7]), 4.0)},
+                         {}) is not None
+    # they spoke at once
+    assert vss.join_pair(voices, {}, {frozenset((1, 2))}) is None
+    # a third voice too close to both: no clear lead
+    close = {**voices, 3: _ev(near([0.35, 1.0, 0.35, 0.0]), 4.0)}
+    assert vss.join_pair(close, {}) is None
+    # a clear third voice leaves the pair's lead intact
+    found = vss.join_pair({**voices, 3: _ev(ALEX, 4.0)}, {})
+    assert found[:2] == (1, 2) and found[2]["lead"] >= vss.JOIN_MARGIN
+    # both named, by the naming or by a person, or named and new
+    assert vss.join_pair(voices, {1: {"state": "named"},
+                                  2: {"state": "named"}}) is None
+    assert vss.join_pair(voices, {1: {"state": "named"},
+                                  2: {"state": "new"}}) is None
+    hand = {1: dict(_ev(sam, 4.0), human={"name": "Sam", "pid": "sam"}),
+            2: dict(_ev(sam2, 3.0), human={"name": "Dave", "pid": "dave"})}
+    assert vss.join_pair(hand, {}) is None
+    assert vss.join_pair({1: hand[1], 2: _ev(sam2, 3.0)},
+                         {2: {"state": "named"}}) is None
+    # a TV never joins
+    assert vss.join_pair({1: _ev(sam, 4.0),
+                          2: dict(_ev(sam2, 3.0), **{vss.MEDIA: True})},
+                         {}) is None
+    # two new voices, or listening and named, may
+    assert vss.join_pair(voices, {1: {"state": "new"},
+                                  2: {"state": "new"}}) is not None
+    assert vss.join_pair(voices, {1: {"state": "listening"},
+                                  2: {"state": "named"}}) is not None
+    assert found[2]["by"] == "prints"
+    assert (vss.JOIN_MIN_S, vss.JOIN_SIM, vss.JOIN_MARGIN, vss.JOIN_SURE,
+            vss.JOIN_FLOOR) == (3.0, 0.7, 0.25, 0.99, 0.55)
+
+
+def test_the_banks_join_a_known_person_split_in_two():
+    """With the calibrated scorer, two halves that each name Sam outright
+    join from 1.5 s each and a score of 0.55, where the fingerprints
+    alone would need 3 s and 0.7."""
+    near = voiceid.l2_normalize
+    snap = _snap()
+    a, b = near([0.7, 1.0, 0.0, 0.0]), near([0.0, 1.0, 0.7, 0.0])
+    voices = {1: _both(a, 1.6), 2: _both(b, 1.5)}
+    assert 0.55 <= vss.voice_sim(voices[1], voices[2]) < 0.7
+    keep, gone, scores = vss.join_pair(voices, {1: {"state": "named"},
+                                                2: {"state": "listening"}},
+                                       allowed=ALLOWED, snapshot=snap)
+    assert (keep, gone, scores["by"]) == (1, 2, "banks")
+    assert vss.join_pair(voices, {}) is None           # no banks to ask
+    # under 1.5 s on either side
+    assert vss.join_pair({1: _both(a, 1.6), 2: _both(b, 1.4)}, {},
+                         allowed=ALLOWED, snapshot=snap) is None
+    # Sam at 0.98 each is not outright
+    c, d = near([0.9, 1.0, 0.0, 0.0]), near([0.0, 1.0, 0.9, 0.0])
+    assert vss.join_pair({1: _both(c, 4.0), 2: _both(d, 4.0)}, {},
+                         allowed=ALLOWED, snapshot=snap) is None
+    # each names Sam outright, but they sound nothing alike: 0.26
+    e, f = near([0.77, 1.0, 0.0, 0.0]), near([-0.77, 1.0, 0.0, 0.0])
+    assert vss.join_pair({1: _both(e, 4.0), 2: _both(f, 4.0)}, {},
+                         allowed=ALLOWED, snapshot=snap) is None
+
+
+def test_which_voice_stays():
+    near = voiceid.l2_normalize
+    sam, sam2 = near([0.0, 1.0, 0.1, 0.0]), near([0.1, 1.0, 0.0, 0.0])
+    # the one with more clean speech, else the lower number
+    assert vss.join_pair({3: _ev(sam, 3.0), 5: _ev(sam2, 6.0)},
+                         {})[:2] == (5, 3)
+    assert vss.join_pair({3: _ev(sam, 4.0), 5: _ev(sam2, 4.0)},
+                         {})[:2] == (3, 5)
+    # the one the naming named
+    assert vss.join_pair({3: _ev(sam, 4.0), 5: _ev(sam2, 3.0)},
+                         {5: {"state": "named"}})[:2] == (5, 3)
+    # the one a person named, and its name goes with it
+    hand = dict(_ev(sam2, 3.0), human={"name": "Sam", "pid": "sam"})
+    voices = {3: _ev(sam, 8.0), 5: hand}
+    keep, gone, _ = vss.join_pair(voices, {})
+    assert (keep, gone) == (5, 3)
+    sess = {"voices": voices, "turn_voice": [("t1", 3), ("t2", 5)],
+            "banked": {3: 2, 5: 1}, "overlaps": {frozenset((3, 7))},
+            "joined": {9: 3}}
+    vss.join_voices(sess, keep, gone)
+    assert set(sess["voices"]) == {5} and voices[5]["clean_s"] == 11.0
+    assert voices[5]["human"]["name"] == "Sam"
+    assert sess["turn_voice"] == [("t1", 5), ("t2", 5)]
+    assert sess["banked"] == {5: 3}
+    assert sess["overlaps"] == {frozenset((5, 7))}
+    assert sess["joined"] == {9: 5, 3: 5}
+    assert [vss.joined_slot(sess, n) for n in (3, 5, 9, 7)] == [5, 5, 5, 7]
+
+
+def test_two_voices_that_spoke_at_once_never_join(fakes, monkeypatch):
+    """Two voices the tracker heard talking over each other are two
+    people, however alike they sound."""
+    near = voiceid.l2_normalize
+    seq = [near([0.05, 1.0, 0.0, 0.0]), near([0.0, 1.0, 0.08, 0.0])]
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: seq.pop(0))
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 4.0},
+                     {"slot": 1, "start": 4.0, "end": 4.5, "overlap": True},
+                     {"slot": 2, "start": 4.0, "end": 4.5, "overlap": True},
+                     {"slot": 2, "start": 4.5, "end": 8.5}]]
+    _live(3, "t1", 8.5)
+    assert "joined" not in _row("t1")
+    assert vss._sessions[3]["overlaps"] == {frozenset((1, 2))}
+    assert set(vss._sessions[3]["voices"]) == {1, 2}
+
+
+def test_a_known_person_split_in_two_is_joined(fakes, calibrated):
+    """The tracker starts a second voice for Sam after 4 s of her first.
+    Her second voice's first 2 s name her outright, as the first does, so
+    the two join at once, and the turn is hers."""
+    near = voiceid.l2_normalize
+    calibrated += [near([0.7, 1.0, 0.0, 0.0]), near([0.0, 1.0, 0.7, 0.0])]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 4.0}],
+                    [{"slot": 2, "start": 4.0, "end": 6.0}]]
+    assert _live(3, "t1", 4.0)["name"] == "Sam"
+    got = _live(3, "t2", 2.0)
+    assert (got["voice"], got["name"]) == (1, "Sam")
+    join = _row("t2")["joined"]
+    assert [(j["from"], j["to"], j["by"]) for j in join] == [(2, 1,
+                                                              "banks")]
+    assert set(vss._sessions[3]["voices"]) == {1}
+
+
+def test_the_banks_saying_two_people_stops_a_join(fakes, calibrated):
+    """With the calibrated scorer, two voices whose own evidence names two
+    different people never join, however close their fingerprints."""
+    near = voiceid.l2_normalize
+    snap = _snap()
+    a = near([0.86, 0.0, 0.51, 0.0])       # Alex at 0.99, Dave at 0.0x
+    b = near([0.5, 0.0, 0.87, 0.0])        # Dave at 0.99
+    voices = {1: _both(a, 5.0), 2: _both(b, 5.0)}
+    assert vss.voice_sim(voices[1], voices[2]) >= vss.JOIN_SIM
+    assert vss.join_pair(voices, {}, allowed=ALLOWED,
+                         snapshot=snap) is None
+    assert vss.join_pair(voices, {}) is not None     # no banks to ask

@@ -465,7 +465,7 @@ today's path one setting away, after the morning chat named all 10
 voiced turns before the seats read them, so the new path now has to
 degrade on its own.
 
-Live on this install:
+#### Live on this install
 
 - One voice check for every spoken turn, in every mode and from either
   transcription path, named from the session naming. With no diariser,
@@ -496,6 +496,14 @@ Live on this install:
   gives that voice's person 0.01 or less, the turn is left unnamed, and
   the voice keeps its name. It costs two fingerprints, about 40 to 50
   ms, on those turns only.
+- Joining two session voices that are one person. They join when they
+  never spoke at once and their pooled fingerprints lead every other
+  voice by 0.25 or more. Then either each names the same known person
+  at 0.99 or more from 1.5 seconds and the two score 0.55 or more, or
+  each has 3 seconds and the two score 0.7 or more. Two voices that both
+  have a name, or a named one and a new one, never join, and neither
+  does a TV. The joined voice's unnamed turns take the kept voice's
+  name.
 - The naming pass at the end of a session. Every voice is named once
   more over all its fingerprints, and each turn whose name changed is
   relabelled, the last turn included. A turn whose voice ends the
@@ -522,7 +530,7 @@ Live on this install:
   someone is unlearnt, the old shadow test, and the settings that only
   served them.
 
-Not built yet:
+#### Not built yet
 
 - Made-up sessions from the household's own clips, and the voice rig
   playing a conversation out of a speaker into the microphone.
@@ -531,7 +539,7 @@ Not built yet:
 
 | Risk | What happens | What limits it |
 |---|---|---|
-| The tracker loses track in a long session | Two voices swap | None in 15 recorded meetings. The fingerprint check on every span, the bank check on each voice's speech in a turn, the check on a turn too short to fingerprint, and the end-of-session naming pass. |
+| The tracker loses track in a long session | Two voices swap | None in 15 recorded meetings. The fingerprint check on every span, the bank check on each voice's speech in a turn, the check on a turn too short to fingerprint, joining two voices that are one person, and the end-of-session naming pass. |
 | A voice sounds unlike its bank (a cold, a whisper, a new mic) | Named late, or left listening | Probabilities fall, so the app waits instead of guessing. Confirming a turn teaches it. |
 | Two similar voices, like siblings | Both near the bar | The calibration sees them close, one to one stops both getting one name, and you confirm |
 | The AIs' own playback reaches the mic | A voice made of AI speech | A voice heard mostly while the AIs are talking is never named or saved |
