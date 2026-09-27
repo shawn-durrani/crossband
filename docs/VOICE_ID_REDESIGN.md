@@ -486,8 +486,8 @@ Live on this install:
   1.5 seconds or more of it, it names a known person at 0.99 or more,
   and it gives the person the voice's earlier speech names at 0.9 or
   more a chance of 0.01 or less. It goes to that person's voice, or to
-  a new voice of its own when they have none. A voice named by hand is
-  never checked.
+  a new voice of its own when they have none. A voice named by hand, or
+  one someone said is a TV, is never checked.
 - The naming pass at the end of a session. Every voice is named once
   more over all its fingerprints, and each turn whose name changed is
   relabelled, the last turn included. A turn whose voice ends the

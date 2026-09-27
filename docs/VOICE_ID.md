@@ -117,12 +117,12 @@ when all of these hold:
 - on its own it names a known person at 0.99 or more
 - the voice's earlier speech names someone else at 0.9 or more
 - the turn's speech gives that someone else 0.01 or less
-- nobody named the voice by hand
+- nobody named the voice by hand or said it's a TV
 
 Then every stretch the diariser gave that voice in the turn moves
 together, apart from speech over someone else. It goes to the session
 voice you named as that person, or else to the voice whose own speech
-names them. When there's no such voice, it starts a new voice, named
+names them, never to a TV's. When there's no such voice, it starts a new voice, named
 from its own speech like any other. The voice it came from keeps one
 person's speech, and the turn is labelled by the voice it moved to. If
 that voice isn't sure yet, the turn shows "still listening".

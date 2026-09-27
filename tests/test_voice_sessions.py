@@ -58,12 +58,13 @@ What these tests pin, in order:
    plainly names someone other than the person its voice says moves
    before it's added: to that person's voice, or to a split-off voice
    when they have none, the turn's short spans with it and overlap
-   aside. The bar is strict and two-sided, a voice a person named is
-   never checked, the fallback scorer moves nothing, a normal session
-   moves nothing, and the check fingerprints nothing more.
+   aside. The bar is strict and two-sided. A voice a person named or
+   said is a TV is never checked, and a TV's never takes the speech.
+   The fallback scorer moves nothing, a normal session moves nothing,
+   and the check fingerprints nothing more.
 
 Keyless and offline: the diariser and the speaker model are fakes.
-Synthetic roster (Alex, Sam).
+Synthetic roster (Alex, Sam, Dave).
 """
 
 import asyncio
@@ -1599,6 +1600,9 @@ def test_the_bank_check_bar_is_strict():
     named = dict(_both(DAVE, 8.0), human={"name": "Dave", "pid": "dave"})
     assert vss.bank_check({1: named}, 1, _heard(ALEX, 4.0), ALLOWED,
                           snap)[0] is None
+    tv = dict(_both(DAVE, 8.0), **{vss.MEDIA: True})
+    assert vss.bank_check({1: tv}, 1, _heard(ALEX, 4.0), ALLOWED,
+                          snap)[0] is None
     assert vss.bank_check(dave, 1, _heard(ALEX, 4.0), ALLOWED,
                           None)[0] is None
     assert vss.bank_check(dave, 1, _heard(ALEX, 4.0), {}, snap)[0] is None
@@ -1622,6 +1626,10 @@ def test_the_speech_goes_to_the_voice_that_is_that_person():
     # a voice a person named as someone else never takes it
     voices = {1: _both(DAVE, 8.0),
               2: dict(_both(ALEX, 5.0), human={"name": "Sam", "pid": "sam"})}
+    assert vss.bank_home(voices, 1, "alex", ALLOWED, snap) is None
+    # nor does a voice someone said is a TV
+    voices = {1: _both(DAVE, 8.0), 2: dict(_both(ALEX, 5.0),
+                                           **{vss.MEDIA: True})}
     assert vss.bank_home(voices, 1, "alex", ALLOWED, snap) is None
     # nobody's voice says Alex: a new split-off voice, numbered apart
     voices = {1: _both(DAVE, 8.0), 3: _both(SAM, 5.0)}

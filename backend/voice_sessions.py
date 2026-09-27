@@ -87,7 +87,7 @@ moves nothing:
   * on its own it names a known person at BANK_CHECK_SURE or more;
   * the voice's evidence so far names someone else at NAME_BAR or more,
     and the turn's speech gives that person BANK_CHECK_NOT or less;
-  * nobody named the voice by hand.
+  * nobody named the voice by hand or said it's a TV (media_voice).
 
 Then every span the tracker gave that voice in the turn, overlap aside,
 moves together: to the other session voice a person named as the one it
@@ -997,7 +997,8 @@ def bank_check(voices, slot, prints, allowed, snapshot):
     Pure: nothing is moved here."""
     from . import voice_calibration as vc
     voice = voices.get(slot) or {}
-    if voice.get("human") or not snapshot or not allowed or not prints:
+    if voice.get("human") or voice.get(MEDIA) or not snapshot \
+            or not allowed or not prints:
         return None, {}
     secs = sum(s for _, _, s in prints)
     if secs < BANK_CHECK_MIN_S or any(e is None for _, e, _ in prints):
@@ -1025,8 +1026,8 @@ def bank_check(voices, slot, prints, allowed, snapshot):
 def bank_home(voices, slot, pid, allowed, snapshot):
     """Where speech that plainly is `pid` goes (THE BANK CHECK): the other
     session voice a person named as them, else the other voice whose own
-    evidence names them first at NAME_BAR or more (the likeliest), else
-    None, for a new split-off voice. Pure."""
+    evidence names them first at NAME_BAR or more (the likeliest), never
+    a TV's, else None, for a new split-off voice. Pure."""
     from . import voice_calibration as vc
     best, best_p = None, None
     for other, v in voices.items():
@@ -1036,6 +1037,8 @@ def bank_home(voices, slot, pid, allowed, snapshot):
         if human:
             if human == pid:
                 return other
+            continue
+        if v.get(MEDIA):
             continue
         says = voice_probs(v, allowed, snapshot)
         p = says.get(pid)
