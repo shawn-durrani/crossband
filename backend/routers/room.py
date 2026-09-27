@@ -689,6 +689,14 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
                         link_existing=True, con=con)
     finally:
         con.close()
+    # #482 stage 3: the voice that spoke this turn is that person for the
+    # rest of the session, and its other unnamed turns take the name now.
+    try:
+        from .. import voice_session_shadow
+        voice_session_shadow.human_named(chat_id, row["voice_turn_id"], name,
+                                         pid, cfg)
+    except Exception:
+        log.debug("session naming hand-off failed", exc_info=True)
     if learned:
         # A correction clip changed the bank: re-run the pairwise hygiene
         # audit (#28 PR-B). No-op when the matcher is unavailable.

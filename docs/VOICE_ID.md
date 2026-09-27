@@ -186,11 +186,40 @@ Here's what happens with all of it on.
    session take the name too.
 
 A session's name never replaces a name the matcher gave or one you
-set. It seats nobody and saves no clips. Memory treats a guest's name
-from here as the weakest kind of evidence, so facts from their turns
-wait for review before they're linked to them. A voice that has 4
-seconds of speech and matches nobody is marked as new. The app doesn't
-ask who it is yet, and a TV or radio in the room shows up the same way.
+set. It seats nobody and saves no clips. Memory treats a session name
+as a voice match, with the naming's score as its confidence, so a fact
+from a guest's turn links to them by itself only when the score is 0.8
+or more. A voice that has 4 seconds of speech and matches nobody is
+marked as new, and a TV or radio in the room shows up the same way.
+
+### Letting the session name every turn
+
+With `voice_session_only` on as well, the session naming names every
+spoken turn, in every mode, and the matcher's own passes stop running.
+Here's what happens to each turn.
+
+1. The app takes the session's name for the turn's main voice, waiting
+   up to 0.8 seconds. If the diariser didn't see the turn, the whole
+   turn is named as one voice, with the same scorer.
+2. When the calibrated scorer is on and ready, it names each voice from
+   two fingerprints, TitaNet-Small and ERes2Net, as a probability. A
+   voice is named at 0.9 or more, and marked new under 0.1. Until then
+   the session uses the matcher's own bar.
+3. The owner's voice is labelled as you and changes nothing else.
+4. Someone else you know arms a room that was off, and is seated.
+5. A new voice arms the room and asks who it is, once your own voice
+   is known. When only one person seated in the room has no voice
+   saved yet, a new voice is named as them and marked learning.
+6. Anything else is labelled "still listening", and fills in once the
+   voice is named.
+7. When a voice is named at 0.99 or more, with 8 seconds of clean
+   speech behind it, the turn's longest clean stretch is saved to that
+   person's voice, at most 3 times per voice per session. A turn with
+   two voices in it is never saved.
+
+Solo still labels and never arms, seats, asks or saves. Naming a turn
+by hand names its voice for the rest of the session, and the voice's
+other unnamed turns take the name at once.
 
 ## Starting from nothing
 

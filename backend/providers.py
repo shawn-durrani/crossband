@@ -1011,6 +1011,8 @@ UNRESOLVED_HEAD_COPY = {
     "error": "check failed",
     "pending_present": "maybe someone still being learnt",
     "no_enrolled": "no voices learnt yet",
+    "listening": "still listening",
+    "new_voice": "a new voice",
 }
 
 # Honest pending identity (#28, night test 4; meaning narrowed by PR-B).

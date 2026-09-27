@@ -470,7 +470,8 @@ DECISION_UNRESOLVED = "unresolved"
 # construction, like every other value here.
 DEFER_REASONS = {"too_short", "below_threshold", "ambiguous", "multi",
                  "not_speech", "no_candidates", "unavailable", "disabled",
-                 "error", "pending_present", "no_enrolled"}
+                 "error", "pending_present", "no_enrolled", "listening",
+                 "new_voice"}
 
 
 # Decision history (#304 evidence capture): the single freshest record
@@ -952,6 +953,19 @@ def schedule_turn_check(chat_id, pcm, sample_rate, session, cfg, *, room_on,
     commit_ts = db.now() if commit_ts is None else commit_ts
     route = check_route(room_on, ambient_ok)
     task = None
+    from . import voice_session_shadow
+    if voice_session_shadow.only_enabled(cfg):
+        # #482 stage 3: one pass names every spoken turn, in every mode.
+        # The stash stays for a room-off turn, so an introduction can still
+        # claim it as the owner's first clip.
+        from . import voice_pass
+        if route != ROUTE_ROOM:
+            stash_utterance(chat_id, pcm, sample_rate)
+        task = voice_pass.schedule(chat_id, pcm, sample_rate, commit_ts,
+                                   session, cfg, turn_id)
+        if task is not None:
+            _note_turn_checked(turn_id)
+        return route
     if route == ROUTE_ROOM:
         task = schedule_pass(chat_id, pcm, sample_rate, commit_ts, session,
                              cfg, turn_id=turn_id, speculative=speculative)
