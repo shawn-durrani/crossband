@@ -6,10 +6,14 @@
 // under the same id the send uses; a turn the relay never heard (the
 // zero-frames salvage) does too; a turn the controller can't place, or a
 // recording the browser can't decode, still goes as before, with no copy.
+// #540: a piece of a long turn that goes by the backup copy names the
+// piece before it, however it got there, so the server links the pieces
+// even when the relay never heard this one.
 // Run: node --test frontend/src/voiceIdentityCopy.test.js
 import assert from 'node:assert/strict'
-import { afterEach, beforeEach, test } from 'node:test'
+import { afterEach, beforeEach, mock, test } from 'node:test'
 import VoiceController from './voice.js'
+import { sttCommitTimeoutMs } from './turnPolicy.js'
 import { clear } from './voiceDebug.js'
 
 class FakeWebSocket {
@@ -105,13 +109,15 @@ function session({ realtime, decode = decoder() }) {
   return { ctrl, ws, sent }
 }
 
-async function speak(ctrl, { speechMs = 2000, frames = 40 } = {}) {
+async function speak(ctrl, { speechMs = 2000, frames = 40, cause = 'gap' } = {}) {
   const now = Date.now()
   ctrl.speechStart = now - speechMs - 2000
   ctrl.lastVoice = now - 2000
   ctrl._utterFrames = frames
-  await ctrl._finalizeUtterance('gap')
+  await ctrl._finalizeUtterance(cause)
 }
+
+const commits = (ws) => ws.sent.map((s) => JSON.parse(s)).filter((m) => m.commit)
 
 async function settle() {
   for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0))
@@ -163,4 +169,61 @@ test('a recording the browser cannot decode goes as it always did', async () => 
   assert.deepEqual([...forms[0].keys()], ['file', 'duration_ms', 'why'])
   assert.equal(forms[0].get('why'), 'batch')
   assert.equal(sent.length, 1)
+})
+
+test("a long turn's last piece the relay never heard names the piece before it", async () => {
+  const { ctrl, ws, sent } = session({ realtime: true })
+  // The first piece is cut at the length limit and committed live. No
+  // frame of the last piece reaches the socket, so only its backup copy
+  // tells the server it follows the first.
+  await speak(ctrl, { cause: 'cap' })
+  const [first] = commits(ws)
+  await speak(ctrl, { frames: 0 })
+  await settle()
+  assert.equal(commits(ws).length, 1)
+  assert.equal(forms.length, 1)
+  assert.equal(forms[0].get('turn_id'), sent[0].turnId)
+  assert.notEqual(sent[0].turnId, first.turn_id)
+  assert.equal(forms[0].get('after'), first.turn_id)
+})
+
+test('a last piece spoken across a socket change names the piece before it', async () => {
+  const { ctrl, ws } = session({ realtime: true })
+  await speak(ctrl, { cause: 'cap' })
+  const [first] = commits(ws)
+  // The socket was replaced while the last piece was spoken.
+  ctrl._utterGen = -1
+  await speak(ctrl)
+  await settle()
+  const [, last] = commits(ws)
+  assert.equal(last.after, first.turn_id, 'the commit names it')
+  assert.equal(forms.length, 1)
+  assert.equal(forms[0].get('turn_id'), last.turn_id)
+  assert.equal(forms[0].get('after'), first.turn_id, 'and so does the backup copy')
+})
+
+test("a last piece whose words never come back names the piece before it", async () => {
+  const { ctrl, ws } = session({ realtime: true })
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    await speak(ctrl, { cause: 'cap' })
+    await speak(ctrl)
+    mock.timers.tick(sttCommitTimeoutMs(2000) + 1)
+  } finally {
+    mock.timers.reset()
+  }
+  await settle()
+  const [first, last] = commits(ws)
+  assert.equal(forms.length, 1)
+  assert.equal(forms[0].get('turn_id'), last.turn_id)
+  assert.equal(forms[0].get('after'), first.turn_id)
+})
+
+test('a turn of one piece names none on its backup copy', async () => {
+  const { ctrl } = session({ realtime: true })
+  await speak(ctrl, { frames: 0 })
+  await settle()
+  assert.equal(forms.length, 1)
+  assert.ok(forms[0].get('turn_id'))
+  assert.equal(forms[0].has('after'), false)
 })
