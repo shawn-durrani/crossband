@@ -42,6 +42,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="keyless stand-ins; for checking the harness, never for numbers")
     p.add_argument("--format", choices=("markdown", "json"), default="markdown")
     p.add_argument("--out")
+    p.add_argument("--json-out", help="also write the whole report as JSON here")
     return p
 
 
@@ -112,6 +113,9 @@ def main(argv=None) -> int:
     if args.env:
         load_env(args.env)
     report = asyncio.run(run(args))
+    if args.json_out:
+        with open(args.json_out, "w") as fh:
+            fh.write(json.dumps(report, indent=2, default=str))
     out = (json.dumps(report, indent=2, default=str) if args.format == "json"
            else render_markdown(report, args.mock))
     if args.out:

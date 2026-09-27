@@ -2,7 +2,8 @@
 
 frontend/src/lifecycle.js mirrors two backend facts as literals: the seat
 lifecycle states (backend/provenance.py LIFECYCLE_STATES) and the loopback
-host set (backend/config.py _LOOPBACK_HOSTS). Nothing guarded that
+host set (backend/config.py _LOOPBACK_HOSTS). The later sections cover the
+effort choices, the pass token and the Analysis page's run states. Nothing guarded that
 boundary, so a backend change would leave the UI collapsing every seat to
 Trial with every test green.
 
@@ -17,7 +18,7 @@ clone without a pytest run first.
 import json
 from pathlib import Path
 
-from backend import passes, provenance, providers, voice
+from backend import analysis, passes, provenance, providers, voice
 from backend.config import _LOOPBACK_HOSTS
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backend_contract.json"
@@ -97,6 +98,9 @@ def current_contract():
                           "kept": passes.strip_pass(t, partial=True)}
                          for t in PASS_EXAMPLES],
         },
+        # The Analysis page's badges (frontend/src/analysisView.js) name
+        # every state a run record can be in (#407).
+        "analysis": {"run_states": list(analysis.RUN_STATES)},
     }
 
 

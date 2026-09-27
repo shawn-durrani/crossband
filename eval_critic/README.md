@@ -51,6 +51,11 @@ alarms separately and never averages them.
 
 `scripts/run_critic_eval.py` is a thin wrapper that does the same.
 
+The Analysis page in the app runs the real run as a background job and
+keeps its reports on the Mac. [docs/ANALYSIS.md](../docs/ANALYSIS.md)
+says how. The page passes `--json-out`, which writes the JSON report
+to a file whatever `--format` says.
+
 `--mock` runs the whole pipeline, from prompt build through parse,
 grounding check and scoring, against a keyless stand in that always
 gives the same answers. It misses a small fixed share of the unsafe

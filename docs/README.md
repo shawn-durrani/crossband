@@ -27,19 +27,22 @@ you, or an AI assistant you paste it to, can do the task it covers.
    The same scripted cases through the seats you pick, stage timings
    side by side, saved audio for your own ears, and what the numbers
    can't tell you.
-6. [docs/WEB_RESEARCH.md](WEB_RESEARCH.md): the web tools and what
+6. [docs/ANALYSIS.md](ANALYSIS.md): the Analysis page. Each eval
+   measurement states its cost and what it touches before its Run
+   button, runs in the background, and keeps its reports on the Mac.
+7. [docs/WEB_RESEARCH.md](WEB_RESEARCH.md): the web tools and what
    contains them. What a hostile page can't do, the one-line Chromium
    install that turns on rendered viewing, and the limits.
-7. [docs/REMOTE_ACCESS.md](REMOTE_ACCESS.md): the whole app, voice
+8. [docs/REMOTE_ACCESS.md](REMOTE_ACCESS.md): the whole app, voice
    included, from your phone over Tailscale, with nothing open to the
    internet.
-8. [docs/OPERATIONS.md](OPERATIONS.md): keeping a live install up. The
+9. [docs/OPERATIONS.md](OPERATIONS.md): keeping a live install up. The
    launchd supervisor, the logs, restart on crash, surviving a reboot,
    and backups.
-9. [docs/PRODUCERS.md](PRODUCERS.md): the machine side-channel. It's
-   for your own deploy watcher or scheduler talking to chats. Slash
-   commands out, notices and events in, the acknowledgement contract,
-   the bearer credential, and what a producer must never do.
+10. [docs/PRODUCERS.md](PRODUCERS.md): the machine side-channel. It's
+    for your own deploy watcher or scheduler talking to chats. Slash
+    commands out, notices and events in, the acknowledgement contract,
+    the bearer credential, and what a producer must never do.
 
 [Membro](https://github.com/shawn-durrani/membro) is the optional
 memory service beside the app, and its own README.md covers its install.
@@ -88,7 +91,9 @@ rule so it can't drift. CI presses it, so it never needs a button.
 
 A measurement runs by hand when a decision needs numbers. It produces a
 report to read, and it can cost money or touch your own data. Each
-page says what it costs and what it touches.
+page says what it costs and what it touches. You can run every one of
+them from the Analysis page, and [docs/ANALYSIS.md](ANALYSIS.md) says
+how.
 
 - [eval_critic/README.md](../eval_critic/README.md): the critic
   question. Can a cheap critic catch a made-up memory fact in a draft

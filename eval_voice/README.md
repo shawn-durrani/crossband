@@ -100,6 +100,11 @@ each turn on its own. `--no-calibrated` leaves the calibrated scorer
 off. `--speed 2` plays twice as fast. `--out` and `--json-out` write
 the report to files.
 
+The Analysis page in the app runs the real run as a background job and
+keeps its reports on the Mac. It won't start the rig while a voice chat
+is live, since the two share the diariser.
+[docs/ANALYSIS.md](../docs/ANALYSIS.md) says how.
+
 The machinery is pinned by `tests/test_eval_voice.py`, with no keys:
 
 ```sh

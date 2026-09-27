@@ -107,7 +107,7 @@ A producer is infrastructure, and it fails in known ways.
 - Ask before you restart the app. `GET /api/busy` answers
   `{"busy": <bool>, "reasons": [<fixed labels>]}` on loopback with no
   session. Busy means a round, a voice capture, a guest visit, a person
-  sync, a benchmark, an import or a backup is in flight. Wait for
+  sync, a benchmark, a measurement, an import or a backup is in flight. Wait for
   false, then restart. [OPERATIONS.md](OPERATIONS.md#deploying-a-change)
   has the detail.
 - Run one copy. Hold a lock that checks the holder is alive, so a

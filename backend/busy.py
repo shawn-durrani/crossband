@@ -20,7 +20,7 @@ without a session, so the only thing it may say about the work is that
 it exists.
 """
 
-from . import benchmark, db, guestjobs, importer, person_sync, rounds
+from . import analysis, benchmark, db, guestjobs, importer, person_sync, rounds
 from .routers import voice as voice_router
 
 PATH = "/api/busy"
@@ -30,6 +30,7 @@ VOICE_CAPTURE_RUNNING = "voice capture running"
 GUEST_VISIT_RUNNING = "guest visit running"
 PERSON_SYNC_RUNNING = "person sync running"
 BENCHMARK_RUNNING = "benchmark running"
+MEASUREMENT_RUNNING = "measurement running"
 IMPORT_RUNNING = "import running"
 BACKUP_RUNNING = "backup running"
 
@@ -41,6 +42,7 @@ LABELS = (
     GUEST_VISIT_RUNNING,
     PERSON_SYNC_RUNNING,
     BENCHMARK_RUNNING,
+    MEASUREMENT_RUNNING,
     IMPORT_RUNNING,
     BACKUP_RUNNING,
 )
@@ -61,6 +63,9 @@ def reasons() -> list[str]:
       correction replay to membro stops half way, to be redone next pass;
     - a benchmark (`benchmark._active`): the run's results.json is left
       saying "running" for ever;
+    - a measurement from the Analysis page (`analysis`, #407): the run is
+      cut off and its spend wasted, and the voice rig's second app is
+      stopped half way through its conversations;
     - an import (`importer`): an export lands half way, chats here and
       membro not yet seeded;
     - a backup (`db`): the mirror copy is a plain file copy, so a kill
@@ -80,6 +85,8 @@ def reasons() -> list[str]:
         out.append(PERSON_SYNC_RUNNING)
     if benchmark._active:
         out.append(BENCHMARK_RUNNING)
+    if analysis.running_count():
+        out.append(MEASUREMENT_RUNNING)
     if importer.in_flight():
         out.append(IMPORT_RUNNING)
     if db.backup_running():

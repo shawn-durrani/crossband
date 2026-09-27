@@ -11,6 +11,7 @@ import ImportModal from './components/ImportModal'
 import ExportModal from './components/ExportModal'
 import SpendPage from './components/SpendPage'
 import VoicesPage from './components/VoicesPage'
+import AnalysisPage from './components/AnalysisPage'
 import IntegrationsConsole from './components/IntegrationsConsole'
 import SetupWizard from './components/SetupWizard'
 import MobileVoiceCall from './components/MobileVoiceCall'
@@ -29,6 +30,7 @@ import { contextGauge } from './headerView'
 import { useEventStream } from './hooks/useEventStream'
 import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
+import { measuring } from './analysisView'
 import { adoptRoomMode, askFlag, flagCopy, mergeFlag, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
 import { healthStrip } from './voiceHealth'
 import { autoDump as voiceDebugAutoDump, autoSaveNotice, dump as voiceDebugDump,
@@ -88,6 +90,10 @@ export default function App() {
   const [showImport, setShowImport] = useState(false)
   const [showExport, setShowExport] = useState(false)
   const [showCost, setShowCost] = useState(false)
+  const [showAnalysis, setShowAnalysis] = useState(false)  // #407
+  // Which measurements the Analysis page has running, from /api/state:
+  // the sidebar's dot, and a reason to keep polling state.
+  const [measuringIds, setMeasuringIds] = useState([])
 
   // Every full-page surface that replaces the chat pane, as [open, close]
   // pairs. Adding a page means adding ONE row here - pageOpen (the voice
@@ -102,6 +108,7 @@ export default function App() {
     [showCost, setShowCost],
     [showParticipants, setShowParticipants],
     [showVoices, setShowVoices],
+    [showAnalysis, setShowAnalysis],
   ]
   const pageOpen = pageFlags.some(([open]) => open)
   const [showSetup, setShowSetup] = useState(false)
@@ -184,6 +191,7 @@ export default function App() {
     const s = await api.state()
     setState(s)
     applyRunning(s.running_chat_ids)
+    setMeasuringIds(s.running_measurements || [])
     if (s.memory_writes?.failed?.length) {
       setBanner(`A memory save didn't complete for ${s.memory_writes.failed.length} chat(s) - re-open the chat to retry.`)
     }
@@ -200,10 +208,10 @@ export default function App() {
   // While anything is running, poll so a background chat's indicator clears the
   // moment its detached round finishes - then stop polling once all idle.
   useEffect(() => {
-    if (!shouldPollRunning(runningChats)) return
+    if (!shouldPollRunning(runningChats) && !measuring(measuringIds)) return
     const t = setInterval(() => { refreshState().catch(() => {}) }, 3000)
     return () => clearInterval(t)
-  }, [runningChats])
+  }, [runningChats, measuringIds])
 
   // The round loop's client side ( step 4): the hook OWNS the transcript,
   // streaming flag, round progress, the batch and the offline send queue -
@@ -624,10 +632,10 @@ export default function App() {
   }
 
 
-  // Leave every full-page surface (Models / Connections / Spend / Voices):
-  // the chat pane renders only when ALL page flags are down. Every route
-  // back to a chat goes through here; the flags live in pageFlags above, so
-  // this stays complete by construction.
+  // Leave every full-page surface (Models / Connections / Spend / Voices /
+  // Analysis): the chat pane renders only when ALL page flags are down.
+  // Every route back to a chat goes through here; the flags live in
+  // pageFlags above, so this stays complete by construction.
   function leavePages() {
     for (const [, setOpen] of pageFlags) setOpen(false)
     setModelsIntent(null)
@@ -858,6 +866,8 @@ export default function App() {
       onOpenExport={() => setShowExport(true)}
       onOpenCost={() => { leavePages(); setShowCost(true); if (closeAfter) setDrawerOpen(false) }}
       onOpenVoices={() => { leavePages(); setShowVoices(true); if (closeAfter) setDrawerOpen(false) }}
+      onOpenAnalysis={() => { leavePages(); setShowAnalysis(true); if (closeAfter) setDrawerOpen(false) }}
+      measuring={measuring(measuringIds)}
       theme={theme}
       onToggleTheme={setTheme}
     />
@@ -924,6 +934,12 @@ export default function App() {
           <VoicesPage
             onClose={() => setShowVoices(false)}
             onOpenMenu={() => setDrawerOpen(true)}
+          />
+        ) : showAnalysis ? (
+          <AnalysisPage
+            onClose={() => setShowAnalysis(false)}
+            onOpenMenu={() => setDrawerOpen(true)}
+            onChanged={() => { refreshState().catch(() => {}) }}
           />
         ) : showParticipants ? (
           <ModelsPage

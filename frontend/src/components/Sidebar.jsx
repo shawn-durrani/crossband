@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AudioLines, ChevronRight, ChevronDown, Folder, Settings, Plus, X, Upload, Download, PanelLeftClose, Users, Archive, ArchiveRestore, BarChart3, Plug, Lock } from 'lucide-react'
+import { AudioLines, ChevronRight, ChevronDown, Folder, Settings, Plus, X, Upload, Download, PanelLeftClose, Users, Archive, ArchiveRestore, BarChart3, FlaskConical, Plug, Lock } from 'lucide-react'
 import { api } from '../api'
 import { isChatRunning } from '../runningState'
 
@@ -68,7 +68,8 @@ function ChatRow({ chat, active, running, unread, onSelect, onDelete, onArchive 
 export default function Sidebar({
   projects, chats, activeChatId, runningChats, unreadChats,
   onSelectChat, onNewChat, onNewProject, onDeleteChat, onArchiveChat, onDeleteProject, onEditProject, onMoveChat,
-  onManageModels, onOpenIntegrations, onOpenImport, onOpenExport, onOpenCost, onOpenVoices, theme, onToggleTheme, onCollapse,
+  onManageModels, onOpenIntegrations, onOpenImport, onOpenExport, onOpenCost, onOpenVoices, onOpenAnalysis, measuring = false,
+  theme, onToggleTheme, onCollapse,
 }) {
   const [collapsed, setCollapsed] = useState({})
   const [showArchived, setShowArchived] = useState(false)
@@ -266,6 +267,22 @@ export default function Sidebar({
           onClick={onOpenCost}
         >
           <BarChart3 size={15} className="text-ink-dim" /> Spend
+        </button>
+        <button
+          className="w-full inline-flex items-center gap-2 text-left text-sm text-ink-mid hover:text-ink rounded-lg px-2.5 py-1.5 hover:bg-panel"
+          title="Measurements you run when a decision needs numbers - what each costs and touches, a Run button, and the reports kept on this Mac"
+          onClick={onOpenAnalysis}
+        >
+          <FlaskConical size={15} className="text-ink-dim" /> Analysis
+          {/* #407: a measurement keeps running after you leave the page. */}
+          {measuring && (
+            <span
+              className="running-dot shrink-0 ml-auto"
+              role="status"
+              aria-label="A measurement is running"
+              title="A measurement is running - open Analysis to see it."
+            />
+          )}
         </button>
         <div className="flex items-center gap-0.5">
           <button

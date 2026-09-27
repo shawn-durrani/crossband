@@ -71,6 +71,13 @@ configures one keeps the session rule everywhere.
   even on a trusted host. A remote caller also sees environment variable
   names without their values.
 
+### The Analysis page waits for no password
+
+Its measurements can spend money and one reads your chat history, so
+every `/api/analysis` route needs a signed-in session even before a
+password is enrolled. Until the owner enrols, the page runs nothing for
+anyone, a Claude Code guest on this Mac included.
+
 ## How a request from the tailnet is checked
 
 [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md#where-a-request-goes)
