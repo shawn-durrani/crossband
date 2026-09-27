@@ -167,3 +167,7 @@ limits.
   pinned public URL and checked against its SHA-256 hash before use.
   After that first fetch, local identification makes no network calls.
   The model file carries no personal data and is never committed.
+- The diariser that follows each voice through a session is reached
+  only on this computer. An address anywhere else is refused, and the
+  calls follow no redirects and ignore proxy settings. No voice clip is
+  sent to a cloud service to be named or split.

@@ -1,31 +1,23 @@
-"""Anchored identification (#28 phase 2): remembered voices become NAMES.
+"""Remembered voices become NAMES (#28 phase 2, #482).
 
-Driven end to end through the realtime relay with the same FakeEleven /
-httpx-mock doubles as tests/test_room_mode.py - phase 1's latency pins stay
-in that file and still hold; this file pins what phase 2 adds ON TOP.
+Driven end to end through the realtime relay with the same FakeEleven
+double as tests/test_room_mode.py, and the session naming stood in for by
+roomkit.fake_naming - the latency pins stay in that file and still hold;
+this file pins what naming adds ON TOP.
 
-#28 PR-B: the anchored EL pass these tests exercise now has exactly ONE
-door - the local matcher's "multi" (overlapping speech) verdict - so the
-relay-driven tests stub the matcher to that verdict (the `multi_matcher`
-fixture). The machinery under test (prefix cluster naming, elimination,
-the ask-fallback, the mismatch cross-check) is unchanged behind that door.
-
-1. With a roster, the diarization request grows the anchor prefix and the
-   num_speakers = roster+1 hint; a cluster matching a person's prefix segment
-   labels the turn with their NAME.
-2. A fresh session re-identifies a remembered voice with no introduction.
-3. Exactly one anchor-pending person + exactly one unmatched cluster names
-   them by elimination (uncertain), and their anchor set accumulates from
-   those single-speaker utterances until it crosses the sufficiency bar.
-4. An unmatched cluster with no unambiguous elimination stays UNCERTAIN with
-   an ordinal and raises the 'unknown_voice' ask-fallback - one open ask at a
-   time - which a later introduction resolves.
-5. The LLM mismatch cross-check raises a content-free flag and NEVER mutates
+1. A named voice labels the turn with the person's NAME, in any session:
+   banks, not session state, carry identity.
+2. A new voice with no unambiguous elimination stays unnamed and raises
+   the 'unknown_voice' ask - one open ask at a time - which a later
+   introduction resolves. Nobody's bank is fed from it.
+3. The LLM mismatch cross-check raises a content-free flag and NEVER mutates
    the label it doubts.
-6. Tap-to-correct rewrites the label, resolves the turn's flags, and feeds
+4. Tap-to-correct rewrites the label, resolves the turn's flags, and feeds
    the cached single-speaker audio to the person's anchors as ground truth.
-7. Roster/flag changes ride the live-events stream content-free; the roster
+5. Roster/flag changes ride the live-events stream content-free; the roster
    snapshot and remembered-voices endpoints serve the UI; forget deletes.
+6. With the room off, a turn's audio is remembered under its message for an
+   introduction to claim, and no cloud call is made.
 """
 
 import asyncio
@@ -38,12 +30,13 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, auth, db, diarize, events, introductions
+from backend import anchors, auth, db, events, introductions
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
-from roomkit import _insert_user_message, _message_labels, _stt_usage_rows, _wait_for, as_utility_completion, loud_pcm
-from tests.conftest import speech_pcm
+from roomkit import (_insert_user_message, _message_labels, _wait_for,
+                     as_utility_completion, fake_naming, loud_pcm,
+                     naming_answer)
 
 
 @pytest.fixture
@@ -101,39 +94,17 @@ def relay(app, monkeypatch):
 
 
 @pytest.fixture
-def multi_matcher(monkeypatch):
-    """Stub the local matcher to the "multi" verdict - since #28 PR-B the
-    only verdict that runs the anchored ElevenLabs pass under test here."""
-    from backend import voiceid
-    monkeypatch.setattr(
-        voiceid, "identify_utterance",
-        lambda *a, **k: {"status": "defer", "person_id": None, "name": None,
-                         "score": 0.4, "reason": "multi"})
+def naming(monkeypatch):
+    return fake_naming(monkeypatch)
 
 
 @pytest.fixture
-def batch_stt(monkeypatch):
-    state = {"calls": [], "responses": []}
-
-    def fake_post(url, headers=None, data=None, files=None, timeout=None):
-        state["calls"].append({"url": url, "data": dict(data or {}),
-                               "audio": files["file"][1]})
-        nxt = state["responses"].pop(0) if state["responses"] else _resp()
-        if isinstance(nxt, Exception):
-            raise nxt
-        return httpx.Response(200, json=nxt,
-                              request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(voice_router.voice.httpx, "post", fake_post)
-    return state
-
-
-def _resp(*entries):
-    """A diarized batch response: entries are (speaker_id, start, end)."""
-    return {"language_code": "en", "text": "hello world",
-            "words": [{"text": f"w{i}", "type": "word", "speaker_id": s,
-                       "start": a, "end": b}
-                      for i, (s, a, b) in enumerate(entries)]}
+def cloud(monkeypatch):
+    """Every batch call to ElevenLabs, recorded. Naming makes none."""
+    calls = []
+    monkeypatch.setattr(voice_router.voice.httpx, "post",
+                        lambda url, *a, **k: calls.append(url))
+    return calls
 
 
 def _frame(data, commit=False):
@@ -158,13 +129,12 @@ def _roster(chat_id):
 
 
 def _setup_room(client, sufficient=(), pending=()):
-    """A chat with room mode on (durably + mirrored) and a roster: `sufficient`
-    people get 3x2s anchors (over the bar), `pending` people get roster rows
-    with no anchors."""
+    """A chat with room mode on and a roster: `sufficient` people get 3x2s
+    anchors (over the bar), `pending` people get roster rows with no
+    anchors."""
     chat = client.post("/api/chats", json={"participant_ids": []}).json()
     con = db.connect()
     db.set_chat_room_mode(con, chat["id"], True)
-    diarize.set_room_enabled(chat["id"], True)
     store = anchors.store()
     for name in sufficient:
         pid = store.ensure_person(name)
@@ -182,53 +152,44 @@ def _setup_room(client, sufficient=(), pending=()):
     return chat
 
 
-# One sufficient person's prefix is exactly PREFIX_PERSON_SECONDS long
-# (2s + 2s best clips, capped) - where mocked utterance timestamps start.
-PREFIX_1 = anchors.PREFIX_PERSON_SECONDS
+def _pid(name):
+    return anchors.store().find_by_name(name)["person_id"]
 
 
-# ── 1. anchored request + name labels ───────────────────────────────────────
+# ── 1. names ────────────────────────────────────────────────────────────────
 
-def test_matched_cluster_gets_the_persons_name(app, relay, batch_stt, multi_matcher):
-    """The whole point: prefix cluster -> Shawn's segment -> the utterance
-    cluster that matches it is labelled 'Shawn', and the request carried the
-    anchor prefix and the roster+1 num_speakers hint."""
-    batch_stt["responses"] = [_resp(("speaker_0", 0.4, 0.9),
-                                    ("speaker_0", PREFIX_1 + 0.5,
-                                     PREFIX_1 + 0.9))]
+def test_a_named_voice_labels_the_turn_with_the_persons_name(
+        app, relay, naming, cloud):
+    """The whole point: the naming names the voice, and the turn carries
+    that person's name - with no cloud call."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _setup_room(c, sufficient=["Shawn"])
-        utter = loud_pcm(1.5)
+        chat = _setup_room(c, sufficient=["Alex"])
+        naming["answers"] = [naming_answer(name="Alex", pid=_pid("Alex"),
+                                           score=0.95)]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"]})  # NO client toggle - server flag
+            ws.send_json({"chat_id": chat["id"]})  # NO client toggle
             assert ws.receive_json()["session"]  # #134 handshake
-            ws.send_json(_frame(utter, commit=True))
+            ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
             msg = _insert_user_message(chat["id"])
             labels = _wait_for(lambda: _message_labels(msg["id"]))
             ws.send_json({"done": True})
-    assert json.loads(labels) == {"clusters": ["speaker_0"],
-                                  "labels": ["Shawn"], "uncertain": []}
-    call = batch_stt["calls"][0]
-    assert call["data"]["num_speakers"] == "2"  # roster (1) + 1
-    pid = anchors.store().find_by_name("Shawn")["person_id"]
-    prefix_pcm, _ = anchors.store().build_prefix([pid], 16000)
-    assert call["audio"] == diarize.pcm16_wav(prefix_pcm + utter, 16000)
+    assert json.loads(labels) == {"clusters": ["session"],
+                                  "labels": ["Alex"], "uncertain": [],
+                                  "source": "session", "score": 0.95}
+    assert cloud == []
 
 
-def test_remembered_voice_reidentifies_in_a_fresh_session(app, relay, batch_stt, multi_matcher):
-    """A NEW websocket session (fresh RoomSession, fresh ordinals) still
-    names the remembered voice - anchors, not session state, carry identity.
-    No introduction happened in either session."""
-    batch_stt["responses"] = [
-        _resp(("speaker_0", 0.4, 0.9),
-              ("speaker_0", PREFIX_1 + 0.5, PREFIX_1 + 0.9)),
-        _resp(("speaker_3", 0.4, 0.9),   # per-request ids differ - that's the point
-              ("speaker_3", PREFIX_1 + 0.5, PREFIX_1 + 0.9)),
-    ]
+def test_remembered_voice_reidentifies_in_a_fresh_session(
+        app, relay, naming, cloud):
+    """A NEW websocket session still names the remembered voice - banks,
+    not session state, carry identity. No introduction happened in either
+    session."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _setup_room(c, sufficient=["Shawn"])
-        for expect_rows in (1, 2):
+        chat = _setup_room(c, sufficient=["Alex"])
+        naming["answers"] = [naming_answer(name="Alex", pid=_pid("Alex")),
+                             naming_answer(name="Alex", pid=_pid("Alex"))]
+        for _ in (1, 2):
             with c.websocket_connect("/api/voice/stt-stream") as ws:
                 ws.send_json({"chat_id": chat["id"]})
                 assert ws.receive_json()["session"]  # #134 handshake
@@ -236,81 +197,22 @@ def test_remembered_voice_reidentifies_in_a_fresh_session(app, relay, batch_stt,
                 assert ws.receive_json() == {"final": "hello world"}
                 msg = _insert_user_message(chat["id"])
                 labels = _wait_for(lambda: _message_labels(msg["id"]))
-                assert json.loads(labels)["labels"] == ["Shawn"]
+                assert json.loads(labels)["labels"] == ["Alex"]
                 ws.send_json({"done": True})
 
 
-# ── 2. elimination + anchor accumulation for the introduced person ──────────
+# ── 2. the ask ──────────────────────────────────────────────────────────────
 
-def test_elimination_names_the_single_pending_person_and_builds_their_anchor(
-        app, relay, batch_stt, multi_matcher):
-    """After 'my wife Alex is here', Alex speaks: her cluster matches no
-    anchor, but she is the ONLY pending person - elimination names her
-    (uncertain), and each clean single-speaker utterance feeds her anchor set
-    until it crosses the sufficiency bar. The bar is TWO-PART since #28 PR-B
-    (seconds AND short clips), so her utterances mix lengths - two long, two
-    short - exactly the mix real speech provides."""
-    batch_stt["responses"] = [
-        _resp(("speaker_0", 0.4, 0.9),
-              ("speaker_1", PREFIX_1 + 0.3, PREFIX_1 + 0.7))
-        for _ in range(4)]
+def test_an_unknown_voice_stays_unnamed_and_asks_once(app, relay, naming,
+                                                      cloud):
+    """Two unlearnt people, one new voice: no elimination possible. The
+    turn stays unnamed and says why, ONE 'unknown_voice' flag opens (not
+    one per turn), nobody's bank is fed, and a later introduction resolves
+    the ask. The owner (the default `user_name`) is learnt, so a new voice
+    can't be them."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _setup_room(c, sufficient=["Shawn"], pending=["Alex"])
-        with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"]})
-            assert ws.receive_json()["session"]  # #134 handshake
-            first_labels = None
-            for n, secs in enumerate((2.5, 2.5, 1.5, 1.5), start=1):
-                ws.send_json(_frame(loud_pcm(secs), commit=True))
-                assert ws.receive_json() == {"final": "hello world"}
-                msg = _insert_user_message(chat["id"], f"turn {n}")
-                labels = _wait_for(lambda: _message_labels(msg["id"]))
-                if first_labels is None:
-                    first_labels = labels
-            ws.send_json({"done": True})
-    assert json.loads(first_labels) == {"clusters": ["speaker_1"],
-                                        "labels": ["Alex"],
-                                        "uncertain": ["Alex"]}
-    alex = anchors.store().find_by_name("Alex")
-    assert alex is not None
-    # Elimination built her a real anchor set and she crossed the seconds bar
-    # (#28, tenth field test: sufficiency is seconds alone, so she graduates
-    # to the voice-matched path partway through rather than being eliminated
-    # on every turn - at least one short clip was banked before she did).
-    assert alex["sufficient"] is True
-    assert alex["short_clips"] >= 1
-    # the roster row linked the moment her first clip was accepted
-    row = next(p for p in _roster(chat["id"]) if p["name"] == "Alex")
-    assert row["person_id"] == alex["person_id"]
-    assert _flags(chat["id"]) == []          # elimination was unambiguous - no ask
-
-
-def test_num_speakers_tracks_roster_size(app, relay, batch_stt, multi_matcher):
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _setup_room(c, sufficient=["Shawn"], pending=["Ana", "Ben"])
-        with c.websocket_connect("/api/voice/stt-stream") as ws:
-            ws.send_json({"chat_id": chat["id"]})
-            assert ws.receive_json()["session"]  # #134 handshake
-            ws.send_json(_frame(loud_pcm(1.0), commit=True))
-            ws.receive_json()
-            assert _wait_for(lambda: batch_stt["calls"])
-            ws.send_json({"done": True})
-    assert batch_stt["calls"][0]["data"]["num_speakers"] == "4"  # 3 present + 1
-
-
-# ── 3. the ask-fallback ─────────────────────────────────────────────────────
-
-def test_ambiguous_unknown_cluster_stays_uncertain_and_asks_once(
-        app, relay, batch_stt, multi_matcher):
-    """Two pending people, one unknown cluster: no elimination possible. The
-    turn keeps an uncertain ordinal, ONE 'unknown_voice' flag opens (not one
-    per utterance), and a later introduction resolves it."""
-    batch_stt["responses"] = [
-        _resp(("speaker_0", 0.4, 0.9),
-              ("speaker_1", PREFIX_1 + 0.3, PREFIX_1 + 0.7))
-        for _ in range(2)]
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _setup_room(c, sufficient=["Shawn"], pending=["Ana", "Ben"])
+        chat = _setup_room(c, sufficient=["User"], pending=["Sam", "Dave"])
+        naming["answers"] = [naming_answer("new"), naming_answer("new")]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             assert ws.receive_json()["session"]  # #134 handshake
@@ -319,43 +221,39 @@ def test_ambiguous_unknown_cluster_stays_uncertain_and_asks_once(
                 assert ws.receive_json() == {"final": "hello world"}
                 msg = _insert_user_message(chat["id"], f"turn {n}")
                 labels = _wait_for(lambda: _message_labels(msg["id"]))
+                assert _wait_for(lambda: _flags(chat["id"]))
             ws.send_json({"done": True})
-        assert json.loads(labels)["uncertain"] == ["Voice 1"]
+        assert json.loads(labels)["unresolved"] == "new_voice"
         flags = _flags(chat["id"])
         assert len(flags) == 1               # one open ask, not one per turn
         assert flags[0]["kind"] == "unknown_voice"
         assert flags[0]["message_id"] is not None
-        # nobody's anchor was fed - an ambiguous voice is not ground truth
-        assert anchors.store().find_by_name("Ana") is None
-        assert anchors.store().find_by_name("Ben") is None
+        # nobody's anchor was fed - an unknown voice is not ground truth
+        assert anchors.store().find_by_name("Sam") is None
+        assert anchors.store().find_by_name("Dave") is None
         # answering in chat (a confirmed introduction) closes the ask
         introductions.apply_scan(chat["id"],
-                                 {"introductions": ["Cass"], "departures": []},
-                                 {"user_name": "Shawn", "room_roster_max": 6})
+                                 {"introductions": ["Mateo"],
+                                  "departures": []},
+                                 {"user_name": "Alex", "room_roster_max": 6})
         assert _flags(chat["id"]) == []
+    assert cloud == []
 
 
 # ── 4. the mismatch cross-check ─────────────────────────────────────────────
 
-def test_mismatch_flags_but_never_mutates_the_label(app, relay, batch_stt, multi_matcher,
+def test_mismatch_flags_but_never_mutates_the_label(app, relay, naming,
                                                     monkeypatch):
     """The cross-check doubts a named turn: a 'mismatch' flag opens carrying
     names only, and the voice label is EXACTLY what it was - there is no code
     path from the check to the label."""
     async def fake_utility(prompt, cfg, max_tokens=2000):
-        return json.dumps({"mismatch": True, "suspected": "Alex"})
+        return json.dumps({"mismatch": True, "suspected": "Sam"})
     monkeypatch.setattr("backend.llm_util.utility_complete_with_usage",
                         as_utility_completion(fake_utility))
-    two = 2 * PREFIX_1  # two sufficient people tile the prefix
-    batch_stt["responses"] = [_resp(
-        ("speaker_0", 0.4, 0.9),                  # Shawn's anchor segment
-        ("speaker_9", PREFIX_1 + 0.4, PREFIX_1 + 0.9),  # Alex's anchor segment
-        ("speaker_0", two + 0.1, two + 0.2),
-        ("speaker_0", two + 0.3, two + 0.4),
-        ("speaker_0", two + 0.5, two + 0.6),
-        ("speaker_0", two + 0.7, two + 0.8))]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _setup_room(c, sufficient=["Shawn", "Alex"])
+        chat = _setup_room(c, sufficient=["Dave", "Sam"])
+        naming["answers"] = [naming_answer(name="Dave", pid=_pid("Dave"))]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             assert ws.receive_json()["session"]  # #134 handshake
@@ -366,12 +264,12 @@ def test_mismatch_flags_but_never_mutates_the_label(app, relay, batch_stt, multi
             flag = _wait_for(lambda: _flags(chat["id"]))
             ws.send_json({"done": True})
     assert flag[0]["kind"] == "mismatch"
-    assert flag[0]["label"] == "Shawn"
-    assert flag[0]["suspected"] == "Alex"
+    assert flag[0]["label"] == "Dave"
+    assert flag[0]["suspected"] == "Sam"
     assert flag[0]["message_id"] == msg["id"]
     # THE PIN: the label is untouched, before and after the flag
     assert json.loads(_message_labels(msg["id"]))["labels"] == json.loads(
-        labels)["labels"] == ["Shawn"]
+        labels)["labels"] == ["Dave"]
 
 
 def test_mismatch_parse_verdict_is_defensive():
@@ -385,17 +283,12 @@ def test_mismatch_parse_verdict_is_defensive():
         assert mismatch.parse_verdict(bad)["mismatch"] is False, bad
 
 
-def test_mismatch_keyless_is_a_quiet_no_op(app, relay, batch_stt, multi_matcher):
+def test_mismatch_keyless_is_a_quiet_no_op(app, relay, naming):
     """No utility key: the check degrades to nothing - no flag, no error, and
     obviously no label change."""
-    batch_stt["responses"] = [_resp(
-        ("speaker_0", 0.4, 0.9),
-        ("speaker_0", PREFIX_1 + 0.1, PREFIX_1 + 0.2),
-        ("speaker_0", PREFIX_1 + 0.3, PREFIX_1 + 0.4),
-        ("speaker_0", PREFIX_1 + 0.5, PREFIX_1 + 0.6),
-        ("speaker_0", PREFIX_1 + 0.7, PREFIX_1 + 0.8))]
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _setup_room(c, sufficient=["Shawn"])
+        chat = _setup_room(c, sufficient=["Dave"])
+        naming["answers"] = [naming_answer(name="Dave", pid=_pid("Dave"))]
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             assert ws.receive_json()["session"]  # #134 handshake
@@ -539,15 +432,13 @@ def test_rename_sets_preferred_name_and_roster_shows_it(app):
                       json={"name": "!!!"}).status_code == 400
 
 
-def test_room_mode_patch_override_updates_flag_and_mirror(app):
+def test_room_mode_patch_override_updates_the_flag(app):
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         r = c.patch(f"/api/chats/{chat['id']}", json={"room_mode": True}).json()
         assert r["room_mode"] == 1
-        assert diarize.room_enabled(chat["id"]) is True
         r = c.patch(f"/api/chats/{chat['id']}", json={"room_mode": False}).json()
         assert r["room_mode"] == 0
-        assert diarize.room_enabled(chat["id"]) is False
 
 
 def test_flag_dismissal_endpoint(app):
@@ -563,31 +454,30 @@ def test_flag_dismissal_endpoint(app):
                       ).status_code == 404
 
 
-def test_off_session_stashes_the_utterance_for_the_owner_anchor(
-        app, relay, batch_stt):
-    """Room mode OFF: the commit still slices the tee, but the audio only
-    lands in the in-memory stash (for a later introduction to claim) - no
-    batch call, no task, no label. The phase-1 pins hold with the stash."""
+def test_a_room_off_turn_remembers_its_audio_for_an_introduction(
+        app, relay, naming, cloud):
+    """Room mode OFF: the commit still slices the tee and the turn still
+    gets its check, and its audio is remembered under its message for a
+    later introduction to claim as the owner's first clip. No cloud call."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         utter = loud_pcm(1.0)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             assert ws.receive_json()["session"]  # #134 handshake
-            ws.send_json(_frame(utter, commit=True))
-            assert ws.receive_json() == {"final": "hello world"}
+            ws.send_json({**_frame(utter, commit=True), "turn_id": "t1"})
+            assert ws.receive_json() == {"final": "hello world",
+                                         "turn_id": "t1"}
+            msg = _insert_user_message(chat["id"], voice_turn_id="t1")
+            entry = _wait_for(lambda: anchors.peek_audio(msg["id"]))
             ws.send_json({"done": True})
-        time.sleep(0.2)
-        assert batch_stt["calls"] == []
-        assert diarize._TASKS == set()
-        stashed = diarize.take_stashed_utterance(chat["id"])
-        assert stashed is not None and stashed[0] == utter
+        assert entry[0] == utter and entry[2] == 1
+        assert cloud == []
 
 
 # ── 7. the live-events stream ───────────────────────────────────────────────
 
 def test_roster_and_flag_changes_ride_the_stream_content_free(tmp_path):
-    diarize._ROOM_ENABLED.clear()
     create_app(Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1"))
 
@@ -638,7 +528,6 @@ def test_correcting_a_turn_to_an_owner_alias_never_mints_a_second_person(
     "ambiguous", so the owner sat on "identity pending" forever. A correction
     naming the owner (or a spelling variant of it) must route to the owner's
     EXISTING record - never mint a twin."""
-    diarize._ROOM_ENABLED.clear()
     anchors.clear_recent_audio()
     app = create_app(Settings(data_dir=str(tmp_path / "data"),
                               memory_url="http://127.0.0.1:1",

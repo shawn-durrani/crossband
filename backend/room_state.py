@@ -8,13 +8,12 @@ tests/test_room_state_guard.py holds the walls: no new direct writer can
 land outside this module.
 
 THE ORDERING LAW (db.py's store discipline, kept): the database is the
-durable state; diarize's in-process dicts are the live mirror the STT
-relay reads at commit boundaries with no I/O on the audio path; the
+state, and the voice check reads it from the chat row on every turn; the
 room-update bell (events.notify_room_update) is only the wake-up. Every
 function here commits the durable write FIRST - one statement, one
 commit, even when a call touches both flags, so a crash can no longer
-split a flip - then updates the mirror, then runs the roster steps
-(whose db writers ring their own bells), then rings the bell once. The
+split a flip - then runs the roster steps (whose db writers ring their
+own bells), then rings the bell once. The
 bell rings on every arm/disarm call, including one that changed
 nothing: it is a wake-up, not a delta, and the early-return paths that
 used to skip it left durable ambient flips nobody was told about.
@@ -32,10 +31,9 @@ each call site instead of averaged away:
   room some other path armed first has already seated them); "always"
   re-seats and re-links every time (the manual toggle is a plain
   idempotent switch); "never" leaves the owner to the caller (the
-  introduction scan seats from its stash gate, and the known-voice arm
-  seats the matched guests instead - a remembered guest proves a
-  household, and the anchored-pass rationale only needs the owner on
-  the UNKNOWN path).
+  introduction scan seats the owner from the introduction's own audio,
+  and the known-voice arm seats the matched guests instead - a
+  remembered guest proves a household by itself).
 - disarm(set_ambient_off / clear_roster / resolve_asks): the spoken
   "solo mode" is the sacred disarm and passes all three; the manual
   toggle-off is the degraded/accessibility path and passes none, which
@@ -48,27 +46,25 @@ each call site instead of averaged away:
 
 THREADING: arm(), disarm() and seat() are synchronous and block on
 sqlite commits - never call them on the event loop. Every production
-caller is already off it: diarize's arms run under _in_voice_thread,
-apply_scan and apply_command run on worker threads, and the chats/room
-routers are sync endpoints on the request threadpool. seed_mirrors() is
-the exception: dict writes only (single-key assignments, atomic under
-the GIL), no I/O, safe from the event loop - the relay's session-open
-seed calls it there.
+caller is already off it: the voice check's arms run under
+diarize._in_voice_thread, apply_scan and apply_command run on worker
+threads, and the chats/room routers are sync endpoints on the request
+threadpool.
 
 What deliberately stays at the call sites: the introduction scan's
 naming ceremony (owner aliases, the #65 participant boundary,
 relationship nouns, variant merging, alias capture, merge questions)
 and its once-per-scan ask resolution (re-introducing a present person
 still answers the ask, so it cannot hang off any single seat); the
-stash-gated owner anchor seed (it needs the scan's armed_before
-context); the ambient ask raise (_raise_unknown_voice needs the
+owner's first clip from the introduction's audio (it needs the scan's
+armed_before context); the voice check's ask raise (_raise_unknown_voice needs the
 attached message id, which does not exist at arm time); and
 reassign_speaker's message-scoped flag resolution (it belongs to the
 label rewrite, not the seat).
 """
 import logging
 
-from . import db, diarize
+from . import db
 from .config import Settings
 
 log = logging.getLogger("crossband.room_state")
@@ -88,16 +84,6 @@ def roster_cap(cfg) -> int:
     if v is None:
         v = Settings.model_fields["room_roster_max"].default
     return int(v)
-
-
-def seed_mirrors(chat_id, *, enabled, ambient_disarmed):
-    """Seed diarize's live mirrors from durable state already read
-    elsewhere (the relay's session-open path). Mirror-only by design: no
-    database write and no bell, because the chat row is the truth this
-    copies - ringing would announce a change that did not happen. Safe
-    on the event loop: two dict assignments, no I/O."""
-    diarize.set_room_enabled(chat_id, bool(enabled))
-    diarize.set_ambient_off(chat_id, bool(ambient_disarmed))
 
 
 def arm(chat_id, cfg, *, source, clear_ambient, seat_owner, con=None):
@@ -124,9 +110,6 @@ def arm(chat_id, cfg, *, source, clear_ambient, seat_owner, con=None):
         # when this arm is an explicit owner re-enable.
         db.set_chat_room_state(con, chat_id, room_mode=True,
                                ambient_off=False if clear_ambient else None)
-        diarize.set_room_enabled(chat_id, True)
-        if clear_ambient:
-            diarize.set_ambient_off(chat_id, False)
         if flipped:
             log.info("room mode ON via %s: chat=%s", source, chat_id)
         if seat_owner == "always" or (seat_owner == "on_arm" and flipped):
@@ -163,9 +146,6 @@ def disarm(chat_id, *, source, set_ambient_off, clear_roster,
         flipped = bool(row["room_mode"])
         db.set_chat_room_state(con, chat_id, room_mode=False,
                                ambient_off=True if set_ambient_off else None)
-        diarize.set_room_enabled(chat_id, False)
-        if set_ambient_off:
-            diarize.set_ambient_off(chat_id, True)
         departed = 0
         if flipped and clear_roster:
             for r in db.get_room_roster(con, chat_id, present_only=True):

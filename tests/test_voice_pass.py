@@ -1,4 +1,4 @@
-"""The single naming pass (#482 stage 3, `voice_session_only`).
+"""The voice check (#482): one pass names every spoken turn.
 
 What these tests pin, in order:
 
@@ -13,11 +13,14 @@ What these tests pin, in order:
 3. WHOLE TURNS. Through `run`, with the session's answer faked and the
    real room state: labels land with source "session", a guest arms and
    seats, a new voice arms and asks, solo changes nothing, a turn no feed
-   saw is named on its own, and a sure naming saves one clip.
-4. THE SWITCH. With `voice_session_only` on, every route goes through this
-   pass; off, the old passes run as before.
+   saw is named on its own, and a sure naming saves one clip and re-runs
+   the hygiene audit. A named turn gets the mismatch cross-check.
+4. ONE PATH. Every voiced turn goes through this pass, whatever the room
+   is doing, and nothing else runs.
 5. NAMING. The calibrated scorer names one person per voice at its bar
    and marks a voice new under the new bar, and a name set by hand wins.
+6. NO DIARISER. With no diariser configured, the feed stays off and every
+   turn is named on its own, end to end.
 
 Keyless and offline. Synthetic roster (Alex the owner, Sam, Dave).
 """
@@ -28,7 +31,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, db, diarize, voice_pass, voice_session_shadow as vss
+from backend import anchors, db, diarize, voice_pass, voice_sessions as vss
 from backend.app import create_app
 from backend.config import Settings
 from roomkit import _insert_user_message, _message_labels
@@ -36,9 +39,7 @@ from tests.conftest import speech_pcm
 
 SR = 16000
 OWNER = "Alex"
-ONLY_CFG = {"user_name": OWNER, "diarize_shadow_url": "http://127.0.0.1:8910",
-            "voice_session_shadow": True, "voice_session_live": True,
-            "voice_session_only": True}
+ONLY_CFG = {"user_name": OWNER, "diarize_shadow_url": "http://127.0.0.1:8910"}
 
 
 def _plan(**kw):
@@ -176,7 +177,7 @@ def _run(chat_id, got, monkeypatch, single=None, turn="t1"):
     monkeypatch.setattr(vss, "name_single_turn",
                         lambda *a, **k: single)
     asyncio.run(voice_pass.run(chat_id, speech_pcm(3.0, amp=4000), SR,
-                               db.now(), diarize.RoomSession(enabled=False),
+                               db.now(), diarize.RoomSession(),
                                dict(ONLY_CFG), turn))
 
 
@@ -266,50 +267,93 @@ def test_nothing_named_anywhere_leaves_the_turn_listening(app, monkeypatch):
 
 
 def test_a_sure_naming_saves_one_clip_per_allowance(app, monkeypatch):
-    saved = []
+    saved, audits = [], []
     monkeypatch.setattr(anchors.AnchorStore, "add_clip",
                         lambda self, pid, pcm, sr, source, score=None, **k:
                         saved.append((pid, source, len(pcm))) or True)
+    from backend import voiceid
+    monkeypatch.setattr(voiceid, "audit_banks_if_changed",
+                        lambda cfg: audits.append(1))
     vss._sessions[99] = {"id": "s1", "voices": {}, "turn_voice": []}
     got = _got(pid="p-Sam", prob=0.995)
-    assert voice_pass._bank(99, got, speech_pcm(3.0, amp=3000), SR) is True
+    assert voice_pass._bank(99, got, speech_pcm(3.0, amp=3000), SR,
+                            ONLY_CFG) is True
     assert saved == [("p-Sam", "accumulated", 3 * SR * 2)]
+    assert audits == [1]            # a saved clip re-runs the hygiene audit
     for _ in range(voice_pass.BANK_PER_SESSION):
-        voice_pass._bank(99, got, speech_pcm(3.0, amp=3000), SR)
+        voice_pass._bank(99, got, speech_pcm(3.0, amp=3000), SR, ONLY_CFG)
     assert len(saved) == voice_pass.BANK_PER_SESSION
 
 
-# ---------- 4. the switch ----------
+def test_the_fallback_banking_bar_is_the_configured_one():
+    """voice_id_banking_extra reaches the fallback scorer's banking bar."""
+    got = _got(method="multi", score=0.65)
+    assert voice_pass.should_bank(got, {}) is True
+    assert voice_pass.should_bank(got, {"voice_id_banking_extra": 0.2}) \
+        is False
 
-def test_with_the_switch_on_every_route_goes_through_this_pass(app,
-                                                              monkeypatch):
+
+def test_a_named_turn_gets_the_mismatch_cross_check(app, monkeypatch):
+    """The mismatch cross-check (backend/mismatch.py) doubts a name the
+    words don't fit, and never changes a label. A named guest's turn gets
+    it in every mode, the owner's only while the room is on, and a
+    learning, listening or new-voice turn never does."""
+    d = voice_pass.decide(_got(), _plan())
+    assert voice_pass.cross_checks(d, _plan(), 3.0) is True
+    assert voice_pass.cross_checks(d, _plan(), 1.0) is False   # too short
+    solo = _plan(solo=True)
+    assert voice_pass.cross_checks(voice_pass.decide(_got(), solo), solo,
+                                   3.0) is True
+    owner = voice_pass.decide(_got(name=OWNER), _plan())
+    assert voice_pass.cross_checks(owner, _plan(), 3.0) is False
+    assert voice_pass.cross_checks(owner, _plan(room_on=True), 3.0) is True
+    for got, plan in ((_got("listening", ""), _plan()),
+                      (_got("new", ""), _plan()),
+                      (_got("new", ""), _plan(room_on=True,
+                                              unlearnt=["Dave"]))):
+        d = voice_pass.decide(got, plan)
+        assert voice_pass.cross_checks(d, plan, 3.0) is False
+    checks = []
+    monkeypatch.setattr("backend.mismatch.schedule_check",
+                        lambda *a, **k: checks.append(a[1:3]))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        _person(OWNER)
+        sam = _person("Sam", amp=2000)
+        chat = _chat(c, room_on=True)
+        m = _insert_user_message(chat, voice_turn_id="t1")
+        _run(chat, _got(pid=sam), monkeypatch)
+    assert checks == [(m["id"], "Sam")]
+
+
+# ---------- 4. one path ----------
+
+def test_every_voiced_turn_goes_through_this_pass(app, monkeypatch):
     seen = []
     monkeypatch.setattr(voice_pass, "schedule",
                         lambda *a, **k: seen.append(a[-1]) or object())
-    monkeypatch.setattr(diarize, "schedule_pass",
-                        lambda *a, **k: pytest.fail("old armed pass ran"))
-    monkeypatch.setattr(diarize, "schedule_ambient",
-                        lambda *a, **k: pytest.fail("old room-off pass ran"))
-    for room_on, ambient_ok in ((True, True), (False, True), (False, False)):
+    for i in range(3):
         diarize.schedule_turn_check(1, b"\x01\x00" * SR, SR,
-                                    diarize.RoomSession(enabled=room_on),
-                                    ONLY_CFG, room_on=room_on,
-                                    ambient_ok=ambient_ok,
-                                    turn_id=f"t{room_on}{ambient_ok}")
-    assert len(seen) == 3
+                                    diarize.RoomSession(), ONLY_CFG,
+                                    turn_id=f"t{i}")
+    assert seen == ["t0", "t1", "t2"]
+    assert all(diarize.turn_checked(f"t{i}") for i in range(3))
 
 
-def test_with_the_switch_off_the_old_passes_run(app, monkeypatch):
-    monkeypatch.setattr(voice_pass, "schedule",
-                        lambda *a, **k: pytest.fail("new pass ran"))
-    ran = []
-    monkeypatch.setattr(diarize, "schedule_pass",
-                        lambda *a, **k: ran.append("room") or object())
-    cfg = dict(ONLY_CFG, voice_session_only=False)
-    diarize.schedule_turn_check(1, b"\x01\x00" * SR, SR,
-                                diarize.RoomSession(enabled=True), cfg,
-                                room_on=True, ambient_ok=True, turn_id="t")
-    assert ran == ["room"]
+def test_the_old_passes_and_switches_are_gone():
+    """Retired with #482 item E: the three routes, the early check at
+    silence-start, the cloud crosstalk split, the stash and the switches.
+    A config file still naming the switches loads fine."""
+    for name in ("run_pass", "run_ambient", "schedule_speculative",
+                 "check_route", "stash_utterance", "ambient_decision",
+                 "set_room_enabled"):
+        assert not hasattr(diarize, name), name
+    from backend import voice
+    assert not hasattr(voice, "transcribe_diarized")
+    from backend.config import Settings
+    for key in ("voice_session_shadow", "voice_session_labels",
+                "voice_session_live", "voice_session_only",
+                "voice_shadow_model", "voice_id_pending_extra"):
+        assert key not in Settings.model_fields, key
 
 
 # ---------- 5. naming ----------
@@ -361,3 +405,31 @@ def test_naming_a_turn_by_hand_names_its_session_voice(app, monkeypatch):
         assert vss.human_named(chat, "t1", "Dave", "p-dave", ONLY_CFG)
         assert vss._sessions[chat]["voices"][4]["human"]["name"] == "Dave"
         assert json.loads(_message_labels(m2["id"]))["labels"] == ["Dave"]
+
+
+# ---------- 6. no diariser ----------
+
+def test_with_no_diariser_every_turn_is_named_on_its_own(app, monkeypatch):
+    """No `diarize_shadow_url` at all: the feed never starts, the pass
+    finds no feed's answer, and the real single-turn naming names the
+    whole turn as one voice against the remembered banks. The speaker
+    model is faked, everything else is real."""
+    sam_vec = [0.0, 1.0, 0.0, 0.0]
+    cfg = {"user_name": OWNER}
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, c: sam_vec)
+    monkeypatch.setattr(vss, "embed_eres_live", lambda pcm, sr, c: None)
+    assert not vss.enabled(cfg)
+    vss.feed(7, speech_pcm(0.5), SR, cfg)
+    vss.end_turn(7, "t1", cfg)
+    assert vss._feeds == {} and vss.peek_turn("t1") == (False, False, None)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        _person("Sam", amp=2000)
+        chat = _chat(c, room_on=True)
+        m = _insert_user_message(chat, voice_turn_id="t1")
+        asyncio.run(voice_pass.run(chat, speech_pcm(3.0, amp=4000), SR,
+                                   db.now(), diarize.RoomSession(), cfg,
+                                   "t1"))
+        labels = json.loads(_message_labels(m["id"]))
+        _, roster, _ = _room(chat)
+    assert labels["labels"] == ["Sam"] and labels["source"] == "session"
+    assert "Sam" in roster

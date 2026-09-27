@@ -318,37 +318,31 @@ class Settings(BaseModel):
     voice_pricing: dict = Field(default_factory=lambda: dict(DEFAULT_VOICE_PRICING))
     # Room mode (#28 phase 2): how many people the roster may hold at once
     # (present people; the cap frees as people leave). A product choice, not a
-    # technical one - the diarization API clusters up to 32. Override with
+    # technical one - the diariser follows up to 8 voices. Override with
     # CROSSBAND_ROOM_ROSTER_MAX.
     room_roster_max: int = 6
 
-    # Local speaker identification (#28): THE identity path. Since PR-B the
-    # on-device matcher is the only way a voice ever gets a name - identity
-    # is local or honestly uncertain, and no cloud pass ever names a turn.
+    # Local speaker identification (#28, #482): every voice is named on this
+    # computer, and no cloud pass ever names a turn or hears a voice clip.
     # When off (CROSSBAND_VOICE_ID_ENABLED=false), or when sherpa-onnx or
     # the model is absent, turns simply stay unnamed and automatic voice
     # arming does not happen; introductions, spoken commands and the toggle
-    # still arm room mode by hand. The ElevenLabs diarize batch call
-    # survives only for crosstalk word-splitting when the matcher hears
-    # overlapping speech.
+    # still arm room mode by hand.
     voice_id_enabled: bool = True
     # Cosine match threshold. Calibrated for nemo_en_titanet_small: same-speaker
     # ~0.63-0.73 vs best-impostor ~0.12-0.31 locally, so 0.5 sits in the gap.
+    # The session naming's fallback scorer carries it onto its own scale,
+    # and the tap-to-correct owner guard and the introduction's voice check
+    # use it as is.
     voice_id_threshold: float = 0.5
     # Match margin (#28 PR-B): how far the best enrolled match must beat the
     # runner-up before it is claimed. The hygiene guard widens it further,
     # automatically, for enrolled pairs whose voices sound close.
     voice_id_margin: float = 0.12
-    # #81: while anyone on the roster is anchor-pending, the naming bar
-    # rises by this much - the person most likely to be speaking has no
-    # bank to score against, so borderline matches to remembered people
-    # defer instead of confidently stealing a new guest's turns. 0 = off.
-    voice_id_pending_extra: float = 0.08
-    # #222: how much score, on top of the threshold, a match needs before
-    # its audio may be BANKED (accumulation and short-slice harvesting).
-    # Naming keeps the plain threshold; this keeps borderline matches from
-    # feeding the very bank that produced them. 0 = banking at the naming
-    # bar, the pre-#222 behaviour.
+    # #222: how much score, on top of the threshold, a voice named by the
+    # fallback scorer needs before its audio may be BANKED. Naming keeps
+    # the plain threshold; this keeps borderline matches from feeding the
+    # very bank that produced them. 0 = banking at the naming bar.
     voice_id_banking_extra: float = 0.10
     # The two-part anchor sufficiency bar (#28 PR-B): accepted seconds AND a
     # minimum number of short (~1-2s) clips before a voice counts as
@@ -363,40 +357,22 @@ class Settings(BaseModel):
     # <data_dir>/voice_models/ and never committed.
     voice_id_model_url: str = ""
     voice_id_model_sha256: str = ""
-    # The shadow test (#465 stage 1, backend/voice_shadow.py). It measures
-    # two possible changes to room mode on real turns and changes nothing:
-    # every armed voice turn gets one content-free row beside today's label.
-    # Both parts default off and either runs alone.
-    # diarize_shadow_url: a loopback diariser (workbench's diarserve, e.g.
-    # http://127.0.0.1:8910) to split each turn before naming the pieces.
-    # A URL that isn't this machine is refused and that part stays off.
+    # The diariser (#482, backend/voice_sessions.py): a loopback diariser
+    # with session routes (workbench's diarserve, e.g. http://127.0.0.1:8910)
+    # that follows each voice through a voice session. The name is from the
+    # stage that introduced it, kept so existing config files keep working.
+    # Empty, or a URL that isn't this machine (refused), names each voice
+    # turn on its own. The retired voice_shadow_model, voice_session_shadow,
+    # voice_session_labels, voice_session_live, voice_session_only and
+    # voice_id_pending_extra keys are ignored like any unknown key: what the
+    # switches turned on always runs, and nothing reads the bump any more.
     diarize_shadow_url: str = ""
-    # voice_shadow_model: a second speaker model scored beside TitaNet-Small.
-    # "titanet_large" is the one known name; it is fetched once, pinned and
-    # SHA-256-verified like the primary, only while this is set.
-    voice_shadow_model: str = ""
-    # voice_session_shadow: the redesign's session tracking and pooled
-    # naming (#482 stage 2, backend/voice_session_shadow.py), measured
-    # beside today's. Needs diarize_shadow_url and a diariser with /sessions.
-    voice_session_shadow: bool = False
-    # voice_session_labels: the first live step of the cut-over. A turn the
-    # live pass left unnamed takes its session voice's name, and nothing
-    # else changes. Needs voice_session_shadow.
-    voice_session_labels: bool = False
-    # voice_session_live: the relay feeds the tracker as audio arrives, and
-    # the live check names a turn it would leave unnamed from the session
-    # voice, before the seats read it. Needs voice_session_shadow.
-    voice_session_live: bool = False
-    # voice_session_only: stage 3's switch. One pass names every spoken
-    # turn in every mode from the session naming, and the old matcher's
-    # passes don't run. Needs voice_session_live.
-    voice_session_only: bool = False
-    # The calibrated voice scorer (#482 stage 2, backend/voice_calibration.py):
-    # the redesign's two-model, calibrated scorer and the readiness test the
-    # Voices page shows. Off by default. On, it fetches ERes2Net once (pinned
-    # and SHA-256-verified like the primary) and builds in the background at
-    # startup and after every bank change. It never names a turn: live
-    # naming keeps the matcher above and the sufficiency bar.
+    # The calibrated voice scorer (#482, backend/voice_calibration.py): the
+    # two-model, calibrated scorer that names voices, and the readiness test
+    # the Voices page shows. Off by default. On, it fetches ERes2Net once
+    # (pinned and SHA-256-verified like the primary) and builds in the
+    # background at startup and after every bank change. Until it is ready,
+    # voices are named by the fallback scorer on the matcher's bar.
     voice_calibrated_scorer: bool = False
 
     # memory companion service (Membro)

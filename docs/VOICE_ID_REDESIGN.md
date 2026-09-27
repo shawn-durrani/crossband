@@ -433,32 +433,43 @@ Every stage is its own pull request and can be reverted on its own.
 Nothing migrates by hand. Fingerprints are never stored, so every bank
 is rebuilt from its clips by the new scorer at the first start.
 
-### Where it stands, 26 September
+### Where it stands, 27 September
 
-Part of stage 3 went live early, as a narrower step than the plan's
-switch. The owner asked to cut over during that evening's game, after
-the session naming named 33 of 35 turns where the matcher named 4.
+Stages 2, 3 and 4 are done. The owner chose to skip the two weeks with
+today's path one setting away, after the morning chat named all 10
+voiced turns before the seats read them, so the new path now has to
+degrade on its own.
 
 Live on this install:
 
-- The diariser's tracking sessions, and the session naming running
-  beside the matcher on every spoken turn in an armed room.
-- The relay feeds the tracker as you talk. When the matcher can't name
-  a turn, the session's name goes on it before the models read it,
-  about a tenth of a second after you stop.
-- A voice named later fills in its earlier unnamed turns.
-- The calibrated scorer, used so far only for the readiness test on
-  the Voices page.
+- One voice check for every spoken turn, in every mode and from either
+  transcription path, named from the session naming. With no diariser,
+  or with it down, each turn is named on its own as one voice, with the
+  same scorer.
+- The calibrated two-model scorer names voices once its first build is
+  ready, and the multi scorer on the matcher's bar names them until
+  then.
+- One mic setting in every mode, recording a voice on purpose, and the
+  readiness test on the Voices page.
+- A new voice is asked about once, after 4 seconds of clean speech.
+  Clips are saved from a voice named at 0.99 or more with 8 seconds of
+  clean speech. Memory gets the probability as confidence.
+- Crosstalk is split on the Mac from Scribe's word times.
+- Deleted: the three routes, their decision tables and live mirrors,
+  the early check before a turn ends, the cloud crosstalk split, the
+  introduction stash, the window multi-voice check, the extra bar while
+  someone is unlearnt, the old shadow test, and the settings that only
+  served them.
 
 Not built yet:
 
-- Session names come from TitaNet-Small against every kept clip, on
-  the matcher's own bar. The calibrated two-model scorer doesn't name
-  turns yet.
-- Recording a voice on purpose, asking who a new voice is, saving clips
-  from a session, and the one mic setting.
-- The session name only fills gaps. It never overrules the matcher,
-  and today's path hasn't been removed.
+- A spoken answer to the ask naming the voice, relabelling its turns
+  and saving its held audio. Tapping a turn does all three. And "that's
+  the TV".
+- The check that moves a span to the session voice it plainly belongs
+  to, and the naming pass at the end of a session.
+- Stored trust scores recomputed in the new units, and the hygiene
+  check on the new scorer.
 
 ## Risks
 

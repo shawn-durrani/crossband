@@ -1,7 +1,7 @@
 """Crosstalk, split on this computer (#482 item D).
 
-The cloud split is gone with the session naming on. A turn two voices
-spoke in is labelled from the tracker's spans and Scribe's word times.
+A turn two voices spoke in is labelled from the tracker's spans and
+Scribe's word times, on this computer: no voice clip goes to the cloud.
 What these tests pin, in order:
 
 1. WHICH TURNS. A second voice counts once it spoke for a second or more;
@@ -19,8 +19,8 @@ What these tests pin, in order:
    listening is an unidentified speaker to the seats, never the owner, and
    memory files the turn as guest:unknown.
 5. THE PASS. A two-voice turn waits for its words only as long as it must,
-   a single-voice turn doesn't wait and is labelled as before, the label
-   is parked in time for the message, and the cloud split never runs.
+   a single-voice turn doesn't wait and is labelled as before, and the
+   label is parked in time for the message.
 6. END TO END. Relay, tracker and pass together, across a tracker restart
    and a socket reconnect.
 
@@ -37,7 +37,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend import (crosstalk, db, diarize, memory_client, voice,
-                     voice_pass, voice_session_shadow as vss, voice_shadow)
+                     voice_pass, voice_sessions as vss)
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import _crosstalk_tail, _user_turn_head
@@ -46,9 +46,7 @@ from tests.conftest import speech_pcm
 
 SR = 16000
 OWNER = "Alex"
-ONLY_CFG = {"user_name": OWNER, "diarize_shadow_url": "http://127.0.0.1:8910",
-            "voice_session_shadow": True, "voice_session_live": True,
-            "voice_session_only": True}
+ONLY_CFG = {"user_name": OWNER, "diarize_shadow_url": "http://127.0.0.1:8910"}
 
 
 def _span(slot, start, end, overlap=False):
@@ -329,7 +327,7 @@ def _run(chat_id, got, monkeypatch, turn="t1"):
     monkeypatch.setattr(vss, "name_single_turn", lambda *a, **k: None)
     t0 = time.monotonic()
     asyncio.run(voice_pass.run(chat_id, speech_pcm(3.0, amp=4000), SR,
-                               db.now(), diarize.RoomSession(enabled=False),
+                               db.now(), diarize.RoomSession(),
                                dict(ONLY_CFG), turn))
     return time.monotonic() - t0
 
@@ -371,7 +369,7 @@ def test_words_that_arrive_while_the_pass_waits_are_used(app, monkeypatch):
             monkeypatch.setattr(vss, "await_turn", await_turn)
             await asyncio.gather(later(), voice_pass.run(
                 chat, speech_pcm(3.0, amp=4000), SR, db.now(),
-                diarize.RoomSession(enabled=False), dict(ONLY_CFG), "t1"))
+                diarize.RoomSession(), dict(ONLY_CFG), "t1"))
         asyncio.run(both())
         labels = json.loads(_message_labels(m["id"]))
     assert len(labels["segments"]) == 3
@@ -461,7 +459,7 @@ def test_the_label_is_parked_before_the_message_is_saved(app, monkeypatch):
             monkeypatch.setattr(vss, "await_turn", await_turn)
             msg, _ = await asyncio.gather(send_later(), voice_pass.run(
                 chat, speech_pcm(3.0, amp=4000), SR, db.now(),
-                diarize.RoomSession(enabled=False), dict(ONLY_CFG), "t1"))
+                diarize.RoomSession(), dict(ONLY_CFG), "t1"))
             return msg
         msg = asyncio.run(both())
     stored = json.loads(msg["voice_labels"])
@@ -469,32 +467,6 @@ def test_the_label_is_parked_before_the_message_is_saved(app, monkeypatch):
     # the pass knew the row was its own: the two-voice audio is remembered
     # for tap-to-correct as two voices, so a correction learns nothing
     assert remembered == [(msg["id"], 2)]
-
-
-def test_the_cloud_split_never_runs_with_the_switch_on(app, monkeypatch):
-    """The one path that reached ElevenLabs' batch split, an armed room's
-    "multi" verdict, returns before it with the session naming on."""
-    calls = []
-    monkeypatch.setattr(voice, "transcribe_diarized",
-                        lambda *a, **k: calls.append(1))
-    monkeypatch.setattr(diarize, "_room_plan", lambda chat_id, sr: (
-        b"", [], [], 2, None, [{"person_id": "p", "name": "Sam"}]))
-    monkeypatch.setattr(diarize.voiceid, "enabled", lambda cfg: True)
-
-    async def multi(*a, **k):
-        return {"status": "multi", "reason": "multi", "score": 0.4}
-    monkeypatch.setattr(diarize, "_utterance_verdict", multi)
-    monkeypatch.setattr(diarize.voiceid, "matched", lambda v: False)
-    monkeypatch.setattr(diarize.voiceid, "is_multi", lambda v: True)
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = _chat(c)
-        for cfg, expect in ((ONLY_CFG, 0),
-                            (dict(ONLY_CFG, voice_session_only=False), 1)):
-            calls.clear()
-            asyncio.run(diarize._live_pass(
-                chat, speech_pcm(2.0), SR, db.now(),
-                diarize.RoomSession(True), dict(cfg)))
-            assert len(calls) == expect
 
 
 def test_correcting_a_two_voice_turn_names_no_session_voice(app,
@@ -619,12 +591,10 @@ def e2e(tmp_path, monkeypatch):
     from backend.routers import voice as voice_router
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1", user_name=OWNER,
-                        diarize_shadow_url="http://127.0.0.1:8910",
-                        voice_session_shadow=True, voice_session_live=True,
-                        voice_session_only=True)
+                        diarize_shadow_url="http://127.0.0.1:8910")
     a = create_app(settings)
     vss._reset_for_tests()
-    monkeypatch.setattr(voice_shadow, "gate", lambda pcm, sr: None)
+    monkeypatch.setattr(vss, "gate", lambda pcm, sr: None)
     # the first voice sounds like Alex, the second like nobody saved
     monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX_FP)
     monkeypatch.setattr(vss, "embed_eres_live", lambda pcm, sr, cfg: None)
@@ -635,7 +605,7 @@ def e2e(tmp_path, monkeypatch):
     monkeypatch.setattr(vss, "_bar", lambda *a, **k: {
         "threshold": 0.5, "margin": 0.1, "source": "t"})
     calls = []
-    monkeypatch.setattr(voice, "transcribe_diarized",
+    monkeypatch.setattr(voice.httpx, "post",
                         lambda *a, **k: calls.append(1))
     monkeypatch.setattr(voice_router.engine, "prewarm_recall",
                         lambda *a, **k: None)

@@ -1326,10 +1326,8 @@ def _json_dumps(obj):
 # is only the wake-up. Every write here commits BEFORE notifying.
 
 def set_chat_room_mode(con, chat_id, on):
-    """Flip the durable per-chat room-mode flag. Callers must ALSO update
-    diarize's in-process registry (diarize.set_room_enabled) so a live STT
-    session sees the flip at its next commit boundary without a DB read on
-    the audio path.
+    """Flip the durable per-chat room-mode flag. The voice check reads it
+    from the chat row on every turn.
 
     Production code goes through backend/room_state.py; kept for tests,
     which place state directly.
@@ -1342,9 +1340,8 @@ def set_chat_room_mode(con, chat_id, on):
 def set_chat_ambient_off(con, chat_id, off):
     """Flip the durable per-chat ambient-off flag (#28). Set when the owner
     says "solo mode", so automatic arming is suppressed until an explicit
-    re-enable clears it. Callers must ALSO update diarize's live mirror
-    (diarize.set_ambient_off) so a running STT session honours it without a
-    DB read on the audio path.
+    re-enable clears it. The voice check reads it from the chat row on
+    every turn.
 
     Production code goes through backend/room_state.py; kept for tests,
     which place state directly.

@@ -1,14 +1,17 @@
-"""The session shadow (#482 stage 2): the redesign's session tracking and
-pooled naming, measured beside today's, changing nothing.
+"""The session naming (#482): follow each voice through a voice session and
+name each voice from everything it has said.
 
 What these tests pin, in order:
 
-1. OFF BY DEFAULT. Without its own switch, or without the shadow's
-   loopback diariser, the shadow's worker never calls it.
+1. THE DIARISER IS LOOPBACK ONLY. Every non-loopback URL is refused, a
+   refused URL starts no feed and sends nothing, the refusal is logged
+   once, and the calls ignore proxies and redirects. With no diariser, or
+   the matcher off, the feed stays off.
 2. NAMING A VOICE FROM POOLED EVIDENCE. Listening under 1.5 s of clean
    speech, named over the bar and the margin, one person per voice, new
    once a voice has 4 s and matches nobody, and the pooled fingerprint
-   weights by length.
+   weights by length. The multi scorer's maths: the mean of each
+   person's best clips, its impostor statistics and its z-matched bar.
 3. ONE TRACKING SESSION PER CHAT. Opened once, every turn pushed then
    ended in order, spans moved from session time to turn time, a fresh
    session after the idle limit (the old one closed), and a failed call
@@ -17,9 +20,23 @@ What these tests pin, in order:
    are, and evidence builds across turns so a short turn is named from
    what the voice said before.
 5. NO SCORING AGAINST ITSELF. A clip banked after the session opened is
-   left out of the comparison.
-6. CONTENT-FREE ROWS, AND THE COMPARE VIEW. No words, no audio. The view
-   gives today's label, the name at the time and the name at the end.
+   left out of the comparison, every kept clip is embedded once, and the
+   feed never writes to the store.
+6. CONTENT-FREE ROWS, AND THE VIEW. No words, no audio. The view gives the
+   name at the time and the name at the end, the route serves it, and the
+   file is cut back once full.
+7. FILLING IN. A named voice's unnamed turns take its name, with the
+   owner marker for the owner; a name a person or the pass gave, a
+   correction and crosstalk are never touched; nothing but the label
+   changes.
+8. THE FEED. The relay feeds the tracker as audio arrives, a later turn is
+   named from the voice's whole session, a failed push gives no name, and
+   the relay feeds every chunk and ends the turn before the check.
+9. WARMING. A warm embeds every clip so the first turn embeds none, runs
+   once at a time and only with the matcher on, and a new voice chat
+   starts one.
+10. WHAT THE CROSSTALK SPLIT READS. Every voice heard in a turn, with its
+   spans in turn time.
 
 Keyless and offline: the diariser and the speaker model are fakes.
 Synthetic roster (Alex, Sam).
@@ -27,17 +44,19 @@ Synthetic roster (Alex, Sam).
 
 import asyncio
 import json
+import logging
+import math
 
 import pytest
 
-from backend import anchors, voice_session_shadow as vss, voice_shadow, voiceid
+from backend import anchors, voice_sessions as vss, voiceid
 from backend.app import create_app
 from backend.config import Settings
+from roomkit import _wait_for
 from tests.conftest import speech_pcm
 
 SR = 16000
-CFG = {"user_name": "Alex", "diarize_shadow_url": "http://127.0.0.1:8910",
-       "voice_session_shadow": True}
+CFG = {"user_name": "Alex", "diarize_shadow_url": "http://127.0.0.1:8910"}
 ALEX = [1.0, 0.0, 0.0, 0.0]
 SAM = [0.0, 1.0, 0.0, 0.0]
 BAR = {"threshold": 0.5, "margin": 0.1}
@@ -84,8 +103,10 @@ class FakeDiariser:
 def fakes(app, monkeypatch):
     diar = FakeDiariser()
     monkeypatch.setattr(vss, "_request", diar)
-    monkeypatch.setattr(voice_shadow, "gate", lambda pcm, sr: None)
-    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: ALEX)
+    monkeypatch.setattr(vss, "gate", lambda pcm, sr: None)
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
+    monkeypatch.setattr(vss, "embed_eres_live", lambda pcm, sr, cfg: None)
+    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
     monkeypatch.setattr(vss, "bank", lambda cands, sr, cfg, before,
                         embed_fn=None: {
         "alex": {"name": "Alex", "clips": [ALEX]},
@@ -98,40 +119,114 @@ def _turn(seconds):
     return speech_pcm(seconds, amp=6000)
 
 
-def _today(labels=("Alex",)):
-    return {"path": "local", "labels": list(labels), "uncertain": [],
-            "reason": "", "score": 0.7, "ms": 50.0,
-            "candidates": [{"person_id": "alex", "name": "Alex"},
-                           {"person_id": "sam", "name": "Sam"}]}
+def _chunks(seconds, size=0.1):
+    pcm = _turn(seconds)
+    step = int(size * SR) * 2
+    return [pcm[i:i + step] for i in range(0, len(pcm), step)]
 
 
-# ---------- 1. off by default ----------
+def _live(chat_id, turn_id, seconds, cfg=CFG):
+    """One turn through the feed, as the relay drives it: every chunk as it
+    arrives, then the commit. Returns the turn's result once its row is
+    written too (the pass gets the result first, then the row lands)."""
+    for chunk in _chunks(seconds):
+        vss.feed(chat_id, chunk, SR, cfg)
+    vss.end_turn(chat_id, turn_id, cfg)
+    got = vss.wait_turn(turn_id, timeout=3)
+    assert _wait_for(lambda: _row(turn_id))
+    return got
 
-def test_off_without_its_switch_or_without_a_loopback_diariser():
+
+def _row(turn_id):
+    return next((r for r in vss.read_rows() if r["turn_id"] == turn_id),
+                None)
+
+
+# ---------- 1. the diariser is loopback only ----------
+
+@pytest.mark.parametrize("url,base", [
+    ("http://127.0.0.1:8910", "http://127.0.0.1:8910"),
+    ("http://127.0.0.1:8910/", "http://127.0.0.1:8910"),
+    ("http://127.0.0.1:8910/diarize", "http://127.0.0.1:8910"),
+    ("http://localhost:8910", "http://localhost:8910"),
+    ("http://[::1]:8910", "http://[::1]:8910"),
+    ("http://127.0.0.2:9000", "http://127.0.0.2:9000"),
+])
+def test_loopback_urls_are_accepted(url, base):
+    assert vss.loopback_base_url(url) == base
+
+
+@pytest.mark.parametrize("url", [
+    "http://192.168.1.20:8910", "http://10.0.0.5:8910",
+    "http://100.101.102.103:8910", "http://my-mac.my-tailnet.ts.net:8910",
+    "https://diarise.example.com", "http://0.0.0.0:8910",
+    "http://127.0.0.1.nip.io:8910", "http://user:pw@127.0.0.1:8910",
+    "http://127.0.0.1:8910/?next=http://evil", "ftp://127.0.0.1:8910",
+    "127.0.0.1:8910", "http://[fd7a:115c:a1e0::1]:8910", "http://:8910",
+    "http://127.0.0.1:99999",
+])
+def test_non_loopback_urls_are_refused(url):
+    assert vss.loopback_base_url(url) is None
+
+
+def test_the_feed_is_off_without_a_loopback_diariser_or_the_matcher():
     assert not vss.enabled({})
-    assert not vss.enabled({"voice_session_shadow": True})
-    assert not vss.enabled({"diarize_shadow_url": "http://127.0.0.1:8910"})
-    assert not vss.enabled({"voice_session_shadow": True,
-                            "diarize_shadow_url": "http://10.0.0.5:8910"})
+    assert not vss.enabled({"diarize_shadow_url": "http://10.0.0.5:8910"})
+    assert not vss.enabled(dict(CFG, voice_id_enabled=False))
     assert vss.enabled(CFG)
-    assert Settings().voice_session_shadow is False
+    assert Settings().diarize_shadow_url == ""
 
 
-def test_the_shadow_worker_calls_it_only_when_on(app, monkeypatch):
-    seen = []
-    monkeypatch.setattr(vss, "observe", lambda *a: seen.append(a[0]))
-    monkeypatch.setattr(voice_shadow, "diarise",
-                        lambda url, pcm, sr: ({"error": "x"}, "", 0.0))
-    monkeypatch.setattr(voice_shadow, "score_turn", lambda *a, **k: {})
-    monkeypatch.setattr(voice_shadow, "write_row", lambda row: None)
+def test_a_refused_url_sends_nothing_and_warns_once(app, monkeypatch,
+                                                    caplog):
+    monkeypatch.setattr(vss, "_request", lambda *a, **k: pytest.fail(
+        "audio must never go to a refused URL"))
+    caplog.set_level(logging.WARNING, logger="crossband.voice_sessions")
+    cfg = dict(CFG, diarize_shadow_url="http://192.168.1.20:8910")
+    assert vss.diariser_url(cfg) is None
+    assert vss.diariser_url(cfg) is None
+    vss.feed(3, _turn(0.5), SR, cfg)
+    vss.end_turn(3, "t1", cfg)
+    assert vss._feeds == {} and vss.wait_turn("t1", timeout=0.01) is None
+    refusals = [r for r in caplog.records if "refused" in r.getMessage()]
+    assert len(refusals) == 1
+    assert vss.status(cfg)["diariser_refused"] is True
+    assert vss.status(cfg)["on"] is False
 
-    async def go(cfg):
-        await voice_shadow._run(7, b"\x00\x00" * SR, SR, cfg, "t1",
-                                _today(), 0.0)
-    asyncio.run(go(dict(CFG, voice_session_shadow=False)))
-    assert seen == []
-    asyncio.run(go(CFG))
-    assert seen == [7]
+
+def test_the_http_client_ignores_proxies_and_redirects(monkeypatch):
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, method, url, content=None, headers=None):
+            seen["url"] = url
+
+            class R:
+                content = b"{}"
+
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"session": "s1"}
+            return R()
+
+    import httpx
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    assert vss._request("POST", "http://127.0.0.1:8910/sessions") == {
+        "session": "s1"}
+    assert seen["trust_env"] is False and seen["follow_redirects"] is False
+    assert seen["url"] == "http://127.0.0.1:8910/sessions"
+    assert seen["timeout"] == vss.REQUEST_TIMEOUT_S
 
 
 # ---------- 2. naming a voice from pooled evidence ----------
@@ -199,30 +294,102 @@ def test_spans_and_the_main_voice():
     assert vss.main_voice([]) is None
 
 
+def test_topk_mean_is_the_mean_of_the_best_clips():
+    q = [1.0, 0.0]
+    clips = [[1.0, 0.0], [0.6, 0.8], [0.0, 1.0]]
+    assert vss.topk_mean(q, clips, k=2) == pytest.approx(0.8)
+    assert vss.topk_mean(q, clips, k=1) == pytest.approx(1.0)
+    assert vss.topk_mean(q, clips[:1], k=2) == pytest.approx(1.0)
+    assert vss.topk_mean(q, [], k=2) is None
+    assert vss.MULTI_TOP_K == 2
+
+
+def test_every_clip_reaches_a_voice_the_average_misses():
+    """Alex was recorded in two rooms. The average of his clips sits
+    between them, so a turn from either room scores lower against it than
+    against his clips from that room."""
+    phone = voiceid.l2_normalize([1.0, 0.0, 1.0, 0.0])
+    laptop = voiceid.l2_normalize([1.0, 0.0, 0.0, 1.0])
+    clips = [phone, phone, laptop, laptop]
+    average = voiceid.cosine(phone, voiceid.average_embeddings(clips))
+    assert average == pytest.approx(0.866, abs=1e-3)
+    assert vss.topk_mean(phone, clips) == pytest.approx(1.0)
+
+
+def _anchors(spec):
+    """{pid: {"name", "emb", "clips"}} from {pid: [clip vectors]}."""
+    return {pid: {"name": pid.title(), "clips": clips,
+                  "emb": voiceid.average_embeddings(clips)}
+            for pid, clips in spec.items()}
+
+
+def test_impostor_statistics_use_cross_speaker_scores_only():
+    a = _anchors({"alex": [[1.0, 0.0], [0.8, 0.6]],
+                  "sam": [[0.0, 1.0], [0.6, 0.8]]})
+    stats = vss.impostor_stats(a)
+    expected = [voiceid.cosine(c, a[o]["emb"])
+                for p in a for c in a[p]["clips"] for o in a if o != p]
+    mean = sum(expected) / 4
+    std = math.sqrt(sum((x - mean) ** 2 for x in expected) / 4)
+    assert stats["n"] == 4
+    assert stats["mean"] == round(mean, 4)
+    assert stats["std"] == round(max(std, vss.SPREAD_FLOOR), 4)
+    # one person has nobody to be an impostor against
+    assert vss.impostor_stats(_anchors({"alex": [[1, 0]] * 3})) is None
+
+
+def test_the_multi_scorer_gets_its_own_z_matched_bar():
+    small = {"mean": 0.2, "std": 0.1, "n": 10}
+    multi = {"mean": 0.3, "std": 0.05, "n": 10}
+    bar = vss.multi_bar({}, small, multi)
+    # The matcher's threshold 0.5 is z = 3 on its scale; the same z here
+    assert bar["threshold"] == pytest.approx(0.3 + 3 * 0.05)
+    assert bar["margin"] == pytest.approx(0.12 * 0.5)
+    assert bar["source"] == "matched" and bar["k"] == 2
+    live = vss.multi_bar({}, small, None)
+    assert live["source"] == "live"
+    assert (live["threshold"], live["margin"]) == (0.5, 0.12)
+    stats = vss.multi_impostor_stats(
+        {"a": {"clips": [[1.0, 0.0], [0.8, 0.6]]},
+         "b": {"clips": [[0.0, 1.0], [0.6, 0.8]]}})
+    expected = [vss.topk_mean(c, o) for c, o in (
+        ([1.0, 0.0], [[0.0, 1.0], [0.6, 0.8]]),
+        ([0.8, 0.6], [[0.0, 1.0], [0.6, 0.8]]),
+        ([0.0, 1.0], [[1.0, 0.0], [0.8, 0.6]]),
+        ([0.6, 0.8], [[1.0, 0.0], [0.8, 0.6]]))]
+    assert stats["n"] == 4
+    assert stats["mean"] == round(sum(expected) / 4, 4)
+
+
 # ---------- 3. one tracking session per chat ----------
 
 def test_one_session_per_chat_turns_pushed_then_ended_in_order(fakes):
     fakes.script = [[{"slot": 0, "start": 0.0, "end": 2.0}],
                     [{"slot": 0, "start": 2.0, "end": 5.0}]]
-    r1 = vss.observe(3, "t1", _turn(2.0), SR, CFG, _today())
-    r2 = vss.observe(3, "t2", _turn(3.0), SR, CFG, _today())
+    r1 = _live(3, "t1", 2.0)
+    r2 = _live(3, "t2", 3.0)
     assert fakes.opened == 1
-    assert [c[1] for c in fakes.calls] == [
-        "/sessions", "/sessions/s1/audio", "/sessions/s1/end-turn",
-        "/sessions/s1/audio", "/sessions/s1/end-turn"]
-    assert fakes.calls[1][2] == len(_turn(2.0))
+    paths = [c[1] for c in fakes.calls]
+    assert paths[0] == "/sessions"
+    ends = [i for i, p in enumerate(paths) if p.endswith("/end-turn")]
+    assert len(ends) == 2 and ends[-1] == len(paths) - 1
+    assert all(p == "/sessions/s1/audio" for p in paths[1:ends[0]])
+    assert sum(c[2] for c in fakes.calls[:ends[0]]) == len(_turn(2.0))
     # session time moves to turn time
-    assert r2["offset"] == 2.0
-    assert r2["spans"] == [{"slot": 0, "start": 0.0, "end": 3.0,
-                            "overlap": False}]
-    assert r1["main_name"] == "Alex" and r2["turn"] == 2
+    row = _row("t2")
+    assert row["offset"] == 2.0
+    assert row["spans"] == [{"slot": 0, "start": 0.0, "end": 3.0,
+                             "overlap": False}]
+    assert r1["name"] == "Alex" and r2["name"] == "Alex" and row["turn"] == 2
 
 
 def test_a_quiet_chat_gets_a_fresh_session(fakes, monkeypatch):
-    vss.observe(3, "t1", _turn(2.0), SR, CFG, _today())
+    fakes.script = [[{"slot": 0, "start": 0.0, "end": 2.0}],
+                    [{"slot": 0, "start": 0.0, "end": 2.0}]]
+    _live(3, "t1", 2.0)
     now = [vss.time.time() + vss.SESSION_IDLE_S + 5]
     monkeypatch.setattr(vss.time, "time", lambda: now[0])
-    vss.observe(3, "t2", _turn(2.0), SR, CFG, _today())
+    _live(3, "t2", 2.0)
     assert fakes.opened == 2
     assert ("DELETE", "/sessions/s1", 0) in fakes.calls
 
@@ -230,21 +397,23 @@ def test_a_quiet_chat_gets_a_fresh_session(fakes, monkeypatch):
 def test_a_failed_call_drops_the_session_and_the_next_turn_reopens(
         fakes, caplog):
     fakes.fail_on = "/end-turn"
-    r = vss.observe(3, "t1", _turn(2.0), SR, CFG, _today())
-    assert r["error"] == "unreachable"
-    r = vss.observe(3, "t2", _turn(2.0), SR, CFG, _today())
-    assert r["error"] == "unreachable"
+    assert _live(3, "t1", 2.0) is None
+    assert _row("t1")["error"] == "unreachable"
+    assert _live(3, "t2", 2.0) is None
+    assert _row("t2")["error"] == "unreachable"
     assert fakes.opened == 2
     warnings = [m for m in caplog.messages if "tracking session failed" in m]
     assert len(warnings) <= 1
     fakes.fail_on = None
-    assert "error" not in vss.observe(3, "t3", _turn(2.0), SR, CFG, _today())
+    fakes.script = [[{"slot": 0, "start": 0.0, "end": 2.0}]]
+    assert _live(3, "t3", 2.0)["name"] == "Alex"
+    assert "error" not in _row("t3")
 
 
 def test_the_wrong_sample_rate_or_no_audio_does_nothing(fakes):
-    assert vss.observe(3, "t1", _turn(1.0), 8000, CFG, _today()) is None
-    assert vss.observe(3, "t1", b"", SR, CFG, _today()) is None
-    assert fakes.calls == []
+    vss.feed(3, _turn(1.0), 8000, CFG)
+    vss.feed(3, b"", SR, CFG)
+    assert vss._feeds == {} and fakes.calls == []
 
 
 # ---------- 4. only clean speech is fingerprinted ----------
@@ -252,33 +421,33 @@ def test_the_wrong_sample_rate_or_no_audio_does_nothing(fakes):
 def test_overlap_and_short_spans_are_never_fingerprinted(fakes, monkeypatch):
     lengths = []
 
-    def embed(model, pcm, sr, cfg):
+    def embed(pcm, sr, cfg):
         lengths.append(len(pcm) / 2 / sr)
         return ALEX
-    monkeypatch.setattr(voice_shadow, "embed", embed)
+    monkeypatch.setattr(vss, "embed_live", embed)
     fakes.script = [[{"slot": 0, "start": 0.0, "end": 2.0},
                      {"slot": 1, "start": 2.0, "end": 3.5, "overlap": True},
                      {"slot": 1, "start": 3.5, "end": 4.0}]]
-    r = vss.observe(3, "t1", _turn(4.0), SR, CFG, _today())
+    _live(3, "t1", 4.0)
+    row = _row("t1")
     assert lengths == [2.0]
-    assert r["embedded"] == 1
-    assert r["voices"]["1"]["clean_s"] == 0.0
+    assert row["embedded"] == 1
+    assert row["voices"]["1"]["clean_s"] == 0.0
 
 
 def test_evidence_builds_so_a_short_turn_is_named_from_earlier_turns(
         fakes, monkeypatch):
     """1 s of Sam can't be named alone; after a 2 s turn from the same
     voice it is, because the voice's evidence is pooled."""
-    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
     fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
                     [{"slot": 1, "start": 1.0, "end": 3.0}],
                     [{"slot": 1, "start": 3.0, "end": 4.0}]]
-    first = vss.observe(3, "t1", _turn(1.0), SR, CFG, _today(()))
-    assert first["main_state"] == "listening"
-    vss.observe(3, "t2", _turn(2.0), SR, CFG, _today(()))
-    third = vss.observe(3, "t3", _turn(1.0), SR, CFG, _today(()))
-    assert third["main_name"] == "Sam"
-    assert third["voices"]["1"]["clean_s"] == 4.0
+    assert _live(3, "t1", 1.0)["state"] == "listening"
+    _live(3, "t2", 2.0)
+    third = _live(3, "t3", 1.0)
+    assert third["name"] == "Sam"
+    assert _row("t3")["voices"]["1"]["clean_s"] == 4.0
 
 
 # ---------- 5. no scoring against itself ----------
@@ -290,40 +459,69 @@ def test_clips_banked_after_the_session_opened_are_left_out(app,
     for _ in range(4):
         assert store.add_clip(pid, speech_pcm(2.0, amp=3000), SR,
                               source="introduction")
-    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    embed = (lambda pcm: SAM)
     cands = [{"person_id": pid, "name": "Sam"}]
     opened = vss.time.time()
-    before_count = len(vss.bank(cands, SR, {}, before=opened)[pid]["clips"])
+    before_count = len(vss.bank(cands, SR, {}, before=opened,
+                                embed_fn=embed)[pid]["clips"])
     vss.time.sleep(0.02)
     assert store.add_clip(pid, speech_pcm(2.5, amp=3100), SR,
                           source="accumulated")
-    kept = vss.bank(cands, SR, {}, before=opened)[pid]["clips"]
-    everything = vss.bank(cands, SR, {}, before=vss.time.time() + 10)
+    kept = vss.bank(cands, SR, {}, before=opened, embed_fn=embed)[pid]["clips"]
+    everything = vss.bank(cands, SR, {}, before=vss.time.time() + 10,
+                          embed_fn=embed)
     assert len(kept) == before_count
     assert len(everything[pid]["clips"]) == before_count + 1
 
 
-def test_the_live_store_is_never_written(fakes, monkeypatch):
+def test_every_kept_clip_is_embedded_once(app):
+    calls = []
+    embed = (lambda pcm: calls.append(len(pcm)) or SAM)
+    store = anchors.store()
+    alex = store.ensure_person("Alex")
+    for n in range(5):                     # five long clips, all kept
+        assert store.add_clip(alex, speech_pcm(2.5 + n / 10, amp=9000), SR,
+                              source="introduction")
+    cands = [{"person_id": alex, "name": "Alex"}]
+    enrolled = vss.build_anchors(cands, SR, {}, embed_fn=embed)
+    assert len(enrolled[alex]["clips"]) == anchors.ENROLL_CLIPS
+    calls.clear()
+    people = vss.bank(cands, SR, {}, before=vss.time.time() + 1,
+                      embed_fn=embed)
+    assert len(people[alex]["clips"]) == 5          # every kept clip
+    assert len(calls) == 5
+    vss.bank(cands, SR, {}, before=vss.time.time() + 1, embed_fn=embed)
+    assert len(calls) == 5                          # cached per clip
+    assert store.add_clip(alex, speech_pcm(1.5, amp=9000), SR,
+                          source="accumulated")
+    again = vss.bank(cands, SR, {}, before=vss.time.time() + 1,
+                     embed_fn=embed)
+    assert len(again[alex]["clips"]) == 6
+    assert len(calls) == 6                          # only the new clip
+
+
+def test_the_feed_never_writes_to_the_store(fakes, monkeypatch):
     def boom(*a, **k):
-        raise AssertionError("the session shadow wrote to the store")
-    for name in ("add_clip", "ensure_person", "remember_audio"):
-        if hasattr(anchors.AnchorStore, name):
-            monkeypatch.setattr(anchors.AnchorStore, name, boom)
+        raise AssertionError("the session naming wrote to the store")
+    for name in ("add_clip", "ensure_person"):
+        monkeypatch.setattr(anchors.AnchorStore, name, boom)
+    monkeypatch.setattr(anchors, "remember_audio", boom)
     fakes.script = [[{"slot": 0, "start": 0.0, "end": 2.0}]]
-    assert "error" not in vss.observe(3, "t1", _turn(2.0), SR, CFG, _today())
+    assert _live(3, "t1", 2.0)["name"] == "Alex"
+    assert "error" not in _row("t1")
 
 
-# ---------- 6. rows and the compare view ----------
+# ---------- 6. rows and the view ----------
 
 ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
-            "today", "session", "turn", "offset", "spans", "main",
-            "main_state", "main_name", "voices", "bar", "embedded",
-            "people", "ms", "filled", "method"}
+            "session", "turn", "offset", "spans", "main", "main_state",
+            "main_name", "voices", "bar", "embedded", "people", "ms",
+            "filled", "method", "error"}
 
 
 def test_rows_are_content_free_and_owner_only(fakes):
     fakes.script = [[{"slot": 0, "start": 0.0, "end": 2.0}]]
-    vss.observe(3, "t1", _turn(2.0), SR, CFG, _today())
+    _live(3, "t1", 2.0)
     path = vss.rows_path()
     assert oct(path.stat().st_mode & 0o777) == "0o600"
     row = json.loads(path.read_text().splitlines()[0])
@@ -332,39 +530,50 @@ def test_rows_are_content_free_and_owner_only(fakes):
     assert "prints" not in text and "pcm" not in text
 
 
-def test_compare_gives_today_then_and_at_the_end(fakes, monkeypatch):
+def test_the_view_gives_the_name_then_and_at_the_end(fakes, monkeypatch):
     """The first turn is too short to name, so it reads listening at the
     time. By the end of the session its voice is Sam, and the view says
-    so beside today's label."""
-    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    so."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
     fakes.script = [[{"slot": 2, "start": 0.0, "end": 1.0}],
                     [{"slot": 2, "start": 1.0, "end": 4.0}]]
-    vss.observe(3, "t1", _turn(1.0), SR, CFG, _today(("Alex",)))
-    vss.observe(3, "t2", _turn(3.0), SR, CFG, _today(()))
-    view = vss.compare(vss.read_rows())
+    _live(3, "t1", 1.0)
+    _live(3, "t2", 3.0)
+    view = vss.view(vss.read_rows())
     first = next(line for line in view["lines"] if line["turn_id"] == "t1")
-    assert first["today"] == "Alex"
     assert first["then"] == "listening"
     assert first["at_end"] == "Sam"
-    assert view["tally"]["at_end_differs_from_today"] == 1
     assert view["tally"]["turns"] == 2
+    assert view["tally"]["named_then"] == 1
+    assert view["tally"]["named_at_end"] == 2
 
 
 def test_the_route_serves_the_view(app, fakes):
     from fastapi.testclient import TestClient
     fakes.script = [[{"slot": 0, "start": 0.0, "end": 2.0}]]
-    vss.observe(3, "t1", _turn(2.0), SR, CFG, _today())
+    _live(3, "t1", 2.0)
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        body = c.get("/api/voice/shadow/sessions?rows=true").json()
+        body = c.get("/api/voice/sessions?rows=true").json()
+        assert c.get("/api/voice/shadow/sessions").status_code == 404
+        assert c.get("/api/voice/shadow").status_code == 404
     assert body["tally"]["turns"] == 1
     assert body["rows"][0]["main_name"] == "Alex"
     assert "status" in body
 
 
-# ---------- 7. filling in unnamed turns (voice_session_labels) ----------
+def test_rows_are_cut_back_once_the_file_is_full(tmp_path, monkeypatch):
+    from backend import db
+    monkeypatch.setattr(db, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(vss, "ROWS_MAX", 300)
+    monkeypatch.setattr(vss, "ROWS_KEEP", 100)
+    for n in range(400):
+        vss.write_row({"chat_id": 1, "turn_id": f"t{n}", "message_id": n})
+    rows = vss.read_rows(limit=1000)
+    assert 100 <= len(rows) <= 300
+    assert rows[0]["turn_id"] == "t399"
 
-LABELS_CFG = dict(CFG, voice_session_labels=True)
 
+# ---------- 7. filling in unnamed turns ----------
 
 def _msg(chat_id, turn_id, labels=None):
     from roomkit import _insert_user_message
@@ -391,25 +600,19 @@ def _chat(app):
         return c.post("/api/chats", json={"participant_ids": []}).json()["id"]
 
 
-def test_filling_in_is_off_unless_its_own_switch_is_on(app, fakes):
-    chat = _chat(app)
-    mid = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
-                            "uncertain": [], "unresolved": "below_threshold"})
-    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
-    row = vss.observe(chat, "t1", _turn(2.0), SR, CFG, _today(()))
-    assert "filled" not in row
-    assert _labels(mid)["labels"] == []
-    assert not vss.labels_enabled({"voice_session_labels": True})
+UNNAMED = {"clusters": ["session"], "labels": [], "uncertain": [],
+           "source": "session", "unresolved": "listening"}
 
 
 def test_an_unnamed_turn_takes_its_voices_name(app, fakes, monkeypatch):
-    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
     chat = _chat(app)
-    mid = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
-                            "uncertain": [], "unresolved": "below_threshold"})
-    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
-    row = vss.observe(chat, "t1", _turn(2.0), SR, LABELS_CFG, _today(()))
-    assert row["filled"] == 1
+    mid = _msg(chat, "t1", UNNAMED)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                    [{"slot": 1, "start": 1.0, "end": 3.0}]]
+    _live(chat, "t1", 1.0)
+    _live(chat, "t2", 2.0)
+    assert _row("t2")["filled"] == 1
     got = _labels(mid)
     assert got["labels"] == ["Sam"] and got["source"] == "session"
     assert "unresolved" not in got and not got.get("owner")
@@ -423,26 +626,27 @@ def test_an_unnamed_turn_takes_its_voices_name(app, fakes, monkeypatch):
 
 def test_the_owners_name_carries_the_owner_marker(app, fakes):
     chat = _chat(app)
-    mid = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
-                            "uncertain": [], "unresolved": "below_threshold"})
-    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
-    vss.observe(chat, "t1", _turn(2.0), SR, LABELS_CFG, _today(()))
+    mid = _msg(chat, "t1", UNNAMED)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                    [{"slot": 1, "start": 1.0, "end": 3.0}]]
+    _live(chat, "t1", 1.0)
+    _live(chat, "t2", 2.0)
     got = _labels(mid)
     assert got["labels"] == ["Alex"] and got["owner"] is True
 
 
-def test_a_name_a_correction_or_crosstalk_is_never_touched(app, fakes,
-                                                           monkeypatch):
+def test_a_correction_or_crosstalk_is_never_touched(app, fakes, monkeypatch):
     """The voice is Sam, but each of these turns already says something a
-    person or the live pass decided, so none changes."""
-    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    person decided or held two voices, so none changes."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
     chat = _chat(app)
     keep = {
         "t1": {"clusters": ["local"], "labels": ["Alex"], "uncertain": [],
                "source": "local", "score": 0.6},
         "t2": {"clusters": [], "labels": ["Alex"], "uncertain": [],
                "corrected": True, "source": "correction"},
-        "t3": {"clusters": ["s0", "s1"], "labels": [], "uncertain": [],
+        "t3": {"clusters": ["session"], "labels": ["Voice 1", "Voice 2"],
+               "uncertain": ["Voice 1", "Voice 2"], "source": "session",
                "crosstalk": True},
     }
     ids = {t: _msg(chat, t, labels) for t, labels in keep.items()}
@@ -450,7 +654,7 @@ def test_a_name_a_correction_or_crosstalk_is_never_touched(app, fakes,
                     [{"slot": 1, "start": 2.0, "end": 4.0}],
                     [{"slot": 1, "start": 4.0, "end": 6.0}]]
     for t in ("t1", "t2", "t3"):
-        vss.observe(chat, t, _turn(2.0), SR, LABELS_CFG, _today(()))
+        _live(chat, t, 2.0)
     for t, labels in keep.items():
         assert _labels(ids[t]) == labels
 
@@ -459,22 +663,21 @@ def test_a_turn_named_late_is_filled_when_its_voice_is_named(app, fakes,
                                                              monkeypatch):
     """1 s is too little to name, so the first turn stays unnamed. The
     second turn names the voice, and the first turn takes the name too.
-    A turn whose message wasn't saved yet at its own pass is filled on a
-    later one."""
-    monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: SAM)
+    A turn whose message wasn't saved yet at its own turn's end is filled
+    on a later one."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
     chat = _chat(app)
-    first = _msg(chat, "t1", {"clusters": ["local"], "labels": [],
-                              "uncertain": [], "unresolved": "too_short"})
+    first = _msg(chat, "t1", UNNAMED)
     fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
                     [{"slot": 1, "start": 1.0, "end": 3.0}],
                     [{"slot": 1, "start": 3.0, "end": 5.0}]]
-    assert vss.observe(chat, "t1", _turn(1.0), SR, LABELS_CFG,
-                       _today(()))["filled"] == 0
+    _live(chat, "t1", 1.0)
+    assert _row("t1")["filled"] == 0
     assert _labels(first)["labels"] == []
-    vss.observe(chat, "t2", _turn(2.0), SR, LABELS_CFG, _today(()))
+    _live(chat, "t2", 2.0)
     assert _labels(first)["labels"] == ["Sam"]
-    second = _msg(chat, "t2")            # saved after its own pass
-    vss.observe(chat, "t3", _turn(2.0), SR, LABELS_CFG, _today(()))
+    second = _msg(chat, "t2")            # saved after its own turn's end
+    _live(chat, "t3", 2.0)
     assert _labels(second)["labels"] == ["Sam"]
 
 
@@ -486,9 +689,24 @@ def test_nothing_but_the_label_changes(app, fakes, monkeypatch):
     monkeypatch.setattr(anchors.AnchorStore, "add_clip", boom)
     chat = _chat(app)
     _msg(chat, "t1", {"clusters": ["local"], "labels": [], "uncertain": []})
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                    [{"slot": 1, "start": 1.0, "end": 3.0}]]
+    _live(chat, "t1", 1.0)
+    _live(chat, "t2", 2.0)
+    assert _row("t2")["filled"] == 1
+
+
+def test_the_turn_being_named_is_never_filled(app, fakes):
+    """The pass labels the turn being named right now, from the whole
+    answer: it may hold two voices. Its message may already be saved when
+    the feed names the voice, and filling it then would put one voice's
+    name on a two-voice turn before the pass's crosstalk label lands."""
+    chat = _chat(app)
+    mid = _msg(chat, "t1")
     fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
-    assert vss.observe(chat, "t1", _turn(2.0), SR, LABELS_CFG,
-                       _today(()))["filled"] == 1
+    assert _live(chat, "t1", 2.0)["name"] == "Alex"
+    assert _row("t1")["filled"] == 0
+    assert _labels(mid) == {}
 
 
 def test_fillable():
@@ -503,155 +721,72 @@ def test_fillable():
     assert not vss.fillable(None)
 
 
-# ---------- 8. live: the relay feeds the tracker, the check asks it ----------
-
-LIVE_CFG = dict(CFG, voice_session_live=True)
-
-
-@pytest.fixture
-def live(fakes, monkeypatch):
-    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
-    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
-    return fakes
-
-
-def _chunks(seconds, size=0.1):
-    pcm = _turn(seconds)
-    step = int(size * SR) * 2
-    return [pcm[i:i + step] for i in range(0, len(pcm), step)]
-
-
-def test_live_is_off_unless_its_own_switch_is_on(fakes):
-    vss.feed(3, _turn(0.5), SR, CFG)
-    vss.end_turn(3, "t1", CFG)
-    assert fakes.calls == [] and vss._feeds == {}
-    assert vss.wait_turn("t1", timeout=0.01) is None
-    assert not vss.live_enabled({"voice_session_live": True})
+def test_naming_a_turn_by_hand_fills_its_voices_other_turns(app, fakes,
+                                                            monkeypatch):
+    """Tap-to-correct names the voice that spoke the turn, and its other
+    unnamed turns in the session take the name at once."""
+    monkeypatch.setattr(vss, "embed_live",
+                        lambda pcm, sr, cfg: [0.0, 0.0, 1.0, 0.0])
+    chat = _chat(app)
+    m1 = _msg(chat, "t1", UNNAMED)
+    m2 = _msg(chat, "t2", UNNAMED)
+    fakes.script = [[{"slot": 4, "start": 0.0, "end": 2.0}],
+                    [{"slot": 4, "start": 2.0, "end": 4.0}]]
+    _live(chat, "t1", 2.0)
+    _live(chat, "t2", 2.0)
+    assert _labels(m2)["labels"] == []            # nobody known
+    assert vss.human_named(chat, "t1", "Dave", "p-dave", CFG)
+    assert _labels(m2)["labels"] == ["Dave"]
+    assert not vss.human_named(chat, "t-unknown", "Dave", "p-dave", CFG)
 
 
-def test_the_feed_pushes_as_audio_arrives_and_names_the_turn(live):
-    live.script = [[{"slot": 1, "start": 0.0, "end": 1.0}]]
-    for chunk in _chunks(1.0):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t1", LIVE_CFG)
-    got = vss.wait_turn("t1", timeout=3)
+# ---------- 8. the feed ----------
+
+def test_the_feed_pushes_as_audio_arrives_and_names_the_turn(fakes):
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}]]
+    got = _live(3, "t1", 1.0)
     assert {k: got[k] for k in ("voice", "state", "name", "score")} == {
         "voice": 1, "state": "listening", "name": "", "score": 1.0}
     # 1 s alone is too little to name
-    paths = [c[1] for c in live.calls]
+    paths = [c[1] for c in fakes.calls]
     assert paths[0] == "/sessions" and paths[-1] == "/sessions/s1/end-turn"
-    audio = [c for c in live.calls if c[1].endswith("/audio")]
+    audio = [c for c in fakes.calls if c[1].endswith("/audio")]
     # quarter-second pieces while the turn runs, the rest before end-turn
     sizes = [c[2] for c in audio]
     assert sizes == [9600, 9600, 9600, 3200]   # 0.1 s chunks, pushed at 0.25 s
     assert sum(sizes) == len(_turn(1.0))
-    row = vss.read_rows()[0]
-    assert row["live"] is True and row["turn_id"] == "t1"
+    assert vss.read_rows()[0]["turn_id"] == "t1"
 
 
-def test_a_later_turn_is_named_from_the_voices_whole_session(live):
-    live.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
-                   [{"slot": 1, "start": 1.0, "end": 3.0}]]
-    for chunk in _chunks(1.0):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t1", LIVE_CFG)
-    assert vss.wait_turn("t1", timeout=3)["state"] == "listening"
-    for chunk in _chunks(2.0):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t2", LIVE_CFG)
-    got = vss.wait_turn("t2", timeout=3)
+def test_a_later_turn_is_named_from_the_voices_whole_session(fakes):
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                    [{"slot": 1, "start": 1.0, "end": 3.0}]]
+    assert _live(3, "t1", 1.0)["state"] == "listening"
+    got = _live(3, "t2", 2.0)
     assert got["state"] == "named" and got["name"] == "Alex"
-    rows = vss.read_rows()
-    assert rows[0]["offset"] == 1.0          # session time moved to turn time
-    assert rows[0]["spans"] == [{"slot": 1, "start": 0.0, "end": 2.0,
-                                 "overlap": False}]
+    row = _row("t2")
+    assert row["offset"] == 1.0          # session time moved to turn time
+    assert row["spans"] == [{"slot": 1, "start": 0.0, "end": 2.0,
+                             "overlap": False}]
 
 
-def test_a_failed_push_gives_no_name_and_the_next_turn_reopens(live):
-    live.fail_on = "/audio"
-    for chunk in _chunks(0.5):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t1", LIVE_CFG)
-    assert vss.wait_turn("t1", timeout=3) is None
+def test_a_failed_push_gives_no_name_and_the_next_turn_reopens(fakes):
+    fakes.fail_on = "/audio"
+    assert _live(3, "t1", 0.5) is None
     assert vss.read_rows()[0]["error"] == "unreachable"
-    live.fail_on = None
-    live.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
-    for chunk in _chunks(2.0):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t2", LIVE_CFG)
-    assert vss.wait_turn("t2", timeout=3)["name"] == "Alex"
-    assert live.opened == 2
+    fakes.fail_on = None
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 2.0}]]
+    assert _live(3, "t2", 2.0)["name"] == "Alex"
+    assert fakes.opened == 2
 
 
-def test_waiting_on_a_turn_that_never_ends_gives_up(live):
-    vss.feed(3, _turn(0.3), SR, LIVE_CFG)
+def test_waiting_on_a_turn_that_never_ends_gives_up(fakes):
+    vss.feed(3, _turn(0.3), SR, CFG)
     vss._result_slot("never")
     t0 = vss.time.monotonic()
     assert vss.wait_turn("never", timeout=0.05) is None
     assert vss.time.monotonic() - t0 < 1.0
     assert vss.wait_turn("unknown-turn", timeout=5) is None   # no slot: no wait
-
-
-def test_the_shadow_never_pushes_a_turn_twice_when_live(live):
-    assert vss.observe(3, "t1", _turn(2.0), SR, LIVE_CFG, _today()) is None
-    assert live.calls == []
-
-
-# ---------- 9. live: the check names a turn it would leave unnamed ----------
-
-from tests.test_voice_shadow import live_fakes  # noqa: E402,F401  (fixture)
-
-
-def _room_turn(app, monkeypatch, got, loud=False):
-    """Drive one armed-room turn through run_pass with the session's answer
-    faked as `got`, and return the turn's labels and the wait calls."""
-    from fastapi.testclient import TestClient
-    from roomkit import _insert_user_message
-    from tests import test_voice_shadow as tvs
-    waited = []
-
-    async def wait(turn_id, timeout=vss.LIVE_WAIT_S, step=0.02):
-        waited.append(turn_id)
-        return got
-    monkeypatch.setattr(vss, "await_turn", wait)
-    monkeypatch.setattr(voice_shadow, "schedule", lambda *a, **k: None)
-    cfg = dict(tvs.BASE_CFG, **LIVE_CFG)
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat, _, _ = tvs._setup(c)
-        m = _insert_user_message(chat["id"], voice_turn_id="t1")
-        tvs._turn(chat["id"], speech_pcm(3.0, amp=tvs.ALEX_AMP if loud
-                                         else tvs.SAM_AMP), "t1", cfg)
-        return json.loads(tvs._labels(m["id"]) or "{}"), waited
-
-
-def test_a_deferred_turn_takes_its_session_name(app, live_fakes,
-                                                monkeypatch):
-    labels, waited = _room_turn(app, monkeypatch, {
-        "voice": 1, "state": "named", "name": "Sam", "score": 0.71})
-    assert waited == ["t1"]
-    assert labels["labels"] == ["Sam"] and labels["source"] == "session"
-    assert "unresolved" not in labels and not labels.get("owner")
-
-
-def test_no_session_name_in_time_leaves_todays_unnamed_marker(
-        app, live_fakes, monkeypatch):
-    labels, waited = _room_turn(app, monkeypatch, None)
-    assert waited == ["t1"]
-    assert labels["labels"] == [] and labels["unresolved"] == \
-        "below_threshold"
-
-
-def test_a_voice_still_listening_leaves_the_marker_too(app, live_fakes,
-                                                       monkeypatch):
-    labels, _ = _room_turn(app, monkeypatch, {
-        "voice": 1, "state": "listening", "name": "", "score": 0.4})
-    assert labels["labels"] == [] and "unresolved" in labels
-
-
-def test_a_turn_the_matcher_names_never_waits(app, live_fakes, monkeypatch):
-    labels, waited = _room_turn(app, monkeypatch, None, loud=True)
-    assert waited == []
-    assert labels["labels"] == ["Alex"] and labels["source"] == "local"
 
 
 def test_the_relay_feeds_every_chunk_and_ends_the_turn_before_the_check(
@@ -692,7 +827,6 @@ def test_the_relay_feeds_every_chunk_and_ends_the_turn_before_the_check(
 
 
 def test_the_async_wait_polls_without_a_thread():
-    import asyncio
     vss._reset_for_tests()
     assert asyncio.run(vss.await_turn("nobody", timeout=5)) is None  # no slot
     vss._result_slot("slow")
@@ -704,7 +838,7 @@ def test_the_async_wait_polls_without_a_thread():
     vss._reset_for_tests()
 
 
-# ---------- 10. warming: the first live turn finds the caches full ----------
+# ---------- 9. warming: the first turn finds the caches full ----------
 
 def _one_person_store():
     store = anchors.store()
@@ -719,12 +853,10 @@ def test_a_warm_embeds_every_clip_so_the_first_turn_embeds_none(
         app, monkeypatch):
     _one_person_store()
     calls = []
-    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(voiceid, "matcher_status", lambda cfg: "ready")
     monkeypatch.setattr(vss, "embed_live",
                         lambda pcm, sr, cfg: calls.append(len(pcm)) or SAM)
-    monkeypatch.setattr(voice_shadow, "embed",
-                        lambda m, p, s, c: calls.append(len(p)) or SAM)
-    voice_shadow._reset_for_tests()
+    vss._reset_for_tests()
     vss._warm(CFG)
     warmed = len(calls)
     assert warmed >= 4
@@ -732,36 +864,32 @@ def test_a_warm_embeds_every_clip_so_the_first_turn_embeds_none(
     cands = diarize.remembered_candidates()
     people = vss.bank(cands, SR, CFG, before=vss.time.time() + 1,
                       embed_fn=lambda p: vss.embed_live(p, SR, CFG))
-    vss._bar(people, cands, SR, CFG, False)
+    vss._bar(people, cands, SR, CFG)
     assert len(calls) == warmed          # nothing left to embed
     assert not vss._warming.is_set()
 
 
-def test_the_live_turn_never_waits_on_the_shadows_embedder(app, monkeypatch):
-    """The shadow's embed waits for the live check to finish; the live
-    check is waiting on this turn. So the live path embeds bank clips with
-    embed_live and never calls the shadow's embed for them."""
-    pid = _one_person_store()
-    monkeypatch.setattr(voice_shadow, "embed", lambda *a: pytest.fail(
-        "the live bank must not use the shadow's embed"))
-    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
-    voice_shadow._reset_for_tests()
-    people = vss.bank([{"person_id": pid, "name": "Sam"}], SR, CFG,
-                      before=vss.time.time() + 1,
-                      embed_fn=lambda p: vss.embed_live(p, SR, CFG))
-    assert people[pid]["clips"]
+def test_a_warm_never_starts_the_model_loading_itself(app, monkeypatch):
+    """A warm waits on the matcher's state and gives up; it never claims
+    the model fetch, which startup and the first voice check own."""
+    claimed = []
+    monkeypatch.setattr(voiceid, "_get_extractor",
+                        lambda cfg: claimed.append(1))
+    vss._warm(CFG)
+    assert claimed == [] and not vss._warming.is_set()
 
 
-def test_warming_is_off_with_the_session_test_and_runs_once_at_a_time(
+def test_warming_is_off_with_the_matcher_off_and_runs_once_at_a_time(
         monkeypatch):
     started = []
     monkeypatch.setattr(vss.threading, "Thread",
                         lambda **kw: type("T", (), {
                             "start": lambda self: started.append(kw["name"])})())
     vss._warming.clear()
-    assert vss.start_warm({}) is False and started == []
-    assert vss.start_warm(CFG) is True
-    assert vss.start_warm(CFG) is False          # one at a time
+    assert vss.start_warm({"voice_id_enabled": False}) is False
+    assert started == []
+    assert vss.start_warm({}) is True             # no diariser needed
+    assert vss.start_warm(CFG) is False           # one at a time
     assert started == ["voice-session-warm"]
     vss._warming.clear()
 
@@ -769,14 +897,12 @@ def test_warming_is_off_with_the_session_test_and_runs_once_at_a_time(
 def test_a_new_voice_chat_starts_a_warm(fakes, monkeypatch):
     warmed = []
     monkeypatch.setattr(vss, "start_warm", lambda cfg: warmed.append(1))
-    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
-    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
-    vss.feed(3, _turn(0.3), SR, LIVE_CFG)
-    vss.feed(3, _turn(0.3), SR, LIVE_CFG)
+    vss.feed(3, _turn(0.3), SR, CFG)
+    vss.feed(3, _turn(0.3), SR, CFG)
     assert warmed == [1]                          # once per new feed
 
 
-def test_clean_spans_are_fingerprinted_while_the_turn_runs(live,
+def test_clean_spans_are_fingerprinted_while_the_turn_runs(fakes,
                                                           monkeypatch):
     """A span the tracker calls final mid-turn is fingerprinted then, so
     the turn's end only names; it isn't fingerprinted a second time."""
@@ -784,7 +910,7 @@ def test_clean_spans_are_fingerprinted_while_the_turn_runs(live,
     monkeypatch.setattr(vss, "embed_live",
                         lambda pcm, sr, cfg: calls.append(len(pcm)) or ALEX)
     pushes = {"n": 0}
-    base = live
+    base = fakes
 
     def diariser(method, url, content=None):
         if url.endswith("/audio"):
@@ -796,34 +922,26 @@ def test_clean_spans_are_fingerprinted_while_the_turn_runs(live,
             return {"spans": []}
         return base(method, url, content)
     monkeypatch.setattr(vss, "_request", diariser)
-    for chunk in _chunks(2.0):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t1", LIVE_CFG)
-    got = vss.wait_turn("t1", timeout=3)
+    got = _live(3, "t1", 2.0)
     assert got is not None and got["voice_clean_s"] == 1.0
     assert calls == [SR * 2]              # once, during the turn
 
 
-# ---------- 11. what the crosstalk split reads (#482 item D) ----------
+# ---------- 10. what the crosstalk split reads (#482 item D) ----------
 
-def test_the_live_result_lists_every_voice_with_its_spans_in_turn_time(live):
+def test_the_live_result_lists_every_voice_with_its_spans_in_turn_time(
+        fakes):
     """A turn after 1 s of earlier audio: the spans come back in session
     time and the result gives them in turn time, with every voice heard,
     its seconds and when it first spoke, and the turn's length. Names,
     numbers and times only."""
-    live.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
-                   [{"slot": 1, "start": 1.0, "end": 2.6},
-                    {"slot": 1, "start": 2.6, "end": 2.9, "overlap": True},
-                    {"slot": 2, "start": 2.6, "end": 2.9, "overlap": True},
-                    {"slot": 2, "start": 2.9, "end": 4.0}]]
-    for chunk in _chunks(1.0):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t1", LIVE_CFG)
-    assert vss.wait_turn("t1", timeout=3)["voices_in_turn"] == 1
-    for chunk in _chunks(3.0):
-        vss.feed(3, chunk, SR, LIVE_CFG)
-    vss.end_turn(3, "t2", LIVE_CFG)
-    got = vss.wait_turn("t2", timeout=3)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 1.0}],
+                    [{"slot": 1, "start": 1.0, "end": 2.6},
+                     {"slot": 1, "start": 2.6, "end": 2.9, "overlap": True},
+                     {"slot": 2, "start": 2.6, "end": 2.9, "overlap": True},
+                     {"slot": 2, "start": 2.9, "end": 4.0}]]
+    assert _live(3, "t1", 1.0)["voices_in_turn"] == 1
+    got = _live(3, "t2", 3.0)
     assert got["turn_s"] == 3.0
     assert got["spans"] == [
         {"slot": 1, "start": 0.0, "end": 1.6, "overlap": False},
@@ -839,11 +957,9 @@ def test_the_live_result_lists_every_voice_with_its_spans_in_turn_time(live):
     assert all(set(v) == allowed for v in got["voices"].values())
 
 
-def test_a_turn_named_on_its_own_is_one_voice(fakes, monkeypatch):
-    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
-    monkeypatch.setattr(vss, "embed_eres_live", lambda pcm, sr, cfg: None)
-    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
+def test_a_turn_named_on_its_own_is_one_voice(fakes):
     got = vss.name_single_turn(3, _turn(2.0), SR, dict(CFG))
     assert list(got["voices"]) == [0] and got["turn_s"] == 2.0
+    assert got["single"] is True and got["voices_in_turn"] == 1
     from backend import crosstalk
     assert crosstalk.listed_voices(got) == [0]

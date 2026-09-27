@@ -1,7 +1,7 @@
 """The LLM attribution cross-check (#28 phase 2): content says who content says.
 
 Voice evidence (anchors) decides labels; this module is the second opinion.
-After the diarization pass attaches a NAMED label to a turn, a fire-and-forget
+After the voice check attaches a NAMED label to a turn, a fire-and-forget
 utility-model call reads the turn against recent conversation context and the
 roster, and asks one narrow question: does what was said contradict the name
 on it ("the turn labelled Shawn reads like his wife")? On a contradiction it
@@ -83,7 +83,7 @@ def build_prompt(turn_text: str, label: str, roster_names: list,
 
 def schedule_check(chat_id, message_id, label, cfg):
     """Fire the cross-check for one freshly-labelled turn and return
-    immediately. Callers (the diarization pass) never await it."""
+    immediately. Callers (the voice check) never await it."""
     try:
         task = asyncio.get_running_loop().create_task(
             check_turn(chat_id, message_id, label, cfg))

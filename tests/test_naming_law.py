@@ -44,7 +44,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, db, diarize, introductions, memory_client
+from backend import anchors, db, introductions, memory_client
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import _crosstalk_tail, _user_turn_head
@@ -657,22 +657,23 @@ def test_voice_match_with_dissimilar_name_asks_instead_of_rebinding(
     rebind silently - and that is exactly how a real new guest merged into
     the wrong person for a whole afternoon. Now: the introduction wins the
     seat, the voice arm's suspicion becomes the merge question, no merged
-    name is recorded without the owner - and the stashed guest audio still
-    never becomes the owner's anchor."""
+    name is recorded without the owner - and the guest's audio never
+    becomes the owner's anchor."""
     with TestClient(app, base_url="http://127.0.0.1"):
         pid = _mint_sufficient("Samantha")
 
-        def fake_identify(pcm, sample_rate, candidates, cfg,
-                          pending_present=False):
+        def fake_identify(pcm, sample_rate, candidates, cfg):
             return {"status": "match", "person_id": pid, "name": "Samantha",
                     "score": 0.8, "reason": "match"}
 
         monkeypatch.setattr("backend.voiceid.identify_utterance",
                             fake_identify)
         chat_id = _mk_chat()
-        diarize.stash_utterance(chat_id, loud_pcm(3.0), 16000)
+        msg = _insert_user_message(chat_id, "this is Dave, hello")
+        anchors.remember_audio(msg["id"], loud_pcm(3.0), 16000, 1)
         introductions.apply_scan(
-            chat_id, {"introductions": ["Dave"], "departures": []}, CFG)
+            chat_id, {"introductions": ["Dave"], "departures": []}, CFG,
+            text="this is Dave, hello", message_id=msg["id"])
         roster = _roster(chat_id)
         # the owner's ears win the seat: Dave, anchor-pending
         assert [p["name"] for p in roster] == ["Dave"]
@@ -697,19 +698,20 @@ def test_voice_match_with_variant_name_still_rebinds_silently(
     with TestClient(app, base_url="http://127.0.0.1"):
         pid = _mint_sufficient("Sonja")
 
-        def fake_identify(pcm, sample_rate, candidates, cfg,
-                          pending_present=False):
+        def fake_identify(pcm, sample_rate, candidates, cfg):
             return {"status": "match", "person_id": pid, "name": "Sonja",
                     "score": 0.8, "reason": "match"}
 
         monkeypatch.setattr("backend.voiceid.identify_utterance",
                             fake_identify)
         chat_id = _mk_chat()
-        diarize.stash_utterance(chat_id, loud_pcm(3.0), 16000)
+        msg = _insert_user_message(chat_id, "this is Sanya, hello")
+        anchors.remember_audio(msg["id"], loud_pcm(3.0), 16000, 1)
         # "Sanya" is CLOSE to "Sonja" (not confident): spelling alone would
         # only ask - the voice arm is what upgrades it to certainty.
         introductions.apply_scan(
-            chat_id, {"introductions": ["Sanya"], "departures": []}, CFG)
+            chat_id, {"introductions": ["Sanya"], "departures": []}, CFG,
+            text="this is Sanya, hello", message_id=msg["id"])
         roster = _roster(chat_id)
         assert [p["name"] for p in roster] == ["Sonja"]
         assert roster[0]["person_id"] == pid
@@ -718,9 +720,8 @@ def test_voice_match_with_variant_name_still_rebinds_silently(
         person = anchors.store().find_by_name("Sonja")
         assert "Sanya" in person["merged_names"]
         assert [p["name"] for p in anchors.store().people()] == ["Sonja"]
+        # the guest's audio seeded nobody, least of all the owner
         assert anchors.store().find_by_name("Alex") is None
-        # the stash was discarded, not left for a later claim
-        assert diarize.take_stashed_utterance(chat_id) is None
         # names collapse by voice: the introduced spelling resolves to them
         assert anchors.store().find_by_name("Sanya")["person_id"] == pid
 
@@ -729,13 +730,12 @@ def test_voice_match_with_variant_name_still_rebinds_silently(
 #
 # 2026-08-08, night. Room mode had ARMED (ambient, unknown voice) before the
 # guest introduced herself, and the scan's voice-match arm then judged the
-# WRONG audio: nothing is stashed once room mode is on, so the stash held a
-# stale pre-arm utterance the matcher had already declined to name - and the
-# owner-anchor seed then consumed that same stash, banking the guest's voice
-# as the owner's. Two fixes, both pinned here with synthetic names: in an
-# armed room the voice arm judges the introduction TURN's own audio (the
-# per-message memory the label passes keep), and the stash is never claimed
-# as the owner's anchor in a chat that was already armed.
+# WRONG audio: a stale pre-arm utterance the matcher had already declined to
+# name - and the owner-anchor seed then consumed that same audio, banking
+# the guest's voice as the owner's. Two fixes, both pinned here with
+# synthetic names: the voice arm judges the introduction TURN's own audio
+# (the per-message memory the voice check keeps, in every mode), and no
+# audio is claimed as the owner's anchor in a chat that was already armed.
 
 def _armed_chat_id():
     chat_id = _mk_chat()
@@ -744,28 +744,25 @@ def _armed_chat_id():
         db.set_chat_room_mode(con, chat_id, True)
     finally:
         con.close()
-    diarize.set_room_enabled(chat_id, True)
     return chat_id
 
 
 def test_armed_introduction_voice_match_judges_the_turns_own_audio(
         app, monkeypatch):
     """The armed-room audio plumbing pin, updated for #81: the voice arm
-    still judges the introduction TURN's own remembered audio (never the
-    stale pre-arm stash) - but with a VARIANT-compatible name it rebinds
-    silently, and the stash is still never claimed."""
+    judges the introduction TURN's own remembered audio - and with a
+    VARIANT-compatible name it rebinds silently, and nothing seeds the
+    owner."""
     with TestClient(app, base_url="http://127.0.0.1"):
         pid = _mint_sufficient("Sonja")
 
-        def fake_identify(pcm, sample_rate, candidates, cfg,
-                          pending_present=False):
+        def fake_identify(pcm, sample_rate, candidates, cfg):
             return {"status": "match", "person_id": pid, "name": "Sonja",
                     "score": 0.8, "reason": "match"}
 
         monkeypatch.setattr("backend.voiceid.identify_utterance",
                             fake_identify)
         chat_id = _armed_chat_id()
-        diarize.stash_utterance(chat_id, loud_pcm(2.0), 16000)  # stale, pre-arm
         msg = _insert_user_message(chat_id, "this is Sanya, hello")
         anchors.remember_audio(msg["id"], loud_pcm(3.0), 16000, 1)
         introductions.apply_scan(
@@ -776,7 +773,7 @@ def test_armed_introduction_voice_match_judges_the_turns_own_audio(
         assert roster[0]["person_id"] == pid
         person = anchors.store().find_by_name("Sonja")
         assert "Sanya" in person["merged_names"]
-        # the owner gained nothing, least of all the stale pre-arm audio
+        # the owner gained nothing from a guest's introduction
         assert anchors.store().find_by_name("Alex") is None
 
 
@@ -789,8 +786,7 @@ def test_armed_introduction_dissimilar_voice_match_seats_the_new_person(
     with TestClient(app, base_url="http://127.0.0.1"):
         pid = _mint_sufficient("Samantha")
 
-        def fake_identify(pcm, sample_rate, candidates, cfg,
-                          pending_present=False):
+        def fake_identify(pcm, sample_rate, candidates, cfg):
             return {"status": "match", "person_id": pid, "name": "Samantha",
                     "score": 0.8, "reason": "match"}
 
@@ -811,13 +807,13 @@ def test_armed_introduction_dissimilar_voice_match_seats_the_new_person(
         assert "Dave" not in (person.get("merged_names") or [])
 
 
-def test_armed_introduction_never_judges_or_seeds_from_the_stale_stash(
+def test_an_introduction_with_no_turn_audio_judges_and_seeds_nothing(
         app, monkeypatch):
-    """THE LOG PIN. No per-turn audio remembered (the turn deferred, or a
-    typed introduction): the voice arm must NOT fall back to the stale
-    stash - that audio did not speak this introduction - and the
-    owner-anchor seed must NOT consume it either. Before this fix the
-    fourteenth field test's log shows exactly that consumption: 'owner
+    """THE LOG PIN. No per-turn audio remembered (a typed introduction, or
+    the voice check never labelled the turn): the voice arm must NOT judge
+    some other utterance's audio - that audio did not speak this
+    introduction - and the owner-anchor seed must NOT consume it either.
+    The fourteenth field test's log shows exactly that consumption: 'owner
     anchor seeded from introduction' fired in an armed room while a guest
     was speaking."""
     with TestClient(app, base_url="http://127.0.0.1"):
@@ -825,10 +821,10 @@ def test_armed_introduction_never_judges_or_seeds_from_the_stale_stash(
         monkeypatch.setattr(
             "backend.voiceid.identify_utterance",
             lambda *a, **k: pytest.fail(
-                "an armed-room scan with no turn audio must not judge "
-                "the stale stash"))
+                "a scan with no turn audio must not judge any audio"))
         chat_id = _armed_chat_id()
-        diarize.stash_utterance(chat_id, loud_pcm(2.0), 16000)  # stale, pre-arm
+        earlier = _insert_user_message(chat_id, "an earlier turn")
+        anchors.remember_audio(earlier["id"], loud_pcm(2.0), 16000, 1)
         msg = _insert_user_message(chat_id, "this is Dave, hello")
         introductions.apply_scan(
             chat_id, {"introductions": ["Dave"], "departures": []}, CFG,
@@ -837,10 +833,10 @@ def test_armed_introduction_never_judges_or_seeds_from_the_stale_stash(
         roster = _roster(chat_id)
         assert [p["name"] for p in roster] == ["Dave"]
         assert roster[0]["person_id"] == ""
-        # the owner's bank gained NOTHING, and the stash was left alone
-        # (TTL is its only exit) rather than claimed as anyone's anchor
+        # the owner's bank gained NOTHING, and the earlier turn's audio was
+        # left alone rather than claimed as anyone's anchor
         assert anchors.store().find_by_name("Alex") is None
-        assert diarize.take_stashed_utterance(chat_id) is not None
+        assert anchors.peek_audio(earlier["id"]) is not None
 
 
 # ── 5. the merge endpoint and the rename conflict ───────────────────────────

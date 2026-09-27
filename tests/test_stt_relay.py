@@ -496,14 +496,13 @@ def _say(ws, seconds, turn_id):
 
 @pytest.fixture
 def only_app(tmp_path, monkeypatch):
-    """The app with the session naming on, its tracker and pass stubbed out:
+    """The app with a diariser configured (so the relay keeps the word
+    times for the crosstalk split), its tracker and check stubbed out:
     these tests are about the relay's finals and words only."""
-    from backend import diarize, voice_session_shadow as vss
+    from backend import diarize, voice_sessions as vss
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1",
-                        diarize_shadow_url="http://127.0.0.1:8910",
-                        voice_session_shadow=True, voice_session_live=True,
-                        voice_session_only=True)
+                        diarize_shadow_url="http://127.0.0.1:8910")
     monkeypatch.setattr(vss, "feed", lambda *a, **k: None)
     monkeypatch.setattr(vss, "end_turn", lambda *a, **k: None)
     monkeypatch.setattr(diarize, "schedule_turn_check", lambda *a, **k: None)
@@ -612,6 +611,24 @@ def test_words_are_kept_in_turn_time_before_the_final_goes_out(
             ws.send_json({"done": True})
     # the socket's own clock did run on: the fake sent 1.1 s for "second"
     assert fake.sent_s == pytest.approx(1.5)
+
+
+def test_with_no_diariser_the_words_are_never_held(app, monkeypatch):
+    """The words hold transcript text and only the crosstalk split reads
+    them, which needs the tracker's spans. With no diariser configured
+    there is no split, so the relay holds no words at all."""
+    from backend import diarize
+    monkeypatch.setattr(diarize, "schedule_turn_check", lambda *a, **k: None)
+    _timed_relay(app, monkeypatch, TimedEleven("both", script=[
+        [(0.1, 0.4, "first"), (0.5, 0.9, "turn")]]))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            assert _say(ws, 1.0, "t1")["turn_id"] == "t1"
+            ws.send_json({"done": True})
+    assert crosstalk.take_words("t1") == (False, None)
 
 
 def test_a_reconnected_socket_starts_its_own_clock(only_app, monkeypatch):

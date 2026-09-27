@@ -131,14 +131,14 @@ forget someone.
 **Have more than one person in the room.** Room mode is for when more
 than one person is talking to the models. When someone speaks, the app
 compares the voice with the voices it's learnt. That check happens on
-the computer the app runs on, in well under a second. If it knows the
-voice, it puts that person's name on the turn, so the models know who
-said what. If it doesn't, it asks who's joined. A turn from one person
-is transcribed once. Only a turn where two people talked over each
-other gets a second transcription, to untangle who said what. The
-small model that does the checking is about 38MB, downloaded once, and
-then works offline. Set `CROSSBAND_VOICE_ID_ENABLED=false` to turn it
-off.
+the computer the app runs on, and follows each voice through the
+conversation, so a short reply is named from everything that voice has
+said. If it knows the voice, it puts that person's name on the turn, so
+the models know who said what. If it doesn't, it asks who's joined.
+When two people talk over each other, their words are split between
+them on your computer too. The small model that does the checking is
+about 38MB, downloaded once, and then works offline. Set
+`CROSSBAND_VOICE_ID_ENABLED=false` to turn it off.
 
 **Call in a coding agent.** You can call Claude Code into the chat as
 a guest. It joins for one turn, works in its own copy of your repo (a

@@ -31,9 +31,10 @@ import asyncio
 import json
 import logging
 import re
+import time
 import unicodedata
 
-from . import anchors, db, depth, diarize, intent, llm_util, model_step
+from . import anchors, db, depth, intent, llm_util, model_step
 from . import research, room_state
 
 log = logging.getLogger("crossband.introductions")
@@ -953,11 +954,16 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
                      > len(verdict["corrections"]))
         outcome = None
         outcomes = {}
+        if verdict["introductions"] or verdict["corrections"] \
+                or verdict["mode_command"] == "on":
+            # These can learn from the turn's own audio, which the voice
+            # check remembers a moment after the message is saved.
+            await await_turn_audio(message_id)
         if verdict["mode_command"] != "none":
             direction = (COMMAND_ARM if verdict["mode_command"] == "on"
                         else COMMAND_DISARM)
             result = await asyncio.to_thread(apply_command, chat_id,
-                                             direction, cfg)
+                                             direction, cfg, message_id)
             outcomes["mode_command"] = result
             if result != "no_change":
                 outcome = result
@@ -1019,6 +1025,41 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
         _log_verdict(chat_id, "scan_error")
         log.info("introduction scan failed: chat=%s", chat_id)
         log.debug("introduction scan failure detail", exc_info=True)
+
+
+TURN_AUDIO_WAIT_S = 2.0   # longest a scan waits for its turn's audio
+
+
+def _voice_turn(message_id) -> bool:
+    """Was this message spoken (it carries a voice turn id)?"""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT voice_turn_id FROM messages WHERE id=?",
+                          (message_id,)).fetchone()
+    finally:
+        con.close()
+    return bool(row and row["voice_turn_id"])
+
+
+async def await_turn_audio(message_id, timeout=TURN_AUDIO_WAIT_S,
+                           step=0.05):
+    """Wait, at most `timeout`, for the voice check to remember a spoken
+    turn's audio (diarize._deliver_label does, a moment after /send saves
+    the message), so an introduction or a spoken arm command can seed the
+    owner's first clip from it. Returns the entry or None at once for a
+    typed turn. Polls, so no thread is held."""
+    if not message_id:
+        return None
+    entry = anchors.peek_audio(message_id)
+    if entry is not None \
+            or not await asyncio.to_thread(_voice_turn, message_id):
+        return entry
+    deadline = time.monotonic() + timeout
+    while True:
+        entry = anchors.peek_audio(message_id)
+        if entry is not None or time.monotonic() >= deadline:
+            return entry
+        await asyncio.sleep(step)
 
 
 def vouch_self_named_turn(chat_id, message_id, verdict, cfg) -> bool:
@@ -1219,11 +1260,11 @@ def apply_corrections(chat_id, corrections, cfg):
 def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
     """Apply a confirmed verdict (synchronous; runs on a worker thread):
 
-    - introductions: flip room mode on (durably AND in diarize's in-process
-      registry so a live session tees from its next commit), append each name
-      to the roster up to the cap, link a REMEMBERED person's anchors
-      immediately (that is re-identification), and seed the owner's anchor
-      from the introduction utterance the relay stashed.
+    - introductions: flip room mode on, append each name to the roster up
+      to the cap, link a REMEMBERED person's anchors immediately (that is
+      re-identification), and seed the owner's anchor from the
+      introduction's own audio, which the voice check remembered under
+      this message's id.
     - naming hygiene (#28 phase 4): a relationship word is never stored as a
       person's name. Proper names in the same verdict win; a
       relationship-only introduction first tries to re-identify a REMEMBERED
@@ -1260,9 +1301,8 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
         if not chat:
             return "no_change"
         # Whether the room was armed BEFORE this scan touched anything: it
-        # decides where the voice-match arm finds the introduction's audio,
-        # and whether the stash may be trusted as the owner's (#28,
-        # fourteenth field test - see the seed gate below).
+        # decides whether the introduction's audio may be trusted as the
+        # owner's (#28, fourteenth field test - see the seed gate below).
         armed_before = bool(chat["room_mode"])
         owner = cfg.get("user_name", "User")
         # The owner's roster identity is the `user_name` SETTING (#28 phase
@@ -1299,7 +1339,7 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
             # An introduction is an explicit owner re-enable: room_state
             # clears any sacred ambient-off so remembered voices resume
             # being noticed, even when the room is already armed. The owner
-            # is NOT seated here - the stash-gated seed below decides that
+            # is NOT seated here - the audio-gated seed below decides that
             # (#28, fourteenth field test).
             flipped = room_state.arm(chat_id, cfg, source="introduction",
                                      clear_ambient=True, seat_owner="never",
@@ -1337,8 +1377,7 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
             # speaking IS someone we remember, whatever the transcriber made
             # of their name - re-identify them instead of minting a twin.
             voice_person = _voice_matched_person(
-                chat_id, people, cfg, owner, message_id=message_id,
-                armed=armed_before) if new else None
+                people, cfg, owner, message_id=message_id) if new else None
             seed_owner = True
             for name in new[:allowed]:
                 known = store.find_by_name(name)
@@ -1374,10 +1413,10 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                     if voice_match_name_compatible(name, voice_person):
                         known = voice_person
                         variant = None
-                        # The stashed utterance is the GUEST's voice, not the
-                        # owner's - claiming it as the owner's anchor would be
-                        # exactly the cross-contamination the sixth field test
-                        # found. Discard it instead.
+                        # The introduction's audio is the GUEST's voice, not
+                        # the owner's - claiming it as the owner's anchor
+                        # would be exactly the cross-contamination the sixth
+                        # field test found. It seeds nobody.
                         seed_owner = False
                         log.info("introduction voice-matched a remembered "
                                  "person: chat=%s", chat_id)
@@ -1428,8 +1467,6 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                                 enforce_cap=True, link_existing=True, con=con)
             added = min(allowed, len(new))
             log.info("roster grew: chat=%s added=%d", chat_id, added)
-            if not seed_owner:
-                diarize.take_stashed_utterance(chat_id)  # guest audio: drop it
             if named:
                 # An introduction is also the ANSWER to an open "someone new
                 # is speaking - who?" ask: naming them closes it. The next
@@ -1438,17 +1475,15 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
                 # ambiguous. An UNNAMED introduction resolves nothing - the
                 # ask it just raised must stand.
                 db.resolve_room_flags(con, chat_id, kind="unknown_voice")
-            if not armed_before:
-                # The stash is the ROOM-OFF path's memory of the utterance
-                # that spoke the introduction. In a chat that was ALREADY
-                # armed, nothing has been stashed since arming - whatever
-                # sits there is pre-arm audio whose speaker is unknowable,
-                # and the fourteenth field test's log shows exactly that:
-                # a guest's pre-arm utterance was banked as the OWNER's
-                # anchor because her introduction arrived after ambient had
-                # armed the room. Seeding is gated on THIS scan having
-                # armed the room, when the stash is plausibly the
-                # introduction utterance itself.
+            if not armed_before and seed_owner:
+                # In a room that was off, the voice that spoke the
+                # introduction is the owner's by design, so its audio is the
+                # owner's first clip. In a chat that was ALREADY armed,
+                # anyone in the room may have spoken it: the fourteenth
+                # field test's log shows a guest's utterance banked as the
+                # OWNER's anchor because her introduction arrived after the
+                # room had armed itself. Seeding is gated on THIS scan
+                # having armed the room.
                 _seed_owner_anchor(chat_id, cfg, message_id=message_id)
         for name in departs:
             if db.mark_room_person_left(con, chat_id, name):
@@ -1589,35 +1624,33 @@ def _raise_merge_question(con, chat_id, new_name, existing_person):
                         suspected=display)
 
 
-def _voice_matched_person(chat_id, people, cfg, owner, message_id=None,
-                          armed=False):
+def _intro_audio(message_id):
+    """The introduction's own audio as (pcm, sample_rate), or None. The
+    voice check remembers every labelled turn's audio under its message id
+    (anchors.remember_audio), in every mode, so this is the utterance that
+    spoke the introduction (#28, fourteenth field test: an older stash of
+    the last room-off turn judged the wrong utterance once the room had
+    armed). A two-voice turn is trusted for nobody, and a typed turn has
+    no audio. Peeked, never taken, so tap-to-correct still has it."""
+    entry = anchors.peek_audio(message_id) if message_id else None
+    if not entry or entry[2] != 1:
+        return None
+    return entry[0], entry[1]
+
+
+def _voice_matched_person(people, cfg, owner, message_id=None):
     """Does the introduction utterance's audio confidently match an enrolled
     NON-owner voice? Runs the local matcher against every sufficient person
     and returns the matched person dict or None. Every doubt is None: this
     is an extra door to re-identification, never a required one. Runs on
-    the scan's worker thread.
-
-    WHERE THE AUDIO COMES FROM (#28, fourteenth field test). Room off: the
-    stashed utterance, peeked, never consumed - the owner-anchor seed path
-    still owns that decision. ARMED room: nothing is stashed once room mode
-    is on, so any stash is stale pre-arm audio that did NOT speak this
-    introduction - that night the scan judged the wrong utterance and the
-    match was missed. The label passes remember each labelled utterance's
-    audio per message id, and that is the audio that actually spoke the
-    introduction; a multi-voice utterance is trusted for nobody."""
+    the scan's worker thread."""
     from . import voiceid
     if not voiceid.enabled(cfg):
         return None
-    if armed:
-        entry = anchors.peek_audio(message_id) if message_id else None
-        if not entry or entry[2] != 1:
-            return None
-        pcm, sample_rate = entry[0], entry[1]
-    else:
-        stashed = diarize.peek_stashed_utterance(chat_id)
-        if not stashed:
-            return None
-        pcm, sample_rate = stashed
+    audio = _intro_audio(message_id)
+    if audio is None:
+        return None
+    pcm, sample_rate = audio
     candidates = [{"person_id": p["person_id"], "name": p["name"]}
                   for p in people if p.get("sufficient")]
     if not candidates:
@@ -1634,18 +1667,49 @@ def _voice_matched_person(chat_id, people, cfg, owner, message_id=None,
                  if p["person_id"] == verdict["person_id"]), None)
 
 
+def _heard_someone_else(message_id, owner):
+    """Did the voice check hear someone other than the owner on this turn?
+    A name on its label that isn't the owner's, sure or not, or a new voice
+    once the owner's own voice is known (then it isn't theirs). Before the
+    owner's voice is known, their own turns read as a new voice, so that
+    alone rules nothing out."""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT voice_labels FROM messages WHERE id=?",
+                          (message_id,)).fetchone()
+    finally:
+        con.close()
+    try:
+        data = json.loads(row["voice_labels"]) if row and \
+            row["voice_labels"] else {}
+    except (TypeError, json.JSONDecodeError):
+        return True             # a label we can't read vouches for nobody
+    if not isinstance(data, dict):
+        return True
+    names = [n for n in data.get("labels") or () if isinstance(n, str)
+             and n.strip()]
+    if any(not owner_alias(n, owner) for n in names):
+        return True
+    if data.get("unresolved") == "new_voice":
+        from . import diarize
+        return diarize.owner_sufficient(anchors.store().people(), owner)
+    return False
+
+
 def _seed_owner_anchor(chat_id, cfg, message_id=None):
-    """The owner's anchor comes from the introduction utterance: the relay
-    stashes each finished utterance while room mode is off, and the voice
-    that spoke the introduction is the owner's by design. Quietly a no-op
-    when there is no live voice session (a TYPED introduction has no audio).
-    `message_id` (#84): the triggering message when the caller has one (the
-    introduction scan does; a command arm names no message)."""
-    stashed = diarize.take_stashed_utterance(chat_id)
-    if not stashed:
-        return
-    pcm, sample_rate = stashed
+    """The owner's anchor comes from the utterance that spoke the
+    introduction or the spoken arm command: in a room that was off, that
+    voice is the owner's by design. The audio is the one the voice check
+    remembered under `message_id` (_intro_audio). Quietly a no-op when
+    there is none: a TYPED introduction has no audio, and neither does a
+    two-voice turn. Nor does a turn the voice check heard as someone else
+    (_heard_someone_else): a guest introducing themselves in a quiet room
+    is not the owner. `message_id` (#84) is also the seat's trigger."""
+    audio = _intro_audio(message_id)
     owner = cfg.get("user_name", "User")
+    if audio is None or _heard_someone_else(message_id, owner):
+        return
+    pcm, sample_rate = audio
     store = anchors.store()
     pid = store.ensure_person(owner)
     if store.add_clip(pid, pcm, sample_rate, source="introduction"):
@@ -1656,7 +1720,7 @@ def _seed_owner_anchor(chat_id, cfg, message_id=None):
     con = db.connect()
     try:
         # The owner rides the roster too - the "In the room" chip should show
-        # everyone the diarizer is being asked to tell apart. Uncapped: the
+        # everyone the voice check is telling apart. Uncapped: the
         # owner's seat is never what the cap guards.
         room_state.seat(chat_id, owner, cfg, via="owner", person_id=pid,
                         message_id=message_id, enforce_cap=False,
@@ -1665,23 +1729,21 @@ def _seed_owner_anchor(chat_id, cfg, message_id=None):
         con.close()
 
 
-def apply_command(chat_id, direction, cfg):
+def apply_command(chat_id, direction, cfg, message_id=None):
     """Apply a confirmed room-mode command (synchronous; runs on a worker
     thread). Returns the outcome for the verdict line.
 
     ARM is the introduction's control path without any names: the durable
-    flip plus diarize's live mirror, so a live session's pass machinery
-    starts at its next commit boundary. The OWNER joins the roster (linked
-    to their remembered anchors when those exist), which makes the pass run
-    ANCHORED rather than as the phase-1 ordinal pass - an unknown second
-    voice then raises the ask-fallback instead of a bare ordinal, and a
-    remembered person who speaks is re-identified through the normal
-    ask/introduction/correction flows. A SPOKEN command also seeds the
-    owner's anchor from the stashed utterance, exactly as an introduction
-    does - the voice that spoke the command is the owner's by design.
+    flip, which the voice check reads on the next turn. The OWNER joins the
+    roster (linked to their remembered anchors when those exist), so an
+    unknown second voice raises the ask, and a remembered person who
+    speaks is re-identified through the normal ask/introduction/correction
+    flows. A SPOKEN command also seeds the owner's anchor from its own
+    audio (`message_id`), exactly as an introduction does - the voice that
+    spoke the command is the owner's by design.
 
     DISARM is the override-off semantics ("solo mode", "just me now"): the
-    durable flip off plus the live mirror, everyone still present marked
+    durable flip off, everyone still present marked
     left (the phrase says the room is back to one person; the cap frees and
     the roster chip disappears), and any open "who is speaking?" ask
     resolved - it is moot once solo. Mismatch flags stay: they doubt past
@@ -1736,8 +1798,8 @@ def apply_command(chat_id, direction, cfg):
     finally:
         con.close()
     if outcome == "armed_by_command":
-        # The stash-gated owner anchor seed stays here: it needs the scan
-        # layer's stash, and a fresh connection after this one closed.
-        _seed_owner_anchor(chat_id, cfg)
+        # The owner anchor seed stays here: it needs the turn's audio, and
+        # a fresh connection after this one closed.
+        _seed_owner_anchor(chat_id, cfg, message_id=message_id)
     return outcome
 

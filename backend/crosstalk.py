@@ -1,12 +1,11 @@
 """Crosstalk, split on this computer (#482 item D).
 
 When two people talk in one spoken turn, the turn's label says so, and
-where it can it says which words were whose. The cloud split did that by
-sending the turn and people's kept clips to ElevenLabs' batch
-transcription. With the session naming on (`voice_session_only`) this
-module does it here instead, from two things the app already has:
+where it can it says which words were whose. This module does it on this
+computer, and no voice clip goes to the cloud for it, from two things the
+app already has:
 
-  1. The tracker's spans (backend/voice_session_shadow.py's live feed):
+  1. The tracker's spans (backend/voice_sessions.py's feed):
      which session voice spoke when, in the turn's own time.
   2. Scribe Realtime's word times. The relay asks for them, and each
      commit's timed final carries every word with its start and end.

@@ -1,34 +1,30 @@
-"""Ambient room detection (#28): no trigger phrase required.
+"""A room that switches itself on (#28, #461, #482): no trigger phrase.
 
-The arming ceremony existed to gate the cost of cloud identity; the local
-matcher made identity ~free, so with room mode OFF every committed utterance
-now gets a quiet LOCAL-ONLY check. What these tests prove, in order:
+With room mode OFF every committed utterance still gets the voice check
+(backend/voice_pass.py), on this computer. What these tests prove, in
+order:
 
-1. THE LATENCY PIN: the committed transcript arrives while the ambient
-   check is deliberately wedged open - the live path never waits on it.
-2. The decision table, end to end through the relay: the owner's voice
-   labels the turn as the owner, voice-confirmed, and arms NOTHING (#28
-   PR-C - it used to write no label at all; the owner's identity is shown,
-   not hidden); a remembered non-owner arms room mode, joins the roster and
-   names the turn; a clear stranger (decidable only because the owner is
-   enrolled) arms, labels an ordinal, and raises the ask-fallback; an
-   undecidable verdict defers with room mode untouched.
-3. AMBIENT IS LOCAL-ONLY: none of those decisions makes an ElevenLabs batch
-   call.
+1. THE LATENCY PIN: the committed transcript arrives while the check is
+   deliberately wedged open - the live path never waits on it.
+2. The rules, end to end through the relay: the owner's voice labels the
+   turn as the owner, voice-confirmed, and arms NOTHING; a remembered
+   non-owner arms room mode, joins the roster, names the turn and gets
+   the mismatch cross-check; a clear new voice (decidable only because
+   the owner is enrolled) arms, says "new voice", and raises the ask; with
+   the owner not enrolled a new voice changes nothing.
+3. THE CHECK IS LOCAL-ONLY: none of those makes an ElevenLabs batch call.
 4. DISARM IS SACRED: "solo mode" sets a durable ambient-off (even with room
    mode already off), and every explicit re-enable (arm command,
-   introduction, manual toggle) clears it. #461: solo still checks every
-   turn, so the turn says who spoke, but in solo nothing arms, seats or
-   asks, and a mid-session disarm is honoured at the next commit.
+   introduction, manual toggle) clears it. Solo still checks every turn, so
+   the turn says who spoke, but in solo nothing arms, seats or asks, and a
+   mid-session disarm is honoured at the next commit.
 5. THE ASK FIRES WHEN /send CLAIMS THE LABEL (#461): labels ride the
    insert, so the check nearly always found its label already on the row
    and stopped before raising the ask.
 6. A SESSION THAT OPENED ARMED STILL CHECKS ONCE THE ROOM GOES SOLO
-   (#461): the room state is read per commit, never frozen at session open.
+   (#461): the room state is read per turn, never frozen at session open.
 
-(#28 PR-B: the bounded EL sniff that used to back ambient up is retired
-with the cloud identity path - ambient is the ONLY automatic arming door,
-and tests/test_room_sniff.py pins the retirement itself.)
+The session naming is stood in for by roomkit.fake_naming.
 """
 
 import base64
@@ -39,12 +35,12 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, auth, db, diarize, voiceid
+from backend import anchors, auth, db, diarize
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
-from roomkit import _insert_user_message, _message_labels, _remember, _wait_for, loud_pcm
-from tests.conftest import speech_pcm
+from roomkit import (_insert_user_message, _message_labels, _remember,
+                     _wait_for, fake_naming, loud_pcm, naming_answer)
 
 
 @pytest.fixture
@@ -104,7 +100,7 @@ def relay(app, monkeypatch):
 
 @pytest.fixture
 def batch_calls(monkeypatch):
-    """Counts EL batch STT calls - ambient decisions must make NONE."""
+    """Counts EL batch STT calls - the check must make NONE."""
     state = {"calls": 0}
 
     def fake_post(url, headers=None, data=None, files=None, timeout=None):
@@ -118,32 +114,9 @@ def batch_calls(monkeypatch):
     return state
 
 
-def _verdict_match(name, pid, score=0.8):
-    return {"status": voiceid.MATCH, "person_id": pid, "name": name,
-            "score": score, "reason": "match"}
-
-
-def _verdict_defer(reason, score=0.3):
-    return {"status": voiceid.DEFER, "person_id": None, "name": None,
-            "score": score, "reason": reason}
-
-
 @pytest.fixture
-def matcher(monkeypatch):
-    """The local matcher double: a queue of verdicts, an optional wedge, and
-    a call log. Patched at the voiceid module so diarize's reference sees it."""
-    state = {"verdicts": [], "calls": 0, "gate": None}
-
-    def fake_identify(pcm, sample_rate, candidates, cfg, pending_present=False):
-        if state["gate"] is not None:
-            state["gate"].wait(10)
-        state["calls"] += 1
-        if state["verdicts"]:
-            return state["verdicts"].pop(0)
-        return _verdict_defer("unavailable")
-
-    monkeypatch.setattr(voiceid, "identify_utterance", fake_identify)
-    return state
+def naming(monkeypatch):
+    return fake_naming(monkeypatch)
 
 
 def _frame(data, commit=False):
@@ -183,33 +156,9 @@ def _new_chat(c):
 
 # ── pure rules ──────────────────────────────────────────────────────────────
 
-def test_ambient_decision_table():
-    owner = _verdict_match("Alex", "p0")
-    guest = _verdict_match("Sam", "p1")
-    below = _verdict_defer("below_threshold")
-    assert diarize.ambient_decision(owner, "Alex", True) == "noop_owner"
-    assert diarize.ambient_decision(owner, "alex", False) == "noop_owner"
-    assert diarize.ambient_decision(guest, "Alex", True) == "arm_known"
-    assert diarize.ambient_decision(below, "Alex", True) == "arm_unknown"
-    # without the owner enrolled, "below threshold" could BE the owner
-    assert diarize.ambient_decision(below, "Alex", False) == "defer"
-    # not_speech included (#217): a static burst must never arm anything
-    for reason in ("ambiguous", "multi", "too_short", "not_speech",
-                   "unavailable", "no_candidates"):
-        assert diarize.ambient_decision(_verdict_defer(reason),
-                                        "Alex", True) == "defer"
-    assert diarize.ambient_decision(None, "Alex", True) == "defer"
-
-
-def test_ambient_eligibility_rules():
-    on = {"voice_id_enabled": True}
-    off = {"voice_id_enabled": False}
+def test_owner_sufficient_rules():
+    """Only an enrolled owner lets a new voice mean "not the owner"."""
     somebody = [{"name": "Sam", "sufficient": True}]
-    nobody = [{"name": "Sam", "sufficient": False}]
-    assert diarize.ambient_eligible(somebody, on) is True
-    assert diarize.ambient_eligible(nobody, on) is False
-    assert diarize.ambient_eligible([], on) is False
-    assert diarize.ambient_eligible(somebody, off) is False
     assert diarize.owner_sufficient(
         [{"name": "Alex", "sufficient": True}], "Alex") is True
     assert diarize.owner_sufficient(
@@ -219,21 +168,21 @@ def test_ambient_eligibility_rules():
 
 # ── 1. the latency pin ──────────────────────────────────────────────────────
 
-def test_committed_transcript_arrives_while_ambient_is_wedged(
-        app, relay, batch_calls, matcher):
-    _remember("Sam")
-    matcher["gate"] = threading.Event()
-    matcher["verdicts"] = [_verdict_match("Sam", "ignored")]
+def test_committed_transcript_arrives_while_the_check_is_wedged(
+        app, relay, batch_calls, naming):
+    pid = _remember("Sam")
+    naming["gate"] = threading.Event()
+    naming["answers"] = [naming_answer(name="Sam", pid=pid)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
             ws.send_json({"chat_id": chat["id"]})
             assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
-            # the live path completes while the ambient check is blocked
+            # the live path completes while the check is blocked
             assert ws.receive_json() == {"final": "hello world"}
             assert _chat_state(chat["id"])[0] is False
-            matcher["gate"].set()
+            naming["gate"].set()
             assert _wait_for(lambda: _chat_state(chat["id"])[0])
             ws.send_json({"done": True})
     assert batch_calls["calls"] == 0  # local-only, even on the arm
@@ -241,17 +190,14 @@ def test_committed_transcript_arrives_while_ambient_is_wedged(
 
 # ── 2. the decision table, end to end ───────────────────────────────────────
 
-def test_owner_voice_labels_but_never_arms(app, relay, batch_calls, matcher):
-    """#28 PR-C deliberately updated this pin (formerly
-    test_owner_voice_is_a_noop, which asserted only that nothing armed):
-    the owner's identity is shown, not hidden. A confident owner match in a
-    room-off session now writes an owner-marked confident label on the turn
-    - so solo chats can answer "who is speaking?" - while everything the
-    old pin guaranteed still holds: no arm, no roster, no ElevenLabs
-    call."""
+def test_owner_voice_labels_but_never_arms(app, relay, batch_calls, naming):
+    """#28 PR-C: the owner's identity is shown, not hidden. A confident
+    owner naming in a room-off session writes an owner-marked confident
+    label on the turn - so solo chats can answer "who is speaking?" - and
+    nothing else: no arm, no roster, no ElevenLabs call."""
     _remember("Alex")  # the owner, sufficiently enrolled
     pid_owner = anchors.store().find_by_name("Alex")["person_id"]
-    matcher["verdicts"] = [_verdict_match("Alex", pid_owner)]
+    naming["answers"] = [naming_answer(name="Alex", pid=pid_owner)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -270,18 +216,17 @@ def test_owner_voice_labels_but_never_arms(app, relay, batch_calls, matcher):
     assert parsed["uncertain"] == []
     assert parsed["owner"] is True   # the chips' voice-confirmed marker
     assert batch_calls["calls"] == 0
-    # #237: the owner path was the one pass that discarded its audio, so
-    # the owner-by-voice guard and tap-to-correct went silent on solo
-    # chats. The remembered ring must now hold this turn.
+    # #237: the owner-by-voice guard and tap-to-correct need this turn's
+    # audio in the remembered ring, on solo chats too.
     assert anchors.peek_audio(msg["id"]) is not None
 
 
 def test_remembered_voice_arms_names_and_rosters(app, relay, batch_calls,
-                                                 matcher, monkeypatch):
+                                                 naming, monkeypatch):
     pid = _remember("Sam")
-    matcher["verdicts"] = [_verdict_match("Sam", pid)]
-    # #237: the turn that ARMS the room now gets the same mismatch
-    # cross-check the fast path gets on equivalent evidence.
+    naming["answers"] = [naming_answer(name="Sam", pid=pid)]
+    # #237: the turn that ARMS the room gets the mismatch cross-check, as
+    # every named guest's turn does.
     checks = []
     monkeypatch.setattr("backend.mismatch.schedule_check",
                         lambda *a, **k: checks.append(a))
@@ -296,7 +241,6 @@ def test_remembered_voice_arms_names_and_rosters(app, relay, batch_calls,
             labels = _wait_for(lambda: _message_labels(msg["id"]))
             assert _wait_for(lambda: _chat_state(chat["id"])[0])
             ws.send_json({"done": True})
-    assert diarize.room_enabled(chat["id"]) is True
     assert [(p["name"], p["person_id"]) for p in _roster(chat["id"])] \
         == [("Sam", pid)]
     assert json.loads(labels)["labels"] == ["Sam"]
@@ -305,9 +249,9 @@ def test_remembered_voice_arms_names_and_rosters(app, relay, batch_calls,
     assert len(checks) == 1 and checks[0][2] == "Sam", checks
 
 
-def test_clear_stranger_arms_and_asks(app, relay, batch_calls, matcher):
-    _remember("Alex")  # owner enrolled: below-threshold means NOT the owner
-    matcher["verdicts"] = [_verdict_defer("below_threshold")]
+def test_clear_stranger_arms_and_asks(app, relay, batch_calls, naming):
+    _remember("Alex")  # owner enrolled: a new voice means NOT the owner
+    naming["answers"] = [naming_answer("new")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -320,12 +264,12 @@ def test_clear_stranger_arms_and_asks(app, relay, batch_calls, matcher):
             assert _wait_for(lambda: _chat_state(chat["id"])[0])
             assert _wait_for(lambda: _flags(chat["id"]))
             ws.send_json({"done": True})
-    # armed, the owner rostered so the armed pass runs anchored
+    # armed, the owner rostered beside the new voice
     assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]
-    # the stranger's turn carries an ordinal, marked uncertain
+    # the new voice's turn names nobody and says why, never the owner
     parsed = json.loads(labels)
-    assert parsed["labels"] == ["Voice 1"]
-    assert parsed["uncertain"] == ["Voice 1"]
+    assert parsed["labels"] == []
+    assert parsed["unresolved"] == "new_voice"
     # and exactly one open ask
     flags = _flags(chat["id"])
     assert [f["kind"] for f in flags] == ["unknown_voice"]
@@ -333,9 +277,9 @@ def test_clear_stranger_arms_and_asks(app, relay, batch_calls, matcher):
 
 
 def test_stranger_without_owner_enrolment_defers(app, relay, batch_calls,
-                                                 matcher):
+                                                 naming):
     _remember("Sam")  # a guest is remembered, but the OWNER is not enrolled
-    matcher["verdicts"] = [_verdict_defer("below_threshold")]
+    naming["answers"] = [naming_answer("new")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -343,7 +287,7 @@ def test_stranger_without_owner_enrolment_defers(app, relay, batch_calls,
             assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
-            assert _wait_for(lambda: matcher["calls"] >= 1)
+            assert _wait_for(lambda: naming["calls"] >= 1)
             ws.send_json({"done": True})
     assert _chat_state(chat["id"])[0] is False
     assert _flags(chat["id"]) == []
@@ -362,7 +306,6 @@ def test_solo_command_sets_ambient_off_even_when_room_already_off(app):
     assert outcome == "disarmed_by_command"
     on, ambient_off = _chat_state(chat["id"])
     assert on is False and ambient_off is True
-    assert diarize.ambient_off(chat["id"]) is True
 
 
 def _claim_insert(chat_id, turn_id, text="hello world"):
@@ -386,21 +329,19 @@ def _commit(ws, turn_id):
 
 
 def test_solo_labels_but_never_arms_seats_or_asks(app, relay, batch_calls,
-                                                  matcher):
-    """#461 deliberately replaced test_disarmed_chat_never_schedules_ambient.
-    Solo used to skip the check outright, and 15 of one evening's 19
-    unlabelled turns came after a spoken "solo mode": a guest's words then
-    reached memory as the owner's. Now every turn in solo is checked. The
-    owner is labelled as in listening, a remembered guest is named, and a
-    clear stranger is marked "voice not recognised". None of them arms,
-    seats or asks, and an undecidable turn still writes nothing."""
+                                                  naming):
+    """#461: 15 of one evening's 19 unlabelled turns came after a spoken
+    "solo mode", and a guest's words then reached memory as the owner's.
+    Every turn in solo is checked. The owner is labelled as in listening,
+    a remembered guest is named, a clear new voice is marked "a new
+    voice", and a turn the naming had nothing for is marked "still
+    listening". None of them arms, seats or asks."""
     from backend import introductions
     owner = _remember("Alex")
     guest = _remember("Sam")
-    matcher["verdicts"] = [_verdict_match("Alex", owner),
-                           _verdict_match("Sam", guest),
-                           _verdict_defer("below_threshold"),
-                           _verdict_defer("too_short")]
+    naming["answers"] = [naming_answer(name="Alex", pid=owner),
+                         naming_answer(name="Sam", pid=guest),
+                         naming_answer("new"), None]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         introductions.apply_command(chat["id"], introductions.COMMAND_DISARM,
@@ -414,7 +355,7 @@ def test_solo_labels_but_never_arms_seats_or_asks(app, relay, batch_calls,
                 assert _wait_for(lambda: tid in diarize._PENDING_LABELS)
                 msgs.append(_claim_insert(chat["id"], tid))
             _commit(ws, "tS4")
-            assert _wait_for(lambda: matcher["calls"] == 4)
+            assert _wait_for(lambda: "tS4" in diarize._PENDING_LABELS)
             msgs.append(_claim_insert(chat["id"], "tS4"))
             time.sleep(0.3)  # give a wrong arm or ask time to land
             ws.send_json({"done": True})
@@ -422,8 +363,9 @@ def test_solo_labels_but_never_arms_seats_or_asks(app, relay, batch_calls,
     assert heads[0]["labels"] == ["Alex"] and heads[0]["owner"] is True
     assert heads[1]["labels"] == ["Sam"] and heads[1]["uncertain"] == []
     assert heads[2]["labels"] == []
-    assert heads[2]["unresolved"] == "below_threshold"
-    assert msgs[3]["voice_labels"] == ""       # undecidable: as in listening
+    assert heads[2]["unresolved"] == "new_voice"
+    last = json.loads(msgs[3]["voice_labels"])
+    assert last["labels"] == [] and last["unresolved"] == "listening"
     assert _chat_state(chat["id"]) == (False, True)
     assert _roster(chat["id"]) == []
     assert _flags(chat["id"]) == []
@@ -431,14 +373,14 @@ def test_solo_labels_but_never_arms_seats_or_asks(app, relay, batch_calls,
 
 
 def test_mid_session_disarm_is_honoured_at_the_next_commit(
-        app, relay, batch_calls, matcher):
-    """#461 updated this pin: the commit after a mid-session "solo mode"
-    is still checked (it used to be skipped), and the match that would
-    have armed a listening room only names the turn."""
+        app, relay, batch_calls, naming):
+    """#461: the commit after a mid-session "solo mode" is still checked,
+    and the naming that would have armed a listening room only names the
+    turn."""
     from backend import introductions
     pid = _remember("Sam")
-    matcher["verdicts"] = [_verdict_defer("ambiguous"),
-                           _verdict_match("Sam", pid)]
+    naming["answers"] = [naming_answer("listening"),
+                         naming_answer(name="Sam", pid=pid)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         cfg = app.state.settings.as_cfg()
@@ -447,7 +389,7 @@ def test_mid_session_disarm_is_honoured_at_the_next_commit(
             assert ws.receive_json()["session"]  # #134 handshake
             ws.send_json(_frame(loud_pcm(1.5), commit=True))
             assert ws.receive_json() == {"final": "hello world"}
-            assert _wait_for(lambda: matcher["calls"] == 1)   # ran, deferred
+            assert _wait_for(lambda: naming["calls"] == 1)   # ran, deferred
             introductions.apply_command(chat["id"],
                                         introductions.COMMAND_DISARM, cfg)
             _commit(ws, "tM2")
@@ -455,21 +397,21 @@ def test_mid_session_disarm_is_honoured_at_the_next_commit(
             msg = _claim_insert(chat["id"], "tM2")
             time.sleep(0.3)
             ws.send_json({"done": True})
-    assert matcher["calls"] == 2
+    assert naming["calls"] == 2
     assert json.loads(msg["voice_labels"])["labels"] == ["Sam"]
     assert _chat_state(chat["id"]) == (False, True)
     assert _roster(chat["id"]) == []
 
 
 def test_claimed_stranger_label_still_raises_the_ask(app, relay, batch_calls,
-                                                     matcher):
+                                                     naming):
     """#461: the who-joined ask waited for the check to write its label,
     and since labels ride the insert the check nearly always found the
     label already there and stopped. No ask was raised from 14 Aug on.
     Here the label is claimed by the insert, as /send does, and the ask
     must still come up, pointing at the turn."""
     _remember("Alex")
-    matcher["verdicts"] = [_verdict_defer("below_threshold")]
+    naming["answers"] = [naming_answer("new")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -478,7 +420,8 @@ def test_claimed_stranger_label_still_raises_the_ask(app, relay, batch_calls,
             _commit(ws, "tU1")
             assert _wait_for(lambda: "tU1" in diarize._PENDING_LABELS)
             msg = _claim_insert(chat["id"], "tU1")
-            assert json.loads(msg["voice_labels"])["labels"] == ["Voice 1"]
+            assert json.loads(msg["voice_labels"])["unresolved"] \
+                == "new_voice"
             flags = _wait_for(lambda: _flags(chat["id"]))
             ws.send_json({"done": True})
     assert [(f["kind"], f["message_id"]) for f in flags] \
@@ -487,14 +430,13 @@ def test_claimed_stranger_label_still_raises_the_ask(app, relay, batch_calls,
 
 
 def test_switch_off_mid_session_still_checks(app, relay, batch_calls,
-                                             matcher):
+                                             naming):
     """#461: the switch in settings takes the chat to solo, as the spoken
-    command does. A session that opened with the room on also froze "no
-    room-off check" at open, so even with solo checking, its turns would
-    have gone unchecked until the microphone reconnected. The owner's
+    command does. A session that opened with the room on keeps checking
+    every turn once it goes solo: the room is read per turn. The owner's
     turn is labelled, and the room stays off."""
     owner = _remember("Alex")
-    matcher["verdicts"] = [_verdict_match("Alex", owner)]
+    naming["answers"] = [naming_answer(name="Alex", pid=owner)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _new_chat(c)
         c.patch(f"/api/chats/{chat['id']}", json={"room_mode": True})
@@ -512,8 +454,6 @@ def test_switch_off_mid_session_still_checks(app, relay, batch_calls,
 
 
 def test_every_reenable_clears_ambient_off(app):
-    from backend import introductions
-    cfg_key = None
     with TestClient(app, base_url="http://127.0.0.1") as c:
         cfg = app.state.settings.as_cfg()
         from backend import introductions as intro
@@ -532,23 +472,11 @@ def test_every_reenable_clears_ambient_off(app):
                          cfg, text="this is Sam")
         assert _chat_state(chat2["id"])[1] is False
         # the manual toggle-on clears it, and (#28, fifth field test) behaves
-        # like the arm command: the owner joins the roster so the pass runs
-        # ANCHORED - the slow no-roster path can no longer be reached from
-        # the control that looks like it should enable identification
+        # like the arm command: the owner joins the roster
         chat3 = _new_chat(c)
         intro.apply_command(chat3["id"], intro.COMMAND_DISARM, cfg)
         assert _chat_state(chat3["id"])[1] is True
         c.patch(f"/api/chats/{chat3['id']}", json={"room_mode": True})
         assert _chat_state(chat3["id"])[1] is False
-        assert diarize.ambient_off(chat3["id"]) is False
         assert [p["name"] for p in _roster(chat3["id"])] == ["Alex"]
 
-
-# ── 5. no fallback behind ambient (#28 PR-B) ────────────────────────────────
-#
-# The bounded EL sniff that used to catch what ambient deferred is RETIRED
-# with the whole cloud identity path. tests/test_room_sniff.py now pins that
-# retirement end to end (no EL call under any defer, matcher-off/unavailable
-# means manual-only arming); this file keeps owning the ambient decision
-# table above. This deliberate note replaces the deleted
-# test_matcher_disabled_falls_back_to_the_bounded_sniff.

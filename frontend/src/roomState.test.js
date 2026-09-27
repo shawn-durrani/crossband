@@ -36,14 +36,14 @@ test('an empty or junk roster shows no chip at all', () => {
 })
 
 test('the roster hint states the cost honestly and who is still being learned', () => {
-  // #28 PR-B: the cloud identity fallback retired, so the hint's cost story
-  // simplified - overlap splitting is the ONLY second transcription left,
-  // and an unplaceable voice stays unnamed (it is not sent to the cloud to
-  // be guessed at). Deliberately updates the pre-PR-B "or a voice cannot be
-  // placed locally" wording pin.
+  // #482: the cloud crosstalk split retired, so no second transcription
+  // runs at all - overlapping voices are split on this device too - and an
+  // unplaceable voice stays unnamed (it is not sent to the cloud to be
+  // guessed at).
   const t = rosterTitle([present('Shawn'), present('Alex', false)])
   assert.match(t, /on this device, at no extra cost/)
-  assert.match(t, /second transcription runs only when voices overlap/)
+  assert.match(t, /When voices overlap, their words are split here too/)
+  assert.doesNotMatch(t, /second transcription/)
   assert.match(t, /stays unnamed/)
   assert.match(t, /solo mode/)
   assert.match(t, /Still learning: Alex/)

@@ -317,30 +317,6 @@ def transcribe(audio_bytes, mime, cfg):
     raise RuntimeError(f"Speech-to-text failed ({r.status_code}: {r.text[:200]})")
 
 
-def transcribe_diarized(audio_bytes, mime, cfg, num_speakers=None):
-    """The room-mode second pass (#28): batch Scribe v2 with diarize=true,
-    returning the FULL response (per-word speaker_id clusters), not just the
-    text. Batch is the only place diarization exists - the realtime model
-    trades it away for latency - which is why room mode runs this in parallel
-    rather than touching the live relay's stream. `num_speakers` (phase 2) is
-    the roster-size-plus-one hint; None sends no hint at all, which keeps the
-    roster-less request byte-identical to phase 1's."""
-    model_id = cfg.get("stt_model") or "scribe_v2"
-    data = {"model_id": model_id, "diarize": "true"}
-    if num_speakers:
-        data["num_speakers"] = str(int(num_speakers))
-    r = httpx.post(
-        f"{ELEVEN_BASE}/v1/speech-to-text",
-        headers=_headers(),
-        data=data,
-        files={"file": ("utterance.wav", audio_bytes, mime or "audio/wav")},
-        timeout=60,
-    )
-    if r.status_code < 400:
-        return r.json()
-    raise RuntimeError(f"Diarized speech-to-text failed ({r.status_code}: {r.text[:200]})")
-
-
 def synthesize(text, voice_id, cfg):
     """Non-streaming TTS for the synthetic benchmark (#94): the whole mp3
     back. The live voice path stays on the streaming sockets; this exists so

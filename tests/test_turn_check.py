@@ -1,22 +1,25 @@
-"""Every voiced turn gets an identity check (#461).
+"""Every voiced turn gets a voice check (#461, #482).
 
 The field evidence: in a room with two people, about half of what was said
-carried no name and no reason, and a new voice was never asked about. Three
-separate gaps, each pinned here or beside the pin it replaced:
+carried no name and no reason, and a new voice was never asked about. The
+gaps, each pinned here or beside the pin it replaced:
 
 1. THE BATCH PATH: a turn transcribed by the batch /stt POST (the fallback
    once realtime fails, and the salvage for a turn realtime lost) was never
    checked, because the check hung off the realtime relay alone. The client
    now sends a PCM-16 WAV copy with the turn id, and the route runs the
    same check the relay does. A turn the relay already checked is left
-   alone, and a request without the copy behaves exactly as before.
+   alone, a second copy of a turn is checked once, and a request without
+   the copy behaves exactly as before.
 2. THE CLAIMED LABEL: labels ride the insert, so the check nearly always
    found its own label already on the row and returned no id. Everything
    keyed off that id went quiet: the who-joined ask, the mismatch
    cross-check and tap-to-correct's audio. The ask is pinned in
-   test_room_ambient; the other two are pinned here, on the armed pass.
-3. SOLO: pinned in test_room_ambient and test_room_speculative, where the
-   old "solo skips the check" pins were replaced.
+   test_room_ambient; the other two are pinned here.
+3. SOLO: pinned in test_voice_pass and test_room_ambient.
+4. THE MATCHER OFF (`voice_id_enabled` false): no turn is checked at all.
+
+The session naming is stood in for by roomkit.fake_naming.
 """
 
 import json
@@ -25,11 +28,11 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, db, diarize, voiceid
+from backend import anchors, db, diarize
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
-from roomkit import _remember, _wait_for, loud_pcm
+from roomkit import _remember, _wait_for, fake_naming, loud_pcm, naming_answer
 
 
 @pytest.fixture
@@ -61,29 +64,8 @@ def batch(monkeypatch):
 
 
 @pytest.fixture
-def matcher(monkeypatch):
-    state = {"verdicts": [], "calls": 0, "seconds": []}
-
-    def fake_identify(pcm, sample_rate, candidates, cfg,
-                      pending_present=False):
-        state["calls"] += 1
-        state["seconds"].append(len(pcm) / 2 / sample_rate)
-        if state["verdicts"]:
-            return state["verdicts"].pop(0)
-        return _defer("unavailable")
-
-    monkeypatch.setattr(voiceid, "identify_utterance", fake_identify)
-    return state
-
-
-def _match(name, pid, score=0.8):
-    return {"status": voiceid.MATCH, "person_id": pid, "name": name,
-            "score": score, "reason": "match"}
-
-
-def _defer(reason):
-    return {"status": voiceid.DEFER, "person_id": None, "name": None,
-            "score": 0.3, "reason": reason}
+def naming(monkeypatch):
+    return fake_naming(monkeypatch)
 
 
 def _armed_chat(client, *people):
@@ -95,7 +77,6 @@ def _armed_chat(client, *people):
             db.add_room_person(con, chat["id"], name, person_id=pid)
     finally:
         con.close()
-    diarize.set_room_enabled(chat["id"], True)
     return chat
 
 
@@ -137,23 +118,6 @@ def _chat_state(chat_id):
 
 # ── pure rules ──────────────────────────────────────────────────────────────
 
-def test_check_route_table():
-    assert diarize.check_route(True, True) == diarize.ROUTE_ROOM
-    assert diarize.check_route(True, False) == diarize.ROUTE_ROOM
-    assert diarize.check_route(False, True) == diarize.ROUTE_AMBIENT
-    assert diarize.check_route(False, False) == diarize.ROUTE_NONE
-
-
-def test_solo_decision_never_arms_seats_or_asks():
-    assert diarize.solo_decision("noop_owner") == "noop_owner"
-    assert diarize.solo_decision("arm_known") == "name_known"
-    assert diarize.solo_decision("arm_unknown") == "mark_unknown"
-    assert diarize.solo_decision("defer") == "defer"
-    assert diarize.solo_decision("anything else") == "defer"
-    assert not any(d.startswith("arm") for d in
-                   diarize.SOLO_DECISIONS.values())
-
-
 def test_carries_payload_reads_only_this_passes_label():
     mine = diarize.label_payload(["Sam"], score=0.81)
     assert diarize.carries_payload(json.dumps(mine), mine)
@@ -192,9 +156,9 @@ def test_wav_keeps_the_newest_audio_past_the_cap(monkeypatch):
 
 # ── 1. the batch path ───────────────────────────────────────────────────────
 
-def test_batch_turn_in_an_armed_room_is_named(app, batch, matcher):
+def test_batch_turn_in_an_armed_room_is_named(app, batch, naming):
     pid = _remember("Sam")
-    matcher["verdicts"] = [_match("Sam", pid)]
+    naming["answers"] = [naming_answer(name="Sam", pid=pid)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _armed_chat(c, ("Sam", pid))
         r = _post_stt(c, chat["id"], turn_id="tB1", wav=_wav())
@@ -202,14 +166,14 @@ def test_batch_turn_in_an_armed_room_is_named(app, batch, matcher):
         assert _wait_for(lambda: "tB1" in diarize._PENDING_LABELS)
         msg = _claim_insert(chat["id"], "tB1")
     assert json.loads(msg["voice_labels"])["labels"] == ["Sam"]
-    assert matcher["calls"] == 1
-    assert matcher["seconds"] == [1.5]
+    assert naming["calls"] == 1
+    assert [len(p) / 2 / 16000 for p in naming["pcms"]] == [1.5]
     assert batch["transcribed"] == 1
 
 
-def test_batch_turn_the_matcher_cannot_name_says_why(app, batch, matcher):
+def test_batch_turn_the_naming_cannot_name_says_why(app, batch, naming):
     pid = _remember("Sam")
-    matcher["verdicts"] = [_defer("below_threshold")]
+    naming["answers"] = [naming_answer("listening")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _armed_chat(c, ("Sam", pid))
         assert _post_stt(c, chat["id"], turn_id="tB2",
@@ -217,15 +181,16 @@ def test_batch_turn_the_matcher_cannot_name_says_why(app, batch, matcher):
         assert _wait_for(lambda: "tB2" in diarize._PENDING_LABELS)
         msg = _claim_insert(chat["id"], "tB2")
     parsed = json.loads(msg["voice_labels"])
-    assert parsed["labels"] == [] and parsed["unresolved"] == "below_threshold"
+    assert parsed["labels"] == [] and parsed["unresolved"] == "listening"
 
 
-def test_batch_turn_with_the_room_off_gets_the_room_off_check(app, batch,
-                                                             matcher):
-    """A clear stranger heard only through the batch path arms the room and
-    raises the ask, exactly as through the relay."""
+def test_batch_turn_with_the_room_off_gets_the_same_check(app, batch,
+                                                          naming):
+    """A clear new voice heard only through the batch path arms the room
+    and raises the ask, exactly as through the relay, and its audio is
+    remembered so an introduction can still claim it."""
     _remember("Alex")
-    matcher["verdicts"] = [_defer("below_threshold")]
+    naming["answers"] = [naming_answer("new")]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         assert _post_stt(c, chat["id"], turn_id="tB3",
@@ -238,39 +203,30 @@ def test_batch_turn_with_the_room_off_gets_the_room_off_check(app, batch,
             flags = _wait_for(lambda: db.get_room_flags(con, chat["id"]))
         finally:
             con.close()
-    assert json.loads(msg["voice_labels"])["labels"] == ["Voice 1"]
+        assert _wait_for(lambda: anchors.peek_audio(msg["id"]))
+    parsed = json.loads(msg["voice_labels"])
+    assert parsed["labels"] == [] and parsed["unresolved"] == "new_voice"
     assert [(f["kind"], f["message_id"]) for f in flags] \
         == [("unknown_voice", msg["id"])]
-    # the room-off turn was stashed, as the relay stashes it, so a
-    # confirmed introduction can still claim it
-    assert diarize.peek_stashed_utterance(chat["id"]) is not None
 
 
-def test_the_shadow_scores_each_checked_turn_once(app, batch, matcher,
-                                                  monkeypatch):
-    """The room-mode shadow test (#465) reads each armed turn after its
-    identity check. A backup-path turn is one checked turn, so it hands the
-    shadow one turn, and a second copy of the same turn hands it none."""
-    from backend import voice_shadow
-    handed = []
-    monkeypatch.setattr(voice_shadow, "schedule",
-                        lambda chat_id, pcm, rate, cfg, turn_id, today:
-                        handed.append((turn_id, today.get("path"))))
+def test_a_second_copy_of_a_turn_is_checked_once(app, batch, naming):
+    """A backup-path turn is one checked turn: a second copy of the same
+    turn id starts no second check."""
     pid = _remember("Sam")
-    matcher["verdicts"] = [_match("Sam", pid)]
+    naming["answers"] = [naming_answer(name="Sam", pid=pid)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _armed_chat(c, ("Sam", pid))
         assert _post_stt(c, chat["id"], turn_id="tS1",
                          wav=_wav()).status_code == 200
-        assert _wait_for(lambda: handed)
+        assert _wait_for(lambda: naming["calls"] == 1)
         assert _post_stt(c, chat["id"], turn_id="tS1",
                          wav=_wav()).status_code == 200
         time.sleep(0.3)
-    assert handed == [("tS1", "local")]
-    assert matcher["calls"] == 1
+    assert naming["calls"] == 1
 
 
-def test_batch_skips_a_turn_the_relay_already_checked(app, batch, matcher):
+def test_batch_skips_a_turn_the_relay_already_checked(app, batch, naming):
     pid = _remember("Sam")
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _armed_chat(c, ("Sam", pid))
@@ -279,11 +235,11 @@ def test_batch_skips_a_turn_the_relay_already_checked(app, batch, matcher):
         assert _post_stt(c, chat["id"], turn_id="tB4",
                          wav=_wav()).status_code == 200
         time.sleep(0.3)
-    assert matcher["calls"] == 0
+    assert naming["calls"] == 0
     assert batch["transcribed"] == 1
 
 
-def test_batch_without_the_copy_only_transcribes(app, batch, matcher):
+def test_batch_without_the_copy_only_transcribes(app, batch, naming):
     pid = _remember("Sam")
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = _armed_chat(c, ("Sam", pid))
@@ -294,21 +250,39 @@ def test_batch_without_the_copy_only_transcribes(app, batch, matcher):
         assert _post_stt(c, chat["id"], turn_id="tB6",
                          wav=b"\x1a\x45\xdf\xa3" * 64).status_code == 200
         time.sleep(0.3)
-    assert matcher["calls"] == 0
+    assert naming["calls"] == 0
     assert batch["transcribed"] == 3
     assert not diarize.turn_checked("tB5") and not diarize.turn_checked("tB6")
 
 
-# ── 2. the claimed label, on the armed pass ─────────────────────────────────
+def test_with_the_matcher_off_no_turn_is_checked(app, batch, naming):
+    """`voice_id_enabled` false: turns are transcribed, never checked,
+    named or labelled, so memory reads them as it always has."""
+    app.state.settings = app.state.settings.model_copy(
+        update={"voice_id_enabled": False})
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _armed_chat(c)
+        assert _post_stt(c, chat["id"], turn_id="tB7",
+                         wav=_wav()).status_code == 200
+        time.sleep(0.3)
+        msg = _claim_insert(chat["id"], "tB7")
+    assert naming["calls"] == 0
+    assert not msg.get("voice_labels")
+    assert not diarize.turn_checked("tB7")
+    assert diarize.schedule_turn_check(1, loud_pcm(1.0), 16000,
+                                       diarize.RoomSession(),
+                                       {"voice_id_enabled": False}) is None
+
+
+# ── 2. the claimed label ────────────────────────────────────────────────────
 
 def test_claimed_named_label_keeps_audio_and_gets_the_cross_check(
-        app, batch, matcher, monkeypatch):
-    """The armed pass's named turn: the label is claimed by the insert, and
-    tap-to-correct's audio and the mismatch cross-check must still follow.
-    Driven through the batch path, which shares the armed pass with the
-    relay."""
+        app, batch, naming, monkeypatch):
+    """A named turn: the label is claimed by the insert, and tap-to-correct's
+    audio and the mismatch cross-check must still follow. Driven through
+    the batch path, which shares the check with the relay."""
     pid = _remember("Sam")
-    matcher["verdicts"] = [_match("Sam", pid)]
+    naming["answers"] = [naming_answer(name="Sam", pid=pid)]
     checks = []
     monkeypatch.setattr("backend.mismatch.schedule_check",
                         lambda *a, **k: checks.append(a))
@@ -324,12 +298,12 @@ def test_claimed_named_label_keeps_audio_and_gets_the_cross_check(
     assert anchors.peek_audio(msg["id"]) is not None
 
 
-def test_someone_elses_label_on_the_row_is_left_alone(app, batch, matcher,
+def test_someone_elses_label_on_the_row_is_left_alone(app, batch, naming,
                                                      monkeypatch):
     """The claim fix must not adopt a row another writer labelled: only a
-    row carrying exactly this pass's payload counts as its own."""
+    row carrying exactly this check's payload counts as its own."""
     pid = _remember("Sam")
-    matcher["verdicts"] = [_match("Sam", pid)]
+    naming["answers"] = [naming_answer(name="Sam", pid=pid)]
     checks = []
     monkeypatch.setattr("backend.mismatch.schedule_check",
                         lambda *a, **k: checks.append(a))
@@ -345,7 +319,7 @@ def test_someone_elses_label_on_the_row_is_left_alone(app, batch, matcher,
             con.close()
         assert _post_stt(c, chat["id"], turn_id="tC2",
                          wav=_wav()).status_code == 200
-        assert _wait_for(lambda: matcher["calls"] == 1)
+        assert _wait_for(lambda: naming["calls"] == 1)
         time.sleep(0.3)
     con = db.connect()
     try:

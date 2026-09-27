@@ -2,7 +2,6 @@ import { captureConstraints } from './captureProfile.js'
 import { batchSttForm, clipWindow, identityWav } from './identityClip.js'
 import { Resampler, TARGET_RATE } from './resample.js'
 import { sidToKill } from './micRegistry.js'
-import { speculativeStep } from './speculative.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { PassSpeechGate, couldBePass, isPassShaped } from './passView.js'
 import { WrittenFilter } from './writtenChannel.js'
@@ -233,12 +232,11 @@ export default class VoiceController {
     this._ambient = 0
     // --- realtime STT (opt-in, parallel to the batch /stt POST) ---
     this.sttRealtime = true   // realtime by default; batch is the automatic fallback
-    // Room mode (#28 phase 1): per-session, default OFF (App resets it on
-    // every voice start). ON tells the server relay to tee utterance audio
-    // into a parallel diarization pass - a second transcription of the same
-    // audio, which is why the toggle's copy warns that voice minutes roughly
-    // double. Entirely server-side work: nothing about capture, VAD, commit
-    // timing or playback changes here whichever way this flag points.
+    // Room mode: this session's view of the chat's room, default OFF (App
+    // resets it on every voice start), kept for the session log. The server
+    // checks every spoken turn whatever the room is doing and reads the room
+    // from the chat itself, so nothing about capture, VAD, commit timing,
+    // playback or the relay changes whichever way this flag points.
     this.roomMode = false
     this.sttWs = null
     this.sttProc = null
@@ -391,18 +389,12 @@ export default class VoiceController {
 
   setManualMode(on) { this.manualMode = !!on }
 
-  // Room mode toggle: remember the choice for (re)opened STT sockets and tell
-  // a live one via a control frame (no audio key, so the server treats it as
-  // ours alone and sends nothing upstream). Works mid-session both ways.
-  // The mic itself is left alone: every mode captures with the same setting
-  // (#505, captureProfile.js).
+  // Room mode toggle: remembered for the session log, and nothing else.
+  // The relay needs no word of it (the server reads the chat's room on
+  // every turn), and the mic is left alone: every mode captures with the
+  // same setting (#505, captureProfile.js).
   setRoomMode(on) {
-    on = !!on
-    if (on === this.roomMode) return
-    this.roomMode = on
-    if (this.sttWs && this.sttWs.readyState === WebSocket.OPEN) {
-      this._sttSend({ room_mode: on })
-    }
+    this.roomMode = !!on
   }
   setSilenceMs(ms) { this.silenceMs = Math.max(400, Math.min(6000, ms || DEFAULT_SILENCE_MS)) }
 
@@ -430,8 +422,7 @@ export default class VoiceController {
     const ws = new WebSocket(`${wsBase()}/api/voice/stt-stream`)
     ws.onopen = () => {
       try {
-        ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: TARGET_RATE,
-                                 room_mode: this.roomMode }))
+        ws.send(JSON.stringify({ chat_id: this.getChatId(), sample_rate: TARGET_RATE }))
       } catch { /* */ }
     }
     ws.onmessage = (e) => {
@@ -653,7 +644,6 @@ export default class VoiceController {
     // "did THIS utterance's audio flow", so pre-roll is deliberately not
     // counted.
     this._utterFrames = 0
-    this._specFired = false  // a fresh utterance re-arms the silence hint
     this._strandedSent = false  // a fresh utterance re-arms the stall beacon
     if (!this.sttRealtime || !this.sttWs || this.sttStreaming) return
     this.sttStreaming = true
@@ -1075,20 +1065,6 @@ export default class VoiceController {
         }
       } else {
         if (voiced) this.lastVoice = now
-        // Speculative identity (#28 PR-B): at silence-start, send a
-        // content-free hint frame so the server can run the LOCAL identity
-        // check on the buffered utterance while the silence window is still
-        // counting down. The rule lives in speculative.js (pure,
-        // unit-tested); the frame carries no audio and the relay forwards
-        // nothing upstream for it.
-        const spec = speculativeStep(this._specFired, {
-          inUtterance: true,
-          streaming: this.sttStreaming && !!this.sttWs,
-          voiced,
-          silenceMs: now - this.lastVoice,
-        })
-        this._specFired = spec.fired
-        if (spec.fire) this._sttSend({ speculative: true })
         // Auto mode sends after a pause; manual mode waits for finalizeNow().
         if (!this.manualMode && now - this.lastVoice > this.silenceMs) {
           this._vlog('vad:finalize', { cause: 'gap', silenceMs: now - this.lastVoice })

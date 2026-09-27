@@ -7,15 +7,17 @@ What these tests prove, in order of importance:
    SSE stream fully drains - while the utility-model confirmation is
    deliberately wedged open. Introduction detection is fire-and-forget after
    the user message persists; dispatch has no dependence on it.
-2. A confirmed introduction flips the chat's durable room_mode, mirrors it
-   into diarize's in-process registry, and appends the named people to the
-   roster (anchor pending); departures mark them left and free the cap.
+2. A confirmed introduction flips the chat's durable room_mode and appends
+   the named people to the roster (anchor pending); departures mark them
+   left and free the cap.
 3. The roster cap (Settings.room_roster_max, env-mapped) is enforced.
 4. Since #412 every user turn - other than an empty one or a `/` command -
    makes exactly one merged utility call; there is no phrase-shaped
    prefilter gating this axis any more (backend/intent.py, test_intent.py).
-5. The owner's anchor seeds from the stashed introduction utterance, and a
-   remembered (sufficient) person links immediately - re-identification.
+5. The owner's first clip seeds from the introduction's own audio - the
+   voice check remembers every spoken turn's audio under its message, and
+   the scan waits briefly for it - and a remembered (sufficient) person
+   links immediately - re-identification.
 
 The utility model is always mocked (keyless like everything else); with no
 key at all the scan quietly does nothing, which is also pinned.
@@ -29,7 +31,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, db, diarize, introductions
+from backend import anchors, db, introductions
 from backend.app import create_app
 from backend.config import Settings, load_settings
 from roomkit import _chat_room_mode, _wait_for, as_utility_completion, loud_pcm
@@ -141,8 +143,6 @@ def test_confirmed_introduction_flips_room_mode_and_grows_the_roster(
         assert [p["name"] for p in roster] == ["Alex"]
         assert roster[0]["person_id"] == ""  # anchor pending - nothing heard yet
         assert _chat_room_mode(chat["id"]) is True
-        # the live mirror the STT relay reads at commit boundaries
-        assert diarize.room_enabled(chat["id"]) is True
 
 
 def test_room_mode_commit_can_precede_the_roster_row(app, utility, monkeypatch):
@@ -228,7 +228,6 @@ def test_cap_allows_math():
 
 
 def test_roster_cap_is_enforced_from_settings(tmp_path, utility):
-    diarize._ROOM_ENABLED.clear()
     app = create_app(Settings(data_dir=str(tmp_path / "data"),
                               memory_url="http://127.0.0.1:1",
                               room_roster_max=2))
@@ -249,10 +248,21 @@ def test_room_roster_max_rides_the_auto_env_mapping():
 
 # ── 4. owner anchor + re-identification ─────────────────────────────────────
 
-def test_owner_anchor_seeds_from_the_stashed_introduction_utterance(app):
-    """The voice that spoke the introduction is the owner's anchor: the relay
-    stashes each finished utterance while room mode is off, and apply_scan
-    claims it. The owner also joins the roster, linked."""
+def _voiced_turn(chat_id, text, turn_id="t1"):
+    con = db.connect()
+    try:
+        return db.insert_message(con, chat_id, "user", text,
+                                 voice_turn_id=turn_id, notify=False)
+    finally:
+        con.close()
+
+
+def test_owner_anchor_seeds_from_the_introductions_own_audio(app):
+    """The voice that spoke the introduction, in a room that was off, is
+    the owner's first clip: the voice check remembered that turn's audio
+    under its message, and apply_scan reads it. The owner also joins the
+    roster, linked, and the audio stays for tap-to-correct."""
+    cfg = {"user_name": "Dave", "room_roster_max": 6}
     with TestClient(app, base_url="http://127.0.0.1"):
         con = db.connect()
         cur = con.execute("INSERT INTO chats(title, created_at, updated_at) "
@@ -260,19 +270,101 @@ def test_owner_anchor_seeds_from_the_stashed_introduction_utterance(app):
         con.commit()
         chat_id = cur.lastrowid
         con.close()
-        diarize.stash_utterance(chat_id, loud_pcm(2.0), 16000)
+        msg = _voiced_turn(chat_id, "my wife Alex is here")
+        anchors.remember_audio(msg["id"], loud_pcm(2.0), 16000, 1)
         introductions.apply_scan(chat_id,
                                  {"introductions": ["Alex"], "departures": []},
-                                 {"user_name": "Shawn", "room_roster_max": 6})
+                                 cfg, text="my wife Alex is here",
+                                 message_id=msg["id"])
         people = anchors.store().people()
-        assert [p["name"] for p in people] == ["Shawn"]
+        assert [p["name"] for p in people] == ["Dave"]
         assert people[0]["clip_count"] == 1  # the introduction utterance
         roster = _roster(chat_id)
-        assert sorted(p["name"] for p in roster) == ["Alex", "Shawn"]
-        owner_row = next(p for p in roster if p["name"] == "Shawn")
+        assert sorted(p["name"] for p in roster) == ["Alex", "Dave"]
+        owner_row = next(p for p in roster if p["name"] == "Dave")
         assert owner_row["person_id"] == people[0]["person_id"]
-        # the stash is CLAIMED - a second scan cannot double-feed it
-        assert diarize.take_stashed_utterance(chat_id) is None
+        assert anchors.peek_audio(msg["id"]) is not None
+
+
+@pytest.mark.parametrize("labels,owner_known,seeds", [
+    ({"labels": ["Sam"], "uncertain": []}, False, False),     # a guest
+    ({"labels": ["Sam"], "uncertain": ["Sam"]}, False, False),  # likely one
+    ({"labels": [], "unresolved": "new_voice"}, True, False),  # not the owner
+    ({"labels": [], "unresolved": "new_voice"}, False, True),  # owner unknown
+    ({"labels": ["Dave"], "uncertain": [], "owner": True}, True, True),
+    ({"labels": [], "unresolved": "listening"}, True, True),
+])
+def test_the_owner_is_seeded_only_from_a_voice_that_could_be_theirs(
+        app, labels, owner_known, seeds):
+    """The introduction's audio is the owner's by design, unless the voice
+    check heard someone else on the turn: another name, sure or not, or a
+    new voice once the owner's own voice is known."""
+    cfg = {"user_name": "Dave", "room_roster_max": 6}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        store = anchors.store()
+        if owner_known:
+            pid = store.ensure_person("Dave")
+            for _ in range(3):
+                assert store.add_clip(pid, loud_pcm(2.0), 16000,
+                                      source="introduction")
+        before = sum(p["clip_count"] for p in store.people())
+        msg = _voiced_turn(chat["id"], "this is Alex")
+        con = db.connect()
+        try:
+            db.set_message_voice_labels(con, msg["id"],
+                                        dict({"clusters": ["session"],
+                                              "source": "session"}, **labels))
+        finally:
+            con.close()
+        anchors.remember_audio(msg["id"], loud_pcm(2.0), 16000, 1)
+        introductions.apply_scan(chat["id"],
+                                 {"introductions": ["Alex"], "departures": []},
+                                 cfg, text="this is Alex",
+                                 message_id=msg["id"])
+        after = sum(p["clip_count"] for p in anchors.store().people())
+    assert (after > before) is seeds
+
+
+def test_a_first_introduction_seeds_the_owner_when_its_audio_lands_late(
+        app, utility):
+    """End to end through the scan: the model call returns before the voice
+    check has remembered the turn's audio (a slow check), and the scan
+    waits for it, briefly, so the very first introduction still gives the
+    owner a first clip. With the room already armed nothing is seeded."""
+    utility["verdict"] = {"introductions": ["Alex"], "departures": []}
+    cfg = {"user_name": "Dave", "room_roster_max": 6}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        msg = _voiced_turn(chat["id"], "my wife Alex is here")
+
+        async def both():
+            async def remember_later():
+                await asyncio.sleep(0.3)
+                anchors.remember_audio(msg["id"], loud_pcm(2.0), 16000, 1)
+            await asyncio.gather(
+                remember_later(),
+                introductions.scan_user_turn(chat["id"], msg["id"],
+                                             "my wife Alex is here", cfg))
+        asyncio.run(both())
+    people = anchors.store().people()
+    assert [p["name"] for p in people] == ["Dave"]
+    assert people[0]["clip_count"] == 1
+
+
+def test_a_typed_turn_never_waits_for_audio(app):
+    """A typed introduction has no audio, so the scan doesn't wait for any,
+    however long a spoken turn may wait."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        con = db.connect()
+        typed = db.insert_message(con, chat["id"], "user", "hi", notify=False)
+        con.close()
+        t0 = time.monotonic()
+        assert asyncio.run(introductions.await_turn_audio(
+            typed["id"], timeout=5.0)) is None
+        assert asyncio.run(introductions.await_turn_audio(None)) is None
+        assert time.monotonic() - t0 < 1.0
 
 
 def test_typed_introduction_has_no_audio_and_that_is_fine(app):
@@ -286,7 +378,7 @@ def test_typed_introduction_has_no_audio_and_that_is_fine(app):
         introductions.apply_scan(chat_id,
                                  {"introductions": ["Alex"], "departures": []},
                                  {"user_name": "Shawn", "room_roster_max": 6})
-        assert anchors.store().people() == []  # nothing stashed, nothing stored
+        assert anchors.store().people() == []  # no audio, nothing stored
         assert [p["name"] for p in _roster(chat_id)] == ["Alex"]
 
 

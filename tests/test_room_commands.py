@@ -12,10 +12,9 @@ tests pin the two halves of the fix.
    awaited by dispatch.
 2. The command paths: one merged utility call per turn (#412) hears the
    command among everything else; a confirmed ARM flips the chat's durable
-   room mode on through the existing
-   control plumbing (durable flag + diarize's live mirror), rosters the
-   owner (linked to remembered anchors when they exist, seeded from the
-   stashed utterance when the command was spoken); a confirmed DISARM flips
+   room mode on, rosters the owner (linked to remembered anchors when they
+   exist, seeded from the command's own audio when it was spoken); a
+   confirmed DISARM flips
    it off, marks everyone still present left (the cap frees, the chip
    disappears) and resolves the open unknown-voice ask. Talk ABOUT the mode
    ("is group mode on?") confirms as none and changes nothing.
@@ -37,7 +36,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, db, diarize, engine, introductions
+from backend import anchors, db, engine, introductions
 from backend.app import create_app
 from backend.config import Settings
 from roomkit import _chat_room_mode, _wait_for, as_utility_completion, loud_pcm
@@ -131,9 +130,8 @@ def test_send_completes_while_the_command_confirm_is_wedged_open(app, utility):
 # ── 2. the chat-198 pin, end to end ─────────────────────────────────────────
 
 def test_group_mode_please_arms_end_to_end(app, utility, caplog):
-    """THE field phrasing: "Group mode, please" flips the durable flag,
-    mirrors it into diarize's registry so a live session's pass machinery
-    starts at its next commit, rosters the owner, and logs
+    """THE field phrasing: "Group mode, please" flips the durable flag the
+    voice check reads on the next turn, rosters the owner, and logs
     armed_by_command."""
     utility["reply"] = {"mode_command": "on"}
     with caplog.at_level(logging.INFO, logger="crossband.introductions"):
@@ -141,7 +139,6 @@ def test_group_mode_please_arms_end_to_end(app, utility, caplog):
             chat = _make_chat(c)
             _send(c, chat["id"], "Group mode, please")
             assert _wait_for(lambda: _chat_room_mode(chat["id"]))
-            assert diarize.room_enabled(chat["id"]) is True
             roster = _wait_for(lambda: _roster(chat["id"]))
             # the owner is the only person a command honestly knows present
             assert [p["name"] for p in roster] == ["User"]
@@ -150,8 +147,8 @@ def test_group_mode_please_arms_end_to_end(app, utility, caplog):
 
 
 def test_room_mode_off_disarms_end_to_end(app, utility, caplog):
-    """"Room mode off": durable flag off, live mirror off, everyone still
-    present marked left (the chip disappears), disarmed_by_command logged."""
+    """"Room mode off": durable flag off, everyone still present marked
+    left (the chip disappears), disarmed_by_command logged."""
     with caplog.at_level(logging.INFO, logger="crossband.introductions"):
         with TestClient(app, base_url="http://127.0.0.1") as c:
             chat = _make_chat(c)
@@ -162,7 +159,6 @@ def test_room_mode_off_disarms_end_to_end(app, utility, caplog):
             utility["reply"] = {"mode_command": "off"}
             _send(c, chat["id"], "room mode off, thanks")
             assert _wait_for(lambda: not _chat_room_mode(chat["id"]))
-            assert diarize.room_enabled(chat["id"]) is False
             assert _wait_for(lambda: not _roster(chat["id"]))
             gone = _roster(chat["id"], present_only=False)
             assert all(p["status"] == "left" for p in gone)
@@ -375,7 +371,6 @@ def test_arm_flips_and_rosters_the_owner_anchor_pending(app):
         assert introductions.apply_command(chat_id, "arm", CFG) \
             == "armed_by_command"
         assert _chat_room_mode(chat_id) is True
-        assert diarize.room_enabled(chat_id) is True
         roster = _roster(chat_id)
         assert [p["name"] for p in roster] == ["Shawn"]
         assert roster[0]["person_id"] == ""  # nothing heard yet
@@ -383,21 +378,40 @@ def test_arm_flips_and_rosters_the_owner_anchor_pending(app):
         assert introductions.apply_command(chat_id, "arm", CFG) == "no_change"
 
 
-def test_spoken_arm_seeds_the_owner_anchor_from_the_stash(app):
+def test_spoken_arm_seeds_the_owner_anchor_from_its_own_audio(app):
     """The voice that spoke "group mode, please" is the owner's by design -
-    exactly the introduction's rule, same stash, same claim-once."""
+    exactly the introduction's rule. Its audio is the one the voice check
+    remembered under that message, peeked so tap-to-correct still has it,
+    and a two-voice turn seeds nobody."""
+    cfg = dict(CFG, user_name="Alex")
     with TestClient(app, base_url="http://127.0.0.1"):
         chat_id = _bare_chat()
-        diarize.stash_utterance(chat_id, loud_pcm(2.0), 16000)
-        assert introductions.apply_command(chat_id, "arm", CFG) \
+        con = db.connect()
+        msg = db.insert_message(con, chat_id, "user", "group mode please",
+                                voice_turn_id="t1", notify=False)
+        con.close()
+        anchors.remember_audio(msg["id"], loud_pcm(2.0), 16000, 1)
+        assert introductions.apply_command(chat_id, "arm", cfg,
+                                           message_id=msg["id"]) \
             == "armed_by_command"
         people = anchors.store().people()
-        assert [p["name"] for p in people] == ["Shawn"]
+        assert [p["name"] for p in people] == ["Alex"]
         assert people[0]["clip_count"] == 1
         roster = _roster(chat_id)
-        assert [p["name"] for p in roster] == ["Shawn"]
+        assert [p["name"] for p in roster] == ["Alex"]
         assert roster[0]["person_id"] == people[0]["person_id"]
-        assert diarize.take_stashed_utterance(chat_id) is None  # claimed
+        assert anchors.peek_audio(msg["id"]) is not None   # still there
+        # the same command over a two-voice turn seeds nobody
+        other = _bare_chat()
+        con = db.connect()
+        two = db.insert_message(con, other, "user", "group mode please",
+                                voice_turn_id="t2", notify=False)
+        con.close()
+        anchors.remember_audio(two["id"], loud_pcm(2.0), 16000, 2)
+        assert introductions.apply_command(other, "arm", cfg,
+                                           message_id=two["id"]) \
+            == "armed_by_command"
+        assert anchors.store().people()[0]["clip_count"] == 1
 
 
 def test_arm_links_a_remembered_owner(app):
@@ -435,7 +449,6 @@ def test_disarm_marks_everyone_left_and_resolves_the_ask(app):
         assert introductions.apply_command(chat_id, "disarm", CFG) \
             == "disarmed_by_command"
         assert _chat_room_mode(chat_id) is False
-        assert diarize.room_enabled(chat_id) is False
         assert _roster(chat_id) == []
         gone = _roster(chat_id, present_only=False)
         assert sorted(p["name"] for p in gone) == ["Alex", "Dave"]

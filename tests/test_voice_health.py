@@ -11,10 +11,10 @@ What these tests pin:
    sherpa-onnx), and the cold/fetching/ready machine states, read without
    ever triggering the warm.
 3. The last-decision record: bounded per-chat memory of path + ms +
-   monotonic age, written only from inside the never-awaited background
-   passes - the cloud batch pass and the local ambient check are both
-   pinned to record - so the CORE LAW (zero added latency on the live voice
-   path) is untouched by construction.
+   monotonic age, written only from inside the never-awaited voice check -
+   a named turn records "local", an unnamed one "unresolved" with its
+   reason - so the CORE LAW (zero added latency on the live voice path) is
+   untouched by construction.
 4. The chat block: room on / ambient available / owner-disarmed flags plus
    the roster count, 404 for a chat that does not exist.
 """
@@ -25,11 +25,10 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, db, diarize, voiceid
+from backend import anchors, db, diarize, voice_pass, voiceid
 from backend.app import create_app
 from backend.config import Settings
-from roomkit import loud_pcm
-from tests.conftest import speech_pcm
+from roomkit import fake_naming, loud_pcm, naming_answer
 
 
 @pytest.fixture
@@ -80,11 +79,14 @@ def test_record_and_read_last_decision():
     assert got["ms"] == 226.7
     assert got["age_s"] >= 0
     # newest wins
-    diarize.record_decision(1, "cloud", 1900)
-    assert diarize.last_decision(1)["path"] == "cloud"
-    # junk paths and a missing chat id are ignored, never stored
+    diarize.record_decision(1, "unresolved", 40, "listening")
+    assert diarize.last_decision(1)["path"] == "unresolved"
+    assert diarize.last_decision(1)["reason"] == "listening"
+    # junk paths (the retired "cloud" among them) and a missing chat id are
+    # ignored, never stored
     diarize.record_decision(1, "teleport", 5)
-    assert diarize.last_decision(1)["path"] == "cloud"
+    diarize.record_decision(1, "cloud", 1900)
+    assert diarize.last_decision(1)["path"] == "unresolved"
     diarize.record_decision(None, "local", 5)
     assert diarize.last_decision(None) is None
 
@@ -98,92 +100,44 @@ def test_last_decision_store_is_bounded():
     assert diarize.last_decision(0) is None        # oldest evicted
 
 
-def test_cloud_pass_records_the_decision(app, monkeypatch):
-    """The crosstalk split - the one ElevenLabs pass left (#28 PR-B) -
-    stamps a 'cloud' decision, driven with the matcher stubbed to "multi"
-    (its only trigger) and the batch call mocked, inside the never-awaited
-    pass itself."""
-    monkeypatch.setattr("backend.voice.transcribe_diarized",
-                        lambda *a, **k: {"words": []})
+def _check(chat_id, monkeypatch, got):
+    fake_naming(monkeypatch)["answers"] = [got]
     monkeypatch.setattr(
-        "backend.voiceid.identify_utterance",
-        lambda *a, **k: {"status": "defer", "person_id": None, "name": None,
-                         "score": 0.4, "reason": "multi"})
-    monkeypatch.setattr(
-        diarize, "_room_plan",
-        # The 5th item is _room_plan's cold-start candidate (#28): None
-        # here, so these pins keep testing the plain defer/multi paths.
-        # The 6th is the remembered-first candidate list (#28, fourteenth
-        # field test) - the plan tuple grew when the armed pass's
-        # candidates became every sufficient remembered person.
-        lambda *a, **k: (b"\x00\x40" * 16000,
-                         [{"person_id": "p1", "name": "Sam",
-                           "start": 0.0, "end": 1.0}], [], 2, None,
-                         [{"person_id": "p1", "name": "Sam"}]))
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        session = diarize.RoomSession(enabled=True)
-        asyncio.run(diarize.run_pass(chat["id"], loud_pcm(1.0), 16000,
-                                     time.time(), session, {}))
-        got = diarize.last_decision(chat["id"])
-        assert got is not None
-        assert got["path"] == "cloud"
+        "backend.voice.httpx.post",
+        lambda *a, **k: pytest.fail("the voice check makes no EL call"))
+
+    async def nowhere(*a, **k):
+        return None
+    monkeypatch.setattr(diarize, "_attach_until_deadline", nowhere)
+    asyncio.run(voice_pass.run(chat_id, loud_pcm(1.0), 16000, time.time(),
+                               diarize.RoomSession(), {"user_name": "Alex"},
+                               None))
 
 
-def test_deferred_verdict_records_the_reason_and_no_cloud(app, monkeypatch):
-    """#28 PR-B: a defer leaves the turn unresolved and fires no EL call.
+def test_an_unnamed_turn_records_the_reason_and_no_cloud(app, monkeypatch):
+    """A turn the check can't name stays unresolved and fires no EL call.
     Since the thirteenth field test the pulse DOES record it, as an
-    `unresolved` decision carrying the matcher's own reason - "identity
-    pending" hid "too quiet to judge" and "not sure who" behind one word,
-    and the reason was already computed, so surfacing it costs nothing."""
-    monkeypatch.setattr(
-        "backend.voice.transcribe_diarized",
-        lambda *a, **k: pytest.fail("no EL call on a deferred verdict"))
-    monkeypatch.setattr(
-        "backend.voiceid.identify_utterance",
-        lambda *a, **k: {"status": "defer", "person_id": None, "name": None,
-                         "score": 0.2, "reason": "below_threshold"})
-    monkeypatch.setattr(
-        diarize, "_room_plan",
-        # The 5th item is _room_plan's cold-start candidate (#28): None
-        # here, so these pins keep testing the plain defer/multi paths.
-        # The 6th is the remembered-first candidate list (#28, fourteenth
-        # field test) - the plan tuple grew when the armed pass's
-        # candidates became every sufficient remembered person.
-        lambda *a, **k: (b"\x00\x40" * 16000,
-                         [{"person_id": "p1", "name": "Sam",
-                           "start": 0.0, "end": 1.0}], [], 2, None,
-                         [{"person_id": "p1", "name": "Sam"}]))
+    `unresolved` decision carrying the reason, so "identity pending" says
+    which of several problems it was."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        session = diarize.RoomSession(enabled=True)
-        asyncio.run(diarize.run_pass(chat["id"], loud_pcm(1.0), 16000,
-                                     time.time(), session, {}))
-        decision = diarize.last_decision(chat["id"])
-        assert decision["path"] == diarize.DECISION_UNRESOLVED
-        assert decision["reason"] == "below_threshold"
+    _check(chat["id"], monkeypatch, naming_answer("listening"))
+    decision = diarize.last_decision(chat["id"])
+    assert decision["path"] == diarize.DECISION_UNRESOLVED
+    assert decision["reason"] == "listening"
 
 
-def test_ambient_local_check_records_the_decision(app, monkeypatch):
-    """The ambient no-op owner check is still an identification - it stamps
-    a 'local' decision (the health strip's pulse for the common solo case)."""
+def test_a_named_turn_records_a_local_decision(app, monkeypatch):
+    """The owner named in a solo-style room-off chat is still an
+    identification - it stamps a 'local' decision (the health strip's pulse
+    for the common case)."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         pid = _mint_sufficient("Alex")  # the owner, sufficiently enrolled
-
-        def fake_identify(pcm, sample_rate, candidates, cfg, pending_present=False):
-            return {"status": "match", "person_id": pid, "name": "Alex",
-                    "score": 0.8, "reason": "match"}
-
-        monkeypatch.setattr("backend.voiceid.identify_utterance",
-                            fake_identify)
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        session = diarize.RoomSession()
-        asyncio.run(diarize.run_ambient(chat["id"], loud_pcm(1.0), 16000,
-                                        time.time(), session,
-                                        {"user_name": "Alex"}))
-        got = diarize.last_decision(chat["id"])
-        assert got is not None
-        assert got["path"] == "local"
+    _check(chat["id"], monkeypatch, naming_answer(name="Alex", pid=pid))
+    got = diarize.last_decision(chat["id"])
+    assert got is not None
+    assert got["path"] == "local"
 
 
 # ── the endpoint ────────────────────────────────────────────────────────────

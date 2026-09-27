@@ -20,8 +20,8 @@ What this file pins now, in order:
 3. Matcher unavailable (the CI default) means NO automatic voice arming at
    all - and the manual doors (the spoken arm command, standing in for all
    three) still work. Degraded means manual, never wrong.
-4. A remembered voice still arms a fresh chat - through the ambient LOCAL
-   check (test_room_ambient.py owns the full decision table; the arming pin
+4. A remembered voice still arms a fresh chat - through the voice check,
+   on this computer (test_voice_pass.py owns the full rule; the arming pin
    here proves the sniff's old job is genuinely covered, not dropped).
 """
 
@@ -36,7 +36,8 @@ from backend import anchors, auth, db, diarize, voiceid
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
-from roomkit import _chat_room_mode, _remember, _stt_usage_rows, _wait_for, loud_pcm
+from roomkit import (_chat_room_mode, _remember, _stt_usage_rows, _wait_for,
+                     fake_naming, loud_pcm, naming_answer)
 from tests.conftest import speech_pcm
 
 
@@ -201,11 +202,9 @@ def test_matcher_unavailable_means_no_automatic_arming_and_no_el(
 
 
 def test_matcher_disabled_by_flag_schedules_nothing(tmp_path, monkeypatch):
-    """voice_id_enabled=false: ambient is not even eligible, so no check is
-    scheduled and no arming happens - the pre-PR-B fallback to the sniff is
-    deliberately gone (this replaces its test)."""
-    diarize._ROOM_ENABLED.clear()
-    diarize._AMBIENT_OFF.clear()
+    """voice_id_enabled=false: no check is scheduled and no arming happens -
+    the pre-PR-B fallback to the sniff is deliberately gone (this replaces
+    its test)."""
     anchors.clear_recent_audio()
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1",
@@ -229,6 +228,10 @@ def test_matcher_disabled_by_flag_schedules_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(
         voiceid, "identify_utterance",
         lambda *a, **k: pytest.fail("matcher disabled - never consulted"))
+    from backend import voice_sessions
+    monkeypatch.setattr(
+        voice_sessions, "name_single_turn",
+        lambda *a, **k: pytest.fail("matcher disabled - nothing is named"))
     monkeypatch.setattr(
         voice_router.voice.httpx, "post",
         lambda *a, **kw: pytest.fail("no EL call may fire"))
@@ -250,13 +253,9 @@ def test_remembered_voice_still_arms_a_fresh_chat_locally(
         app, relay, batch_calls, monkeypatch):
     """The gap the sniff existed for stays closed: a remembered non-owner
     voice speaking in a fresh chat arms room mode and joins the roster - via
-    the ambient LOCAL check, with zero EL calls. (The full ambient decision
-    table lives in test_room_ambient.py.)"""
+    the voice check, on this computer, with zero EL calls."""
     pid = _remember("Sam")
-    monkeypatch.setattr(
-        voiceid, "identify_utterance",
-        lambda *a, **k: {"status": "match", "person_id": pid, "name": "Sam",
-                         "score": 0.9, "reason": "match"})
+    fake_naming(monkeypatch)["answers"] = [naming_answer(name="Sam", pid=pid)]
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -266,7 +265,6 @@ def test_remembered_voice_still_arms_a_fresh_chat_locally(
             assert ws.receive_json() == {"final": "hello world"}
             assert _wait_for(lambda: _chat_room_mode(chat["id"]))
             ws.send_json({"done": True})
-    assert diarize.room_enabled(chat["id"]) is True
     assert [(p["name"], p["person_id"]) for p in _roster(chat["id"])] \
         == [("Sam", pid)]
     assert batch_calls["calls"] == 0

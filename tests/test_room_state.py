@@ -7,13 +7,13 @@ the cap derived from one place. The six call sites keep their
 end-to-end coverage in the existing suites - test_room_ambient.py,
 test_room_commands.py, test_room_intro.py, test_room_identify.py and
 test_room_remembered_first.py passing unchanged is the real regression
-net for the refactor. conftest's autouse _room_state_clean fixture
-resets diarize's mirrors between tests."""
+net for the refactor. The chat row is the only state: the voice check
+reads it on every turn, so there is no live copy to keep in step."""
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import db, diarize, room_state
+from backend import db, room_state
 from backend.app import create_app
 from backend.config import Settings
 from roomkit import _remember
@@ -64,23 +64,21 @@ def _open_flags(chat_id):
 
 
 def _set_ambient(chat_id, off):
-    """Place the sacred flag on both planes, as the suites already do."""
+    """Place the sacred flag directly, as the suites already do."""
     con = db.connect()
     try:
         db.set_chat_ambient_off(con, chat_id, off)
     finally:
         con.close()
-    diarize.set_ambient_off(chat_id, off)
 
 
 # ── arm ─────────────────────────────────────────────────────────────────
 
-def test_arm_flips_durable_and_mirror_and_reports_the_flip(app, make_chat):
+def test_arm_flips_durable_and_reports_the_flip(app, make_chat):
     chat_id = make_chat()
     assert room_state.arm(chat_id, CFG, source="command",
                           clear_ambient=True, seat_owner="never") is True
     assert _chat_flags(chat_id) == (True, False)
-    assert diarize.room_enabled(chat_id) is True
     # Idempotent, and the second call reports no flip - the command
     # path's "no_change" outcome depends on exactly this.
     assert room_state.arm(chat_id, CFG, source="command",
@@ -104,7 +102,7 @@ def test_the_bell_rings_after_the_durable_commit(app, make_chat, monkeypatch):
 def test_an_explicit_re_enable_clears_ambient_even_when_already_armed(
         app, make_chat):
     """apply_command's early-return shape: the ambient clear lands on
-    the no-flip path too, on both planes."""
+    the no-flip path too."""
     chat_id = make_chat()
     room_state.arm(chat_id, CFG, source="command",
                    clear_ambient=True, seat_owner="never")
@@ -112,12 +110,10 @@ def test_an_explicit_re_enable_clears_ambient_even_when_already_armed(
     assert room_state.arm(chat_id, CFG, source="command",
                           clear_ambient=True, seat_owner="never") is False
     assert _chat_flags(chat_id) == (True, False)
-    assert diarize.ambient_off(chat_id) is False
 
 
 def test_an_automatic_arm_never_clears_the_sacred_flag(app, make_chat):
-    """clear_ambient=False leaves a set ambient-off untouched in both
-    stores. Production gates keep ambient arms from firing while the
+    """clear_ambient=False leaves a set ambient-off untouched. Production gates keep ambient arms from firing while the
     flag is set; the module holds the rule by construction anyway, so a
     future caller cannot inherit the gap unguarded."""
     chat_id = make_chat()
@@ -125,7 +121,6 @@ def test_an_automatic_arm_never_clears_the_sacred_flag(app, make_chat):
     room_state.arm(chat_id, CFG, source="ambient (known voice)",
                    clear_ambient=False, seat_owner="never")
     assert _chat_flags(chat_id) == (True, True)
-    assert diarize.ambient_off(chat_id) is True
 
 
 def test_seat_owner_on_arm_seats_only_on_a_genuine_flip(app, make_chat):
@@ -182,21 +177,18 @@ def test_disarm_solo_shape_sets_ambient_marks_left_and_resolves_asks(
                              set_ambient_off=True, clear_roster=True,
                              resolve_asks=True) is True
     assert _chat_flags(chat_id) == (False, True)
-    assert diarize.room_enabled(chat_id) is False
-    assert diarize.ambient_off(chat_id) is True
     assert _present(chat_id) == []
     assert _open_flags(chat_id) == []
 
 
 def test_disarm_is_sacred_even_when_room_already_off(app, make_chat):
     """"Solo mode" in a room that never armed still writes the durable
-    preference and its mirror, and reports no flip."""
+    preference, and reports no flip."""
     chat_id = make_chat()
     assert room_state.disarm(chat_id, source="command",
                              set_ambient_off=True, clear_roster=True,
                              resolve_asks=True) is False
     assert _chat_flags(chat_id) == (False, True)
-    assert diarize.ambient_off(chat_id) is True
 
 
 def test_disarm_toggle_off_means_off(app, make_chat):
@@ -218,7 +210,6 @@ def test_disarm_toggle_off_means_off(app, make_chat):
                              set_ambient_off=True, clear_roster=True,
                              resolve_asks=True) is True
     assert _chat_flags(chat_id) == (False, True)
-    assert diarize.room_enabled(chat_id) is False
     assert _present(chat_id) == []
     assert _open_flags(chat_id) == []
 
@@ -324,10 +315,3 @@ def test_roster_cap_one_key_one_default_and_zero_means_it(app):
     assert room_state.roster_cap({"room_roster_max": 0}) == 0
     assert room_state.roster_cap({"room_roster_max": 3}) == 3
 
-
-def test_seed_mirrors_touches_no_durable_state(app, make_chat):
-    chat_id = make_chat()
-    room_state.seed_mirrors(chat_id, enabled=True, ambient_disarmed=True)
-    assert diarize.room_enabled(chat_id) is True
-    assert diarize.ambient_off(chat_id) is True
-    assert _chat_flags(chat_id) == (False, False)
