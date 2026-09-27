@@ -14,7 +14,9 @@ What these tests pin, in order:
    real room state: labels land with source "session", a guest arms and
    seats, a new voice arms and asks, solo changes nothing, a turn no feed
    saw is named on its own, and a sure naming saves one clip and re-runs
-   the hygiene audit. A named turn gets the mismatch cross-check.
+   the hygiene audit. A named turn gets the mismatch cross-check. A long
+   turn's tail takes the name its pieces had, and a long turn with two
+   voices keeps the note without waiting for words (#469).
 4. ONE PATH. Every voiced turn goes through this pass, whatever the room
    is doing, and nothing else runs.
 5. NAMING. The calibrated scorer names one person per voice at its bar
@@ -323,6 +325,57 @@ def test_a_named_turn_gets_the_mismatch_cross_check(app, monkeypatch):
         m = _insert_user_message(chat, voice_turn_id="t1")
         _run(chat, _got(pid=sam), monkeypatch)
     assert checks == [(m["id"], "Sam")]
+
+
+def test_a_long_turns_tail_is_labelled_from_its_pieces(app, monkeypatch):
+    """#469 with no feed: the first piece was named Sam on its own, and the
+    tail the message carries was too short to name. The message takes the
+    name its pieces had, not "still listening"."""
+    monkeypatch.setattr(diarize, "ID_ATTACH_WINDOW_SECS", 0.05)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        _person(OWNER)
+        sam = _person("Sam", amp=2000)
+        chat = _chat(c, room_on=True)
+        vss.note_piece("t1")
+        vss.note_piece("t2", "t1")
+        _run(chat, None, monkeypatch, single=_got(pid=sam, single=True),
+             turn="t1")
+        m = _insert_user_message(chat, voice_turn_id="t2")
+        _run(chat, None, monkeypatch, single=None, turn="t2")
+        labels = json.loads(_message_labels(m["id"]))
+    assert labels["labels"] == ["Sam"] and "unresolved" not in labels
+
+
+def test_a_long_turn_with_two_voices_keeps_the_note_without_the_split(
+        app, monkeypatch):
+    """The feed's answer covers two pieces with a voice each. The label
+    lists both and marks the turn as two voices. The words the relay kept
+    cover only the last piece, so the pass doesn't wait for them."""
+    from backend import crosstalk
+    waited = []
+
+    async def await_words(turn_id, timeout=None, step=0.01):
+        waited.append(turn_id)
+    monkeypatch.setattr(crosstalk, "await_words", await_words)
+    voices = {1: {"state": "named", "name": "Sam", "pid": "p-Sam",
+                  "score": 0.97, "prob": 0.97, "human": False,
+                  "seconds": 10.0, "first": 0.0},
+              2: {"state": "named", "name": "Dave", "pid": "p-Dave",
+                  "score": 0.96, "prob": 0.96, "human": False,
+                  "seconds": 6.0, "first": 10.0}}
+    got = _got(voices=voices, voices_in_turn=2, pieces=2, turn_s=16.0,
+               spans=[{"slot": 1, "start": 0.0, "end": 10.0,
+                       "overlap": False},
+                      {"slot": 2, "start": 10.0, "end": 16.0,
+                       "overlap": False}])
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _chat(c, room_on=True)
+        m = _insert_user_message(chat, voice_turn_id="t1")
+        _run(chat, got, monkeypatch)
+        labels = json.loads(_message_labels(m["id"]))
+    assert labels["crosstalk"] is True and labels["labels"] == ["Sam",
+                                                                "Dave"]
+    assert "segments" not in labels and waited == []
 
 
 # ---------- 4. one path ----------

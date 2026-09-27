@@ -8,14 +8,17 @@ reads its answer:
      voice_sessions.LIVE_WAIT_S. When no feed saw the turn (no diariser
      is configured, it is down, or the backup transcript path carried the
      turn), the turn is named on its own as one voice, with the same
-     scorer.
+     scorer. A long turn the browser cut into pieces is named from all of
+     them (voice_sessions' LONG TURNS): the feed's answer covers every
+     piece, and pieces named on their own are joined (join_pieces).
   2. Decide, as a pure rule (`decide`), from that answer and the chat's
      room state: the label, and whether to arm the room, seat someone, or
      ask who a new voice is. The room follows the main voice.
   3. When a second voice spoke for a second or more, the label is
      crosstalk instead: it names every voice and splits the words between
-     them on this computer (backend/crosstalk.py). Only such a turn waits
-     for Scribe's word times, at most crosstalk.WORDS_WAIT_S. They come
+     them on this computer (backend/crosstalk.py). Only such a turn of one
+     piece waits for Scribe's word times, at most crosstalk.WORDS_WAIT_S,
+     since a long turn's words cover only its last piece. They come
      with the final the browser sends the message on, and the relay hands
      them over first, so the label is normally parked before the message
      is saved and the seats read the split, not a single name that would
@@ -232,6 +235,10 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
         if got is None:
             got = await diarize._in_voice_thread(
                 vss.name_single_turn, chat_id, pcm, sample_rate, cfg)
+        # A long turn cut into pieces is named from all of them (#469).
+        got = vss.join_pieces(turn_id, got, len(pcm) / 2 / (sample_rate
+                                                              or 16000))
+        pieces = (got or {}).get("pieces") or 1
         plan = await diarize._in_voice_thread(_plan, chat_id, cfg)
         decision = decide(got, plan)
         listed = crosstalk.listed_voices(got)
@@ -240,9 +247,11 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
             # tracker's spans. The words ride the same Scribe answer as the
             # final the browser is waiting for, and the relay hands them
             # over before it sends that final, so they are here (or known
-            # to be missing) before /send can save the message.
-            words = await crosstalk.await_words(turn_id) if turn_id \
-                else None
+            # to be missing) before /send can save the message. A turn of
+            # several pieces has only its last piece's words, so it keeps
+            # the two-voice note without the split.
+            words = await crosstalk.await_words(turn_id) \
+                if turn_id and pieces == 1 else None
             payload = crosstalk.label(got, listed, words,
                                       source=vss.SESSION_SOURCE)
         else:
@@ -272,7 +281,8 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
             await diarize._in_voice_thread(diarize._raise_unknown_voice,
                                            chat_id, target_id)
         checked = bool(target_id) and len(listed) < 2 and cross_checks(
-            decision, plan, len(pcm) / 2 / (sample_rate or 16000))
+            decision, plan, (got or {}).get("turn_s")
+            or len(pcm) / 2 / (sample_rate or 16000))
         if checked:
             from . import mismatch
             mismatch.schedule_check(chat_id, target_id, decision["labels"][0],
@@ -282,11 +292,12 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
             banked = await diarize._in_voice_thread(_bank, chat_id, got, pcm,
                                                     sample_rate, cfg)
         log.info("voice pass: chat=%s ms=%.0f state=%s method=%s single=%s "
-                 "arm=%s ask=%s banked=%s voices=%d split=%s checked=%s",
+                 "arm=%s ask=%s banked=%s voices=%d split=%s checked=%s "
+                 "pieces=%d",
                  chat_id, ms, (got or {}).get("state", "none"),
                  (got or {}).get("method", "-"), bool((got or {}).get(
                      "single")), decision["arm"], decision["ask"], banked,
-                 len(listed), bool(payload.get("segments")), checked)
+                 len(listed), bool(payload.get("segments")), checked, pieces)
     except Exception:
         log.info("voice pass failed: chat=%s", chat_id)
         log.debug("voice pass failure detail", exc_info=True)

@@ -202,7 +202,7 @@ _BATCH_PCM_MAX_BYTES = diarize.MAX_UTTERANCE_SECONDS * 48000 * 2 + 4096
 @router.post("/api/chats/{chat_id}/stt")
 async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
               duration_ms: int = Form(0), turn_id: str = Form(""),
-              pcm: UploadFile | None = File(None)):
+              after: str = Form(""), pcm: UploadFile | None = File(None)):
     """Batch speech-to-text: the fallback once realtime transcription
     fails, and the salvage for a turn realtime lost.
 
@@ -210,9 +210,11 @@ async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
     same turn, with the turn's id. The turn then gets the identity check
     the realtime relay gives a committed turn, started before the
     transcription call so the label is usually parked before /send
-    claims it. A turn the relay already checked is left alone. Async
-    because the check is a task on the running loop; the transcription
-    and the metering are blocking and run on worker threads."""
+    claims it. A turn the relay already checked is left alone. `after`
+    names the piece before this one when a long turn was cut (#469), as
+    the relay's commit frame does. Async because the check is a task on
+    the running loop; the transcription and the metering are blocking and
+    run on worker threads."""
     cfg = request.app.state.settings.as_cfg()
     if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
         raise HTTPException(400, voice.disabled_reason(cfg))
@@ -223,7 +225,8 @@ async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
     if pcm is not None and turn_id and chat_id:
         try:
             await _batch_turn_check(chat_id, turn_id,
-                                    await pcm.read(_BATCH_PCM_MAX_BYTES), cfg)
+                                    await pcm.read(_BATCH_PCM_MAX_BYTES), cfg,
+                                    after=(after or "").strip()[:64])
         except Exception:
             log.warning("batch identity check not started; transcription "
                         "continues", exc_info=True)
@@ -247,7 +250,7 @@ def _meter_batch_stt(chat_id, seconds, cfg):
         con.close()
 
 
-async def _batch_turn_check(chat_id, turn_id, wav, cfg):
+async def _batch_turn_check(chat_id, turn_id, wav, cfg, after=""):
     """Schedule the voice check for one batch-transcribed turn (#461), the
     same check the relay's commits get. Returns the check's task, or None
     when there was nothing to do: the relay already checked this turn, the
@@ -259,6 +262,7 @@ async def _batch_turn_check(chat_id, turn_id, wav, cfg):
     if audio is None:
         return None
     pcm, rate = audio
+    voice_sessions.note_piece(turn_id, after)
     task = diarize.schedule_turn_check(
         chat_id, pcm, rate, diarize.batch_session(chat_id), cfg,
         turn_id=turn_id)
@@ -914,13 +918,20 @@ async def stt_stream_relay(ws: WebSocket):
                                 pcm, pcm_sr = room.take_utterance()
                                 commit_turn_id = (str(msg.get("turn_id") or "")
                                                   .strip()[:64] or None)
+                                # A piece of a long turn names the piece
+                                # before it (#469), so the check names the
+                                # turn from all its pieces. Ours alone, like
+                                # the turn id.
+                                after = (str(msg.get("after") or "")
+                                         .strip()[:64] or None)
                                 finals.commit(commit_turn_id, *turn_on_stt)
                                 # Before the check is scheduled, so the
                                 # turn's result slot exists when the check
                                 # asks for it (#482).
                                 try:
                                     voice_sessions.end_turn(
-                                        chat_id, commit_turn_id, cfg)
+                                        chat_id, commit_turn_id, cfg,
+                                        after=after)
                                 except Exception:
                                     pass
                                 # One check for every voiced turn (#461,

@@ -79,14 +79,17 @@ export function identityWav(samples, srcRate, win) {
 // The batch upload's form: the recording and its length as always, plus
 // the turn id and the identity copy when there is one. A copy without a
 // turn id can't be matched to the message it becomes, so neither goes
-// alone, and the server checks nothing for that turn.
-export function batchSttForm(blob, speechMs, turnId, copy) {
+// alone, and the server checks nothing for that turn. A piece of a long
+// turn also names the piece before it (`after`, #469), so the server
+// names the turn from all its pieces.
+export function batchSttForm(blob, speechMs, turnId, copy, after = null) {
   const fd = new FormData()
   fd.append('file', blob, 'utterance.webm')
   fd.append('duration_ms', String(Math.round(speechMs)))
   if (turnId && copy) {
     fd.append('turn_id', turnId)
     fd.append('pcm', copy, 'turn.wav')
+    if (after) fd.append('after', after)
   }
   return fd
 }

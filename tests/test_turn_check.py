@@ -91,7 +91,7 @@ def _claim_insert(chat_id, turn_id, text="hello world"):
         con.close()
 
 
-def _post_stt(client, chat_id, *, turn_id="", wav=None):
+def _post_stt(client, chat_id, *, turn_id="", wav=None, after=""):
     files = {"file": ("utterance.webm", b"\x1a\x45\xdf\xa3" * 64,
                       "audio/webm")}
     if wav is not None:
@@ -99,6 +99,8 @@ def _post_stt(client, chat_id, *, turn_id="", wav=None):
     data = {"duration_ms": "1500"}
     if turn_id:
         data["turn_id"] = turn_id
+    if after:
+        data["after"] = after
     return client.post(f"/api/chats/{chat_id}/stt", files=files, data=data)
 
 
@@ -208,6 +210,29 @@ def test_batch_turn_with_the_room_off_gets_the_same_check(app, batch,
     assert parsed["labels"] == [] and parsed["unresolved"] == "new_voice"
     assert [(f["kind"], f["message_id"]) for f in flags] \
         == [("unknown_voice", msg["id"])]
+
+
+def test_a_long_batch_turn_is_named_from_its_pieces(app, batch, naming):
+    """#469 on the batch path: each piece after a cut names the piece
+    before it. The first piece is named Sam, the second can't be named on
+    its own, and the message it becomes takes the name of both."""
+    from backend import voice_sessions
+    voice_sessions._reset_for_tests()
+    pid = _remember("Sam")
+    naming["answers"] = [naming_answer(name="Sam", pid=pid),
+                         naming_answer("listening")]
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _armed_chat(c, ("Sam", pid))
+        assert _post_stt(c, chat["id"], turn_id="tL1",
+                         wav=_wav()).status_code == 200
+        assert _wait_for(lambda: "tL1" in diarize._PENDING_LABELS)
+        assert _post_stt(c, chat["id"], turn_id="tL2", wav=_wav(),
+                         after="tL1").status_code == 200
+        assert _wait_for(lambda: "tL2" in diarize._PENDING_LABELS)
+        msg = _claim_insert(chat["id"], "tL2")
+    assert voice_sessions.pieces_before("tL2") == ["tL1"]
+    assert json.loads(msg["voice_labels"])["labels"] == ["Sam"]
+    voice_sessions._reset_for_tests()
 
 
 def test_a_second_copy_of_a_turn_is_checked_once(app, batch, naming):

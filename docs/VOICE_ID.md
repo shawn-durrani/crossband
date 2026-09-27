@@ -59,6 +59,23 @@ When a voice is named later in the session, its earlier turns take the
 name too, and the chat updates. A name you set yourself is never
 replaced, and neither is a turn with two voices in it.
 
+### Long turns
+
+When you talk for a long time, the app sends your turn in pieces of
+about 12 seconds, and each piece tells the app which piece came before
+it. The turn is named from all its pieces together. Its main voice is
+the one that spoke most on its own across every piece, with the name
+that voice has when the turn ends. A second voice that spoke for a
+second or more in any piece makes it a two-voice turn, so pieces spoken
+by different people never give the turn one name. A last piece too
+short to judge adds nothing, and the turn keeps the name its other
+pieces earned.
+
+With no diariser, each piece is named on its own and the turn joins
+what they found. Pieces named as one person give the turn that name.
+Pieces named as different people, or as someone and a new voice, make
+it a two-voice turn. A piece that's still listening counts for nobody.
+
 ### How a voice is named
 
 Two scorers can name a voice. The calibrated scorer is the one the app
@@ -280,8 +297,8 @@ start, and either can restart on its own. The app lines them up at the
 end of the turn, the one moment both heard together. If the tracker
 heard less of the turn than the transcription did, or the word times
 don't come, the turn keeps the two-voices note without the split. A long
-turn sent in pieces keeps just the note too, because the split covers
-only its last piece.
+turn sent in pieces keeps just the note too, because the word times
+cover only its last piece.
 
 The turn waits up to a second for its word times. They come with the
 transcript itself, so the split is normally ready before the message is
