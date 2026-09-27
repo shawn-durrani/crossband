@@ -245,6 +245,7 @@ CONVERTED = {
     "README.md",
     "eval_intent/README.md",
     "eval_recall/README.md",
+    "eval_voice/README.md",
     "docs/README.md",
     "eval_critic/README.md",
     "eval_silence/README.md",

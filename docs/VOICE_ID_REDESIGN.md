@@ -386,14 +386,22 @@ for a service later without changing anything else.
 
 ## Measuring it
 
-Two kinds of truth, both private to this Mac and never committed:
+Three kinds of truth:
 
+- **Made-up conversations in synthetic voices.** The voice rig in
+  `eval_voice/` writes short conversations for made-up people, speaks
+  them in stock ElevenLabs voices, and mixes in crosstalk, quiet voices
+  and noise. It plays them into a second copy of the app and scores
+  every turn against the targets here. It's repeatable and needs nobody
+  in the room, and a synthetic voice is cleaner than a person, so it
+  catches regressions and mix-ups and can't set the thresholds.
+  [eval_voice/README.md](../eval_voice/README.md) has the details.
 - **Made-up sessions from real voices.** 20 to 60 minute sessions
   assembled from the household's kept clips, with crosstalk, short
   replies and long monologues. A stranger is a household member whose
   bank is hidden for that run, because public recordings are too easy
-  to tell apart. The truth is known exactly. This is the heart of the
-  voice rig issue.
+  to tell apart. The truth is known exactly. Private to this Mac and
+  never committed, and not built yet.
 - **Real sessions in shadow.** Your own evenings, with your corrections
   and confirmations as the truth.
 
@@ -481,6 +489,8 @@ Not built yet:
   the TV".
 - Stored trust scores recomputed in the new units, and the hygiene
   check on the new scorer.
+- Made-up sessions from the household's own clips, and the voice rig
+  playing a conversation out of a speaker into the microphone.
 
 ## Risks
 

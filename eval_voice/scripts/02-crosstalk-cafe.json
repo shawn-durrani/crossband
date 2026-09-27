@@ -1,0 +1,17 @@
+{
+  "id": "crosstalk-cafe",
+  "about": "Three known voices in cafe noise, two turns where two people talk at once, and one quiet voice.",
+  "cast": ["Alex", "Sam", "Dave"],
+  "noise": {"kind": "cafe", "snr_db": 18},
+  "turns": [
+    {"speaker": "Alex", "text": "Right, so who is coming to the working bee at the community garden on Sunday?"},
+    {"speaker": "Dave", "text": "I can do the morning, but I have to leave by lunch for my nephew's party."},
+    {"speaker": "Sam", "text": "I'm in for the whole day, as long as somebody brings a proper ladder for the shed roof.",
+     "over": {"speaker": "Dave", "text": "I've got a ladder at home, it's a bit wobbly though.", "at": 0.45}},
+    {"speaker": "Dave", "text": "Sorry, I was saying I can bring my ladder over in the car.", "gain_db": -10},
+    {"speaker": "Alex", "text": "Great. Sam, could you sort out the gloves and the rubbish bags for everyone?"},
+    {"speaker": "Sam", "text": "Sure, I'll grab them from the hardware store on Saturday morning before it gets busy.",
+     "over": {"speaker": "Alex", "text": "Get the heavy duty ones, the thin ones always tear.", "at": 0.4}},
+    {"speaker": "Dave", "text": "And I'll bring a tin of biscuits, because nobody works properly without biscuits."}
+  ]
+}

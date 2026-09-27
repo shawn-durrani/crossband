@@ -1,0 +1,16 @@
+{
+  "id": "introductions",
+  "about": "The room switched on by voice, a new person introduced out loud and then heard for the first time, and the room switched off again.",
+  "cast": ["Alex", "Sam", "Mateo"],
+  "noise": null,
+  "turns": [
+    {"speaker": "Alex", "text": "Group mode on, please.", "events": [{"room": "on"}]},
+    {"speaker": "Sam", "text": "Hi everyone, sorry I'm late, the traffic on the bridge was terrible tonight."},
+    {"speaker": "Alex", "text": "This is my friend Mateo, he's staying with us for the week.", "events": [{"introduce": "Mateo"}]},
+    {"speaker": "Mateo", "text": "Hi, nice to meet you all. Thanks for having me over for dinner tonight."},
+    {"speaker": "Mateo", "text": "I brought a bag of lemons from the tree at my place, if anyone wants some."},
+    {"speaker": "Sam", "text": "Oh, lovely. We could make lemonade tomorrow afternoon if it stays warm."},
+    {"speaker": "Mateo", "text": "That sounds great. I haven't made lemonade since I was a kid."},
+    {"speaker": "Alex", "text": "Okay, they've both headed home now. Solo mode, it's just me now.", "events": [{"room": "off"}]}
+  ]
+}

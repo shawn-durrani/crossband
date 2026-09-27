@@ -1,0 +1,15 @@
+{
+  "id": "road-quiet",
+  "about": "Three known voices beside a busy road, one of them quiet and far away, and a one word reply.",
+  "cast": ["Alex", "Sam", "Dave"],
+  "noise": {"kind": "road", "snr_db": 8},
+  "turns": [
+    {"speaker": "Dave", "text": "Can you hear me all right? The trucks are really loud on this stretch of road."},
+    {"speaker": "Alex", "text": "Just about. Let's walk down to the corner where it's a bit quieter."},
+    {"speaker": "Dave", "text": "Good plan. Watch the gutter on the way, it's full of water from last night."},
+    {"speaker": "Sam", "text": "Wait for me, I'm just locking the car and grabbing my umbrella.", "gain_db": -12},
+    {"speaker": "Alex", "text": "Okay."},
+    {"speaker": "Dave", "text": "Right, we're here. So what time does the bus leave for the city?"},
+    {"speaker": "Alex", "text": "Twenty past, if it's on time, which it almost never is on a Friday."}
+  ]
+}
