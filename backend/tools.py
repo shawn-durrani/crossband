@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import diagnostics, egress
+from . import diagnostics, egress, run_eval
 from .config import load_settings
 from .memory_client import MemorySearchError
 
@@ -197,6 +197,16 @@ def diagnostics_tool_definitions():
         "description": diagnostics.DIAGNOSTIC_DESCRIPTION,
         "input_schema": diagnostics.diagnostic_input_schema(),
     }]
+
+
+def eval_tool_definitions():
+    """run_eval: start one of the Analysis page's measurements when someone
+    in the chat asks for it. Always offered, like get_diagnostic, so its
+    presence never shifts the cached tool list. Everything that decides
+    whether a run starts, who asked, the daily cap, practice or real, lives
+    in backend/run_eval.py, and the run itself goes through the page's own
+    runner."""
+    return [run_eval.tool_definition()]
 
 
 def memory_tool_definitions(user_name):
@@ -1543,6 +1553,10 @@ async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
             # anything else in `args` is ignored, never forwarded.
             payload = await diagnostics.dispatch_diagnostic(args.get("name"), cfg)
             return json.dumps(payload)
+        if name == run_eval.TOOL_NAME:
+            # The whole of args goes in, so a field beyond the measurement
+            # and the mode is refused there rather than dropped here.
+            return await run_eval.run(args, cfg)
         if name in _GITHUB_TOOLS:
             # origin_agent rides along so a filed issue names its author
             return await asyncio.to_thread(_GITHUB_TOOLS[name], args, cfg,

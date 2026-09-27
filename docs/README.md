@@ -30,6 +30,8 @@ you, or an AI assistant you paste it to, can do the task it covers.
 6. [docs/ANALYSIS.md](ANALYSIS.md): the Analysis page. Each eval
    measurement states its cost and what it touches before its Run
    button, runs in the background, and keeps its reports on the Mac.
+   You can ask for one in a chat too, and it says who a seat will start
+   a real run for.
 7. [docs/WEB_RESEARCH.md](WEB_RESEARCH.md): the web tools and what
    contains them. What a hostile page can't do, the one-line Chromium
    install that turns on rendered viewing, and the limits.

@@ -30,7 +30,7 @@ import { contextGauge } from './headerView'
 import { useEventStream } from './hooks/useEventStream'
 import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
-import { measuring } from './analysisView'
+import { measuring, runFromHash } from './analysisView'
 import { adoptRoomMode, askFlag, flagCopy, mergeFlag, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
 import { healthStrip } from './voiceHealth'
 import { autoDump as voiceDebugAutoDump, autoSaveNotice, dump as voiceDebugDump,
@@ -91,6 +91,8 @@ export default function App() {
   const [showExport, setShowExport] = useState(false)
   const [showCost, setShowCost] = useState(false)
   const [showAnalysis, setShowAnalysis] = useState(false)  // #407
+  // The run a chat line's report link asked the Analysis page to open.
+  const [analysisRunId, setAnalysisRunId] = useState(null)
   // Which measurements the Analysis page has running, from /api/state:
   // the sidebar's dot, and a reason to keep polling state.
   const [measuringIds, setMeasuringIds] = useState([])
@@ -111,6 +113,24 @@ export default function App() {
     [showAnalysis, setShowAnalysis],
   ]
   const pageOpen = pageFlags.some(([open]) => open)
+
+  // #407: a run a seat started from chat posts its result with a link to
+  // the report, #analysis/<run id>. Following it, by a tap here or a fresh
+  // load on the phone, opens the Analysis page on that run. The hash is
+  // cleared after, so the same link works a second time.
+  useEffect(() => {
+    function follow() {
+      const runId = runFromHash(window.location.hash)
+      if (!runId) return
+      leavePages()
+      setShowAnalysis(true)
+      setAnalysisRunId(runId)
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+    follow()
+    window.addEventListener('hashchange', follow)
+    return () => window.removeEventListener('hashchange', follow)
+  }, [])
   const [showSetup, setShowSetup] = useState(false)
   const setupAutoOpened = useRef(false)
   const [banner, setBanner] = useState(null)
@@ -866,7 +886,7 @@ export default function App() {
       onOpenExport={() => setShowExport(true)}
       onOpenCost={() => { leavePages(); setShowCost(true); if (closeAfter) setDrawerOpen(false) }}
       onOpenVoices={() => { leavePages(); setShowVoices(true); if (closeAfter) setDrawerOpen(false) }}
-      onOpenAnalysis={() => { leavePages(); setShowAnalysis(true); if (closeAfter) setDrawerOpen(false) }}
+      onOpenAnalysis={() => { leavePages(); setShowAnalysis(true); setAnalysisRunId(null); if (closeAfter) setDrawerOpen(false) }}
       measuring={measuring(measuringIds)}
       theme={theme}
       onToggleTheme={setTheme}
@@ -940,6 +960,7 @@ export default function App() {
             onClose={() => setShowAnalysis(false)}
             onOpenMenu={() => setDrawerOpen(true)}
             onChanged={() => { refreshState().catch(() => {}) }}
+            openRunId={analysisRunId}
           />
         ) : showParticipants ? (
           <ModelsPage

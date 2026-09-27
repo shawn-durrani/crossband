@@ -34,9 +34,10 @@ How a run works:
 Owner-only: routers/analysis.py needs a signed-in session on every route,
 even before a password is enrolled, so a Claude Code guest on loopback, a
 tailnet caller without a session and the machine side-channel all get 401.
-No seat tool and no guest diagnostic reaches this module. A spoken "run the
-recall replay" would spend money on whoever said it, so a `run_eval` seat
-tool waits for the owner's call.
+One seat tool reaches this module, `run_eval` (backend/run_eval.py), and
+only through `start`, so a run asked for in chat keeps every rule above.
+run_eval decides who may start a real run from chat. No guest diagnostic
+reaches this module.
 """
 
 import asyncio
@@ -211,6 +212,9 @@ class Job:
         self.stop_note = ""
         self.stopper: asyncio.Task | None = None
         self.tail: collections.deque = collections.deque(maxlen=TAIL_LINES)
+        # Called with the settled record once the run is over, on the loop.
+        # run_eval posts the result into the chat that asked through it.
+        self.on_settle = None
 
 
 # measurement id -> its live run. One entry per measurement at most.
@@ -344,10 +348,17 @@ def blocked(m: Measurement, voice_live: bool = False) -> str:
 # ---------- the run ----------
 
 def start(measurement_id: str, *, practice: bool = False,
-          voice_live: bool = False, memory_url: str = "") -> dict:
+          voice_live: bool = False, memory_url: str = "",
+          chat: dict | None = None, on_settle=None) -> dict:
     """Start one run and return its record. Needs the running loop. Raises
     LookupError for an unknown id, Busy when `blocked` says so, and Refused
-    when the command would carry content."""
+    when the command would carry content.
+
+    `chat` is {"chat_id", "message_id"} for a run a seat started from a
+    chat (backend/run_eval.py): the record keeps those ids, never who
+    spoke or what they said, so the daily cap and the one-run-per-ask
+    rule can count from the records. `on_settle(record)` runs on the loop
+    once the run has settled, however it ended."""
     m = get(measurement_id)
     if m is None:
         raise LookupError(measurement_id)
@@ -370,9 +381,14 @@ def start(measurement_id: str, *, practice: bool = False,
         "created_at_unix": now,
         "status_label": "",
         "status_at": None,
+        "started_from": "chat" if chat else "page",
     }
+    if chat:
+        record["chat_id"] = chat.get("chat_id")
+        record["asked_in"] = chat.get("message_id")
     _write_record(run_dir, record)
     job = Job(m, record, run_dir)
+    job.on_settle = on_settle
     _live[m.id] = job
     job.task = asyncio.get_running_loop().create_task(_run(job, argv))
     return dict(record)
@@ -426,6 +442,7 @@ async def _pinger(job: Job) -> None:
 async def _run(job: Job, argv: list[str]) -> None:
     pinger = asyncio.create_task(_pinger(job))
     spawn_error = ""
+    settled = False
     try:
         try:
             job.proc = await asyncio.create_subprocess_exec(
@@ -451,6 +468,7 @@ async def _run(job: Job, argv: list[str]) -> None:
             except asyncio.TimeoutError:
                 drain.cancel()
         _settle(job, spawn_error)
+        settled = True
     except asyncio.CancelledError:
         # The loop is going without stop_all: ask the harness to clean up
         # on its own rather than leave it running unasked.
@@ -464,6 +482,13 @@ async def _run(job: Job, argv: list[str]) -> None:
         pinger.cancel()
         if _live.get(job.m.id) is job:
             _live.pop(job.m.id, None)
+        # After the pop, so whatever the callback starts sees the
+        # measurement free again.
+        if settled and job.on_settle is not None:
+            try:
+                job.on_settle(dict(job.record))
+            except Exception:
+                log.exception("after %s settled", job.record["run_id"])
 
 
 def _read_report_json(run_dir: Path):
@@ -685,7 +710,8 @@ def load_record(run_id: str):
     return rec
 
 
-def list_runs(limit: int = LIST_LIMIT) -> list[dict]:
+def list_runs(limit: int | None = LIST_LIMIT) -> list[dict]:
+    """Stored runs newest first, `limit` of them, or every one for None."""
     root = runs_root()
     if not root.is_dir():
         return []

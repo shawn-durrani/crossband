@@ -14,7 +14,8 @@ The contract under test:
 - The report folder is 0700 and every file in it 0600. A recall replay
   report that carries words from a chat is deleted.
 - Every route needs a signed-in owner, before and after enrolment, from
-  loopback and from the tailnet. No seat tool or guest diagnostic reaches it.
+  loopback and from the tailnet. One seat tool, run_eval, reaches it through
+  `start`, and no guest diagnostic does.
 - Every harness writes the JSON report the page reads, and the headline
   reads each one.
 
@@ -550,18 +551,27 @@ def _imports(rel):
     return names
 
 
-def test_no_seat_tool_or_guest_diagnostic_reaches_the_page():
-    """The seats' tools, the guest's diagnostic and the round never import
-    the module, and no tool is named for it. A `run_eval` seat tool waits for
-    the owner's call."""
+def test_one_seat_tool_reaches_the_page_and_no_guest_diagnostic_does():
+    """The guest's diagnostic and the guest itself never import the module
+    or name run_eval. The seats reach it through run_eval alone
+    (tests/test_run_eval.py), which starts a run through `start` and
+    nothing beneath it, so every rule here holds for a run asked for in
+    chat."""
     from backend import diagnostics
     for name in diagnostics.DIAGNOSTIC_NAMES:
         assert "eval" not in name and "analysis" not in name
-    for rel in ("backend/tools.py", "backend/diagnostics.py",
-                "backend/diag_mcp.py", "backend/guest.py", "backend/engine.py",
-                "backend/providers.py", "backend/mcp_client.py"):
+    for rel in ("backend/diagnostics.py", "backend/diag_mcp.py",
+                "backend/guest.py", "backend/mcp_client.py"):
         assert "analysis" not in _imports(rel), rel
         assert "run_eval" not in (REPO / rel).read_text(), rel
+    for rel in ("backend/tools.py", "backend/engine.py",
+                "backend/providers.py"):
+        assert "analysis" not in _imports(rel), rel
+    src = (REPO / "backend" / "run_eval.py").read_text()
+    assert "analysis.start(" in src
+    for beneath in ("build_command", "context_args", "analysis._live",
+                    "analysis._run", "create_subprocess", "CONTENT_FLAGS"):
+        assert beneath not in src, beneath
 
 
 def test_the_harnesses_are_never_imported_by_the_app():

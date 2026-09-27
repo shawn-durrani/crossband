@@ -78,6 +78,18 @@ every `/api/analysis` route needs a signed-in session even before a
 password is enrolled. Until the owner enrols, the page runs nothing for
 anyone, a Claude Code guest on this Mac included.
 
+The seats have one tool that reaches it, `run_eval`, so asking in a chat
+can start a measurement through the page's own runner. It takes a
+measurement and practice or real, and nothing else. A real run starts
+only when the message the seat is answering came from the owner, typed
+or spoken in a voice the app matched to the owner's name, and only once
+a password is enrolled. Anyone else in the room gets a practice run,
+which costs nothing and reads none of your data. At most three real runs
+start from chats in a day. The result goes into the chat as a headline
+and a link, never the report. A summoned Claude Code guest doesn't get
+the tool. [docs/ANALYSIS.md](docs/ANALYSIS.md#asking-from-a-chat) has
+the rest.
+
 ## How a request from the tailnet is checked
 
 [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md#where-a-request-goes)

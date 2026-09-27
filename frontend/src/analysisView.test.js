@@ -8,9 +8,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 import {
-  RUN_STATES, chipText, confirmText, elapsedLabel, historyDetail, historyTitle,
-  latestFor, measuring, newestFirst, pingText, readmeUrl, reportJsonUrl,
-  runHold, shouldPoll, spentLabel, stateBadge, whenLabel,
+  REPORT_LINK_PREFIX, RUN_STATES, chipText, confirmText, elapsedLabel,
+  historyDetail, historyTitle, latestFor, measuring, newestFirst, pingText,
+  readmeUrl, reportJsonUrl, runFromHash, runHold, shouldPoll, spentLabel,
+  stateBadge, whenLabel,
 } from './analysisView.js'
 
 const fixture = JSON.parse(readFileSync(
@@ -112,6 +113,8 @@ test('a history line names the run and says how it ended', () => {
                 summary: { headline: 'Replayed 200 turns.' } }
   assert.equal(historyTitle(run), 'Recall replay · Done')
   assert.equal(historyTitle({ ...run, practice: true }), 'Recall replay (practice) · Done')
+  assert.equal(historyTitle({ ...run, started_from: 'chat' }), 'Recall replay, from a chat · Done')
+  assert.equal(historyTitle({ ...run, started_from: 'page' }), 'Recall replay · Done')
   assert.equal(historyDetail(run), 'Replayed 200 turns.')
   const failed = { ...run, state: 'failed', summary: undefined,
                    error: 'Traceback\nSystemExit: membro is not answering' }
@@ -136,4 +139,23 @@ test('the page polls only while something runs, and the sidebar dot agrees', () 
   assert.equal(measuring(['recall']), true)
   assert.equal(measuring([]), false)
   assert.equal(measuring(undefined), false)
+})
+
+// run_eval (#407): the result line a seat's run posts in the chat links its
+// report. The backend writes the link; this reads it.
+test('a report link from the chat opens that run', () => {
+  assert.equal(REPORT_LINK_PREFIX, fixture.analysis.report_link_prefix)
+  const link = fixture.analysis.report_link_example
+  assert.ok(link.startsWith(REPORT_LINK_PREFIX))
+  assert.equal(runFromHash(link), link.slice(REPORT_LINK_PREFIX.length))
+  assert.equal(runFromHash('#analysis/recall-20260928-101500-2'), 'recall-20260928-101500-2')
+})
+
+test('anything else in the hash opens nothing', () => {
+  for (const hash of ['', '#', '#analysis/', '#analysis/../../etc',
+    '#analysis/recall-2026', '#analysis/Recall-20260928-101500',
+    '#analysis/recall-20260928-101500/report.json', '#other/recall-20260928-101500',
+    '#analysis/%E0%A4%A', null, undefined]) {
+    assert.equal(runFromHash(hash), null, String(hash))
+  }
 })

@@ -40,6 +40,8 @@ tts_v3.py       - how replies are shaped for the Eleven v3 voices
 accounting.py   - cost with provenance; provenance.py defines the axes
 analysis.py     - the Analysis page: runs each eval measurement as a
                   child process and keeps its reports under data/analysis
+run_eval.py     - the seats' tool for starting one from a chat, and who
+                  may start a real run
 frontend/       - React UI; pure .js modules hold the rules and are tested
 ```
 

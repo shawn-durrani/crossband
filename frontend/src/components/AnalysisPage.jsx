@@ -131,7 +131,7 @@ function ReportView({ detail, onDelete }) {
   )
 }
 
-export default function AnalysisPage({ onClose, onOpenMenu, onChanged }) {
+export default function AnalysisPage({ onClose, onOpenMenu, onChanged, openRunId }) {
   const [view, setView] = useState(null)
   const [error, setError] = useState(null)
   const [starting, setStarting] = useState(null)
@@ -160,6 +160,13 @@ export default function AnalysisPage({ onClose, onOpenMenu, onChanged }) {
   }
 
   useEffect(() => { load() }, [])
+
+  // A chat line's report link names a run to open. It opens once the list
+  // has loaded, so the page can bring it into view.
+  const loaded = !!view
+  useEffect(() => {
+    if (openRunId && loaded) openFromCard(openRunId)
+  }, [openRunId, loaded])
 
   // While anything runs, ask every two seconds; stop asking once it's quiet.
   const polling = shouldPoll(view)

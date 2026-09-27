@@ -87,9 +87,48 @@ runs nothing. That keeps it from a Claude Code guest working on this
 Mac, from a phone on your tailnet that hasn't signed in, and from the
 tools that post notices into chats.
 
-The seats can't start a measurement either. There's no tool for it,
-because a spoken "run the recall replay" would spend your money on
-whoever said it.
+The seats can start a measurement for you when you ask in a chat, with
+their own limits. [Asking from a chat](#asking-from-a-chat) has them.
+
+## Asking from a chat
+
+You can ask for a measurement in any chat, typed or out loud. Say
+something like "run the recall replay" and a seat starts it. It's the
+same run the page starts, with the same one at a time rule and the
+same report folder, and it shows on the page while it goes. Ask for a
+practice run and you get one of those.
+
+The seat tells you what the run costs and what it touches as it
+starts. When the run ends, a line in the chat gives its headline and
+what it spent, with a link that opens the report on the Analysis page.
+One seat then passes the result on, the way it does when a Claude Code
+visit finishes. The report itself never goes into the chat, and nor
+does the error from a failed run.
+
+A real run spends your money, so a seat starts one only when you asked.
+That means a message you typed, or a spoken turn the voice check
+labelled with your name. In a chat with room mode off, a spoken turn
+with no label counts as yours, since only you speak there. When anyone
+else asks, the seat says why it can't and offers a practice run
+instead. That covers a guest, a voice the app couldn't name, the TV,
+two voices talking at once, and a turn in room mode that's still
+waiting for its name.
+
+These limits keep a seat from spending more than you meant:
+
+- At most three real runs start from chats each day, counted from
+  midnight on the Mac. A run you start on the page doesn't count, and
+  a practice run doesn't either.
+- A real run from a chat needs an owner password, like the page. A
+  practice run from a chat doesn't, since it costs nothing and reads
+  nothing of yours.
+- One message starts each measurement once, so two seats answering it
+  can't start it twice.
+- A seat passing on a result, or carrying on by itself after you press
+  continue, starts nothing.
+- The seat's tool takes a measurement and practice or real, and nothing
+  else. The recall replay never gets the words of your chats from a
+  chat, for the same reasons it never does from the page.
 
 ## Your own data stays yours
 
