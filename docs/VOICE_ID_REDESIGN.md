@@ -233,7 +233,12 @@ microphones from this household's.
 3. You answer by saying it ("that's Dave"), the person introducing
    themselves, or picking a name from the menu. The name goes on the
    voice, every turn it spoke is relabelled, and its best clean audio
-   becomes that person's first clips, marked as introduced.
+   becomes that person's first clips, marked as introduced. The voice
+   that spoke decides what the words mean: the new voice names itself
+   with "I'm Dave" or "it's Dave", and anyone the app has named names it
+   with "that's Dave". A voice nobody has named might be a second new
+   person, so its words answer nothing. Only while the question is open
+   is the model that reads each turn told the app has asked.
 4. You can also answer "that's the TV" or "that's the radio". That
    voice is then ignored for the rest of the session, and never asked
    about again.
@@ -476,6 +481,9 @@ Live on this install:
   Each piece names the piece before it, pieces with different voices
   make a two-voice turn, and a last piece too short to judge adds
   nothing.
+- Answering the question out loud ("that's Dave", or the new voice
+  saying "I'm Dave") names the voice, relabels its turns and saves its
+  held audio as introduced, as tapping a turn does.
 - Deleted: the three routes, their decision tables and live mirrors,
   the early check before a turn ends, the cloud crosstalk split, the
   introduction stash, the window multi-voice check, the extra bar while
@@ -484,9 +492,8 @@ Live on this install:
 
 Not built yet:
 
-- A spoken answer to the ask naming the voice, relabelling its turns
-  and saving its held audio. Tapping a turn does all three. And "that's
-  the TV".
+- "That's the TV", which would ignore that voice for the rest of the
+  session.
 - Stored trust scores recomputed in the new units, and the hygiene
   check on the new scorer.
 - Made-up sessions from the household's own clips, and the voice rig

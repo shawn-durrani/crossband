@@ -238,6 +238,8 @@ turns as well as spoken ones, whether or not room mode is on.
   small copy of the turn's audio for the check, about 32 KB a second.
 - The other door is the ask. When a new voice appears and nothing on
   record explains it, the app asks who's speaking. It doesn't guess.
+  You answer by saying who it is, as set out in
+  [Saying who a new voice is](#saying-who-a-new-voice-is).
 
 When a spoken command switches the room on or off, one system line
 says what changed and what to say to undo it. When the model hears an
@@ -358,6 +360,8 @@ A clip is saved in only these ways.
   per session, and never from a turn with two voices.
 - You name or confirm a turn, as set out in
   [Teaching it a voice yourself](#teaching-it-a-voice-yourself).
+- Someone says who a new voice is while the app is asking, as set out
+  in [Saying who a new voice is](#saying-who-a-new-voice-is).
 - Someone the app has just named says their own name.
 - Your first introduction, in a room that was off, gives your own
   voice its first clip.
@@ -510,6 +514,34 @@ name is Samuel", the turn's audio goes into Sam's bank as an
 introduction. A rename in the same breath still happens. The words and
 the voice have to agree, so Sam saying Dave's name feeds nobody's
 bank.
+
+### Saying who a new voice is
+
+When a new voice has 4 seconds of clear speech and matches nobody, the
+app asks "Someone new is talking. Who's this?" You can answer out loud,
+or type it. Say "that's Dave", or let the new person say "I'm Dave".
+The answer does what tapping the turn does. The turn the question
+points at is named Dave, and it's marked as an introduction. The voice
+is Dave for the rest of the session, and its other turns take the name.
+The turn's audio goes into Dave's bank as an introduction, so the bank
+counts as vouched.
+
+Who says it matters. The new voice names itself with "I'm Dave", "it's
+Dave", "my name's Dave" or "Dave here". You, or anyone the app has
+already named, name it with "that's Dave" or "it's Dave". "I'm Dave"
+from a named person is about the speaker, so it leaves the question
+open. A voice the app hasn't named yet might be a second new person, so
+its words don't answer the question either.
+
+The answer needs the question to be open and to point at a turn with
+one voice in it. When it isn't, "that's Dave" is an ordinary
+introduction. Dave joins the room, and the question closes. Your own
+name, a spelling of it, a model's name and a relationship word never
+answer it. In solo the app doesn't ask, so there's nothing to answer.
+
+While the question is open, the small model that reads every turn is
+told the app has asked, so it hears "that's Dave" as the answer. Every
+other turn is read the way it always is.
 
 ## When a voice is ready
 

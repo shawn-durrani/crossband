@@ -51,6 +51,20 @@ def test_merged_prompt_carries_every_input_and_ends_with_the_message():
     assert p.endswith("her name is spelt Aleks")
 
 
+def test_the_asking_note_is_added_only_while_the_app_is_asking():
+    """#523: while a "who's this?" ask points at a turn, the prompt says
+    so, and "that's Dave" is heard as the answer. Every other turn gets the
+    prompt exactly as it was, so the answer's wording can't change how any
+    other instruction is heard."""
+    args = ("That's Dave.", "Alex", ["Claude"], ["Sam"], ["Sam"])
+    plain = intent.build_merged_prompt(*args)
+    asking = intent.build_merged_prompt(*args, asking=True)
+    assert intent.ASKING_NOTE not in plain
+    assert asking.replace(intent.ASKING_NOTE, "") == plain
+    assert "that's Dave" in intent.ASKING_NOTE
+    assert asking.endswith("That's Dave.")
+
+
 def test_merged_prompt_handles_empty_lists():
     p = intent.build_merged_prompt("hello", "Alex", [], [], [])
     assert "(none)" in p           # no seats

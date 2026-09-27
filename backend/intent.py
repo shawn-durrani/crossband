@@ -33,12 +33,25 @@ def empty_verdict() -> dict:
             "stronger_model": []}
 
 
+# While the app is asking who a new voice is (#523), the turn may be the
+# answer. Only then does the prompt say so: every other turn gets the prompt
+# exactly as it was, so an answer's wording can't change how anything else
+# is heard.
+ASKING_NOTE = (
+    "The app has just asked who a new voice in the room is, so the message "
+    "may answer it. An answer saying who the voice is ('that's Dave', 'that "
+    "was my brother Dave', 'it's Dave') introduces that name.\n")
+
+
 def build_merged_prompt(text: str, user_name: str, seat_names: list,
-                        present_names: list, known_names: list) -> str:
+                        present_names: list, known_names: list,
+                        asking: bool = False) -> str:
     """The one prompt every user turn goes to. `seat_names` are the chat's AI
     participants, `present_names` the roster's present people, `known_names`
     every name the app might resolve a correction against - the same three
-    inputs the four prompts this replaces took, gathered into one call."""
+    inputs the four prompts this replaces took, gathered into one call.
+    `asking` is whether an open "who's this?" ask points at a turn, which
+    adds ASKING_NOTE and nothing else."""
     seats = ", ".join(seat_names) or "(none)"
     present = ", ".join(present_names) if present_names else "(nobody yet)"
     known = ", ".join(known_names) if known_names else "(nobody yet)"
@@ -48,6 +61,7 @@ def build_merged_prompt(text: str, user_name: str, seat_names: list,
         f"The device owner is {user_name}. The assistants are: {seats}. "
         f"People already known present: {present}. People known by name: "
         f"{known}.\n"
+        + (ASKING_NOTE if asking else "") +
         "Decide, all at once, which of these the message does. Merely "
         "talking ABOUT any of them (a question, praise, a recollection, a "
         "mention in passing) counts for none of them. Asking the "

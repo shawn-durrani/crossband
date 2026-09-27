@@ -1,0 +1,177 @@
+[
+  {
+    "id": "answer_thats_dave",
+    "category": "ask_answer",
+    "asking": true,
+    "text": "That's Dave.",
+    "expected": {
+      "introductions": [
+        "Dave"
+      ]
+    },
+    "notes": "The owner answering \"Someone new is talking. Who's this?\". The app names the voice the question points at."
+  },
+  {
+    "id": "answer_that_was_my_brother",
+    "category": "ask_answer",
+    "asking": true,
+    "text": "Oh, that was my brother Mateo.",
+    "expected": {
+      "introductions": [
+        "Mateo"
+      ]
+    }
+  },
+  {
+    "id": "answer_thats_sam_talking",
+    "category": "ask_answer",
+    "asking": true,
+    "text": "Yeah that's Sam talking, she just got here.",
+    "expected": {
+      "introductions": [
+        "Sam"
+      ]
+    }
+  },
+  {
+    "id": "answer_self_im",
+    "category": "ask_answer",
+    "asking": true,
+    "text": "Hi, I'm Mateo.",
+    "expected": {
+      "introductions": [
+        "Mateo"
+      ]
+    },
+    "notes": "The new voice answering for itself."
+  },
+  {
+    "id": "answer_self_my_names",
+    "category": "ask_answer",
+    "asking": true,
+    "text": "My name's Sam, I'm a friend of Alex's.",
+    "expected": {
+      "introductions": [
+        "Sam"
+      ]
+    }
+  },
+  {
+    "id": "answer_self_here",
+    "category": "ask_answer",
+    "asking": true,
+    "text": "Dave here, hello everyone.",
+    "expected": {
+      "introductions": [
+        "Dave"
+      ]
+    }
+  },
+  {
+    "id": "answer_neg_question",
+    "category": "ask_answer_negative",
+    "asking": true,
+    "present": [
+      "Dave"
+    ],
+    "text": "Was that Dave just then?",
+    "expected": {},
+    "notes": "A question about who spoke answers nothing."
+  },
+  {
+    "id": "answer_neg_not_in_room",
+    "category": "ask_answer_negative",
+    "asking": true,
+    "text": "That was Sam on the phone earlier, she says hi.",
+    "expected": {},
+    "notes": "Sam isn't in the room."
+  },
+  {
+    "id": "answer_neg_thing",
+    "category": "ask_answer_negative",
+    "asking": true,
+    "text": "That's Dave's old bike in the photo, he sold it years ago.",
+    "expected": {},
+    "notes": "Talking about a thing in a photo."
+  },
+  {
+    "id": "answer_neg_assistant",
+    "category": "ask_answer_negative",
+    "asking": true,
+    "text": "That was Claude talking, not a person.",
+    "expected": {},
+    "notes": "An assistant is never a person in the room."
+  },
+  {
+    "id": "answer_neg_owner",
+    "category": "ask_answer_negative",
+    "asking": true,
+    "text": "That was me, I've got a cold.",
+    "expected": {},
+    "notes": "The owner is never introduced."
+  },
+  {
+    "id": "asking_plain_thanks",
+    "category": "asking_other_axes",
+    "asking": true,
+    "text": "Thanks both, that was helpful.",
+    "expected": {},
+    "notes": "While the app is asking, plain chat is still nothing, \"that was\" included."
+  },
+  {
+    "id": "asking_hold_back",
+    "category": "asking_other_axes",
+    "asking": true,
+    "text": "Just listen for now, we're chatting between ourselves.",
+    "expected": {}
+  },
+  {
+    "id": "asking_mention",
+    "category": "asking_other_axes",
+    "asking": true,
+    "text": "So the fence has to come down before Friday, and Dave reckons we can reuse the posts.",
+    "expected": {},
+    "notes": "Dave is mentioned, not named as the new voice."
+  },
+  {
+    "id": "asking_depth",
+    "category": "asking_other_axes",
+    "asking": true,
+    "text": "Claude, think harder about this from now on.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "Claude",
+          "depth": "deep",
+          "once": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "asking_group_and_intro",
+    "category": "asking_other_axes",
+    "asking": true,
+    "text": "Group mode on, this is Dave.",
+    "expected": {
+      "mode_command": "on",
+      "introductions": [
+        "Dave"
+      ]
+    }
+  },
+  {
+    "id": "asking_departure",
+    "category": "asking_other_axes",
+    "asking": true,
+    "present": [
+      "Dave"
+    ],
+    "text": "Dave has left.",
+    "expected": {
+      "departures": [
+        "Dave"
+      ]
+    }
+  }
+]
