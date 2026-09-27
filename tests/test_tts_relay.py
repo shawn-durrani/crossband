@@ -179,12 +179,11 @@ def test_automatic_speaks_v3_conversational_through_the_dialogue_socket(app, ups
                    {"final": True}]
     up = upstreams.last
     assert up.url == voice.TTD_WS_URL.format(model_id="eleven_v3_conversational")
-    # #493's defaults: Robust stability, and the sentence held until the
-    # flush because nothing followed its question mark.
+    # #493's defaults: Robust stability, and the sentence sent the moment
+    # its question mark arrived, without waiting for more text.
     assert up.sent[0] == {"voices": [VOICE], "xi_api_key": "test-key",
                           "voice_settings": {"stability": 1.0}}
     assert up.sent[1:] == [
-        {"keep_alive": True},
         {"inputs": [{"text": "Hello there, how are you?", "voice_id": VOICE}]},
         {"flush": True}, {"close_socket": True}]
 

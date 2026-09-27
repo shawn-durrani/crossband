@@ -163,12 +163,21 @@ def test_mid_sentence_text_is_held_and_keeps_the_socket_alive():
     assert carry["held"] == "Hello there, Alex"
 
 
-def test_a_sentence_goes_as_soon_as_the_next_piece_shows_it_ended():
+def test_a_sentence_goes_as_soon_as_it_ends():
+    """A full stop at the end of what's arrived goes at once, so a reply
+    that pauses (a seat searching the web) is spoken up to its last full
+    stop without waiting for the next word. On 27 September a held
+    sentence waited 16 seconds for it."""
     carry = _chunked()
-    assert _frames([{"text": "Hello there."}], carry) == [{"keep_alive": True}]
-    assert _frames([{"text": " How"}], carry) == [
+    assert _frames([{"text": "Hello there."}], carry) == [
         {"inputs": [{"text": "Hello there.", "voice_id": VOICE}]}]
+    assert _frames([{"text": " How"}], carry) == [{"keep_alive": True}]
     assert carry["held"] == " How"
+    # except after a digit, where "3." may still become "3.14"
+    carry = _chunked()
+    assert _frames([{"text": "Pi is 3."}], carry) == [{"keep_alive": True}]
+    assert _texts(_frames([{"text": "14 today."}], carry)) == [
+        "Pi is 3.14 today."]
     # when one piece carries the end and the next word, it goes at once
     carry = _chunked()
     assert _texts(_frames([{"text": "Sure. Here"}], carry)) == ["Sure."]
@@ -184,6 +193,10 @@ def test_a_sentence_goes_as_soon_as_the_next_piece_shows_it_ended():
     ("Wait... what", "Wait...", " what"),
     ("One. Two. Three", "One. Two.", " Three"),
     ("Pi is 3.14 today", "", "Pi is 3.14 today"),
+    ("It's in stock.", "It's in stock.", ""),
+    ("Is it?", "Is it?", ""),
+    ("Wait...", "Wait...", ""),
+    ("Pi is 3.", "", "Pi is 3."),
     ("See example.com now", "", "See example.com now"),
     ("\n\nHi", "", "\n\nHi"),
 ])
@@ -246,10 +259,9 @@ def test_whitespace_alone_is_never_sent_and_leads_the_next_piece():
     frames = _frames([{"text": "Hi."}, {"text": " "}, {"flush": True}, {"text": "Bye."},
                       {"done": True}], carry)
     assert frames == [
-        {"keep_alive": True},
         {"inputs": [{"text": "Hi.", "voice_id": VOICE}]},
-        {"flush": True},
         {"keep_alive": True},
+        {"flush": True},
         {"inputs": [{"text": " Bye.", "voice_id": VOICE}]},
         {"close_socket": True}]
 
@@ -262,9 +274,11 @@ def test_the_pieces_put_back_together_are_the_reply(size):
     texts = _texts(frames)
     assert "".join(texts) == REPLY
     if size < 1000:
-        assert texts == ["Sure, here's the plan for Saturday.",
-                         " Dave brings the ladder at nine!", " Is that too early?\n",
-                         "Sam can bring lunch."]
+        # where the newline lands depends on the pieces; the sentences don't
+        assert [t.strip() for t in texts] == [
+            "Sure, here's the plan for Saturday.",
+            "Dave brings the ladder at nine!", "Is that too early?",
+            "Sam can bring lunch."]
 
 
 def test_without_sentence_chunks_each_piece_goes_as_it_arrives():

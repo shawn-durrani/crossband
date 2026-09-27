@@ -38,6 +38,13 @@ SENTENCE_CAP = 250
 # "3.14", so the end is only known when the next piece starts. A newline
 # ends a sentence on its own, which covers list items and headings.
 _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*(?=\s)|\n")
+# A sentence end at the very end of what's arrived so far also counts, so
+# a reply that pauses, say while a seat searches the web, is spoken up to
+# its last full stop straight away instead of waiting for the next word
+# (on 27 September a held sentence waited 16 seconds for it). The one
+# exception is a full stop after a digit, "3.", which may still become
+# "3.14".
+_TAIL_END = re.compile(r"(?:[!?]+|(?<![0-9])\.+|\.{2,})[\"'”’)\]]*$")
 _SPACE = re.compile(r"\s")
 
 TAG_MAX = 40
@@ -119,6 +126,8 @@ def take_ready(held: str) -> tuple:
     for m in _SENTENCE_END.finditer(held):
         if held[:m.end()].strip():
             cut = m.end()
+    if _TAIL_END.search(held) and held.strip():
+        cut = len(held)
     rest = held[cut:]
     if len(rest) > SENTENCE_CAP:
         spaces = [m.start() for m in _SPACE.finditer(rest) if m.start() > 0]

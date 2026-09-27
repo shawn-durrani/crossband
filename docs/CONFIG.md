@@ -189,8 +189,10 @@ with it. A value that isn't one of the three speaks robust.
 
 With `tts_v3_sentence_chunks` on, the app holds the reply's text as the
 model writes it and sends it when a sentence ends. A sentence ends at a
-full stop, question mark or exclamation mark with a space after it, or
-at a new line. Text with no sentence end goes once it passes 250
+full stop, question mark or exclamation mark, or at a new line. It goes
+at once, even when the model pauses to search, except for a full stop
+straight after a digit, which waits for the next word in case it's a
+number like 3.14. Text with no sentence end goes once it passes 250
 characters, cut at a space, and ElevenLabs advises v3 inputs of about
 that length for steady output. An abbreviation such as Dr. counts as a
 sentence end, which splits the speech there and never runs two words
