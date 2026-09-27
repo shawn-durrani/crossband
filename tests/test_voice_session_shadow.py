@@ -318,7 +318,7 @@ def test_the_live_store_is_never_written(fakes, monkeypatch):
 ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
             "today", "session", "turn", "offset", "spans", "main",
             "main_state", "main_name", "voices", "bar", "embedded",
-            "people", "ms", "filled"}
+            "people", "ms", "filled", "method"}
 
 
 def test_rows_are_content_free_and_owner_only(fakes):
@@ -413,10 +413,12 @@ def test_an_unnamed_turn_takes_its_voices_name(app, fakes, monkeypatch):
     got = _labels(mid)
     assert got["labels"] == ["Sam"] and got["source"] == "session"
     assert "unresolved" not in got and not got.get("owner")
-    # memory reads it as the weakest method, which membro never binds on
+    # memory reads it as a voice match, with the naming's score as the
+    # confidence: membro binds only at 0.8 or more (#482 stage 3)
     from backend.memory_client import speaker_identity
-    assert speaker_identity({"voice_labels": got}, "guest:Sam",
-                            {})["method"] == "by-elimination"
+    ident = speaker_identity({"voice_labels": got}, "guest:Sam", {})
+    assert ident["method"] == "voice-match"
+    assert ident["confidence"] == got["score"]
 
 
 def test_the_owners_name_carries_the_owner_marker(app, fakes):
@@ -533,8 +535,9 @@ def test_the_feed_pushes_as_audio_arrives_and_names_the_turn(live):
         vss.feed(3, chunk, SR, LIVE_CFG)
     vss.end_turn(3, "t1", LIVE_CFG)
     got = vss.wait_turn("t1", timeout=3)
-    assert got == {"voice": 1, "state": "listening", "name": "",
-                   "score": 1.0}     # 1 s alone is too little to name
+    assert {k: got[k] for k in ("voice", "state", "name", "score")} == {
+        "voice": 1, "state": "listening", "name": "", "score": 1.0}
+    # 1 s alone is too little to name
     paths = [c[1] for c in live.calls]
     assert paths[0] == "/sessions" and paths[-1] == "/sessions/s1/end-turn"
     audio = [c for c in live.calls if c[1].endswith("/audio")]
@@ -771,3 +774,31 @@ def test_a_new_voice_chat_starts_a_warm(fakes, monkeypatch):
     vss.feed(3, _turn(0.3), SR, LIVE_CFG)
     vss.feed(3, _turn(0.3), SR, LIVE_CFG)
     assert warmed == [1]                          # once per new feed
+
+
+def test_clean_spans_are_fingerprinted_while_the_turn_runs(live,
+                                                          monkeypatch):
+    """A span the tracker calls final mid-turn is fingerprinted then, so
+    the turn's end only names; it isn't fingerprinted a second time."""
+    calls = []
+    monkeypatch.setattr(vss, "embed_live",
+                        lambda pcm, sr, cfg: calls.append(len(pcm)) or ALEX)
+    pushes = {"n": 0}
+    base = live
+
+    def diariser(method, url, content=None):
+        if url.endswith("/audio"):
+            base.calls.append((method, url.split("8910", 1)[1],
+                               len(content or b"")))
+            pushes["n"] += 1
+            if pushes["n"] == 4:          # 1.2 s pushed by now
+                return {"spans": [{"slot": 1, "start": 0.0, "end": 1.0}]}
+            return {"spans": []}
+        return base(method, url, content)
+    monkeypatch.setattr(vss, "_request", diariser)
+    for chunk in _chunks(2.0):
+        vss.feed(3, chunk, SR, LIVE_CFG)
+    vss.end_turn(3, "t1", LIVE_CFG)
+    got = vss.wait_turn("t1", timeout=3)
+    assert got is not None and got["voice_clean_s"] == 1.0
+    assert calls == [SR * 2]              # once, during the turn

@@ -74,7 +74,13 @@ GUEST_UNKNOWN = "guest:unknown"
 # claim, which membro's binding policy never auto-links.
 IDENTITY_METHODS = {"local": "voice-match", "cold-start": "by-elimination",
                     "correction": "owner-correction",
-                    "introduction": "introduced"}
+                    "introduction": "introduced",
+                    # #482: the session naming is a voice match. Its score
+                    # is the calibrated probability when the calibrated
+                    # scorer named the voice, so membro's 0.8 bar means 80%
+                    # sure; the fallback scorer's raw cosine rarely reaches
+                    # it, which keeps those turns for review.
+                    "session": "voice-match"}
 
 
 def speaker_identity(msg, wire_speaker, slug_by_name):

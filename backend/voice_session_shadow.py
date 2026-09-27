@@ -105,6 +105,13 @@ def labels_enabled(cfg) -> bool:
     return bool(enabled(cfg) and (cfg or {}).get("voice_session_labels"))
 
 
+def only_enabled(cfg) -> bool:
+    """Stage 3's switch (`voice_session_only`): the session naming names
+    every spoken turn, in every mode, and the old matcher's passes don't
+    run. Needs the live feed on as well."""
+    return bool(live_enabled(cfg) and (cfg or {}).get("voice_session_only"))
+
+
 def live_enabled(cfg) -> bool:
     """The live step: the relay feeds the tracker as audio arrives, and the
     live check names an otherwise unnamed turn from it. Needs the session
@@ -287,6 +294,99 @@ def embed_live(pcm, sample_rate, cfg):
     return voiceid._embed(ex, audio, sample_rate)
 
 
+def embed_eres_live(pcm, sample_rate, cfg):
+    """ERes2Net on one clean span for the calibrated naming, without
+    waiting for the live check (it's waiting on this). None until the
+    calibrated scorer has loaded ERes2Net. Tests replace this function."""
+    from . import voice_calibration as vc
+    audio = voiceid._pcm_to_float(pcm)
+    if audio is None or len(audio) == 0:
+        return None
+    ex = vc._eres2net_extractor(cfg)
+    if ex is None:
+        return None
+    try:
+        with vc._eres_embed_lock:
+            stream = ex.create_stream()
+            stream.accept_waveform(sample_rate=sample_rate, waveform=audio)
+            stream.input_finished()
+            vec = list(ex.compute(stream))
+        return voiceid.l2_normalize(vec) if vec else None
+    except Exception:
+        log.debug("ERes2Net live embedding failed", exc_info=True)
+        return None
+
+
+def human_named(chat_id, turn_id, name, person_id, cfg):
+    """A person named a turn by hand: the session voice that spoke it is
+    that person from now on, and its other turns in the session that
+    carry no name or a session name take it at once. True when a session
+    voice took the name."""
+    tid = str(turn_id or "")[:64]
+    if not tid or not person_id:
+        return False
+    with _lock:
+        sess = _sessions.get(chat_id)
+    if not sess:
+        return False
+    slot = next((s for t, s in reversed(sess.get("turn_voice") or [])
+                 if t == tid), None)
+    voice = sess["voices"].get(slot) if slot is not None else None
+    if voice is None:
+        return False
+    for other in sess["voices"].values():
+        if (other.get("human") or {}).get("pid") == person_id:
+            other.pop("human", None)
+    voice["human"] = {"name": name, "pid": person_id}
+    if labels_enabled(cfg) or only_enabled(cfg):
+        fill_labels(chat_id, sess, {slot: {"state": "named", "name": name}},
+                    cfg)
+    return True
+
+
+def take_bank_allowance(chat_id, voice, limit):
+    """One of `limit` clips a session voice may save per session: True and
+    counted, or False once they're used."""
+    with _lock:
+        sess = _sessions.get(chat_id)
+        if not sess:
+            return False
+        used = sess.setdefault("banked", {})
+        if used.get(voice, 0) >= limit:
+            return False
+        used[voice] = used.get(voice, 0) + 1
+        return True
+
+
+def name_single_turn(chat_id, pcm, sample_rate, cfg):
+    """No tracker saw this turn (the diariser is down, or the backup
+    transcript path carried it): treat the whole turn as one voice with no
+    session behind it, and name it with the same scorer. Returns the same
+    shape as a live result, or None when the audio isn't speech."""
+    if not pcm or voice_shadow.gate(pcm, sample_rate):
+        return None
+    secs = len(pcm) / 2 / sample_rate
+    emb = embed_live(pcm, sample_rate, cfg)
+    if emb is None:
+        return None
+    voice = {"prints": [(emb, secs)], "clean_s": secs}
+    emb_e = embed_eres_live(pcm, sample_rate, cfg)
+    if emb_e is not None:
+        voice["prints_eres"] = [(emb_e, secs)]
+    solo = {"voices": {0: voice}, "opened_at": time.time() + 1.0}
+    named, _, _, method = _name_all(
+        solo, _live_candidates(chat_id), sample_rate, cfg, False,
+        lambda seg: embed_live(seg, sample_rate, cfg),
+        (lambda seg: embed_eres_live(seg, sample_rate, cfg)))
+    v = named.get(0) or {}
+    return {"voice": 0, "state": v.get("state", "listening"),
+            "name": v.get("name", ""), "pid": v.get("pid", ""),
+            "score": v.get("score"), "prob": v.get("prob"), "human": False,
+            "method": method, "voice_clean_s": secs,
+            "clean_spans": [(0.0, secs)], "voices_in_turn": 1,
+            "overlap_s": 0.0, "single": True}
+
+
 def _live_candidates(chat_id):
     """The live check's own candidates: every remembered person, with the
     people seated in this chat kept even while their bank is paused."""
@@ -314,6 +414,7 @@ class _Feed:
         self.spans = []                 # this turn's spans so far
         self.turn_start = None          # session time the turn began at
         self.broken = False             # the session failed mid-turn
+        self.early = {}                 # span key -> fingerprints so far
         self.thread = threading.Thread(
             target=self._run, daemon=True,
             name=f"voice-session-feed-{chat_id}")
@@ -375,11 +476,39 @@ class _Feed:
             sess["pushed_s"] += len(chunk) / 2 / SAMPLE_RATE
             sess["last_at"] = time.time()
             self.spans += got
+            self._fingerprint_early(got)
         except _SessionError as err:
             self._fail(err.reason)
         except Exception:
             log.debug("session feed push failed", exc_info=True)
             self._fail("error")
+
+    def _fingerprint_early(self, spans):
+        """Fingerprint each clean span as soon as the tracker calls it
+        final, while the person is still talking, so the end of the turn
+        only has to name. Anything that fails here is simply done again
+        at the end."""
+        if self.turn_start is None:
+            return
+        pcm = bytes(self.turn_pcm)
+        for s in spans:
+            if s["overlap"] or s["end"] - s["start"] < MIN_SPAN_S:
+                continue
+            try:
+                a, b = s["start"] - self.turn_start, s["end"] - self.turn_start
+                seg = voice_shadow.span_pcm(pcm, SAMPLE_RATE, [(a, b)])
+                if len(seg) < int((b - a) * SAMPLE_RATE) * 2 - 64 \
+                        or voice_shadow.gate(seg, SAMPLE_RATE):
+                    continue
+                emb = embed_live(seg, SAMPLE_RATE, self.cfg)
+                if emb is None:
+                    continue
+                emb_e = embed_eres_live(seg, SAMPLE_RATE, self.cfg) \
+                    if only_enabled(self.cfg) else None
+                self.early[_span_key(s)] = (emb, emb_e,
+                                            len(seg) / 2 / SAMPLE_RATE)
+            except Exception:
+                log.debug("early fingerprint failed", exc_info=True)
 
     def _fail(self, reason):
         self.broken = True
@@ -417,7 +546,11 @@ class _Feed:
                 self.chat_id, sess, turn_id, pcm, SAMPLE_RATE,
                 self.spans + got, self.turn_start, self.cfg,
                 _live_candidates(self.chat_id), False,
-                lambda seg: embed_live(seg, SAMPLE_RATE, self.cfg), row)
+                lambda seg: embed_live(seg, SAMPLE_RATE, self.cfg), row,
+                eres_fn=(lambda seg: embed_eres_live(seg, SAMPLE_RATE,
+                                                     self.cfg))
+                if only_enabled(self.cfg) else None,
+                precomputed=dict(self.early))
             with _lock:
                 _stats["diariser"] = "ok"
             voice_shadow._recovered("session", "the tracking sessions "
@@ -435,6 +568,7 @@ class _Feed:
             _resolve(turn_id, result)
             self.turn_pcm.clear()
             self.spans = []
+            self.early = {}
             self.turn_start = None
             self.broken = False
         row["ms"] = round((time.perf_counter() - t0) * 1000, 1)
@@ -467,6 +601,66 @@ def pooled(prints):
         for i, v in enumerate(emb):
             acc[i] += v * secs
     return voiceid.l2_normalize([v / total for v in acc])
+
+
+def _human_first(voices, out, taken):
+    """A voice a person named (by tapping a turn) is that person, whatever
+    the scores say, and nobody else's voice can take the name."""
+    for slot, v in voices.items():
+        h = v.get("human")
+        if h and h.get("pid") and slot in out:
+            out[slot].update(state="named", name=h["name"], pid=h["pid"],
+                             score=1.0, prob=1.0, human=True)
+            taken.add(h["pid"])
+
+
+def name_voices_calibrated(voices, allowed, snapshot):
+    """name_voices on the calibrated two-model scorer (#482 stage 3): each
+    voice's pooled TitaNet-Small and ERes2Net fingerprints, and its clean
+    seconds, give a probability per allowed person (voice_calibration,
+    with the prior of 1 in N+1). One person per voice, highest first:
+    named at NAME_BAR or more with LISTEN_MIN_S of clean speech, new under
+    NEW_BAR with NEW_VOICE_MIN_S, otherwise listening. `allowed` is
+    {person_id: name}, the candidates the room may name."""
+    from . import voice_calibration as vc
+    out, probs = {}, {}
+    for slot, v in voices.items():
+        clean = v.get("clean_s") or 0.0
+        entry = {"state": "listening", "name": "", "pid": "", "score": None,
+                 "second": None, "prob": None, "clean_s": round(clean, 2)}
+        ps, pe = pooled(v.get("prints")), pooled(v.get("prints_eres"))
+        if ps is not None and pe is not None:
+            got = vc.probability({vc.SMALL: ps, vc.ERES: pe}, clean,
+                                 snapshot) or {}
+            got = {pid: pr for pid, pr in got.items() if pid in allowed}
+            probs[slot] = got
+            ranked = sorted(got.values(), reverse=True)
+            if ranked:
+                entry["score"] = entry["prob"] = round(ranked[0], 4)
+            if len(ranked) > 1:
+                entry["second"] = round(ranked[1], 4)
+        out[slot] = entry
+    taken = set()
+    _human_first(voices, out, taken)
+    pairs = sorted(((pr, slot, pid) for slot, row in probs.items()
+                    for pid, pr in row.items()), reverse=True)
+    for pr, slot, pid in pairs:
+        entry = out[slot]
+        if entry["pid"] or pid in taken or pr < vc.NAME_BAR:
+            continue
+        if (voices[slot].get("clean_s") or 0.0) < LISTEN_MIN_S:
+            continue
+        entry.update(state="named", pid=pid, name=allowed[pid],
+                     score=round(pr, 4), prob=round(pr, 4))
+        taken.add(pid)
+    for slot, entry in out.items():
+        if entry["state"] == "named":
+            continue
+        best = max((probs.get(slot) or {}).values(), default=None)
+        if (voices[slot].get("clean_s") or 0.0) >= NEW_VOICE_MIN_S \
+                and (best is None or best < vc.NEW_BAR):
+            entry["state"] = "new"
+    return out
 
 
 def name_voices(voices, people, bar):
@@ -502,6 +696,7 @@ def name_voices(voices, people, bar):
                      if len(ranked) > 1 else None,
                      "clean_s": round(v.get("clean_s") or 0.0, 2)}
     taken = set()
+    _human_first(voices, out, taken)
     pairs = sorted(((s, slot, pid) for slot, row in scores.items()
                     for pid, s in row.items()), reverse=True)
     for score, slot, pid in pairs:
@@ -545,6 +740,12 @@ def clean_spans(payload, limit=MAX_SPANS):
             out.append({"slot": slot, "start": start, "end": end,
                         "overlap": bool(s.get("overlap"))})
     return out
+
+
+def _span_key(s):
+    """A span's identity in session time, for matching a fingerprint taken
+    during the turn to the same span at its end."""
+    return (s["slot"], round(s["start"], 3), round(s["end"], 3))
 
 
 def main_voice(spans):
@@ -737,19 +938,23 @@ def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
 
 
 def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
-               cfg, candidates, pending, embed_fn, row):
+               cfg, candidates, pending, embed_fn, row, eres_fn=None,
+               precomputed=None):
     """The naming step, shared by the shadow's observe and the live feed:
     move the tracker's spans into turn time, fingerprint the clean ones,
     name every session voice, fill in unnamed turns when that's on, and
     put it all on `row`. Returns the turn's main voice as {"voice",
     "state", "name", "score"}, or None when no voice spoke."""
     seconds = len(pcm) / 2 / sample_rate
-    spans = []
+    spans, ready = [], {}
     for s in raw_spans:
         a = max(0.0, s["start"] - offset)
         b = min(seconds, s["end"] - offset)
         if b > a:
             spans.append({**s, "start": round(a, 3), "end": round(b, 3)})
+            got = (precomputed or {}).get(_span_key(s))
+            if got is not None:
+                ready[(s["slot"], round(a, 3), round(b, 3))] = got
     if True:
         embedded = 0
         for s in spans:
@@ -759,25 +964,30 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
                                       {"prints": [], "clean_s": 0.0})
             if s["overlap"] or s["end"] - s["start"] < MIN_SPAN_S:
                 continue
-            seg = voice_shadow.span_pcm(pcm, sample_rate,
-                                        [(s["start"], s["end"])])
-            if voice_shadow.gate(seg, sample_rate):
-                continue
-            emb = embed_fn(seg)
+            early = ready.get((s["slot"], s["start"], s["end"]))
+            if early is not None:
+                # Fingerprinted while the person was still talking.
+                emb, emb_e, secs = early
+            else:
+                seg = voice_shadow.span_pcm(pcm, sample_rate,
+                                            [(s["start"], s["end"])])
+                if voice_shadow.gate(seg, sample_rate):
+                    continue
+                emb = embed_fn(seg)
+                secs = len(seg) / 2 / sample_rate
+                emb_e = eres_fn(seg) if (eres_fn is not None
+                                         and emb is not None) else None
             if emb is None:
                 continue
-            secs = len(seg) / 2 / sample_rate
             v = sess["voices"].setdefault(s["slot"],
                                           {"prints": [], "clean_s": 0.0})
             v["prints"].append((emb, secs))
             v["clean_s"] += secs
+            if emb_e is not None:
+                v.setdefault("prints_eres", []).append((emb_e, secs))
             embedded += 1
-        # A second's grace: a clip banked by the live pass that opened the
-        # session carries a timestamp just after the session's own.
-        people = bank(candidates, sample_rate, cfg,
-                      before=sess["opened_at"] - 1.0, embed_fn=embed_fn)
-        bar = _bar(people, candidates, sample_rate, cfg, pending)
-        named = name_voices(sess["voices"], people, bar)
+        named, bar, n_people, method = _name_all(
+            sess, candidates, sample_rate, cfg, pending, embed_fn, eres_fn)
         main = main_voice(spans)
         if main is not None and turn_id:
             sess["turn_voice"].append((str(turn_id), main))
@@ -794,14 +1004,46 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             if main is not None else "",
             voices={str(k): v for k, v in sorted(named.items())},
             bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
-            embedded=embedded, people=len(people))
+            embedded=embedded, people=n_people, method=method)
         if filled is not None:
             row["filled"] = filled
     if main is None:
         return None
     voice = named.get(main) or {}
+    clean = [(s["start"], s["end"]) for s in spans
+             if s["slot"] == main and not s["overlap"]
+             and s["end"] - s["start"] >= MIN_SPAN_S]
     return {"voice": main, "state": voice.get("state", "listening"),
-            "name": voice.get("name", ""), "score": voice.get("score")}
+            "name": voice.get("name", ""), "pid": voice.get("pid", ""),
+            "score": voice.get("score"), "prob": voice.get("prob"),
+            "human": bool(voice.get("human")), "method": method,
+            "voice_clean_s": voice.get("clean_s") or 0.0,
+            "clean_spans": clean,
+            "voices_in_turn": len({s["slot"] for s in spans}),
+            "overlap_s": round(sum(s["end"] - s["start"] for s in spans
+                                   if s["overlap"]), 3)}
+
+
+def _name_all(sess, candidates, sample_rate, cfg, pending, embed_fn,
+              eres_fn):
+    """Name every session voice: the calibrated two-model scorer when its
+    snapshot is ready and the voices carry ERes2Net fingerprints, else the
+    multi scorer on the matcher's own bar. Returns (named, bar, people,
+    method)."""
+    from . import voice_calibration as vc
+    snap = vc.current() if eres_fn is not None else None
+    allowed = {c["person_id"]: c["name"] for c in candidates or ()
+               if c.get("person_id")}
+    if snap and snap.get("calibrated") and allowed:
+        named = name_voices_calibrated(sess["voices"], allowed, snap)
+        return (named, {"threshold": vc.NAME_BAR, "margin": None,
+                        "source": "calibrated"}, len(allowed), "calibrated")
+    # A second's grace: a clip banked by the live pass that opened the
+    # session carries a timestamp just after the session's own.
+    people = bank(candidates, sample_rate, cfg,
+                  before=sess["opened_at"] - 1.0, embed_fn=embed_fn)
+    bar = _bar(people, candidates, sample_rate, cfg, pending)
+    return name_voices(sess["voices"], people, bar), bar, len(people), "multi"
 
 
 # ================= filling in unnamed turns ==================================

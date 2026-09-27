@@ -387,6 +387,10 @@ class Settings(BaseModel):
     # the live check names a turn it would leave unnamed from the session
     # voice, before the seats read it. Needs voice_session_shadow.
     voice_session_live: bool = False
+    # voice_session_only: stage 3's switch. One pass names every spoken
+    # turn in every mode from the session naming, and the old matcher's
+    # passes don't run. Needs voice_session_live.
+    voice_session_only: bool = False
     # The calibrated voice scorer (#482 stage 2, backend/voice_calibration.py):
     # the redesign's two-model, calibrated scorer and the readiness test the
     # Voices page shows. Off by default. On, it fetches ERes2Net once (pinned
