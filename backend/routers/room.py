@@ -563,7 +563,10 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
        single-speaker utterance, it feeds the person's anchor set as ground
        truth (source='correction'). A two-voice utterance is never fed - it
        is not clean evidence of anyone's voice - and after a restart there is
-       simply no audio left to learn from; the label still corrects.
+       simply no audio left to learn from; the label still corrects. A long
+       turn of one voice is cached as its piece with the most clean speech
+       (voice_sessions.turn_audio, #540), not its last piece, which can be
+       a one-word tail.
 
     CONFIRM AND LEARN (#477): the same call with the turn's OWN label is the
     owner saying "yes, that's them". The label stays (now owner-corrected),
