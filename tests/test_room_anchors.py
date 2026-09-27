@@ -6,9 +6,9 @@ deletes the person's audio from disk - not just the index entry.
 
 SUFFICIENCY: identification is gated on several seconds of accepted clean
 speech per person. The quality gate keeps junk clips out (too short, too
-quiet), keep-best-N refreshes anchors as better speech arrives, and the
-prefix builder simply excludes anyone below the bar - below it,
-identification stays uncertain by construction.
+quiet), keep-best-N refreshes anchors as better speech arrives, and
+enrolment simply excludes anyone below the bar - below it, identification
+stays uncertain by construction.
 
 Pure rules (quality, keep policy, sufficiency) are tested directly;
 store behaviour through a tmp-path-rooted AnchorStore. No network anywhere.
@@ -581,148 +581,34 @@ def test_find_by_name_is_case_insensitive_reidentification(store):
     assert store.ensure_person("aLeX") == pid
 
 
-# ── the prefix ──────────────────────────────────────────────────────────────
+# ── enrolment's gates ───────────────────────────────────────────────────────
 
-def test_prefix_includes_only_sufficient_people(store):
-    strong = store.ensure_person("Shawn")
+def test_enrolment_includes_only_sufficient_people(store):
+    strong = store.ensure_person("Alex")
     for _ in range(3):
         store.add_clip(strong, loud_pcm(2.0), 16000, source="accumulated")
-    weak = store.ensure_person("Alex")
+    weak = store.ensure_person("Bea")
     store.add_clip(weak, loud_pcm(2.0), 16000, source="introduction")
-    pcm, segments = store.build_prefix([strong, weak], 16000)
-    assert [s["name"] for s in segments] == ["Shawn"]  # Alex is below the bar
-    seg = segments[0]
-    assert seg["start"] == 0.0
-    assert seg["end"] == pytest.approx(anchors.PREFIX_PERSON_SECONDS)
-    assert len(pcm) == int(seg["end"] * 16000) * 2
+    enrol = store.enrollment_clips([strong, weak], 16000)
+    assert list(enrol) == [strong]  # Bea is below the bar
+    assert enrol[strong]["name"] == "Alex"
+    assert len(enrol[strong]["pcms"]) == 3
 
 
-def test_prefix_segments_tile_for_multiple_people(store):
-    a = store.ensure_person("Shawn")
-    b = store.ensure_person("Bea")
-    for pid in (a, b):
-        # #83: vouch the bank (remembered = introduced), or the prefix
-        # rightly refuses it.
-        store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
-        for _ in range(2):
-            store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
-    pcm, segments = store.build_prefix([a, b], 16000)
-    assert [s["name"] for s in segments] == ["Shawn", "Bea"]
-    assert segments[0]["end"] == pytest.approx(segments[1]["start"])
-    assert len(pcm) == int(segments[1]["end"] * 16000) * 2
-
-
-def test_prefix_skips_clips_recorded_at_another_sample_rate(store):
-    pid = store.ensure_person("Shawn")
+def test_enrolment_skips_clips_recorded_at_another_sample_rate(store):
+    pid = store.ensure_person("Alex")
     for _ in range(3):
         store.add_clip(pid, loud_pcm(2.0, sample_rate=48000), 48000,
                        source="accumulated")
-    pcm, segments = store.build_prefix([pid], 16000)
-    assert pcm == b"" and segments == []
-
-
-# ── the prefix cache (#28, night test 4) ────────────────────────────────────
-#
-# Every diarization pass used to re-read the same clip files from disk. The
-# built prefix is cached per roster snapshot, with two hard pins: a cache hit
-# performs ZERO clip-file reads, and ANY anchor mutation invalidates - the
-# index fingerprint changes on every _save, whichever store instance (or
-# process) wrote it.
-
-
-def _count_clip_reads(store):
-    counter = {"n": 0}
-    real = store._read_clip_pcm
-
-    def counting(fname):
-        counter["n"] += 1
-        return real(fname)
-
-    store._read_clip_pcm = counting
-    return counter
-
-
-def _sufficient_person(store, name):
-    pid = store.ensure_person(name)
-    # #83: the first clip is the introduction that vouched the bank - an
-    # accumulation-only sufficient bank is deliberately paused out of the
-    # prefix now (test_audition_gate.py owns that behaviour).
-    assert store.add_clip(pid, loud_pcm(2.0), 16000, source="introduction")
-    for _ in range(2):
-        assert store.add_clip(pid, loud_pcm(2.0), 16000, source="accumulated")
-    return pid
-
-
-def test_prefix_cache_hit_reads_zero_clip_files(store):
-    a = _sufficient_person(store, "Shawn")
-    b = _sufficient_person(store, "Bea")
-    reads = _count_clip_reads(store)
-    pcm1, segs1 = store.build_prefix([a, b], 16000)
-    assert reads["n"] > 0                      # the first build hits disk
-    reads["n"] = 0
-    pcm2, segs2 = store.build_prefix([a, b], 16000)
-    assert reads["n"] == 0                     # THE pin: a hit reads nothing
-    assert pcm2 == pcm1 and segs2 == segs1     # and is byte-identical
-    # a caller mutating what it got back can never corrupt the cache
-    segs2[0]["name"] = "Mallory"
-    assert store.build_prefix([a, b], 16000)[1] == segs1
-
-
-def test_any_anchor_mutation_invalidates_the_prefix_cache(store):
-    a = _sufficient_person(store, "Shawn")
-    reads = _count_clip_reads(store)
-    store.build_prefix([a], 16000)
-    reads["n"] = 0
-    # a new accepted clip rewrites the index: the next build re-reads
-    assert store.add_clip(a, loud_pcm(3.0), 16000, source="accumulated")
-    store.build_prefix([a], 16000)
-    assert reads["n"] > 0
-    reads["n"] = 0
-    # even a pure metadata write (preferred name) invalidates - "any
-    # mutation" means any, so the rule never needs a per-field exception
-    assert store.set_preferred_name(a, "Shawnie")
-    store.build_prefix([a], 16000)
-    assert reads["n"] > 0
-    # forgetting a person empties their prefix, cache notwithstanding
-    assert store.forget(a)
-    pcm, segments = store.build_prefix([a], 16000)
-    assert pcm == b"" and segments == []
-
-
-def test_prefix_cache_keys_on_the_roster_snapshot(store):
-    a = _sufficient_person(store, "Shawn")
-    b = _sufficient_person(store, "Bea")
-    reads = _count_clip_reads(store)
-    solo = store.build_prefix([a], 16000)
-    reads["n"] = 0
-    pair = store.build_prefix([a, b], 16000)   # different roster: a miss
-    assert reads["n"] > 0
-    assert pair[0] != solo[0]
-    reads["n"] = 0
-    assert store.build_prefix([a], 16000) == solo   # the solo entry survived
-    assert reads["n"] == 0
-
-
-def test_prefix_cache_sees_another_stores_writes(store):
-    """The on-disk half of the fingerprint: a mutation through a DIFFERENT
-    store instance over the same directory (another process, in real life)
-    still invalidates - the index rewrite changes mtime/size, and this
-    instance's cached prefix may not outlive it."""
-    a = _sufficient_person(store, "Shawn")
-    reads = _count_clip_reads(store)
-    store.build_prefix([a], 16000)
-    reads["n"] = 0
-    other = anchors.AnchorStore(store.root)
-    assert other.add_clip(a, loud_pcm(3.0), 16000, source="correction")
-    store.build_prefix([a], 16000)
-    assert reads["n"] > 0
+    assert store.enrollment_clips([pid], 16000) == {}
+    assert list(store.enrollment_clips([pid], 48000)) == [pid]
 
 
 # ── the hygiene guard's storage (#28 PR-B) ──────────────────────────────────
 #
 # The AUDIT lives in voiceid.py (tests/test_voice_id.py pins its rules);
 # this section pins the store half: set-aside clips stay on disk but take
-# part in NOTHING (sufficiency, prefix, enrolment, the UI counts), close
+# part in NOTHING (sufficiency, enrolment, the UI counts), close
 # pairs persist and clean up with their people, and quarantine is bounded.
 
 
@@ -744,8 +630,7 @@ def test_quarantined_clips_are_set_aside_not_deleted(store):
     assert person["clip_count"] == 3            # active clips only
     # the file is STILL on disk - set aside, not forgotten
     assert (store.root / bad).exists()
-    # the prefix and enrolment exclude it
-    pcm, segments = store.build_prefix([pid], 16000)
+    # enrolment excludes it
     enrol = store.enrollment_clips([pid], 16000)
     if pid in enrol:
         assert bad not in enrol[pid]["fingerprint"]

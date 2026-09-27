@@ -916,7 +916,7 @@ def _enrolled_embeddings(candidates, sample_rate, ex):
     """{person_id: {"name", "emb"}} for the candidate people, from their stored
     anchor clips. Averaged per person and CACHED keyed by the person's kept clip
     set, so identification re-embeds a person only when their anchors actually
-    change - not on every utterance (mirrors the phase-1 prefix cache intent).
+    change - not on every utterance.
     The clips arrive speech-only (#477, anchors.enrollment_clips), and the
     cache key carries SPEECH_ONLY_VERSION inside the fingerprint, so no
     embedding of the untrimmed audio is ever reused.
