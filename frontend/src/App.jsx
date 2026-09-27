@@ -38,6 +38,10 @@ import { chatTranscript } from './passView'
 import GuestStatusChip from './components/GuestStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
 
+// The start of the banner shown when live transcription falls back, so the
+// banner can be cleared once it's working again (#537).
+const STT_FALLBACK_BANNER = 'Realtime transcription unavailable'
+
 const EXAMPLE_PROMPTS = [
   'Pitch me three weekend project ideas, then critique each other’s picks.',
   'Debate: is this a good plan? One of you argue for, one against.',
@@ -423,9 +427,14 @@ export default function App() {
           onInterruptRound: stopRound,
           // #21: the cause rides the banner - "unavailable" alone left
           // nothing to debug with when the relay died mid-session.
-          onSttFallback: (cause) => setBanner('Realtime transcription unavailable'
+          // #537: when it will be tried again, it says so, and the
+          // banner goes once a turn is transcribed live again.
+          onSttFallback: (cause, retrying) => setBanner(STT_FALLBACK_BANNER
             + (cause && cause !== 'unknown' ? ` (${cause})` : '')
-            + ' - using standard transcription this session.'),
+            + (retrying ? ' - using standard transcription until it comes back.'
+              : ' - using standard transcription this session.')),
+          onSttBack: () => setBanner((b) => (
+            typeof b === 'string' && b.startsWith(STT_FALLBACK_BANNER) ? null : b)),
           // orb tint follows the AUDIO: whoever's reply is currently playing
           onSpeaker: (slug) => setSpeakingSlug(slug),
           // #304: a stall saves the diagnostics bundle on its own, rate-

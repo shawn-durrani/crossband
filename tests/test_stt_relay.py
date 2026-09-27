@@ -13,7 +13,9 @@ skipped, and the words kept in each turn's own time, across a reconnect.
 
 #470 keeps a quiet socket open: silence fills a long gap, the relay commits
 that silence itself and keeps its final, the next turn keeps its own id and
-its words' times, and every backup-path turn logs why, content-free."""
+its words' times, and every backup-path turn logs why, content-free.
+#537: a session Scribe ends (its time limit, or too little audio) closes
+cleanly instead of reading as an error, and a real error says its kind."""
 
 import asyncio
 import base64
@@ -949,3 +951,55 @@ def test_each_backup_path_turn_is_logged_with_why_and_no_words(
         "late", "reconnect", "unknown", "unknown"]
     assert all("speech_s=2.4" in ln for ln in lines)
     assert not any("gate" in r.getMessage() for r in caplog.records)
+
+
+# ---- #537: a session Scribe ends isn't a failure ----
+#
+# Scribe ends a session at its time limit, or when it hears too little
+# audio. Passed on as an error, either switched the browser to the backup
+# path. The relay now closes cleanly for these, and the browser opens a new
+# session as it does after any clean close. A real error carries its kind,
+# so the browser can tell whether trying again later can help.
+
+class EndingEleven(FakeEleven):
+    """Scribe that answers the first audio with one message of `kind`."""
+
+    def __init__(self, kind, **extra):
+        super().__init__()
+        self.kind, self.extra = kind, extra
+
+    async def send(self, raw):
+        self.sent.append(json.loads(raw))
+        self.queue.put_nowait(json.dumps({"message_type": self.kind, **self.extra}))
+
+
+@pytest.mark.parametrize("kind", sorted(voice_mod.STT_SESSION_ENDS))
+def test_a_session_scribe_ends_closes_cleanly(app, monkeypatch, kind, caplog):
+    from starlette.websockets import WebSocketDisconnect
+    fake = EndingEleven(kind, error="Maximum session time has been reached")
+    _timed_relay(app, monkeypatch, fake)
+    caplog.set_level("INFO", logger="crossband.voice")
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            ws.send_json(_speech(0.1)[0])
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()          # a close, never an error frame
+            assert closed.value.code == 1000
+    assert any(f"kind={kind}" in r.getMessage() for r in caplog.records)
+
+
+def test_a_scribe_error_carries_its_kind(app, monkeypatch):
+    fake = EndingEleven("auth_error", error="Invalid API key")
+    _timed_relay(app, monkeypatch, fake)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            ws.send_json(_speech(0.1)[0])
+            assert ws.receive_json() == {"error": "Invalid API key",
+                                         "kind": "auth_error"}
+            ws.send_json({"done": True})

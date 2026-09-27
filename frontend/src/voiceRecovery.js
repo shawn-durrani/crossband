@@ -69,3 +69,21 @@ export function realtimeCommitAction({ framesSent, speechMs, minSpeechMs,
   if (speechMs >= minSpeechMs && socketChanged) return 'salvage'
   return 'commit'
 }
+
+// #537: when to try live transcription again after it failed. A network
+// drop, or a hiccup at ElevenLabs, passes, and a session that stayed on
+// the slower backup path for good paid for it on every later turn (26
+// turns on 27 September, until a reload). The waits grow each time it
+// fails again, so a service that really is down is asked rarely. A
+// failure no wait can mend (the key, the account's quota or terms, or a
+// request ElevenLabs refuses outright) isn't retried: `kind` is the
+// error's type as the relay passes it on. Null means don't retry.
+export const REALTIME_RETRY_MS = [10000, 30000, 60000, 120000, 300000]
+const REALTIME_FOR_GOOD = new Set(['auth_error', 'quota_exceeded', 'unaccepted_terms',
+                                   'invalid_request'])
+
+export function realtimeRetryMs(kind, attempt) {
+  if (REALTIME_FOR_GOOD.has(kind)) return null
+  const n = Math.max(0, Math.floor(Number(attempt) || 0))
+  return REALTIME_RETRY_MS[Math.min(n, REALTIME_RETRY_MS.length - 1)]
+}
