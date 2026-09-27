@@ -16,6 +16,12 @@
 // the queue drains; a new reply or round can be cut again; a round slow to
 // end is cut once too; and with MediaSource a reply still streams as it
 // arrives and a cut stops it the same way.
+// An iPhone with iOS 17.1 or later streams through ManagedMediaSource,
+// and the diagnostics name the path a session took. There a reply is
+// heard, and its playback traced, before its speech
+// stream ends; a barge-in cuts it once and pauses it; a reply queued
+// behind it never plays; and after a cut or voice off, neither late audio
+// nor the source asking for more puts anything in.
 // Run: node --test frontend/src/voiceBargeIn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -111,6 +117,31 @@ class FakeMediaSource {
   endOfStream() { this.readyState = 'ended'; this.ended = true }
   open() { this.readyState = 'open'; for (const fn of this.listeners) fn() }
 }
+// ManagedMediaSource, for an iPhone with iOS 17.1 or later. It can ask
+// the page to stop and start feeding it.
+class Emitter {
+  constructor() { this.handlers = {} }
+  addEventListener(type, fn) { (this.handlers[type] ||= []).push(fn) }
+  emit(type, ev = {}) { for (const fn of this.handlers[type] || []) fn(ev) }
+}
+class FakeManagedSourceBuffer extends Emitter {
+  constructor() { super(); this.updating = false; this.appended = 0 }
+  get buffered() { return { length: 0 } }
+  appendBuffer() {
+    this.appended++
+    this.updating = true
+    queueMicrotask(() => { this.updating = false; this.emit('updateend') })
+  }
+}
+class FakeManagedMediaSource extends Emitter {
+  static isTypeSupported(type) { return type === 'audio/mpeg' }
+  static byUrl = new Map()
+  constructor() { super(); this.readyState = 'closed'; this.ended = false }
+  addSourceBuffer() { this.sb = new FakeManagedSourceBuffer(); return this.sb }
+  endOfStream() { this.readyState = 'ended'; this.ended = true }
+  open() { this.readyState = 'open'; this.emit('sourceopen') }
+  stream(on) { this.emit(on ? 'startstreaming' : 'endstreaming') }
+}
 const realCreateObjectURL = URL.createObjectURL
 let mseUrls = 0
 
@@ -125,6 +156,9 @@ globalThis.Audio = class {
     this._src = v
     const ms = FakeMediaSource.byUrl.get(v)
     if (ms) queueMicrotask(() => ms.open())
+    // WebKit opens a managed source only once remote playback is off.
+    const mms = FakeManagedMediaSource.byUrl.get(v)
+    if (mms && this.disableRemotePlayback) queueMicrotask(() => mms.open())
   }
   setAttribute() {}
   pause() { pauses.push(this._src) }
@@ -187,7 +221,9 @@ beforeEach(async () => {
   clear()
   FakeWebSocket.all = []
   FakeMediaSource.byUrl = new Map()
+  FakeManagedMediaSource.byUrl = new Map()
   delete globalThis.MediaSource
+  delete globalThis.ManagedMediaSource
   relay.latencyMs = 300
   relay.texts = [SAID, SAID_AGAIN]
   relay.queue = []
@@ -230,6 +266,7 @@ afterEach(() => {
   ctrl.stop()
   mock.timers.reset()
   delete globalThis.MediaSource
+  delete globalThis.ManagedMediaSource
   URL.createObjectURL = realCreateObjectURL
   console.debug = realDebug
   console.warn = realWarn
@@ -456,4 +493,106 @@ test('with MediaSource a reply queued behind the cut one never plays', async () 
   await flush()
   assert.equal(audible().length, 1, 'only the first reply ever started')
   assert.equal(ctrl.playing, 0)
+})
+
+// ---------- an iPhone with ManagedMediaSource (iOS 17.1 and later) ----------
+
+function withManagedMediaSource() {
+  globalThis.ManagedMediaSource = FakeManagedMediaSource
+  URL.createObjectURL = (obj) => {
+    if (!(obj instanceof FakeManagedMediaSource)) return realCreateObjectURL(obj)
+    const url = `blob:mms-${++mseUrls}`
+    FakeManagedMediaSource.byUrl.set(url, obj)
+    return url
+  }
+}
+
+test('the diagnostics say which way a session plays its replies', async () => {
+  const played = () => tagged('session:start').map((e) => JSON.parse(e.data).playback)
+  assert.deepEqual(played(), ['held'], 'no streaming source: held')
+  withManagedMediaSource()
+  ctrl.stop()
+  await ctrl.start()
+  assert.deepEqual(played(), ['held', 'managed'])
+})
+
+test('on an iPhone a reply is heard before its speech stream ends, and the trace says so', async () => {
+  withManagedMediaSource()
+  ctrl._trace.begin('t-phone')
+  const ws = await replyUnderway()
+  const [src] = audible()
+  assert.match(src, /^blob:mms-/, 'playback began before the stream ended')
+  const ms = FakeManagedMediaSource.byUrl.get(src)
+  assert.equal(ms.readyState, 'open', 'remote playback was off, so the source opened')
+  assert.equal(ms.sb.appended, 2, 'each chunk went in as it arrived')
+  // The element becomes audible, with the reply's stream still open.
+  ctrl.sink.onplaying()
+  assert.equal(ws.closed, false)
+  const claude = ctrl._trace.current().speakers.claude
+  assert.equal(typeof claude.playback, 'number', 'playback is marked now, not at the end')
+  assert.ok(claude.playback >= claude.first_audio)
+  const stages = ctrl._trace.build().stages.map((st) => st.stage)
+  assert.ok(stages.includes('first_audio_to_playback'))
+  ws.speak({ final: true })
+  await flush()
+  assert.equal(ms.sb.appended, 3)
+  assert.equal(ms.ended, true, 'the source ends with the stream')
+})
+
+test('on an iPhone a barge-in cuts a streaming reply once, and late audio never goes in', async () => {
+  withManagedMediaSource()
+  const ws = await replyUnderway()
+  const [src] = audible()
+  const ms = FakeManagedMediaSource.byUrl.get(src)
+  const t = elapsed()
+  await runUntil(t + 6000, talking(t + 100, t + 2100))
+  assert.equal(tagged('vad:bargeIn').length, 1)
+  assert.equal(aborts(), 1)
+  assert.ok(pauses.includes(src), 'the playing reply was paused')
+  assert.equal(ctrl.playing, 0)
+  assert.equal(ws.closed, true)
+  ws.speak()
+  ms.stream(false)
+  ms.stream(true)
+  await flush()
+  assert.equal(ms.sb.appended, 2, 'late audio never reaches the source')
+  assert.equal(ms.ended, false)
+  assert.deepEqual(sent.map((m) => m.text), [SAID])
+  assert.deepEqual(audible(), [src], 'nothing else played')
+})
+
+test('on an iPhone a reply queued behind the cut one never plays', async () => {
+  withManagedMediaSource()
+  const first = await replyUnderway('claude', REPLY)
+  ctrl.onEvent({ type: 'speaker_end', speaker: 'claude' })
+  const second = await nextSpeaker('gpt', SECOND)
+  ctrl.interrupt()
+  ctrl.onRoundDone()
+  first.speak({ final: true })
+  second.speak({ final: true })
+  mock.timers.tick(10000)
+  await flush()
+  assert.equal(audible().length, 1, 'only the first reply ever started')
+  assert.equal(ctrl.playing, 0)
+})
+
+test('on an iPhone switching voice off stops a streaming reply, and nothing more goes in', async () => {
+  withManagedMediaSource()
+  const ws = await replyUnderway()
+  const [src] = audible()
+  const ms = FakeManagedMediaSource.byUrl.get(src)
+  ms.stream(false)
+  ws.speak()
+  await flush()
+  assert.equal(ms.sb.appended, 2, 'the chunk waits while the source has enough')
+  ctrl.stop()
+  await flush()
+  assert.ok(pauses.includes(src))
+  assert.equal(ctrl.playing, 0)
+  ms.stream(true)
+  ws.speak({ final: true })
+  mock.timers.tick(40000)
+  await flush()
+  assert.equal(ms.sb.appended, 2, 'the held chunk was thrown away')
+  assert.deepEqual(audible(), [src], 'nothing plays after the session ended')
 })

@@ -48,6 +48,15 @@ wrong.
   24 hours, and any seat can read the `voice_latency` diagnostic. Each
   voice stage is also split by the ElevenLabs model that spoke, under
   `by_tts_model`, which is how to compare voice models.
+- For how long a reply's audio waits before you hear it, read
+  `first_audio_to_playback`. On a browser that streams, a reply starts
+  playing as soon as its first audio decodes, unless it's waiting for
+  the seat before it to finish. A browser that can't stream holds the
+  reply until the last of its audio has arrived, and the stage runs
+  until then. An iPhone streams from iOS 17.1. The `session:start` line
+  in a saved voice diagnostics dump names the way that session played:
+  `mse` for a desktop browser, `managed` for an iPhone that streams,
+  and `held` for a browser that can't.
 - For the weight of a conversation, the context ring in the chat header
   shows tokens by component and the megabytes sent again per turn. Or
   ask a seat for the `conversation_performance` diagnostic, which names

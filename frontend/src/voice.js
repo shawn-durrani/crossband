@@ -9,6 +9,7 @@ import { effectiveVolume } from './voiceGain.js'
 import { gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
 import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
 import { StreamPlayer } from './streamPlayer.js'
+import { playbackPath } from './streamFeed.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs, turnOverAfterCut } from './turnPolicy.js'
@@ -596,7 +597,10 @@ export default class VoiceController {
   }
 
   async _startSession() {
-    this._vlog('session:start', { roomMode: this.roomMode, staleRoundActive: this.roundActive })
+    // Which way replies play on this browser (streamFeed.js), so a saved
+    // diagnostics bundle shows whether a phone streamed or held.
+    this._vlog('session:start', { roomMode: this.roomMode, staleRoundActive: this.roundActive,
+                                  playback: playbackPath() })
     // A fresh session starts with a clean gate. The controller outlives
     // stop()/start() (App builds it once), so a gate wedged true by a dead
     // round in the PREVIOUS session would pin this one to barge-in-only
@@ -758,7 +762,7 @@ export default class VoiceController {
   }
 
   // Every reply still to be heard stops now: the one playing, one held
-  // for its whole stream on a browser without MediaSource, and any queued
+  // for its whole stream on a browser that can't stream it, and any queued
   // behind them. Each closes its speech socket, so no more of its audio
   // is made, and drops whatever still arrives. The play chain then drains
   // at once, `playing` returns to 0 and the mic opens.
@@ -1469,6 +1473,9 @@ export default class VoiceController {
     this._bargeIn = rearm()
     const participant = this.getParticipants().find((p) => p.slug === slug)
     const player = new StreamPlayer(this.sink)
+    // The managed path's holds, evictions and fallbacks land in the
+    // diagnostics ring (streamPlayer.js).
+    player.log = (tag, data) => this._vlog(tag, { seat: slug, ...data })
     this.players.set(slug, player)
     this._replies.add(player)
     const ws = new WebSocket(`${wsBase()}/api/voice/tts`)

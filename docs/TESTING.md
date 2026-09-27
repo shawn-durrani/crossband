@@ -96,16 +96,31 @@ again replaces the running loop and never adds a second. The suite
 starts the real voice client twice on one page, with one scripted
 microphone, and counts the loops reading it on every frame.
 
-Talking over a reply stops it straight away, on an iPhone too. On an
-iPhone the app can't stream a reply's audio, so it holds the audio
-until the whole reply has arrived, and a cut stops it while it waits.
-Audio for a cut reply never plays, whether it turns up after the cut or
-after voice is switched off. A reply queued behind the cut one never
-plays either. Speech that carries on after the cut is the same barge-in,
-so it cuts once, the mic opens and the words are sent. A new reply or a
+### Playing a reply and cutting it off
+
+Talking over a reply stops it straight away, on an iPhone too. A
+desktop browser plays a reply's audio as it arrives, and so does an
+iPhone with iOS 17.1 or later. Any other browser holds the audio until
+the whole reply has arrived, and a cut stops it while it waits. Audio
+for a cut reply never plays, whether it turns up after the cut or after
+voice is switched off. A reply queued behind the cut one never plays
+either. Speech that carries on after the cut is the same barge-in, so
+it cuts once, the mic opens and the words are sent. A new reply or a
 new round can be cut again. The suite talks over a reply through the
 real voice client's listening loop, with a scripted microphone and
-clock, on the iPhone's kind of player and on the streaming kind.
+clock, on all three kinds of player.
+
+On an iPhone that streams, a reply starts playing as its first audio
+arrives, and the voice trace marks it heard while the rest is still on
+its way. Safari's streaming source can ask the app to stop sending
+audio when it has plenty. The app then keeps new audio back until
+Safari asks again or runs out of audio to play. Safari can also throw
+away audio it holds. Throwing away audio already heard changes nothing.
+When the gap is where playback has got to, playback jumps to the audio
+after it. If Safari's stream fails before a word is heard,
+the reply plays whole once all of it has arrived. A blocked autoplay is
+reported as it is on every other path. The suites run each case
+against a fake of Safari's streaming source.
 
 ### Identity and the live turn
 
