@@ -43,8 +43,8 @@ A word that lands on a voice the label doesn't list (it spoke for less
 than OTHER_VOICE_MIN_S) goes to the main voice, not sure.
 
 THE LABEL. Every voice listed gets its session name when the naming has
-named it, and "Voice N" (its session number) otherwise, which reads as
-uncertain everywhere: the chips show it with a question mark, and the
+named it, and "Voice N" (the number it shows as) otherwise, which reads
+as uncertain everywhere: the chips show it with a question mark, and the
 AIs read "unidentified speaker", never the owner. The payload is the one
 the UI and the seats already render: `crosstalk: true`, `overlap`, and
 `segments` [{label, text, uncertain}] in time order, with a segment
@@ -247,8 +247,10 @@ def split(attributed, label_of, main, unsure_labels=()):
 
 
 def ordinal(slot) -> str:
-    """The label a session voice carries until it is named."""
-    return f"Voice {slot}"
+    """The label a session voice carries until it is named, by the number
+    it shows as (voice_sessions.shown_number)."""
+    from .voice_sessions import shown_number
+    return f"Voice {shown_number(slot)}"
 
 
 def label(got, listed, entry, source="session"):

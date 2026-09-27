@@ -252,6 +252,22 @@ def test_a_voice_still_listening_is_voice_n_and_never_sure():
         False, True, True]
 
 
+def test_a_split_off_voice_reads_like_any_other():
+    """The bank check numbers a voice it splits off from 100, clear of the
+    tracker's 1 to 8. Still listening in a two-voice turn, it shows as
+    the next voice after the tracker's, never as "Voice 100" (#540)."""
+    voices = {1: _voice(name=OWNER, seconds=1.9, first=0.0),
+              100: _voice(state="listening", seconds=1.4, first=1.6),
+              101: _voice(state="listening", seconds=1.2, first=2.0)}
+    spans = SPANS[:2] + [_span(100, 1.6, 1.9, True), _span(100, 1.9, 3.0)]
+    payload = crosstalk.label(_got(voices, spans), [1, 100, 101], _entry())
+    assert payload["labels"] == [OWNER, "Voice 9", "Voice 10"]
+    assert payload["uncertain"] == ["Voice 9", "Voice 10"]
+    assert [s["label"] for s in payload["segments"]] == [
+        OWNER, OWNER, "Voice 9"]
+    assert [vss.shown_number(n) for n in (1, 8, 100, 101)] == [1, 8, 9, 10]
+
+
 def test_the_seats_hear_an_unidentified_speaker_never_the_owner():
     cfg = {"user_name": OWNER, "room_mode": True}
     msg = {"speaker": "user", "content": TEXT, "voice_turn_id": "t1",

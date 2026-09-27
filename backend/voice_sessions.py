@@ -219,6 +219,7 @@ BANK_CHECK_MIN_S = LISTEN_MIN_S  # the voice's clean speech in the turn
 BANK_CHECK_SURE = 0.99          # its probability for the person it is
 BANK_CHECK_NOT = 0.01           # and for the person its voice says
 SPLIT_SLOT_BASE = 100           # split-off voices are numbered from here
+TRACKER_VOICES = 8              # the tracker numbers its voices 1 to 8
 # THE SHORT-TURN CHECK's bar, in calibrated probability: a turn too short
 # to fingerprint, scored whole, that gives its voice's person this much or
 # less is left unnamed. On the voice rig the misfiled road reply scored
@@ -1077,8 +1078,18 @@ def bank_home(voices, slot, pid, allowed, snapshot):
 
 def split_slot(voices):
     """The number for a new split-off voice: SPLIT_SLOT_BASE or more, never
-    one the tracker's voices use."""
+    one the tracker's voices use. A label shows it as shown_number."""
     return max([SPLIT_SLOT_BASE - 1] + list(voices)) + 1
+
+
+def shown_number(slot):
+    """The number a session voice shows as until it's named ("Voice 2"):
+    the tracker's own for its voices, and for a split-off voice the next
+    numbers after the tracker's, so it reads like any other voice and
+    never like one of the tracker's."""
+    if slot >= SPLIT_SLOT_BASE:
+        return TRACKER_VOICES + 1 + slot - SPLIT_SLOT_BASE
+    return slot
 
 
 def topk_mean(query, clips, k=None):
