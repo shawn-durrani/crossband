@@ -226,7 +226,9 @@ def test_low_trust_pause_honours_the_already_seated_exception(app):
 
 def test_a_saved_clip_stamps_the_match_score(app):
     """The score a clip was saved at rides it (#221), so a bank that
-    outlives its human backing can be judged by it."""
+    outlives its human backing can be judged by it, and so do its units
+    (#523): the calibrated scorer's probability is stamped as such, and
+    the fallback scorer's cosine carries no stamp."""
     with TestClient(app, base_url="http://127.0.0.1"):
         from backend import voice_pass, voice_sessions
         store = anchors.store()
@@ -238,5 +240,82 @@ def test_a_saved_clip_stamps_the_match_score(app):
                "clean_spans": [(0.0, 5.0)], "voices_in_turn": 1}
         assert voice_pass._bank(1, got, _pcm(5.0), 16000, {})
         clips = store._load()["people"][pid]["clips"]
-        assert clips and all(c.get("match_score") == 0.71 for c in clips)
+        assert clips and all(c.get("match_score") == 0.995
+                             and c.get("match_unit") == "calibrated"
+                             for c in clips)
         assert {c["source"] for c in clips} == {"accumulated"}
+        sam = store.ensure_person("Sam")
+        fallback = dict(got, pid=sam, voice=1, method="multi", prob=None)
+        assert voice_pass._bank(1, fallback, _pcm(5.0, amp=5000), 16000, {})
+        clips = store._load()["people"][sam]["clips"]
+        assert clips and all(c.get("match_score") == 0.71
+                             and "match_unit" not in c for c in clips)
+
+
+def test_the_trust_bar_reads_each_score_in_its_own_units():
+    """#523: a probability is measured against TRUST_PROB_BAR and a cosine
+    against TRUST_SCORE_BAR, so a bank holding both kinds is judged fairly
+    and a bank of one kind is judged as its median against its bar."""
+    def calib(i, p):
+        return _auto(i, p) | {"match_unit": "calibrated"}
+    assert anchors.TRUST_PROB_BAR == 0.5
+    sure = {"clips": [calib(i, 0.97) for i in range(4)], "vouched_at": 1.0}
+    doubtful = {"clips": [calib(i, 0.3) for i in range(4)],
+                "vouched_at": 1.0}
+    assert anchors.bank_trust(sure) == "high"
+    assert anchors.bank_trust(doubtful) == "low"
+    # 0.55 is a weak cosine but a fair chance: the units decide
+    assert anchors.bank_trust({"clips": [calib(i, 0.55) for i in range(4)],
+                               "vouched_at": 1.0}) == "high"
+    assert anchors.bank_trust({"clips": [_auto(i, 0.55) for i in range(4)],
+                               "vouched_at": 1.0}) == "low"
+    # mixed: strong probabilities and strong cosines keep working, and a
+    # bank that's weak in both units still pauses
+    mixed = {"clips": [calib(0, 0.99), calib(1, 0.98), _auto(2, 0.62),
+                       _auto(3, 0.7)], "vouched_at": 1.0}
+    assert anchors.bank_trust(mixed) == "high"
+    weak = {"clips": [calib(0, 0.2), calib(1, 0.4), _auto(2, 0.5),
+                      _auto(3, 0.55)], "vouched_at": 1.0}
+    assert anchors.bank_trust(weak) == "low"
+
+
+def test_rescoring_rewrites_only_old_scores_and_only_once(app):
+    """#523: set_trust_scores moves a clip's cosine into calibrated units
+    once, keeps the old number beside it, and changes nothing else: a
+    clip with no score, a clip already in the new units, and every clip
+    file and set-aside flag stay as they were."""
+    with TestClient(app, base_url="http://127.0.0.1"):
+        store = anchors.store()
+        pid = store.ensure_person("Alex")
+        store.add_clip(pid, _pcm(3.0, amp=6000), 16000, source="introduction")
+        store.add_clip(pid, _pcm(3.0, amp=5500), 16000, source="accumulated",
+                       score=0.62)
+        store.add_clip(pid, _pcm(3.0, amp=5000), 16000, source="accumulated",
+                       score=0.996, score_unit="calibrated")
+        before = store._load()["people"][pid]["clips"]
+        by_score = {c.get("match_score"): c["file"] for c in before}
+        probs = {c["file"]: 0.93 for c in before}
+        done = store.set_trust_scores(probs)
+        assert done == {"clips": 1, "people": 1}
+        after = {c["file"]: c for c in store._load()["people"][pid]["clips"]}
+        old = after[by_score[0.62]]
+        assert old["match_score"] == 0.93
+        assert old["legacy_match_score"] == 0.62
+        assert old["match_unit"] == "calibrated"
+        assert after[by_score[0.996]]["match_score"] == 0.996
+        assert "match_score" not in after[by_score[None]]
+        assert set(after) == {c["file"] for c in before}
+        assert [bool(c.get("quarantined")) for c in after.values()] == \
+            [bool(c.get("quarantined")) for c in before]
+        # a second run finds nothing to change, whatever it's handed
+        assert store.set_trust_scores({f: 0.1 for f in after}) == \
+            {"clips": 0, "people": 0}
+        again = {c["file"]: c for c in store._load()["people"][pid]["clips"]}
+        assert again[by_score[0.62]]["match_score"] == 0.93
+        # a probability that isn't one is never written
+        store.add_clip(pid, _pcm(3.0, amp=4500), 16000, source="accumulated",
+                       score=0.61)
+        new = next(c for c in store._load()["people"][pid]["clips"]
+                   if c.get("match_score") == 0.61)
+        assert store.set_trust_scores({new["file"]: float("nan")}) == \
+            {"clips": 0, "people": 0}

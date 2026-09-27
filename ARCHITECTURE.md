@@ -33,7 +33,8 @@ crosstalk.py    - splits a two-voice turn's words by voice, from the
 voice_ask.py    - answers "who's this?" from what someone says
 voiceid.py      - the speaker model and the matcher; anchors.py is the
                   clip store, introductions.py the phrase and seating layer
-voice_calibration.py - the calibrated scorer and voice readiness
+voice_calibration.py - the calibrated scorer, voice readiness, and the
+                  clip audit and trust scores that run on it
 voice_recording.py - checks and cuts a voice recorded on the Voices page
 tts_v3.py       - how replies are shaped for the Eleven v3 voices
 accounting.py   - cost with provenance; provenance.py defines the axes

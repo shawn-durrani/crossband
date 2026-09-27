@@ -624,6 +624,8 @@ clips all come from one day, each clip leaves on its own.
 The work runs on its own thread, at startup and after every change to
 a bank, and lets any live voice check go first. The first run after a
 start takes a few minutes, and later runs only fingerprint new clips.
+After each run, the same thread moves older clip scores into its units
+and runs the [hygiene guard](#how-the-guard-judges-a-clip).
 Fingerprints stay in memory and are never written anywhere.
 [ERes2Net](https://github.com/modelscope/3D-Speaker) is a speaker model
 from the 3D-Speaker project under the Apache 2.0 licence. It's about
@@ -659,10 +661,10 @@ can say what stopped the name.
 
 ## The models themselves
 
-The fallback scorer and the hygiene audit run `nemo_en_titanet_small`,
-Nvidia's
+The fallback scorer runs `nemo_en_titanet_small`, Nvidia's
 [NeMo TitaNet-Small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small)
-speaker model, which the app calls the matcher. It's about 38MB and
+speaker model, which the app calls the matcher. The hygiene audit uses
+it too while the calibrated scorer is off. It's about 38MB and
 licensed
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/), which lets
 anyone use it as long as Nvidia is credited. It runs on your computer
@@ -731,7 +733,9 @@ the turn unnamed.
 - The hygiene guard audits the stored voices whenever they change. A
   stored clip that sounds more like a different person than its own
   is set aside, kept on disk, shown as "clips set aside" under
-  Remembered voices, and left out of naming. Two people whose stored
+  Remembered voices, and left out of naming.
+  [How the guard judges a clip](#how-the-guard-judges-a-clip) has the
+  rule. Two people whose stored
   voices sit too close are flagged behind the settings button ("Alex
   and Sam sound close - matching is stricter"), and the matcher's own
   checks demand a wider margin between those two.
@@ -743,6 +747,26 @@ the turn unnamed.
 - Tapping a named turn to correct it fixes the label and feeds the
   corrected audio to the right person as ground truth. That's the
   fastest way to pull two confusable voices apart.
+
+### How the guard judges a clip
+
+With the calibrated scorer on, the guard asks the scorer that names
+voices. Each stored clip is scored against every other person's clips,
+and against the rest of its own person's. The clips cut from the same
+turn are left out of their own bank together, since a slice can't
+vouch for its own turn. The clip is set aside when someone else scores
+higher. Every clip is judged against every clip, set aside or not, so
+the same banks always get the same answer. The guard runs after each of
+the scorer's builds, and a build follows every change to a bank.
+
+With the scorer off, or before its first build, the guard uses the
+matcher alone. A clip is set aside when it sits closer to another
+person's average fingerprint than to its own person's, with the clip
+itself left out.
+
+Either way, a clip that isn't speech at all is set aside first. The
+close pairs always come from the matcher's average fingerprints,
+because the matcher's own checks are what widen the margin for them.
 
 ## The owner's ear
 
@@ -779,11 +803,26 @@ clips a human stood behind, but you can delete or move them, and the
 hygiene guard can set them aside. When none is left in the bank, those
 scores decide the bank's standing. Weak scores pause naming until your
 ear confirms the voice again, and strong scores keep it working, with a
-note under Remembered voices. Weak means a middle score under 0.6, so a
-voice that saves its clips cleanly keeps working even when its scores
-never run high. The exception for someone already seated applies to
-this pause too. Clips stored before scores were recorded carry none,
-and a bank made of those keeps working.
+note under Remembered voices. The exception for someone already seated
+applies to this pause too. Clips stored before scores were recorded
+carry none, and a bank made of those keeps working.
+
+Weak means a middle score under the bar, and the bar depends on the
+scorer. With the calibrated scorer, a clip's score is the chance its
+voice is that person, and the bar is 0.5, more likely them than not.
+A clip is saved when its voice is named at 0.99, but one clip on its
+own is much less sure than a whole session's speech. With the fallback
+scorer, the score is the matcher's and the bar is 0.6, the score it
+saves a clip at. A voice that saves its clips cleanly keeps working
+either way, even when its scores never run high.
+
+A clip saved by the fallback scorer carries the matcher's score. After
+each of the calibrated scorer's builds, any clip still scored that way
+gets its chance instead, once. The clip is scored whole against every
+bank, with the clips cut from its own turn left out of its own. The old
+score is kept beside the new one, and nothing else about the clip
+changes. A bank holding both kinds of score is judged by how far each
+one clears its own bar.
 
 ## The durable home
 

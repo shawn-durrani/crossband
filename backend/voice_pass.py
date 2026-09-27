@@ -201,9 +201,13 @@ def _bank(chat_id, got, pcm, sample_rate, cfg):
         return False
     start, end = max(spans, key=lambda s: s[1] - s[0])
     clip = vss.span_pcm(pcm, sample_rate, [(start, end)])
-    added = anchors.store().add_clip(got["pid"], clip, sample_rate,
-                                     source="accumulated",
-                                     score=got.get("score"))
+    # The score the clip is later trusted by, in its own units (#523):
+    # the calibrated scorer's probability, or the fallback's cosine.
+    calibrated = got.get("method") == "calibrated"
+    added = anchors.store().add_clip(
+        got["pid"], clip, sample_rate, source="accumulated",
+        score=got.get("prob") if calibrated else got.get("score"),
+        score_unit=anchors.CALIBRATED_UNIT if calibrated else None)
     if added:
         voiceid.audit_banks_if_changed(cfg)
     return added
