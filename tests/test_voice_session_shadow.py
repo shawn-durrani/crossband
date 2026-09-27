@@ -86,7 +86,8 @@ def fakes(app, monkeypatch):
     monkeypatch.setattr(vss, "_request", diar)
     monkeypatch.setattr(voice_shadow, "gate", lambda pcm, sr: None)
     monkeypatch.setattr(voice_shadow, "embed", lambda m, p, s, c: ALEX)
-    monkeypatch.setattr(vss, "bank", lambda cands, sr, cfg, before: {
+    monkeypatch.setattr(vss, "bank", lambda cands, sr, cfg, before,
+                        embed_fn=None: {
         "alex": {"name": "Alex", "clips": [ALEX]},
         "sam": {"name": "Sam", "clips": [SAM]}})
     monkeypatch.setattr(vss, "_bar", lambda *a, **k: dict(BAR, source="t"))
@@ -698,3 +699,75 @@ def test_the_async_wait_polls_without_a_thread():
     vss._resolve("done", {"state": "named", "name": "Sam"})
     assert asyncio.run(vss.await_turn("done"))["name"] == "Sam"
     vss._reset_for_tests()
+
+
+# ---------- 10. warming: the first live turn finds the caches full ----------
+
+def _one_person_store():
+    store = anchors.store()
+    pid = store.ensure_person("Sam")
+    for amp in (3000, 3100, 3200, 3300):
+        assert store.add_clip(pid, speech_pcm(2.0, amp=amp), SR,
+                              source="introduction")
+    return pid
+
+
+def test_a_warm_embeds_every_clip_so_the_first_turn_embeds_none(
+        app, monkeypatch):
+    _one_person_store()
+    calls = []
+    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
+    monkeypatch.setattr(vss, "embed_live",
+                        lambda pcm, sr, cfg: calls.append(len(pcm)) or SAM)
+    monkeypatch.setattr(voice_shadow, "embed",
+                        lambda m, p, s, c: calls.append(len(p)) or SAM)
+    voice_shadow._reset_for_tests()
+    vss._warm(CFG)
+    warmed = len(calls)
+    assert warmed >= 4
+    from backend import diarize
+    cands = diarize.remembered_candidates()
+    people = vss.bank(cands, SR, CFG, before=vss.time.time() + 1,
+                      embed_fn=lambda p: vss.embed_live(p, SR, CFG))
+    vss._bar(people, cands, SR, CFG, False)
+    assert len(calls) == warmed          # nothing left to embed
+    assert not vss._warming.is_set()
+
+
+def test_the_live_turn_never_waits_on_the_shadows_embedder(app, monkeypatch):
+    """The shadow's embed waits for the live check to finish; the live
+    check is waiting on this turn. So the live path embeds bank clips with
+    embed_live and never calls the shadow's embed for them."""
+    pid = _one_person_store()
+    monkeypatch.setattr(voice_shadow, "embed", lambda *a: pytest.fail(
+        "the live bank must not use the shadow's embed"))
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    voice_shadow._reset_for_tests()
+    people = vss.bank([{"person_id": pid, "name": "Sam"}], SR, CFG,
+                      before=vss.time.time() + 1,
+                      embed_fn=lambda p: vss.embed_live(p, SR, CFG))
+    assert people[pid]["clips"]
+
+
+def test_warming_is_off_with_the_session_test_and_runs_once_at_a_time(
+        monkeypatch):
+    started = []
+    monkeypatch.setattr(vss.threading, "Thread",
+                        lambda **kw: type("T", (), {
+                            "start": lambda self: started.append(kw["name"])})())
+    vss._warming.clear()
+    assert vss.start_warm({}) is False and started == []
+    assert vss.start_warm(CFG) is True
+    assert vss.start_warm(CFG) is False          # one at a time
+    assert started == ["voice-session-warm"]
+    vss._warming.clear()
+
+
+def test_a_new_voice_chat_starts_a_warm(fakes, monkeypatch):
+    warmed = []
+    monkeypatch.setattr(vss, "start_warm", lambda cfg: warmed.append(1))
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: ALEX)
+    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [])
+    vss.feed(3, _turn(0.3), SR, LIVE_CFG)
+    vss.feed(3, _turn(0.3), SR, LIVE_CFG)
+    assert warmed == [1]                          # once per new feed

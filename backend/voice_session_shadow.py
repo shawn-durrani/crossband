@@ -215,11 +215,63 @@ def end_turn(chat_id, turn_id, cfg):
 def _feed_for(chat_id, cfg):
     with _lock:
         f = _feeds.get(chat_id)
-        if f is None or not f.alive:
+        fresh = f is None or not f.alive
+        if fresh:
             f = _Feed(chat_id, cfg)
             _feeds[chat_id] = f
             f.start()
-        return f
+    if fresh:
+        # A voice chat is starting: make sure every saved voice is embedded
+        # before its first turn ends. A no-op when the caches are warm.
+        start_warm(cfg)
+    return f
+
+
+# ================= warming ==================================================
+# The first live turn after a restart took 5.4 s on 27 September, because
+# every saved clip was embedded then, on the turn's clock, while the live
+# check waited. start_warm() does that work at startup and when a voice
+# chat begins, on its own thread, so the first turn finds the caches full.
+
+WARM_READY_WAIT_S = 120.0       # how long a warm waits for the model to load
+_warming = threading.Event()
+
+
+def start_warm(cfg) -> bool:
+    """Embed every remembered person's clips in the background, once at a
+    time. True when a warm started."""
+    if not enabled(cfg) or _warming.is_set():
+        return False
+    _warming.set()
+    threading.Thread(target=_warm, args=(dict(cfg),), daemon=True,
+                     name="voice-session-warm").start()
+    return True
+
+
+def _warm(cfg):
+    """The warm itself (its own thread): wait for the speaker model, then
+    fill the clip cache the naming reads and the anchors its bar uses."""
+    from . import diarize
+    t0 = time.perf_counter()
+    try:
+        deadline = time.monotonic() + WARM_READY_WAIT_S
+        while voiceid._get_extractor(cfg) is None:
+            if time.monotonic() >= deadline:
+                log.info("session naming warm: speaker model not ready")
+                return
+            time.sleep(0.25)
+        candidates = diarize.remembered_candidates()
+        people = bank(candidates, SAMPLE_RATE, cfg,
+                      before=time.time() + 1.0,
+                      embed_fn=lambda pcm: embed_live(pcm, SAMPLE_RATE, cfg))
+        _bar(people, candidates, SAMPLE_RATE, cfg, False)
+        log.info("session naming warm: people=%d clips=%d ms=%.0f",
+                 len(people), sum(len(p["clips"]) for p in people.values()),
+                 (time.perf_counter() - t0) * 1000)
+    except Exception:
+        log.debug("session naming warm failed", exc_info=True)
+    finally:
+        _warming.clear()
 
 
 def embed_live(pcm, sample_rate, cfg):
@@ -576,7 +628,7 @@ def _session_for(chat_id, base, now):
 
 # ================= the bank, as it stood when the session opened ============
 
-def bank(candidates, sample_rate, cfg, before):
+def bank(candidates, sample_rate, cfg, before, embed_fn=None):
     """{pid: {"name", "clips"}} like voice_shadow.build_multi, but without
     any clip added at or after `before` (epoch seconds), so audio the live
     path banked during this session never scores this session's voices.
@@ -602,7 +654,8 @@ def bank(candidates, sample_rate, cfg, before):
             with voice_shadow._lock:
                 emb = voice_shadow._clip_cache.get(key)
             if emb is None:
-                emb = voice_shadow.embed("small", pcm, sample_rate, cfg)
+                emb = embed_fn(pcm) if embed_fn else voice_shadow.embed(
+                    "small", pcm, sample_rate, cfg)
                 if emb is None:
                     continue
                 with voice_shadow._lock:
@@ -722,7 +775,7 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         # A second's grace: a clip banked by the live pass that opened the
         # session carries a timestamp just after the session's own.
         people = bank(candidates, sample_rate, cfg,
-                      before=sess["opened_at"] - 1.0)
+                      before=sess["opened_at"] - 1.0, embed_fn=embed_fn)
         bar = _bar(people, candidates, sample_rate, cfg, pending)
         named = name_voices(sess["voices"], people, bar)
         main = main_voice(spans)

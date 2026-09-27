@@ -29,6 +29,7 @@ from . import tools as tools_mod
 from . import voice_trace
 from . import voice
 from . import voice_calibration
+from . import voice_session_shadow
 from . import voiceid
 from .config import (ROOT, Settings, mmc_migration_state, key_status,
                      load_settings, report_missing_keys)
@@ -256,6 +257,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # on their own worker thread, only while the setting is on.
         if voice_calibration.start(settings.as_cfg()):
             log.info("voice readiness building in the background")
+        # #482: the session naming's saved voices, embedded before the first
+        # voice turn needs them, only while the session test is on.
+        if voice_session_shadow.start_warm(settings.as_cfg()):
+            log.info("session naming warming in the background")
         # #138 slice 1: one vetted egress path for every model-influenced
         # URL. Tools discover the proxy via egress.proxy_url() - a module
         # global bound to this process, exactly like the events bus above.
