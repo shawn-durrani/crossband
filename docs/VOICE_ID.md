@@ -175,10 +175,10 @@ stateDiagram-v2
 The app listens for spoken introductions, like "say hi to Alex" or "my
 mate Dave is here", and for the mode commands "group mode" and "solo
 mode". It also hears a spoken name correction, a change to how hard a
-seat should think, and "research more", which turns on
-[research mode](WEB_RESEARCH.md#research-mode). A small, cheap model
-reads every turn you send once and says which of these it holds, so an
-unusual phrasing lands the same way a common one does. It reads typed
+seat should think, a request for a stronger model, and "research more",
+which turns on [research mode](WEB_RESEARCH.md#research-mode). A small,
+cheap model reads every turn you send once and says which of these it
+holds, so an unusual phrasing lands the same way a common one does. It reads typed
 turns as well as spoken ones, whether or not room mode is on.
 
 - Recognising a voice needs no wording at all. The voice check names a

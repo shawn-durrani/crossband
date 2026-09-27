@@ -6,9 +6,10 @@ memory included. "Back to normal" turns it off. A new chat starts at the
 defaults. Per chat, never per seat (the owner's decision of 17 September):
 one tool-budget pool, and everyone in the room shares it.
 
-The cue also asks for a stronger model for every seat in the chat (the
-owner's decision of 4 September): introductions.scan_user_turn runs that
-after this module has applied the mode (model_step.step_up, #254).
+The cue never changes which model a seat runs. Research asks for an
+answer, not a different model (the owner's decision of 27 September, which
+replaces the one of 4 September): only a standing "think harder" or an
+explicit ask for a stronger model reaches model_step.step_up (#254).
 
 Same shape as depth.py: the merged intent scan (backend/intent.py) is the
 judge, introductions.scan_user_turn applies the confirmed verdict on a

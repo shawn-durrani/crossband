@@ -1,8 +1,9 @@
 """One fixture is one user turn and what the app should hear in it, graded
-by hand, across the five axes the merged classifier returns: a room mode
+by hand, across the six axes the merged classifier returns: a room mode
 switch, introductions and departures (with aliases), name corrections, a
-reasoning depth change, and a research request. Every fixture is made up:
-placeholder people, placeholder topics."""
+reasoning depth change, a research request, and an explicit ask for a
+stronger model. Every fixture is made up: placeholder people, placeholder
+topics."""
 
 from dataclasses import dataclass, field
 
@@ -10,7 +11,7 @@ MODE_VALUES = ("on", "off", "none")
 RESEARCH_VALUES = ("more", "none")
 DEPTHS = ("deep", "quick", "max", "normal")
 AXES = ("mode_command", "introductions", "departures", "aliases",
-        "corrections", "depth", "research")
+        "corrections", "depth", "research", "stronger_model")
 
 
 class FixtureError(ValueError):
@@ -19,7 +20,8 @@ class FixtureError(ValueError):
 
 def empty_verdict() -> dict:
     return {"mode_command": "none", "introductions": [], "departures": [],
-            "aliases": {}, "corrections": [], "depth": [], "research": "none"}
+            "aliases": {}, "corrections": [], "depth": [], "research": "none",
+            "stronger_model": []}
 
 
 @dataclass
@@ -39,7 +41,8 @@ class Fixture:
         e = self.expected
         return (e["mode_command"] != "none" or bool(e["introductions"])
                 or bool(e["departures"]) or bool(e["corrections"])
-                or bool(e["depth"]) or e["research"] != "none")
+                or bool(e["depth"]) or e["research"] != "none"
+                or bool(e["stronger_model"]))
 
     @staticmethod
     def from_dict(d: dict, source: str = "<unknown>") -> "Fixture":
@@ -60,7 +63,7 @@ class Fixture:
         if expected["research"] not in RESEARCH_VALUES:
             raise FixtureError(f"{source}: fixture {d['id']!r} research "
                                f"{expected['research']!r} not in {RESEARCH_VALUES}")
-        for key in ("introductions", "departures"):
+        for key in ("introductions", "departures", "stronger_model"):
             if not isinstance(expected[key], list) or not all(
                     isinstance(n, str) and n for n in expected[key]):
                 raise FixtureError(f"{source}: fixture {d['id']!r} {key} must be a list of names")

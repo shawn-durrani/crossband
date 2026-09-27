@@ -58,7 +58,7 @@ supervisor as [OPERATIONS.md](OPERATIONS.md) describes.
 | `anthropic_model` | `claude-opus-4-8` | The model for the default Claude seat. It seeds the seat on first run, and after that you edit seats on the Models page. |
 | `openai_model` | `gpt-5.1` | The model for the default GPT seat, with the same seed rule. |
 | `utility_model` | `claude-haiku-4-5` | The cheap model behind rolling summaries, auto-titles, project distillation, and the one call that reads every message you send for an instruction. That covers typed and spoken turns, with room mode on or off, and skips a `/` message. A `gpt-*` value routes to OpenAI. |
-| `model_step_up` | `true` | A standing "think harder" or "research more" also moves each seat it names to a stronger model for that chat, found from the provider's model list, the price card and one web search. `false` keeps both to depth and research. [MODELS.md](MODELS.md#a-stronger-model-for-one-chat). |
+| `model_step_up` | `true` | Asking for a stronger model, or a standing "think harder", moves each seat it names to one for that chat, found by one web search. Research mode never moves a model. `false` keeps "think harder" to depth alone. [MODELS.md](MODELS.md#a-stronger-model-for-one-chat). |
 | `pricing` | the built-in rate card | Per-model `{input, output}` prices per million tokens, with provenance. Matched by exact model id, then an entry's `aliases`, then a date-stamped reissue of the same model. There's no family fallback, so an unknown model stays unpriced. |
 
 ### Pricing a model

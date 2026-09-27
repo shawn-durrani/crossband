@@ -709,8 +709,15 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # before anything reads participant["model"], so the call, its cost
         # stamp, the seat trace and the latency trace all name the model the
         # turn really ran on. `stepped_from` is the configured model.
-        step = model_step.live_step(
-            participant, state.get("seat_models", {}).get(participant["slug"]))
+        stored = state.get("seat_models", {}).get(participant["slug"])
+        step = model_step.live_step(participant, stored)
+        if stored and not step:
+            # The owner moved this seat on the Models page after the chat
+            # stepped it up. Their choice wins: the step-up is cleared, and
+            # one line says what the seat runs on now, just before the
+            # reply that runs on it.
+            await asyncio.to_thread(model_step.end_after_settings_change,
+                                    chat_id, participant, stored)
         if step:
             participant = {**participant, "model": step["model"],
                            "stepped_from": step["from"]}

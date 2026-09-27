@@ -30,9 +30,54 @@ def test_builtin_corpus_loads_and_covers_the_named_cases():
     assert len(ids) == len(set(ids))
     cats = {f.category for f in fixtures}
     assert {"depth_missed_wording", "depth_negative", "research",
-            "research_negative", "two_intents", "plain_chat"} <= cats
+            "research_negative", "two_intents", "plain_chat",
+            "stronger_model", "stronger_model_negative"} <= cats
     assert any(not f.has_intent for f in fixtures)
     assert any(ch["once"] for f in fixtures for ch in f.expected["depth"])
+
+
+def test_corpus_grades_research_as_no_model_change():
+    """The 27 September field test: "can you do some research?" turned
+    research mode on and moved every seat to a stronger model nobody asked
+    for. The corpus grades the owner's kinds of wording as research alone,
+    and the app's own rule (model_step.targets) moves no seat for any of
+    them. An explicit ask for a stronger model, and a standing "think
+    harder", still move one."""
+    from backend import model_step
+    roster = [{"slug": "claude", "name": "Claude"},
+              {"slug": "gpt", "name": "GPT"}]
+    fixtures = load_fixtures()
+    research = [f for f in fixtures if f.category == "research"]
+    texts = " ".join(f.text.lower() for f in research)
+    for wording in ("do some research", "find me an answer", "look it up",
+                    "research this properly"):
+        assert wording in texts, wording
+    for f in research:
+        assert f.expected["research"] == "more", f.id
+        assert f.expected["stronger_model"] == [], f.id
+        assert model_step.targets(f.expected, roster) == [], f.id
+    asks = [f for f in fixtures if f.category == "stronger_model"]
+    assert len(asks) >= 3
+    assert all(model_step.targets(f.expected, roster) for f in asks)
+    assert [p["slug"] for p in model_step.targets(
+        _fx("depth_think_harder").expected, roster)] == ["claude"]
+    for f in fixtures:
+        if f.category == "stronger_model_negative":
+            assert f.expected["stronger_model"] == [], f.id
+
+
+def test_a_stronger_model_ask_is_its_own_axis():
+    fx = _fx("model_and_think_harder")
+    same = {**empty_verdict(), "stronger_model": ["gpt"],
+            "depth": [{"seat": "GPT", "depth": "deep", "once": False}]}
+    assert Result(fixture=fx, strategy="merged", heard=same).wrong_axes() == []
+    r = Result(fixture=fx, strategy="merged",
+               heard={**same, "stronger_model": []})
+    assert r.wrong_axes() == ["stronger_model"]
+    assert silent_misses(_fx("model_best_all")) == ["stronger_model"]
+    with pytest.raises(FixtureError):
+        Fixture.from_dict({"id": "x", "category": "c", "text": "t",
+                           "expected": {"stronger_model": "all"}})
 
 
 def test_corpus_grades_hold_back_requests_as_no_instruction():

@@ -7,7 +7,10 @@ job. These tests pin what a stored step-up does once it exists:
    and a row stays alive while any of depth, a parked one-reply override
    or a step-up is set, so clearing one never drops another.
 2. live_step: an owner's edit to the seat's model in settings beats a
-   spoken step-up, because the row names the model it replaced.
+   spoken step-up, because the row names the model it replaced. At the
+   seat's next reply the stale step-up is cleared and one line says what
+   the seat runs on now, just before the reply that runs on it (the
+   owner's decision of 27 September).
 3. The round: the seat's call runs on the stepped-up model with its own
    slug, name and persona, is told so in the VOLATILE block (cache layout
    law), and the persisted turn records both the model it ran on and the
@@ -255,6 +258,68 @@ def test_a_settings_edit_beats_the_step_up(app, monkeypatch):
         claude, cfg = next((p, g) for p, g in captured if p["slug"] == "claude")
         assert claude["model"] == "claude-sonnet-5"
         assert cfg["model_note"] == ""
+
+
+def _usage_model(m):
+    return json.loads(m["usage_json"] or "{}").get("model")
+
+
+def test_the_owners_models_page_change_mid_chat_ends_the_step_up(app, monkeypatch):
+    """The owner steps Claude up by voice, then picks another model for the
+    seat on the Models page. Their choice wins: the next reply runs on it,
+    one line just before that reply says so, the chat's step-up is gone,
+    and later replies post nothing more."""
+    async def stream_reply(participant, roster, transcript, names, cfg, project,
+                           chat_summary, voice_mode, tools=None, memory=None):
+        yield ("text", "ok")
+        yield ("usage", {"input": 10, "cache_read": 0, "cache_creation": 0,
+                         "output": 5})
+
+    monkeypatch.setattr(engine.providers, "stream_reply", stream_reply)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _step(chat_id)
+        _send(c, chat_id)
+        first = [m for m in _messages(c, chat_id) if m["speaker"] == "claude"]
+        assert _usage_model(first[-1]) == "claude-opus-5"
+
+        seat = next(p for p in c.get("/api/state").json()["participants"]
+                    if p["slug"] == "claude")
+        r = c.patch(f"/api/participants/{seat['id']}",
+                    json={"model": "claude-fable-5"})
+        assert r.status_code == 200, r.text
+        _send(c, chat_id, "and now?")
+        _send(c, chat_id, "once more")
+        msgs = _messages(c, chat_id)
+    assert _models(chat_id) == {}
+    system = [m for m in msgs if m["speaker"] == "system"]
+    assert [m["content"] for m in system] == [
+        "Claude is on claude-fable-5 now, the model set on the Models page, "
+        "so this chat's step-up to Claude Opus 5 no longer applies."]
+    after = msgs[msgs.index(system[0]) + 1:]
+    claude_after = [m for m in after if m["speaker"] == "claude"]
+    assert claude_after and all(_usage_model(m) == "claude-fable-5"
+                                for m in claude_after)
+    # the line comes before the first reply on the owner's model
+    first_on_new = next(m for m in msgs if m["speaker"] == "claude"
+                        and _usage_model(m) == "claude-fable-5")
+    assert system[0]["id"] < first_on_new["id"]
+
+
+def test_the_owner_picking_the_stepped_model_itself_says_so_plainly(app):
+    row = {"model": "claude-opus-5", "from": "claude-sonnet-5",
+           "label": "Claude Opus 5", "from_label": "Claude Sonnet 5"}
+    assert model_step.ended_notice("Claude", "claude-opus-5", row) == (
+        "Claude is on Claude Opus 5 now, the model set on the Models page, "
+        "so this chat's step-up to Claude Opus 5 no longer applies.")
+    # a live step-up is never ended
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _step(chat_id)
+        seat = {"slug": "claude", "name": "Claude", "model": "claude-sonnet-5"}
+        assert model_step.end_after_settings_change(
+            chat_id, seat, _models(chat_id)["claude"]) is False
+        assert "claude" in _models(chat_id)
 
 
 class _Refusal(Exception):

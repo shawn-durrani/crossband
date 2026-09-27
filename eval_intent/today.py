@@ -1,5 +1,5 @@
-"""What the live scan hears today: four phrase lists, each gating one
-prompt, and no research axis at all. The harness runs this path over the
+"""What the live scan heard before the merged call: four phrase lists, each
+gating one prompt, and no research or stronger-model axis at all. The harness runs this path over the
 same fixtures so the merged call is compared against what ships, not
 against nothing."""
 
@@ -23,7 +23,8 @@ def prefilters_fired(text: str) -> set:
 def silent_misses(fx: Fixture) -> list:
     """The axes on which this turn carries an instruction that today's lists
     never send to a model, so the miss is silent. Introductions and
-    departures share one list; research has no path today."""
+    departures share one list; research and a stronger-model ask have no
+    path today."""
     fired = prefilters_fired(fx.text)
     e = fx.expected
     out = []
@@ -37,6 +38,8 @@ def silent_misses(fx: Fixture) -> list:
         out.append("depth")
     if e["research"] != "none":
         out.append("research")
+    if e["stronger_model"]:
+        out.append("stronger_model")
     return out
 
 
