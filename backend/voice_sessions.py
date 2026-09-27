@@ -123,9 +123,46 @@ SHORT_CHECK_NOT or less, the turn is left listening:
 
 A turn of several pieces, or one where anything was fingerprinted, isn't
 checked. The check costs two fingerprints of the whole turn, about 40 to
-50 ms for a turn of a second or so, on those short turns only. The row carries `short_check`: the
-turn's probability for the voice's person (`p_own`), whether the turn
-was left unnamed, and the time it took.
+50 ms for a turn of a second or so, on those short turns only. The row
+carries `short_check`: the turn's probability for the voice's person
+(`p_own`), whether the turn was left unnamed, and the time it took.
+
+JOINING TWO VOICES. The span check only catches a split while the new
+voice has no speech of its own. Once both voices have some, two session
+voices that are one person are joined, after the turn's speech is added
+and before the naming. How alike two voices are is their pooled
+fingerprints' score (the cosine, averaged over both models where both
+have one). A pair joins only when all of these hold, so a normal session
+joins nothing:
+
+  * they never spoke at once in the session;
+  * neither is a TV, they aren't both named (a name a person set, by
+    hand or out loud, counts as named), and one isn't named while the
+    other is new;
+  * their score beats each one's score against every other voice by
+    JOIN_MARGIN or more;
+  * and either the banks agree: with the calibrated scorer ready, each
+    has LISTEN_MIN_S of clean speech, each one's own evidence names the
+    same person at JOIN_SURE or more, and their score is JOIN_FLOOR or
+    more;
+  * or the fingerprints do on their own: each has JOIN_MIN_S of clean
+    speech, their score is JOIN_SIM or more, and with the calibrated
+    scorer ready, their own evidence doesn't name two different people
+    at NAME_BAR or more.
+
+The banks' way catches a known person split in two: each half names
+them outright, while the naming gives the name to one half and leaves
+the other listening. The fingerprints' way catches a person the banks
+don't hold.
+
+The voice a person named stays, else the one the naming named, else the
+one with more clean speech, else the lower number. It takes the other's
+evidence, its turns in the session, its clip allowance and whom it spoke
+over, and every span the tracker gives the other from then on
+(joined_slot). The naming then runs as usual, and fill_labels writes the
+kept voice's name onto the joined voice's turns by its usual rules. The
+turn's row lists each join (`joined`: from, to, the score, the lead and
+which way).
 
 THE END-OF-SESSION PASS. A tracking session ends after SESSION_IDLE_S of
 quiet (the feed thread exits, or the next turn finds it stale) or when
@@ -175,6 +212,7 @@ FILLING IN, rules pinned in the same test file:
 
 import collections
 import ipaddress
+import itertools
 import json
 import logging
 import math
@@ -231,6 +269,17 @@ TRACKER_VOICES = 8              # the tracker numbers its voices 1 to 8
 # less is left unnamed. On the voice rig the misfiled road reply scored
 # its voice's person 0.001, and a right short reply scored 0.9995.
 SHORT_CHECK_NOT = 0.01
+# JOINING TWO VOICES' bar, in cosine units like THE SPAN CHECK's on two
+# voices' pooled fingerprints, and in calibrated probability. As strict:
+# on the voice rig one person's pooled speech scored 0.6 to 0.91 against
+# more of their own, two people never more than 0.47, the two picked to
+# sound close included, and a person split in two named by each half at
+# 0.9995 or more.
+JOIN_MARGIN = 0.25              # their lead over each one's other scores
+JOIN_SURE = 0.99                # the banks agree: each names one person
+JOIN_FLOOR = 0.55               # and the two pools score this or more
+JOIN_MIN_S = 3.0                # the fingerprints alone: each voice's
+JOIN_SIM = 0.7                  # clean speech, and the two pools' score
 # The multi scorer (#477): a person's score is the mean of their best
 # MULTI_TOP_K clip scores, so one lucky clip can't carry a name alone. A
 # bank with fewer clips uses what it has.
@@ -1127,10 +1176,144 @@ def bank_home(voices, slot, pid, allowed, snapshot):
     return best
 
 
-def split_slot(voices):
+def split_slot(voices, reserved=()):
     """The number for a new split-off voice: SPLIT_SLOT_BASE or more, never
-    one the tracker's voices use. A label shows it as shown_number."""
-    return max([SPLIT_SLOT_BASE - 1] + list(voices)) + 1
+    one the tracker's voices use, or one in `reserved` (voices joined
+    away, whose numbers stay spoken for). A label shows it as
+    shown_number."""
+    return max([SPLIT_SLOT_BASE - 1] + list(voices) + list(reserved)) + 1
+
+
+def voice_sim(a, b):
+    """How alike two session voices' pooled fingerprints are: the cosine,
+    averaged over TitaNet-Small and ERes2Net where both have one. None
+    when either has none."""
+    pa, pb = pool_of(a), pool_of(b)
+    if pa is None or pb is None:
+        return None
+    score = voiceid.cosine(pa, pb)
+    ea, eb = pool_of(a, "prints_eres"), pool_of(b, "prints_eres")
+    if ea is not None and eb is not None:
+        score = (score + voiceid.cosine(ea, eb)) / 2
+    return score
+
+
+def _likeliest(voice, allowed, snapshot):
+    """(the person a voice's own evidence names first, its probability),
+    or (None, 0.0) with no calibrated evidence."""
+    says = voice_probs(voice, allowed, snapshot) if snapshot else {}
+    if not says:
+        return None, 0.0
+    return max(says.items(), key=lambda kv: (kv[1], kv[0]))
+
+
+def _keeper(voices, named, a, b):
+    """Which of two joined voices stays: (keep, gone)."""
+    def rank(slot):
+        v = voices[slot]
+        return (bool(v.get("human")),
+                (named.get(slot) or {}).get("state") == "named",
+                v.get("clean_s") or 0.0, -slot)
+    keep = max((a, b), key=rank)
+    return keep, (b if keep == a else a)
+
+
+def join_pair(voices, named, overlaps=(), allowed=None, snapshot=None):
+    """JOINING TWO VOICES: the pair of session voices that plainly is one
+    person, as (keep, gone, {"sim", "lead", "by"}), the likeliest first,
+    or None. `by` says which way it joined: "banks" or "prints".
+    `named` is the last naming, `overlaps` the pairs that spoke at once
+    (frozensets). Pure: nothing is joined here."""
+    sims = {}
+    for a, b in itertools.combinations(sorted(voices), 2):
+        score = voice_sim(voices[a], voices[b])
+        if score is not None:
+            sims[(a, b)] = score
+    from . import voice_calibration as vc
+    best = None
+    for (a, b), score in sims.items():
+        va, vb = voices[a], voices[b]
+        if frozenset((a, b)) in (overlaps or ()) \
+                or va.get(MEDIA) or vb.get(MEDIA):
+            continue
+        # A voice a person named counts as named, whatever the last
+        # naming said, so two voices with two names never join.
+        states = {"named" if v.get("human")
+                  else (named.get(slot) or {}).get("state")
+                  for slot, v in ((a, va), (b, vb))}
+        if states in ({"named"}, {"named", "new"}):
+            continue
+        rivals = [s for (x, y), s in sims.items()
+                  if (x in (a, b)) != (y in (a, b))]
+        lead = score - max(rivals) if rivals else None
+        if lead is not None and lead < JOIN_MARGIN:
+            continue
+        clean = min(va.get("clean_s") or 0.0, vb.get("clean_s") or 0.0)
+        (pa, qa), (pb, qb) = ((_likeliest(va, allowed, snapshot),
+                               _likeliest(vb, allowed, snapshot))
+                              if snapshot and allowed
+                              else ((None, 0.0), (None, 0.0)))
+        if pa and pa == pb and min(qa, qb) >= JOIN_SURE \
+                and clean >= LISTEN_MIN_S and score >= JOIN_FLOOR:
+            by = "banks"
+        elif clean >= JOIN_MIN_S and score >= JOIN_SIM \
+                and not (pa and pb and pa != pb
+                         and min(qa, qb) >= vc.NAME_BAR):
+            by = "prints"
+        else:
+            continue
+        if best is None or score > best[2]["sim"]:
+            best = (a, b, {"sim": round(score, 3),
+                           "lead": round(lead, 3) if lead is not None
+                           else None, "by": by})
+    if best is None:
+        return None
+    keep, gone = _keeper(voices, named, best[0], best[1])
+    return keep, gone, best[2]
+
+
+def join_voices(sess, keep, gone):
+    """Fold session voice `gone` into `keep` (JOINING TWO VOICES): its
+    evidence, its turns, its clip allowance and whom it spoke over, and
+    from now on every span the tracker gives it (joined_slot)."""
+    voices = sess["voices"]
+    k, g = voices[keep], voices.pop(gone)
+    for key in ("prints", "prints_eres"):
+        if k.get(key) or g.get(key):
+            k[key] = list(k.get(key) or []) + list(g.get(key) or [])
+    k["clean_s"] = (k.get("clean_s") or 0.0) + (g.get("clean_s") or 0.0)
+    k.pop("pools", None)
+    if not k.get("human") and g.get("human"):
+        k["human"] = g["human"]
+    joined = sess.setdefault("joined", {})
+    for slot, home in list(joined.items()):
+        if home == gone:
+            joined[slot] = keep
+    joined[gone] = keep
+    sess["turn_voice"] = [(t, keep if slot == gone else slot)
+                          for t, slot in sess.get("turn_voice") or ()]
+    banked = sess.get("banked") or {}
+    if gone in banked:
+        banked[keep] = banked.get(keep, 0) + banked.pop(gone)
+    sess["overlaps"] = {frozenset(keep if s == gone else s for s in pair)
+                        for pair in sess.get("overlaps") or ()}
+
+
+def joined_slot(sess, slot):
+    """The session voice a tracker slot's speech counts for: its own, or
+    the voice it was joined into."""
+    return (sess.get("joined") or {}).get(slot, slot)
+
+
+def note_overlaps(sess, spans):
+    """Remember which session voices spoke at once in a turn's spans, so
+    they're never joined."""
+    over = [s for s in spans if s["overlap"]]
+    pairs = sess.setdefault("overlaps", set())
+    for x, y in itertools.combinations(over, 2):
+        if x["slot"] != y["slot"] and x["start"] < y["end"] \
+                and y["start"] < x["end"]:
+            pairs.add(frozenset((x["slot"], y["slot"])))
 
 
 def shown_number(slot):
@@ -1644,10 +1827,13 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         a = max(0.0, s["start"] - offset)
         b = min(seconds, s["end"] - offset)
         if b > a:
-            spans.append({**s, "start": round(a, 3), "end": round(b, 3)})
+            # A slot joined into another voice counts for that voice.
+            slot = joined_slot(sess, s["slot"])
+            spans.append({**s, "slot": slot, "start": round(a, 3),
+                          "end": round(b, 3)})
             got = (precomputed or {}).get(_span_key(s))
             if got is not None:
-                ready[(s["slot"], round(a, 3), round(b, 3))] = got
+                ready[(slot, round(a, 3), round(b, 3))] = got
     prints = {}                         # span index -> (emb, emb_e, secs)
     for i, s in enumerate(spans):
         # Every voice heard is on the table, even one heard only over
@@ -1670,7 +1856,8 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         if emb is not None:
             prints[i] = (emb, emb_e, secs)
     moved, placed = _bank_moves(sess["voices"], spans, prints, candidates,
-                                eres_fn is not None)
+                                eres_fn is not None,
+                                reserved=sess.get("joined") or ())
     embedded, leads = 0, []
     for i, s in enumerate(spans):
         if i not in prints:
@@ -1693,13 +1880,15 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         if emb_e is not None:
             v.setdefault("prints_eres", []).append((emb_e, secs))
         embedded += 1
+    joined = _join_all(sess, spans, candidates, eres_fn is not None)
     named, bar, n_people, method = _name_all(
         sess, candidates, sample_rate, cfg, embed_fn, eres_fn)
     sess["named"] = named               # for the end-of-session pass
     # The whole turn: every piece's spans, end to end, in the first
     # piece's time. A turn of one piece is just this piece.
     base = earlier[0]["offset"] if earlier else offset
-    whole = [{**s, "start": round(s["start"] + p["offset"] - base, 3),
+    whole = [{**s, "slot": joined_slot(sess, s["slot"]),
+              "start": round(s["start"] + p["offset"] - base, 3),
               "end": round(s["end"] + p["offset"] - base, 3)}
              for p in list(earlier) + [{"offset": offset, "spans": spans}]
              for s in p["spans"]]
@@ -1742,6 +1931,8 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         row["span_lead"] = max(leads)
     if short:
         row["short_check"] = short
+    if joined:
+        row["joined"] = joined
     if main is None:
         return None
     voice = heard.get(main) or {}
@@ -1770,7 +1961,8 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             "piece_voices": turn_voices(spans, heard)}
 
 
-def _bank_moves(voices, spans, prints, candidates, calibrated):
+def _bank_moves(voices, spans, prints, candidates, calibrated,
+                reserved=()):
     """THE BANK CHECK for one turn, before any of its speech is added: each
     voice's clean speech in the turn against the banks. When it plainly is
     someone else, every span the tracker gave that voice in the turn,
@@ -1798,7 +1990,7 @@ def _bank_moves(voices, spans, prints, candidates, calibrated):
         if home is None:
             home = splits.get(pid)
         if home is None:
-            home = splits[pid] = split_slot(voices)
+            home = splits[pid] = split_slot(voices, reserved)
             voices[home] = {"prints": [], "clean_s": 0.0}
         for i in members:
             s = spans[i]
@@ -1838,6 +2030,33 @@ def short_check(voice, pcm, sample_rate, candidates, embed_fn, eres_fn):
     return {"p_own": round(got[pid], 4),
             "unnamed": got[pid] <= SHORT_CHECK_NOT,
             "ms": round((time.perf_counter() - t0) * 1000, 1)}
+
+
+def _join_all(sess, spans, candidates, calibrated):
+    """JOINING TWO VOICES for one turn, after its speech is added: note who
+    spoke at once, then join every pair that plainly is one person, the
+    turn's spans with them. Returns the joins, for the row."""
+    from . import voice_calibration as vc
+    note_overlaps(sess, spans)
+    snap = vc.current() if calibrated else None
+    if not (snap and snap.get("calibrated")):
+        snap = None
+    allowed = {c["person_id"]: c["name"] for c in candidates or ()
+               if c.get("person_id")}
+    last = dict(sess.get("named") or {})
+    joined = []
+    while True:
+        found = join_pair(sess["voices"], last, sess.get("overlaps"),
+                          allowed, snap)
+        if found is None:
+            return joined
+        keep, gone, scores = found
+        join_voices(sess, keep, gone)
+        last.pop(gone, None)
+        for s in spans:
+            if s["slot"] == gone:
+                s["slot"] = keep
+        joined.append({"from": gone, "to": keep, **scores})
 
 
 def turn_voices(spans, named):

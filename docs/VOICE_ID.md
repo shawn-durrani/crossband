@@ -159,6 +159,39 @@ it. In loud noise a right short reply can go unnamed now and then. The
 session rows record each check, with the chance and whether the turn was
 left unnamed.
 
+### Joining two voices
+
+The span check only helps while a split voice has nothing of its own.
+Once both halves of one person have some speech, the app compares the
+two voices themselves. It pools everything each voice has said and
+scores the two pools against each other. Two session voices are joined
+when all of these hold:
+
+- they never spoke at the same time in the session
+- they aren't both named, and one isn't named while the other is new
+- neither is a TV
+- their score beats each one's score against every other voice by 0.25
+  or more
+
+The two voices also have to agree on who they are. With the calibrated
+scorer on, the kept clips can say so. Each voice has 1.5 seconds or
+more of clean speech, each on its own names the same person at 0.99 or
+more, and the two score 0.55 or more. That's how a known person split
+in two looks, since the naming gives the name to one half and leaves
+the other listening. Or the voices can agree on their own.
+Each has 3 seconds or more, the two score 0.7 or more, and the kept
+clips don't name them as two different people. That's how a person the
+app doesn't know yet looks.
+
+A name you gave a voice by hand or out loud counts as a name, so two
+voices with two names never join. The voice you named stays, else the
+one with a name, else the one that has said more. It takes the other
+voice's speech and its turns, and the diariser's later speech for that
+voice counts for it too. The joined voice's turns with no name take the
+kept voice's name, by the same rules as any late name. The bar is
+strict, and a normal session joins nothing. The session rows list each
+join with its score.
+
 ### When a session ends
 
 When the session ends, after 10 minutes with no speech, the app names
