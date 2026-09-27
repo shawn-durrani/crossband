@@ -1,8 +1,8 @@
 """The merged intent scan (#258, #412): one utility call per user turn that
 reads every instruction the live scan acts on - a room-mode command, an
 introduction or departure (with aliases), a name correction, a reasoning-
-depth change, a research cue (#253/#417) - and returns them all in one JSON
-verdict.
+depth change, a research cue (#253/#417), an explicit ask for a stronger
+model (#254) - and returns them all in one JSON verdict.
 
 The prompt and the parser live here, not in eval_intent, so the harness that
 justified the switch (`python -m eval_intent`) and the live scan
@@ -11,7 +11,10 @@ happens in one place, and the harness can never silently drift from what the
 app actually sends.
 
 RESEARCH_MORE is applied by backend/research.py (introductions.py: outcome
-"research_set").
+"research_set"). A research cue never asks for a different model (the
+owner's decision of 27 September, which replaces the one of 4 September):
+only `stronger_model`, or a standing "think harder" on the depth axis, sends
+a seat to model_step.step_up.
 """
 
 import json
@@ -20,9 +23,14 @@ import re
 RESEARCH_MORE = "more"
 
 
+# The most seats one stronger-model ask can name. A chat has a handful.
+MAX_MODEL_SEATS = 8
+
+
 def empty_verdict() -> dict:
     return {"mode_command": "none", "introductions": [], "departures": [],
-            "aliases": {}, "corrections": [], "depth": [], "research": "none"}
+            "aliases": {}, "corrections": [], "depth": [], "research": "none",
+            "stronger_model": []}
 
 
 def build_merged_prompt(text: str, user_name: str, seat_names: list,
@@ -111,16 +119,25 @@ def build_merged_prompt(text: str, user_name: str, seat_names: list,
         "5. research: does it ask the assistants to research or look into "
         "things more thoroughly ('research more', 'look into that "
         "properly', 'search more', 'dig into this', 'dig deeper', 'go "
-        "deeper')? 'Go deeper' and 'dig deeper' are research requests, "
-        "not depth changes, unless the message also says how hard to "
-        "think. A request to use a tool once ('can you search for a "
-        "flight', 'look up the weather') is not. \"more\" or \"none\".\n"
+        "deeper', 'do some research', 'research this properly', 'find me "
+        "an answer', 'can you look it up?')? 'Go deeper' and 'dig deeper' "
+        "are research requests, not depth changes, unless the message also "
+        "says how hard to think. 'Look it up' about the question being "
+        "discussed counts. A request to use a tool once for something the "
+        "message names ('can you search for a flight', 'look up the "
+        "weather') is not. Research never asks for a different model. "
+        "\"more\" or \"none\".\n"
+        "6. stronger_model: does it ask an assistant to use a stronger, "
+        "better or its best MODEL ('use your best model', 'use a stronger "
+        "model')? A named assistant means that one, \"all\" when no name "
+        "is given. Only an ask that says model counts.\n"
         "Reply with ONLY JSON: {\"mode_command\": \"on\"|\"off\"|\"none\", "
         "\"introductions\": [names], \"departures\": [names], \"aliases\": "
         "{name: preferred}, \"corrections\": [{\"who\": ..., \"name\": ..., "
         "\"also\": ...}], \"depth\": [{\"seat\": \"<assistant or all>\", "
         "\"depth\": \"deep\"|\"quick\"|\"max\"|\"normal\", \"once\": "
-        "true|false}], \"research\": \"more\"|\"none\"}. Empty lists, "
+        "true|false}], \"research\": \"more\"|\"none\", "
+        "\"stronger_model\": [\"<assistant or all>\"]}. Empty lists, "
         "\"none\" and {} when the message does none of it.\n\n"
         f"Message: {text[:1200]}"
     )
@@ -170,6 +187,31 @@ def parse_merged(text, message="") -> dict:
             json.dumps({"changes": data["depth"]}))
     out["research"] = RESEARCH_MORE if data.get("research") == RESEARCH_MORE \
         else "none"
+    out["stronger_model"] = parse_model_seats(data.get("stronger_model"))
+    return out
+
+
+def parse_model_seats(raw) -> list:
+    """The seats a stronger-model ask names, as spoken, once each: "all" or
+    assistant names. A bare string counts as one name, and an object with a
+    "seat" key (the depth shape) is read the same way. Anything else is
+    nothing heard, never an error. The names resolve against the chat's own
+    seats later (model_step.targets), so a misheard one moves nobody."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if isinstance(item, dict):
+            item = item.get("seat")
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if name and name.casefold() not in {n.casefold() for n in out}:
+            out.append(name)
+        if len(out) >= MAX_MODEL_SEATS:
+            break
     return out
 
 
@@ -248,14 +290,20 @@ def _research_line() -> str:
             "research mode is already on for this chat.")
 
 
+def _model_line() -> str:
+    return ("Heard a request for a stronger model, and nothing changed: "
+            "the seats named are already on one for this chat, or can't "
+            "be moved.")
+
+
 def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
     """The plain-words line for a confirmed instruction that changed
     nothing, or "" when there is nothing to say - no instruction was heard
     at all, or ANY confirmed axis actually changed something. `outcomes`
     maps the axes the scan applied - "mode_command", "introductions",
-    "corrections", "depth", "research" - to the outcome string apply_command
-    / apply_scan / apply_corrections / apply_depth / research.apply_research
-    returned.
+    "corrections", "depth", "research", "stronger_model" - to the outcome
+    string apply_command / apply_scan / apply_corrections / apply_depth /
+    research.apply_research / model_step.step_up returned.
 
     A turn that instructs on more than one axis at once only gets the line
     when EVERY instructed axis was a no-op; the wording then names the
@@ -270,9 +318,10 @@ def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
         ("corrections", bool(verdict.get("corrections")), _correction_line),
         ("depth", bool(verdict.get("depth")), _depth_line),
         ("research", verdict.get("research") == RESEARCH_MORE, _research_line),
+        ("stronger_model", bool(verdict.get("stronger_model")), _model_line),
     )
     if outcomes.get("model") == "model_stepped":
-        return ""  # #254: the depth or research cue moved a model - a change
+        return ""  # #254: a depth cue or a stronger-model ask moved a model
     first_no_op = None
     for key, instructed, line_fn in axes:
         if not instructed:

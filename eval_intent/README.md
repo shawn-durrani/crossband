@@ -3,7 +3,8 @@
 You can change how a chat works by saying so: "group mode on" lets
 several people talk, "this is Dave" adds a person, "her name is spelt
 Aleks" fixes a name, "think harder" makes a seat think more, and
-"research more" turns on research mode. The app hears all of these
+"research more" turns on research mode. "Use your best model" moves a
+seat to a stronger model. The app hears all of these
 with one call to the utility model per turn. That call reads the
 message and returns every kind of instruction at once. This package
 measures how well it hears them, against a baseline of four fixed
@@ -18,9 +19,10 @@ utility model.
 ## What a fixture is
 
 One fixture is one made up user turn and what the app should hear in
-it, graded by hand across five axes: a room mode switch, introductions
+it, graded by hand across six axes: a room mode switch, introductions
 and departures with any alias, name corrections, a thinking depth
-change with a one-off flag, and a research request. A fixture also
+change with a one-off flag, a research request, and an ask for a
+stronger model. A fixture also
 names the owner, who is known present, who is known by name, and the
 seats, because the prompts take those. An empty expectation means
 the turn is plain chat, or only talks about one of these things.
@@ -28,7 +30,9 @@ the turn is plain chat, or only talks about one of these things.
 The corpus in `fixtures/` covers the wordings the phrase lists are
 known to drop, the negatives the depth rules guard against, research
 requests against tool requests, and turns that carry two instructions
-at once. It also covers requests for the seats to hold back, like
+at once. A request for research never asks for a stronger model, and
+the corpus grades it that way, beside asks that name a model and turns
+that only talk about one. It also covers requests for the seats to hold back, like
 "just eavesdrop until we ask", which must never switch room mode on or
 off. Then there are words spelt out letter by letter to fix the
 transcript, like "K-E-R-F", and words spelt in a word game, like "is
@@ -43,7 +47,8 @@ also applies the app's rule for a word spelt out letter by letter, so
 its score is what the app would act on.
 The strategy named `today` is the baseline, and the app doesn't run it.
 It checks each turn against the four phrase lists, sends a separate
-prompt for each list that fires, and hears no research cue at all. The
+prompt for each list that fires, and hears no research cue and no ask
+for a stronger model. The
 lists stay in the code only so the harness has that baseline. Both
 paths parse replies with the app's own parsers, so the judge is the
 same and only the gate changes.

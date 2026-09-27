@@ -1,4 +1,4 @@
-- "Think harder" and "research more" can now move a chat onto a
+- "Think harder" and "use your best model" can now move a chat onto a
   stronger model (#254). Each seat the cue moves asks its own provider
   for the models your key can use, keeps the ones the price card prices
   that fit the chat, and runs one web search to rank them, so the order

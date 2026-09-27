@@ -4,18 +4,23 @@ Pinned here, keyless, with the intent verdict, the model list, the search
 and the ranking all mocked:
 
 1. Who moves: a standing "think harder" or "maximum thinking" moves the
-   seats it names (or all), "research more" moves every seat. A one-off,
-   "quick" and "normal" never move a model up, and a misheard name moves
-   nobody.
-2. The scan end to end: the depth or research line first, then the cost
-   line, then the step-up written. A step is a change, so no "heard,
-   nothing changed" line. The `model_step_up` setting off means no
-   research at all, and a keyless seat is left alone without a word.
+   seats it names (or all), and so does an explicit ask for a stronger
+   model ("use your best model"). Research mode moves nobody (the owner's
+   decision of 27 September). A one-off, "quick" and "normal" never move a
+   model up, and a misheard name moves nobody.
+2. The scan end to end: the depth line first, then the cost line, then the
+   step-up written. A step is a change, so no "heard, nothing changed"
+   line. The `model_step_up` setting off means no research at all, and a
+   keyless seat is left alone without a word.
 3. Back to normal: to everyone it returns every seat to its configured
-   model with its own line, even when no depth was set. Naming one seat
-   returns that seat only. After a settings edit the line names the model
-   the seat is really on.
-4. The running-cost line names the stronger model, alone or beside the
+   model with its own line, even when no depth was set, and turns research
+   mode off. Naming one seat returns that seat only. A step-up a settings
+   edit had already overtaken is cleared without a line.
+4. What the lines say is what runs: the finder's pick is written only for
+   a seat still on the model it started from, a stored step-up a settings
+   edit overtook never blocks a new one, a "back to normal" while the
+   finder worked wins, and the step waits for the replies in flight.
+5. The running-cost line names the stronger model, alone or beside the
    depth, and ignores a step-up a settings edit has ended.
 
 Names are the synthetic roster (Alex, Sam)."""
@@ -116,7 +121,13 @@ def _scan(app, chat_id, text, **cfg):
 # ---------- who moves ----------
 
 @pytest.mark.parametrize("verdict,moved", [
-    ({"research": "more"}, ["claude", "gpt"]),
+    ({"research": "more"}, []),
+    ({"research": "more", "depth": [{"seat": "Claude", "depth": "deep"}]},
+     ["claude"]),
+    ({"stronger_model": ["all"]}, ["claude", "gpt"]),
+    ({"stronger_model": ["GPT"]}, ["gpt"]),
+    ({"stronger_model": ["Clod"]}, []),
+    ({"research": "more", "stronger_model": ["Claude"]}, ["claude"]),
     ({"depth": [{"seat": "Claude", "depth": "deep"}]}, ["claude"]),
     ({"depth": [{"seat": "all", "depth": "max"}]}, ["claude", "gpt"]),
     ({"depth": [{"seat": "gpt", "depth": "deep"}]}, ["gpt"]),
@@ -156,17 +167,62 @@ def test_think_harder_steps_claude_up_and_says_what_it_costs(app, world,
     assert world["calls"]["kinds"] == ["intent_scan", "model_step_up"]
 
 
-def test_research_more_steps_every_seat_it_can(app, world, monkeypatch):
+@pytest.mark.parametrize("text", ["Can you do some research on this?",
+                                  "Just find me an answer.",
+                                  "Look it up, would you?",
+                                  "Research this properly."])
+def test_research_turns_the_mode_on_and_moves_no_model(app, world,
+                                                       monkeypatch, text):
+    """The owner's decision of 27 September: asking for research is asking
+    for an answer. The mode goes on, and no seat's model is looked up,
+    ranked or moved."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     world["verdict"] = {"research": "more"}
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat_id = _chat(c)
-        _scan(app, chat_id, "research more")
+        _scan(app, chat_id, text)
         lines = _system(c, chat_id)
+    assert len(lines) == 1
     assert lines[0].startswith("Research mode on for this chat, set by Alex")
-    assert lines[1].startswith("Claude moves from Claude Sonnet 5 to Claude Opus 5")
-    assert len(lines) == 2  # GPT has no key: left alone without a word
+    assert _models(chat_id) == {}
+    assert world["calls"]["list"] == 0
+    assert world["calls"]["kinds"] == ["intent_scan"]
+
+
+def test_use_your_best_model_steps_up_and_leaves_depth_alone(app, world,
+                                                             monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    world["verdict"] = {"stronger_model": ["all"]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _scan(app, chat_id, "Use your best model from now on.")
+        lines = _system(c, chat_id)
+        con = db.connect()
+        try:
+            assert db.get_chat_seat_state(con, chat_id) == {}  # no depth
+        finally:
+            con.close()
+    assert len(lines) == 1  # GPT has no key: left alone without a word
+    assert lines[0].startswith(
+        "Claude moves from Claude Sonnet 5 to Claude Opus 5 for this chat, "
+        "set by Alex.")
     assert set(_models(chat_id)) == {"claude"}
+
+
+def test_asking_again_for_a_stronger_model_says_nothing_changed(app, world,
+                                                                monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    world["verdict"] = {"stronger_model": ["Claude"]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _scan(app, chat_id, "Claude, use a stronger model")
+        _scan(app, chat_id, "Claude, use a stronger model")
+        lines = _system(c, chat_id)
+    assert world["calls"]["list"] == 1
+    assert lines[-1] == ("Heard a request for a stronger model, and nothing "
+                         "changed: the seats named are already on one for "
+                         "this chat, or can't be moved.")
 
 
 def test_saying_it_again_does_not_research_again(app, world, monkeypatch):
@@ -274,14 +330,43 @@ def test_naming_one_seat_returns_that_seat_only(app):
     assert set(_models(chat_id)) == {"claude"}
 
 
-def test_after_a_settings_edit_the_line_names_the_real_model(app):
+def test_a_step_up_a_settings_edit_overtook_clears_without_a_line(app):
+    """The seat already runs the model its settings name, so back to normal
+    changes nothing it runs. The stale row goes, and no line claims a move."""
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat_id = _chat(c)
         _step(chat_id, model_from="claude-haiku-4-5")  # the seat has moved on
-        depth.apply_depth(chat_id, [{"seat": "all", "depth": "normal"}],
-                          {"user_name": "Alex"})
+        out = depth.apply_depth(chat_id, [{"seat": "all", "depth": "normal"}],
+                                {"user_name": "Alex"})
         lines = _system(c, chat_id)
-    assert lines == ["Claude is back on its configured model, claude-sonnet-5."]
+    assert out == "no_change"
+    assert lines == []
+    assert _models(chat_id) == {}
+
+
+def test_back_to_normal_turns_research_off_and_returns_the_model(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        con = db.connect()
+        try:
+            db.set_chat_research(con, chat_id, True, set_by="Alex")
+        finally:
+            con.close()
+        _step(chat_id)
+        out = depth.apply_depth(chat_id, [{"seat": "all", "depth": "normal"}],
+                                {"user_name": "Alex"})
+        lines = _system(c, chat_id)
+        con = db.connect()
+        try:
+            on = con.execute("SELECT research_mode FROM chats WHERE id=?",
+                             (chat_id,)).fetchone()["research_mode"]
+        finally:
+            con.close()
+    assert out == "depth_cleared"
+    assert lines == ["Claude is back on its configured model, Claude Sonnet 5.",
+                     "Research mode off for this chat."]
+    assert _models(chat_id) == {}
+    assert not on
 
 
 # ---------- apply_decisions ----------
@@ -311,6 +396,127 @@ def test_the_cost_line_lands_before_the_step_and_a_raced_seat_is_left(app):
                                            {"user_name": "Alex"})
         assert again == "no_change"
         assert len(_system(c, chat_id)) == 1
+
+
+def _decision(**over):
+    d = {"slug": "claude", "name": "Claude", "provider": "anthropic",
+         "outcome": "step", "key": "step", "from": "claude-sonnet-5",
+         "from_label": "Claude Sonnet 5", "model": "claude-opus-5",
+         "label": "Claude Opus 5", "source": "example.org", "unpriced": [],
+         "cost": {"turns": 0, "rates_now": (2, 10), "rates_new": (5, 25)}}
+    return {**d, **over}
+
+
+def _set_seat_model(c, slug, model):
+    seat = next(p for p in c.get("/api/state").json()["participants"]
+                if p["slug"] == slug)
+    r = c.patch(f"/api/participants/{seat['id']}", json={"model": model})
+    assert r.status_code == 200, r.text
+
+
+def test_a_seat_moved_on_the_models_page_mid_search_hears_nothing(app):
+    """The owner changed the seat while the finder worked: the finder's
+    base is stale, so neither a step nor a stay line is posted about it."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _set_seat_model(c, "claude", "claude-opus-5-5")
+        out = model_step.apply_decisions(
+            chat_id, [_decision(),
+                      _decision(outcome="stay", key="strongest", model="",
+                                label="")],
+            {"user_name": "Alex"})
+        lines = _system(c, chat_id)
+    assert out == "no_change"
+    assert lines == []
+    assert _models(chat_id) == {}
+
+
+def test_a_step_up_a_settings_edit_overtook_never_blocks_a_new_one(app):
+    """A stored step-up whose base is no longer the seat's model is over.
+    A new ask writes over it, and the line names the model the seat is on
+    now as the base."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _step(chat_id, model_from="claude-haiku-4-5")  # overtaken
+        out = model_step.apply_decisions(chat_id, [_decision()],
+                                         {"user_name": "Alex"})
+        lines = _system(c, chat_id)
+    assert out == "model_stepped"
+    assert lines[0].startswith("Claude moves from Claude Sonnet 5 to Claude "
+                               "Opus 5 for this chat")
+    assert _models(chat_id)["claude"]["from"] == "claude-sonnet-5"
+
+
+def test_back_to_normal_while_the_finder_works_wins(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        marks = model_step.reset_marks(chat_id, ["claude"])
+        depth.apply_depth(chat_id, [{"seat": "all", "depth": "normal"}],
+                          {"user_name": "Alex"})
+        out = model_step.apply_decisions(chat_id, [_decision()],
+                                         {"user_name": "Alex"}, marks=marks)
+        lines = _system(c, chat_id)
+    assert out == "no_change"
+    assert lines == []
+    assert _models(chat_id) == {}
+
+
+def test_a_step_waits_for_the_replies_in_flight(app, world, monkeypatch):
+    """A reply already on its way runs on the model it started with. The
+    step's line and write wait until the round is over, so the next reply
+    after the line is the first on the new model."""
+    from backend import rounds
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(model_step, "QUIET_POLL_S", 0.01)
+    verdict = {"stronger_model": ["Claude"]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        assert rounds.claim(chat_id)  # a round is replying
+        seen = {}
+
+        async def run():
+            task = asyncio.create_task(model_step.step_up(
+                chat_id, verdict, _cfg(app)))
+            for _ in range(500):
+                if "model_step_up" in world["calls"]["kinds"]:
+                    break
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.1)
+            seen["lines"] = await asyncio.to_thread(_system, c, chat_id)
+            seen["models"] = await asyncio.to_thread(_models, chat_id)
+            rounds.release(chat_id)  # the round ends
+            return await task
+
+        try:
+            out = asyncio.run(run())
+        finally:
+            rounds.release(chat_id)
+        lines = _system(c, chat_id)
+        busy = rounds.busy(chat_id)
+    assert "model_step_up" in world["calls"]["kinds"]
+    assert seen == {"lines": [], "models": {}}
+    assert out == "model_stepped"
+    assert lines[0].startswith("Claude moves from Claude Sonnet 5 to Claude Opus 5")
+    assert _models(chat_id)["claude"]["model"] == "claude-opus-5"
+    assert busy is False  # the step-up let go of the chat
+
+
+def test_a_wedged_round_does_not_hold_a_step_forever(app, world, monkeypatch):
+    from backend import rounds
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(model_step, "QUIET_POLL_S", 0.01)
+    monkeypatch.setattr(model_step, "QUIET_WAIT_S", 0.05)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        assert rounds.claim(chat_id)
+        try:
+            out = asyncio.run(model_step.step_up(
+                chat_id, {"stronger_model": ["Claude"]}, _cfg(app)))
+            still_claimed = rounds.busy(chat_id)
+        finally:
+            rounds.release(chat_id)
+    assert out == "model_stepped"
+    assert still_claimed  # the round's own claim, untouched
 
 
 # ---------- the running-cost line ----------

@@ -1,0 +1,76 @@
+[
+  {
+    "id": "model_best_all",
+    "category": "stronger_model",
+    "text": "Use your best model for the rest of this chat.",
+    "expected": {
+      "stronger_model": [
+        "all"
+      ]
+    },
+    "notes": "An explicit ask by the word model, no seat named (27 September)."
+  },
+  {
+    "id": "model_stronger_claude",
+    "category": "stronger_model",
+    "text": "Claude, use a stronger model from now on.",
+    "expected": {
+      "stronger_model": [
+        "Claude"
+      ]
+    }
+  },
+  {
+    "id": "model_smarter_both",
+    "category": "stronger_model",
+    "text": "Can you both switch to a smarter model?",
+    "expected": {
+      "stronger_model": [
+        "all"
+      ]
+    }
+  },
+  {
+    "id": "model_and_think_harder",
+    "category": "stronger_model",
+    "text": "GPT, use your best model and think harder about this from now on.",
+    "expected": {
+      "stronger_model": [
+        "GPT"
+      ],
+      "depth": [
+        {
+          "seat": "GPT",
+          "depth": "deep"
+        }
+      ]
+    },
+    "notes": "Two asks in one breath: the model and the depth, each on its own axis."
+  },
+  {
+    "id": "model_neg_which",
+    "category": "stronger_model_negative",
+    "text": "Which model are you running on right now, Claude?",
+    "expected": {}
+  },
+  {
+    "id": "model_neg_news",
+    "category": "stronger_model_negative",
+    "text": "I read that the newest GPT model is much better at maths.",
+    "expected": {}
+  },
+  {
+    "id": "model_neg_think_harder",
+    "category": "stronger_model_negative",
+    "text": "GPT, think harder from now on.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "GPT",
+          "depth": "deep"
+        }
+      ]
+    },
+    "notes": "Think harder is a depth change. The app steps a standing deep seat up on its own, so the model axis stays empty."
+  }
+]

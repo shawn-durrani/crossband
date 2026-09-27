@@ -34,6 +34,50 @@
     }
   },
   {
+    "id": "research_do_some",
+    "category": "research",
+    "text": "Where would you even start with this series? Can you both do some research?",
+    "expected": {
+      "research": "more"
+    },
+    "notes": "The 27 September field test, reworded: research mode on, and no seat moves to another model."
+  },
+  {
+    "id": "research_find_me_an_answer",
+    "category": "research",
+    "text": "I don't need a guess, just find me an answer.",
+    "expected": {
+      "research": "more"
+    },
+    "notes": "Asks for an answer, never for a different model (27 September)."
+  },
+  {
+    "id": "research_look_it_up",
+    "category": "research",
+    "text": "I'm not sure what they cost here. Can you look it up?",
+    "expected": {
+      "research": "more"
+    },
+    "notes": "'It' is the question being discussed, not a quick named fact."
+  },
+  {
+    "id": "research_this_properly",
+    "category": "research",
+    "text": "Research this properly before you answer, Claude.",
+    "expected": {
+      "research": "more"
+    }
+  },
+  {
+    "id": "research_no_model_change",
+    "category": "research",
+    "text": "Don't swap anything around, just do some research and find me an answer.",
+    "expected": {
+      "research": "more"
+    },
+    "notes": "Research with no stronger model, said outright."
+  },
+  {
     "id": "research_neg_flight",
     "category": "research_negative",
     "text": "Can you search for a flight to Hobart on Friday?",

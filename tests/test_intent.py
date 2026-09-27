@@ -25,6 +25,14 @@ and "heard but changed nothing" wording, tested without a model.
    person's name. Whether the model obeys is measured by eval_intent's
    spelling fixtures. Since #494 a plain rule after the parse holds the
    line too, pinned in tests/test_spelling_guard.py.
+7. The 27 September field test: "can you do some research?" turned
+   research mode on and also moved every seat to a stronger model nobody
+   asked for. Research now never asks for a different model. Only an
+   explicit ask ("use your best model") fills `stronger_model`, and a
+   standing "think harder" stays on the depth axis. The prompt names the
+   research wordings and says research is never a model change. Whether
+   the model obeys is measured by eval_intent's research and model
+   fixtures.
 """
 
 import json
@@ -99,6 +107,7 @@ def test_parse_merged_reads_every_axis():
         "depth": [{"seat": "Claude", "depth": "deep", "once": True}],
         "research": "more"})
     heard = intent.parse_merged("Sure: " + text)
+    assert heard["stronger_model"] == []  # absent is nothing heard
     assert heard["mode_command"] == "off"
     assert heard["introductions"] == ["Sam"]
     assert heard["aliases"] == {"Sam": "Sammy"}
@@ -114,6 +123,38 @@ def test_parse_merged_degrades_to_nothing_on_bad_json():
     out = intent.parse_merged('{"depth": "not a list", "research": "lots"}')
     assert out["depth"] == []
     assert out["research"] == "none"
+
+
+def test_merged_prompt_says_research_never_asks_for_a_model():
+    p = intent.build_merged_prompt("hello", "Alex", ["Claude"], [], [])
+    for wording in ("do some research", "find me an answer", "look it up",
+                    "research this properly"):
+        assert wording in p, wording
+    assert "Research never asks for a different model" in p
+    assert "6. stronger_model" in p
+    for wording in ("use your best model", "use a stronger model"):
+        assert wording in p, wording
+    assert "Only an ask that says model counts" in p
+    assert "'Look it up' about the question being discussed counts" in p
+    assert '"stronger_model": ["<assistant or all>"]' in p
+
+
+def test_parse_merged_reads_a_stronger_model_ask():
+    assert intent.parse_merged(json.dumps(
+        {"stronger_model": ["all"]}))["stronger_model"] == ["all"]
+    assert intent.parse_merged(json.dumps(
+        {"stronger_model": ["Claude", "claude", " GPT ", "", 3]})
+    )["stronger_model"] == ["Claude", "GPT"]
+    assert intent.parse_merged(json.dumps(
+        {"stronger_model": "Claude"}))["stronger_model"] == ["Claude"]
+    assert intent.parse_merged(json.dumps(
+        {"stronger_model": [{"seat": "GPT"}]}))["stronger_model"] == ["GPT"]
+    for junk in ({}, None, 7, "", {"model": "x"}):
+        assert intent.parse_merged(json.dumps(
+            {"stronger_model": junk}))["stronger_model"] == []
+    many = [f"Seat{i}" for i in range(20)]
+    assert len(intent.parse_merged(json.dumps(
+        {"stronger_model": many}))["stronger_model"]) == intent.MAX_MODEL_SEATS
 
 
 # ---------- nothing_changed_line ----------
@@ -155,6 +196,20 @@ def test_line_for_research_heard_while_already_on():
     verdict = {**intent.empty_verdict(), "research": "more"}
     line = intent.nothing_changed_line(verdict, {"research": "no_change"})
     assert "research" in line and "already on" in line
+
+
+def test_line_for_a_stronger_model_ask_that_moved_nothing():
+    verdict = {**intent.empty_verdict(), "stronger_model": ["Claude"]}
+    line = intent.nothing_changed_line(verdict,
+                                       {"stronger_model": "no_change"})
+    assert line.startswith("Heard a request for a stronger model, and "
+                           "nothing changed")
+    # a stay line was already posted, or a seat moved: no second line
+    assert intent.nothing_changed_line(
+        verdict, {"stronger_model": "model_kept"}) == ""
+    assert intent.nothing_changed_line(
+        verdict, {"stronger_model": "model_stepped",
+                  "model": "model_stepped"}) == ""
 
 
 def test_no_line_when_something_actually_changed():

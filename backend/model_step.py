@@ -4,14 +4,16 @@ A seat runs the model its settings name. A spoken cue can step it up to a
 stronger one for the rest of ONE chat: the step-up lives in chat_seat_state
 beside the seat's spoken depth, keyed on chat and seat, so a new chat starts
 back on the configured model by construction. "Back to normal" is the only
-way down.
+spoken way down.
 
 This module owns what the round needs to honour a step-up:
 
 - live_step: whether a stored step-up still applies to the seat as it is
   configured now. An owner who edits the seat's model in settings has made
   an explicit choice, and it beats a spoken one: the stored row names the
-  model it replaced, and once that stops matching, the step-up is ignored.
+  model it replaced, and once that stops matching, the step-up is over.
+  end_after_settings_change clears such a row at the seat's next reply and
+  says so in one line (the owner's decision of 27 September).
 - model_note: the volatile prompt note telling the seat which model it is
   running on and why (cache layout law, same as depth_note).
 - refused / revert_after_refusal: when the provider refuses the stepped-up
@@ -50,6 +52,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 from urllib.parse import urlparse
 
 from . import context_weight, db, llm_util, providers, tools
@@ -76,6 +80,39 @@ def live_step(participant, row):
     if row.get("from") != configured or row["model"] == configured:
         return None
     return row
+
+
+def ended_notice(seat_name, configured, row) -> str:
+    """The line for a step-up the seat's settings have overtaken: what the
+    seat runs on now, and that the chat's step-up no longer applies."""
+    stepped = row.get("label") or row.get("model")
+    now = stepped if configured == row.get("model") else configured
+    return (f"{seat_name} is on {now} now, the model set on the Models page, "
+            f"so this chat's step-up to {stepped} no longer applies.")
+
+
+def end_after_settings_change(chat_id, participant, row) -> bool:
+    """Clear a stored step-up that the seat's settings have overtaken, and say
+    so in the chat (synchronous; worker thread). The engine calls this at the
+    seat's boundary, before the seat's call is built, so the line is always
+    followed by a reply on the model it names. The owner's choice on the
+    Models page wins (the decision of 27 September): the step-up is cleared,
+    never carried over to the new model. True when a row was cleared, so a
+    second round racing this one posts nothing twice."""
+    if not row or not row.get("model") or live_step(participant, row):
+        return False
+    con = db.connect()
+    try:
+        if not db.clear_chat_seat_model(con, chat_id, participant["slug"]):
+            return False
+        db.insert_message(con, chat_id, "system", ended_notice(
+            participant.get("name") or participant["slug"],
+            participant.get("model") or "", row))
+    finally:
+        con.close()
+    log.info("model step-up ended by a settings change: chat=%s seat=%s",
+             chat_id, participant["slug"])
+    return True
 
 
 def model_note(step, seat_name) -> str:
@@ -665,30 +702,59 @@ def stay_lines(decisions) -> list:
 
 # ---------- the cues (slice 3) ----------
 #
-# Two spoken cues ask for a stronger model: a standing "think harder" or
-# "maximum thinking" moves the seats it names, and "research more" moves
-# every seat in the chat (the owner's decision of 4 September on #253). A
-# one-off, "quick answers" and "normal" never move a model up. "Back to
-# normal" is the one way down, through depth.apply_depth.
+# Only asking for a stronger model moves one: a standing "think harder" or
+# "maximum thinking" moves the seats it names, and so does an explicit ask
+# ("use your best model", the intent scan's `stronger_model`). Research mode
+# never moves a model (the owner's decision of 27 September, which replaces
+# the one of 4 September on #253). A one-off, "quick answers" and "normal"
+# never move a model up. "Back to normal" is the one spoken way down,
+# through depth.apply_depth.
 
 STEPPED, KEPT = "model_stepped", "model_kept"
 
+# How long a found step-up waits for the chat's replies in flight to finish
+# before it's written, and how often it looks. A research round can run for
+# minutes; past this the chat is taken to be wedged and the step is written
+# anyway.
+QUIET_WAIT_S = 600.0
+QUIET_POLL_S = 0.25
+
+# Each "back to normal" that reaches a seat bumps its mark, so a step-up
+# found before the reset and still waiting to be written is dropped, never
+# applied after the owner asked to go back. In memory: the scan, the reset
+# and the wait all live in this one process.
+_reset_marks: dict = {}
+_marks_lock = threading.Lock()
+
+
+def _bump_reset(chat_id, slug) -> None:
+    with _marks_lock:
+        _reset_marks[(chat_id, slug)] = _reset_marks.get((chat_id, slug), 0) + 1
+
+
+def reset_marks(chat_id, slugs) -> dict:
+    with _marks_lock:
+        return {slug: _reset_marks.get((chat_id, slug), 0) for slug in slugs}
+
 
 def targets(verdict, roster) -> list:
-    """The seats a verdict asks to step up, in roster order, once each.
-    Names resolve against the chat's own seats by name or slug, the way
-    depth.apply_depth resolves them, so a misheard name moves nobody."""
+    """The seats a verdict asks to step up, in roster order, once each: the
+    seats a stronger-model ask names, and the seats a standing deep or max
+    depth names. Names resolve against the chat's own seats by name or
+    slug, the way depth.apply_depth resolves them, so a misheard name moves
+    nobody. A research cue moves nobody."""
     by_key = {}
     for p in roster:
         by_key[p["slug"].casefold()] = p
         by_key[(p["name"] or "").casefold()] = p
-    wanted = set()
-    if verdict.get("research") == "more":
-        wanted = {p["slug"] for p in roster}
+    asked = list(verdict.get("stronger_model") or [])
     for ch in verdict.get("depth") or []:
         if ch.get("once") or ch.get("depth") not in ("deep", "max"):
             continue
-        key = (ch.get("seat") or "").casefold()
+        asked.append(ch.get("seat") or "")
+    wanted = set()
+    for name in asked:
+        key = (name or "").casefold()
         if key == "all":
             wanted |= {p["slug"] for p in roster}
         elif key in by_key:
@@ -704,20 +770,53 @@ def _roster(chat_id) -> list:
         con.close()
 
 
-def apply_decisions(chat_id, decisions, cfg, message_id=None) -> str:
+def _still_asked(d, seat, marks, marks_now) -> bool:
+    """Does this decision still describe the seat as it is now? The seat's
+    model must be the one the finder started from (an edit on the Models
+    page since then wins, and the chat hears nothing about a model it no
+    longer runs), the pick must differ from it, and nobody may have said
+    back to normal to this seat while the finder worked."""
+    if not seat or (seat.get("model") or "") != d["from"]:
+        return False
+    if d["outcome"] == STEP and d["model"] == d["from"]:
+        return False
+    if marks is not None and marks.get(d["slug"], 0) != marks_now.get(d["slug"], 0):
+        return False
+    return True
+
+
+def apply_decisions(chat_id, decisions, cfg, message_id=None,
+                    marks=None) -> str:
     """Post and write what the finder decided (synchronous; worker thread).
     A step posts its cost line FIRST and only then writes the step-up, so
-    the chat says what it costs before any reply runs on the new model. A
-    seat stepped up by another cue while this one was researching is left
-    as it is. Returns the scan outcome word."""
+    the chat says what it costs before any reply runs on the new model.
+
+    Every decision is checked against the seat as it is at this moment,
+    read fresh from the participants row. A seat whose model changed while
+    the finder worked, or that heard "back to normal" since (`marks`, from
+    reset_marks before the finder ran), gets no line and no write. A seat
+    that already has a live step-up is left as it is. A stored step-up the
+    seat's settings have overtaken counts as none, so it never blocks a new
+    one. Returns the scan outcome word."""
     from .depth import resolve_speaker  # lazy: depth imports this module
     con = db.connect()
     stepped = kept = 0
     try:
         user = resolve_speaker(con, chat_id, message_id, cfg)
+        seats = {p["slug"]: p for p in db.get_chat_participants(con, chat_id)}
         steps = db.get_chat_seat_models(con, chat_id)
+        marks_now = reset_marks(chat_id, seats) if marks is not None else {}
+        current = []
         for d in decisions:
-            if d["outcome"] != STEP or steps.get(d["slug"]):
+            seat = seats.get(d["slug"])
+            if d["outcome"] == SKIP:
+                continue
+            if not _still_asked(d, seat, marks, marks_now):
+                log.info("model step-up dropped, the seat changed while the "
+                         "finder worked: chat=%s seat=%s", chat_id, d["slug"])
+                continue
+            current.append(d)
+            if d["outcome"] != STEP or live_step(seat, steps.get(d["slug"])):
                 continue
             db.insert_message(con, chat_id, "system", step_line(d, user))
             db.set_chat_seat_model(con, chat_id, d["slug"], d["model"],
@@ -725,7 +824,7 @@ def apply_decisions(chat_id, decisions, cfg, message_id=None) -> str:
                                    from_label=d["from_label"], set_by=user,
                                    source=d["source"])
             stepped += 1
-        for line in stay_lines(decisions):
+        for line in stay_lines(current):
             db.insert_message(con, chat_id, "system", line)
             kept += 1
     finally:
@@ -735,20 +834,55 @@ def apply_decisions(chat_id, decisions, cfg, message_id=None) -> str:
     return KEPT if kept else "no_change"
 
 
+async def _await_quiet(chat_id, timeout=None, poll=None) -> bool:
+    """Wait until no round is running in the chat, then claim it, so the
+    step-up is written between rounds: every reply after its line runs on
+    the model the line names, and none already on its way lands after the
+    line on the old model. The claim holds off a new round for the moment
+    the write takes (a send that arrives then is refused before it saves
+    anything, and the client retries it). True with the claim held, which
+    the caller releases. False when the wait ran out, with no claim."""
+    from . import rounds  # lazy: rounds is the event loop's registry
+    timeout = QUIET_WAIT_S if timeout is None else timeout
+    poll = QUIET_POLL_S if poll is None else poll
+    deadline = time.monotonic() + timeout
+    while True:
+        if rounds.claim(chat_id):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(poll)
+
+
 async def step_up(chat_id, verdict, cfg, message_id=None):
     """The scan's step-up axis: find and apply a stronger model for every
     seat the verdict asks for. None when nothing asked, or when the
-    `model_step_up` setting is off. A failure anywhere is logged and
-    changes nothing - it must never cost the scan its other axes."""
+    `model_step_up` setting is off. A found step waits for the chat's
+    replies in flight to finish before its line and its write, so the line
+    always tells the truth about the next reply. A failure anywhere is
+    logged and changes nothing - it must never cost the scan its other
+    axes."""
     if not cfg.get("model_step_up", True):
         return None
+    from . import rounds  # lazy: rounds is the event loop's registry
     try:
         seats = targets(verdict, await asyncio.to_thread(_roster, chat_id))
         if not seats:
             return None
+        marks = reset_marks(chat_id, [s["slug"] for s in seats])
         decisions = await find_step_ups(chat_id, seats, cfg)
-        return await asyncio.to_thread(apply_decisions, chat_id, decisions,
-                                       cfg, message_id)
+        claimed = False
+        if any(d["outcome"] == STEP for d in decisions):
+            claimed = await _await_quiet(chat_id)
+            if not claimed:
+                log.info("model step-up written while the chat is still "
+                         "busy: chat=%s", chat_id)
+        try:
+            return await asyncio.to_thread(apply_decisions, chat_id, decisions,
+                                           cfg, message_id, marks)
+        finally:
+            if claimed:
+                rounds.release(chat_id)
     except Exception:
         log.info("model step-up failed: chat=%s", chat_id, exc_info=True)
         return None
@@ -760,14 +894,18 @@ def back_notice(seat_name, row) -> str:
 
 def clear_for_reset(con, chat_id, participant) -> bool:
     """"Back to normal" for one seat's model (depth.apply_depth calls this
-    on its own connection and worker thread). Posts one line when a step-up
-    was actually cleared; a seat already on its configured model gets
-    nothing. The line names the model the seat returns to."""
+    on its own connection and worker thread). Posts one line when a live
+    step-up was actually cleared. A seat already on its configured model
+    gets nothing, and so does a stored step-up the seat's settings had
+    already overtaken: it is cleared without a word, since the seat was
+    running its configured model anyway. Either way a step-up still being
+    found for this seat is dropped (the reset mark)."""
+    _bump_reset(chat_id, participant["slug"])
     row = db.get_chat_seat_models(con, chat_id).get(participant["slug"])
     if not row or not db.clear_chat_seat_model(con, chat_id, participant["slug"]):
         return False
-    live = live_step(participant, row)
+    if not live_step(participant, row):
+        return False
     name = participant.get("name") or participant["slug"]
-    back = row if live else {**row, "from_label": participant.get("model") or ""}
-    db.insert_message(con, chat_id, "system", back_notice(name, back))
+    db.insert_message(con, chat_id, "system", back_notice(name, row))
     return True

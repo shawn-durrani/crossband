@@ -925,7 +925,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
     """One user turn's scan (#412): a single merged utility call reads every
     instruction the app acts on - a room-mode command, an introduction or
     departure (with aliases), a name correction, a reasoning-depth change,
-    a research cue (#253/#417) - in one JSON verdict (backend/intent.py).
+    a research cue (#253/#417), an ask for a stronger model (#254) - in one
+    JSON verdict (backend/intent.py).
     Each confirmed part applies through exactly the path it always has,
     each on its own worker thread, in the order the verdict line has
     always preferred: the command outcome wins when it changed anything,
@@ -1001,15 +1002,21 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             outcomes["research"] = result
             if outcome is None or outcome == "no_change":
                 outcome = result
-        # #254: a standing "think harder" or "research more" also moves the
-        # seats it asked for onto a stronger model for this chat, found live
-        # (model_step.find_step_ups). After depth and research, so the chat
-        # reads the depth or research line first, then what the model costs.
+        # #254: a standing "think harder", or an explicit ask for a stronger
+        # model, moves the seats it asked for onto a stronger model for this
+        # chat, found live (model_step.find_step_ups). Research mode never
+        # does (the owner's decision of 27 September). After depth and
+        # research, so the chat reads the depth line first, then what the
+        # model costs.
         result = await model_step.step_up(chat_id, verdict, cfg, message_id)
         if result:
             outcomes["model"] = result
             if outcome is None or outcome == "no_change":
                 outcome = result
+        if verdict.get("stronger_model"):
+            outcomes["stronger_model"] = result or "no_change"
+            if outcome is None:
+                outcome = outcomes["stronger_model"]
         if outcome is None:
             # A confirmed instruction that changed nothing is "no_change",
             # never "model_rejected": the 25 September log showed a heard

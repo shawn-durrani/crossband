@@ -137,19 +137,19 @@ for a gated source.
 
 ## Research mode
 
-Say "research more," "look into that properly," or "go deeper," and the
-seats plan their searches before the first one, weigh what comes back by
-how much to trust it, say plainly when the evidence falls short, and
-close with a written answer that lists its sources. Searching your own
+Say "research more," "do some research," "look into that properly," or
+"go deeper," and the seats plan their searches before the first one,
+weigh what comes back by how much to trust it, say plainly when the
+evidence falls short, and close with a written answer that lists its
+sources. Searching your own
 memory counts too, so a question about something you told the app last
 month gets the same care as one that needs the web.
 
 A system line names who turned it on. The tool budget for a reply grows
 for the rest of that chat, the cap set by `research_tool_rounds` in
 [CONFIG.md](CONFIG.md#research-tool-caps), and the running-cost line
-starts naming what the chat has spent since. Each seat also moves to a
-stronger model for the chat when the app can find one, as
+starts naming what the chat has spent since. Every seat keeps the model
+it's on. To move a seat to a stronger model, ask for one, as
 [MODELS.md](MODELS.md#a-stronger-model-for-one-chat) describes. Say
-"back to normal" and
-the next reply is back to the ordinary budget and the ordinary answer. A
-fresh chat always starts at the defaults.
+"back to normal" and the next reply is back to the ordinary budget and
+the ordinary answer. A fresh chat always starts at the defaults.

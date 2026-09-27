@@ -150,11 +150,17 @@ setting and says it didn't apply.
 
 ## A stronger model for one chat
 
-Say "think harder" or "research more" in a chat, and each seat it moves
-can also switch to a stronger model for the rest of that chat. "Think
-harder" moves the seats it names, or every seat when it names none.
-"Research more" moves every seat. A new chat starts back on the model
-each seat's settings name.
+Ask for a stronger model in a chat, and the seats you name can switch
+to one for the rest of that chat. Say "use your best model" or "use a
+stronger model", and add a seat's name to move only that seat. A
+standing "think harder" or "maximum thinking" asks for one too, for the
+seats it names, or every seat when it names none. A new chat starts
+back on the model each seat's settings name.
+
+Asking for research never changes a model. "Do some research" or "find
+me an answer" turns on
+[research mode](WEB_RESEARCH.md#research-mode), and every seat keeps
+the model it's on.
 
 The app finds the stronger model at the moment you ask, in four steps.
 
@@ -171,8 +177,9 @@ The app finds the stronger model at the moment you ask, in four steps.
 4. The seat moves only to a model ranked higher than the one it's on.
 
 Before the switch takes effect, a line in the chat says what moved,
-where the ranking came from, and what a turn costs each way. For
-example:
+where the ranking came from, and what a turn costs each way. The line
+waits for any reply already on its way to finish, so the next reply
+after it is the first on the new model. For example:
 
 > Claude moves from Claude Sonnet 5 to Claude Opus 5 for this chat, set
 > by Alex. A web search ranked it the strongest Claude model the app
@@ -195,9 +202,16 @@ that ranks higher but has no price is named and never chosen.
 
 Say "back to normal" and every seat returns to its configured model,
 along with its thinking depth and research mode. Name one seat and
-only that seat returns. If you change a seat's model in its settings,
-your choice wins in every chat. If the provider refuses the stronger
-model, the seat goes back by itself and the chat says so.
+only that seat returns. If the provider refuses the stronger model, the
+seat goes back by itself and the chat says so.
+
+Your choice on the Models page always wins. Change a seat's model there
+and the step-up ends in every chat. The next time the seat replies in a
+chat that had one, a line just before the reply names the model it's
+on now. For example:
+
+> Claude is on claude-opus-5 now, the model set on the Models page, so
+> this chat's step-up to Claude Sonnet 5 no longer applies.
 
 Local seats and seats on a custom endpoint never switch.
 `model_step_up` in [CONFIG.md](CONFIG.md#models) turns the whole thing
