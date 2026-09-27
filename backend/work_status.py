@@ -36,7 +36,9 @@ status chip can never leak reasoning or render an unsafe string."""
 # noticeable delay", including any MCP tool and summon_claude_code's own
 # (fast) queuing call - so a tool added later is announced by default rather
 # than silently missing the courtesy.
-FAST_TOOLS = frozenset({"get_diagnostic", "recall_memory", "search_history", "save_memory"})
+FAST_TOOLS = frozenset({"get_diagnostic", "recall_memory", "search_history", "save_memory",
+                        # starts a background run and answers at once
+                        "run_eval"})
 
 # First check-in threshold and repeat cadence, from the original acceptance
 # criteria: "If it exceeds 20 seconds... subsequent check-ins are at least 30

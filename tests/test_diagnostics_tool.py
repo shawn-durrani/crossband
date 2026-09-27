@@ -200,7 +200,9 @@ def test_get_diagnostic_is_offered_even_with_every_other_toggle_off(app, monkeyp
         with c.stream("POST", f"/api/chats/{chat['id']}/send",
                       json={"text": "hi"}) as r:
             "".join(r.iter_text())
-    assert seen and all(tools == ["get_diagnostic"] for tools in seen)
+    # run_eval (#407) is offered on the same terms, beside it.
+    assert seen and all(tools == ["get_diagnostic", "run_eval"]
+                        for tools in seen)
 
 
 # ---------- end-to-end chat turn: a fake provider issuing the native call ----------

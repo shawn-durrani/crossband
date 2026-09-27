@@ -184,10 +184,11 @@ async def _status_pinger(job: GuestJob):
         pass
 
 
-async def _wait_for_pause(chat_id: int, settle_s: float):
+async def wait_for_pause(chat_id: int, settle_s: float):
     """Block until the chat has been round-idle for `settle_s` continuous
     seconds (a 'natural pause'), bounded by HANDBACK_MAX_WAIT_S. Imported lazily
-    to keep guestjobs off engine's heavier import graph."""
+    to keep guestjobs off engine's heavier import graph. run_eval's result
+    waits on the same pause before a seat relays it."""
     from . import rounds
     waited = 0.0
     idle_for = 0.0
@@ -262,7 +263,7 @@ async def _run(job: GuestJob, task, repo, context, cfg, mode, resume,
     if narrate and handback and mid:
         settle = BLOCKER_SETTLE_S if kind == "blocker" else RESULT_SETTLE_S
         try:
-            if await _wait_for_pause(job.chat_id, settle):
+            if await wait_for_pause(job.chat_id, settle):
                 await handback(job.chat_id, kind)
         except asyncio.CancelledError:
             raise

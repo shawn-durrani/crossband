@@ -27,6 +27,7 @@ from . import memory_client as memory_client_mod
 from . import providers
 from . import provenance as prov
 from . import research
+from . import run_eval
 from . import tools as tools_mod
 from . import voice_trace
 from .config import compute_cost, provenance_for
@@ -637,6 +638,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
     labels_cursor = 0.0  # newest label write folded in so far (#28)
     guest_ok = None
     memory_up = None
+    asker_id = None  # the message this round answers, if a person sent one
     for idx, participant in enumerate(responders):
         # Server-side half of the client's final_to_first_token stopwatch
         # - only meaningful for the round's FIRST responder (the one the
@@ -661,6 +663,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         messages = state["messages"]
         last_seen_id = state["last_seen_id"]
         labels_cursor = state["labels_cursor"]
+        if idx == 0:
+            # #407: fixed at the round's first read, before any seat
+            # replies, so every seat's run_eval judges the same ask. A
+            # hand-back or continue round has none.
+            asker_id = run_eval.asking_turn_id(messages, is_handback)
         # Use the existing summary + un-folded recent transcript; the fold runs as a
         # background task after each round (prompt caching keeps the larger prefix
         # cheap), so a round never stalls mid-conversation waiting on a summary.
@@ -736,6 +743,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         round_cfg["shared_instructions"] = state["shared_instructions"]
         round_cfg["round_predecessors"] = list(spoken)  # dynamic, this round only
         round_cfg["chat_id"] = chat_id  # summon_claude_code queues per chat
+        # #407: run_eval reads who sent this turn, and relays a finished
+        # run through the same hand-back a guest's result uses.
+        round_cfg["_round_asker_id"] = asker_id
+        round_cfg["_handback"] = handback
         # #138 slice 2: this round's research-tool outputs, shared by every
         # participant, so a URL a search surfaced moments ago is fetchable
         # before anything persists (tool events only insert with the reply).
@@ -800,6 +811,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # gating it behind web_on/code_on would only reintroduce the
         # escalate-to-a-guest step get_diagnostic exists to remove.
         tool_defs = list(tools_mod.diagnostics_tool_definitions())
+        # run_eval (#407): always offered for the same reason. Whether a run
+        # may start is decided per call, in backend/run_eval.py.
+        tool_defs += tools_mod.eval_tool_definitions()
         if web_on:
             tool_defs += tools_mod.tool_definitions(round_cfg)
         if guest_ok is None:  # one PATH scan per round, not per speaker

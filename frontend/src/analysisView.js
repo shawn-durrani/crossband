@@ -91,11 +91,13 @@ export function whenLabel(unix, nowSecs) {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`
 }
 
-// One line for a run in the history: what it was and how it ended.
+// One line for a run in the history: what it was, whether a seat started
+// it from a chat (run_eval), and how it ended.
 export function historyTitle(run) {
   const badge = stateBadge(run)
   const kind = run?.practice ? `${run.title} (practice)` : (run?.title || run?.measurement || 'Run')
-  return `${kind} · ${badge.label}`
+  const from = run?.started_from === 'chat' ? ', from a chat' : ''
+  return `${kind}${from} · ${badge.label}`
 }
 
 // The line under it: the headline when there is one, else why it stopped.
@@ -104,6 +106,25 @@ export function historyDetail(run) {
   if (run.summary?.headline) return run.summary.headline
   if (run.error) return run.error.split('\n').filter(Boolean).slice(-1)[0] || ''
   return ''
+}
+
+// A chat line from run_eval links a run's report as #analysis/<run id>
+// (backend/run_eval.py REPORT_LINK_PREFIX, through
+// tests/fixtures/backend_contract.json). Following one opens this page on
+// that run. The run id is checked against the backend's own shape, so a
+// hash can't smuggle anything else into the page's request.
+export const REPORT_LINK_PREFIX = '#analysis/'
+const RUN_ID = /^[a-z]+-\d{8}-\d{6}(-\d+)?$/
+
+export function runFromHash(hash) {
+  if (typeof hash !== 'string' || !hash.startsWith(REPORT_LINK_PREFIX)) return null
+  let runId
+  try {
+    runId = decodeURIComponent(hash.slice(REPORT_LINK_PREFIX.length))
+  } catch {
+    return null
+  }
+  return RUN_ID.test(runId) ? runId : null
 }
 
 export function reportJsonUrl(runId) {
