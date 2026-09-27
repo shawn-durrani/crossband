@@ -85,7 +85,8 @@ when the session ends. Each step is below as what actually happens.
    noise suppression and automatic gain off. Banks learnt in one mode
    then match speech heard in another.
 2. The browser resamples to 16 kHz properly, with a low-pass filter.
-   Today it drops samples, which folds high sounds into the speech band.
+   Keeping one sample in three would fold high sounds into the speech
+   band.
 3. Turn taking stays as it is: when a turn starts, when it ends, the
    pre-roll, and the cuts on long turns.
 4. The relay keeps the session's audio in memory as it arrives, as it
