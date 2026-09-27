@@ -219,14 +219,17 @@ microphones from this household's.
 1. A message is labelled with the session voices heard in its time
    span. The main speaker is the one with the most time alone. Another
    voice is listed when it spoke for 1 second or more.
-2. A long turn is labelled from all of it, not from its last piece.
-3. When two voices overlap, each word of the transcript goes to the
+2. A turn too short to fingerprint takes its voice's name, unless the
+   whole turn, scored on its own, plainly isn't that voice's person.
+   Then it's left unnamed.
+3. A long turn is labelled from all of it, not from its last piece.
+4. When two voices overlap, each word of the transcript goes to the
    voice speaking at that word's time. ElevenLabs Scribe Realtime sends
    word times when asked, counted from the start of the connection.
    Asking makes it send each final transcript twice, plain and then
    with times, so the relay must use the second and drop the first. The
    split happens on the Mac, so no voice clips go to the cloud to do it.
-4. A named voice's label is ready about 50 ms after the turn ends, well
+5. A named voice's label is ready about 50 ms after the turn ends, well
    before the message is saved.
 
 ### Ask about new voices
@@ -488,6 +491,11 @@ Live on this install:
   more a chance of 0.01 or less. It goes to that person's voice, or to
   a new voice of its own when they have none. A voice named by hand, or
   one someone said is a TV, is never checked.
+- The short-turn check: a turn with nothing long enough to fingerprint,
+  spoken by one named voice, is scored whole against the banks. When it
+  gives that voice's person 0.01 or less, the turn is left unnamed, and
+  the voice keeps its name. It costs two fingerprints, about 40 to 50
+  ms, on those turns only.
 - The naming pass at the end of a session. Every voice is named once
   more over all its fingerprints, and each turn whose name changed is
   relabelled, the last turn included. A turn whose voice ends the
@@ -516,10 +524,6 @@ Live on this install:
 
 Not built yet:
 
-- A check on a turn too short to fingerprint. Today it takes its
-  voice's name, so a one-word reply the tracker files under the wrong
-  voice is named wrong. Whether to check it, and how, is the owner's
-  call.
 - Made-up sessions from the household's own clips, and the voice rig
   playing a conversation out of a speaker into the microphone.
 
@@ -527,7 +531,7 @@ Not built yet:
 
 | Risk | What happens | What limits it |
 |---|---|---|
-| The tracker loses track in a long session | Two voices swap | None in 15 recorded meetings. The fingerprint check on every span, the bank check on each voice's speech in a turn, and the end-of-session naming pass. |
+| The tracker loses track in a long session | Two voices swap | None in 15 recorded meetings. The fingerprint check on every span, the bank check on each voice's speech in a turn, the check on a turn too short to fingerprint, and the end-of-session naming pass. |
 | A voice sounds unlike its bank (a cold, a whisper, a new mic) | Named late, or left listening | Probabilities fall, so the app waits instead of guessing. Confirming a turn teaches it. |
 | Two similar voices, like siblings | Both near the bar | The calibration sees them close, one to one stops both getting one name, and you confirm |
 | The AIs' own playback reaches the mic | A voice made of AI speech | A voice heard mostly while the AIs are talking is never named or saved |

@@ -98,8 +98,29 @@ that speech in, and the turn is labelled by the voice it moved to, or
 left listening. The span check leaves a moved span where
 it is. Each move is on the row's `moved`, with `by: "bank"`, the turn's
 probability for the person it is (`p`) and for the voice's own
-(`p_own`). A turn too short to fingerprint can't be checked, and takes
-its voice's name as before.
+(`p_own`). A turn too short to fingerprint can't be checked here: THE
+SHORT-TURN CHECK is its check.
+
+THE SHORT-TURN CHECK. A turn with no span long enough to fingerprint adds
+no evidence, and takes its voice's name from what that voice said before,
+which trusts the tracker's call on which voice spoke it. Beside a busy
+road on the voice rig, the tracker filed one man's 0.3 second reply under
+another man's voice, and it took his name. So when nothing in a turn was
+fingerprinted, every span in it is one session voice's, that voice is
+named and the calibrated scorer is ready, the whole turn is fingerprinted
+with both models and scored against the banks on its own, as a turn with
+no diariser is (name_single_turn). When it gives the voice's person
+SHORT_CHECK_NOT or less, the turn is left listening:
+
+  * it isn't counted as that voice's turn, so no name fills it later and
+    tapping it names no session voice;
+  * the voice keeps its name and its evidence, and nothing moves.
+
+A turn of several pieces, or one where anything was fingerprinted, isn't
+checked. The check costs two fingerprints of the whole turn, about 40 to
+50 ms for a turn of a second or so, on those short turns only. The row carries `short_check`: the
+turn's probability for the voice's person (`p_own`), whether the turn
+was left unnamed, and the time it took.
 
 THE END-OF-SESSION PASS. A tracking session ends after SESSION_IDLE_S of
 quiet (the feed thread exits, or the next turn finds it stale) or when
@@ -198,6 +219,11 @@ BANK_CHECK_MIN_S = LISTEN_MIN_S  # the voice's clean speech in the turn
 BANK_CHECK_SURE = 0.99          # its probability for the person it is
 BANK_CHECK_NOT = 0.01           # and for the person its voice says
 SPLIT_SLOT_BASE = 100           # split-off voices are numbered from here
+# THE SHORT-TURN CHECK's bar, in calibrated probability: a turn too short
+# to fingerprint, scored whole, that gives its voice's person this much or
+# less is left unnamed. On the voice rig the misfiled road reply scored
+# its voice's person 0.001, and a right short reply scored 0.9995.
+SHORT_CHECK_NOT = 0.01
 # The multi scorer (#477): a person's score is the mean of their best
 # MULTI_TOP_K clip scores, so one lucky clip can't carry a name alone. A
 # bank with fewer clips uses what it has.
@@ -1616,7 +1642,21 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
              for p in list(earlier) + [{"offset": offset, "spans": spans}]
              for s in p["spans"]]
     main = main_voice(whole)
-    if main is not None and turn_id:
+    short = None
+    if main is not None and not prints and not earlier \
+            and all(s["slot"] == main for s in spans) \
+            and method == "calibrated":
+        short = short_check(named.get(main), pcm, sample_rate, candidates,
+                            embed_fn, eres_fn)
+    doubted = bool(short and short["unnamed"])
+    # What this turn says of each voice: the session's naming, but a turn
+    # THE SHORT-TURN CHECK doubted listens. It isn't the voice's turn, so
+    # no name fills it later and tapping it names no session voice.
+    heard = dict(named)
+    if doubted:
+        heard[main] = dict(named[main], state="listening", name="", pid="",
+                           score=None, prob=None, human=False)
+    if main is not None and turn_id and not doubted:
         sess["turn_voice"].append((str(turn_id), main))
         del sess["turn_voice"][:-TURNS_KEPT]
     # The turn being named right now is the pass's to label: it may hold
@@ -1625,9 +1665,9 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
     row.update(
         session=sess["id"], turn=sess["turns"], offset=round(offset, 3),
         spans=spans, main=main,
-        main_state=(named.get(main) or {}).get("state", "listening")
+        main_state=(heard.get(main) or {}).get("state", "listening")
         if main is not None else "",
-        main_name=(named.get(main) or {}).get("name", "")
+        main_name=(heard.get(main) or {}).get("name", "")
         if main is not None else "",
         voices={str(k): v for k, v in sorted(named.items())},
         bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
@@ -1638,9 +1678,11 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
         row["moved"] = moved
     if leads:
         row["span_lead"] = max(leads)
+    if short:
+        row["short_check"] = short
     if main is None:
         return None
-    voice = named.get(main) or {}
+    voice = heard.get(main) or {}
     clean = [(s["start"], s["end"]) for s in spans
              if s["slot"] == main and not s["overlap"]
              and s["end"] - s["start"] >= MIN_SPAN_S]
@@ -1657,13 +1699,13 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             # heard in the turn with its name and seconds, the spans in
             # turn time, and how much audio the turn held (its clock, for
             # lining up Scribe's word times). Content-free, like the rows.
-            "voices": turn_voices(whole, named),
+            "voices": turn_voices(whole, heard),
             "spans": [dict(s) for s in whole],
             "turn_s": round(offset + seconds - base, 3),
             "pieces": len(earlier) + 1,
             # What this piece alone heard, for joining it with pieces the
             # feed didn't answer (join_pieces).
-            "piece_voices": turn_voices(spans, named)}
+            "piece_voices": turn_voices(spans, heard)}
 
 
 def _bank_moves(voices, spans, prints, candidates, calibrated):
@@ -1705,6 +1747,35 @@ def _bank_moves(voices, spans, prints, candidates, calibrated):
             s["slot"] = home
             placed.add(i)
     return moved, placed
+
+
+def short_check(voice, pcm, sample_rate, candidates, embed_fn, eres_fn):
+    """THE SHORT-TURN CHECK for a turn with nothing fingerprinted, whose
+    main voice is `voice` as the session names it: {"p_own", "unnamed",
+    "ms"}, or None when it can't be checked (the voice isn't named as
+    someone the banks hold, no calibrated snapshot, or the turn fails the
+    audio gates). Fingerprints the whole turn with both models."""
+    from . import voice_calibration as vc
+    voice = voice or {}
+    pid = voice.get("pid")
+    if voice.get("state") != "named" or not pid or eres_fn is None:
+        return None
+    snap = vc.current()
+    allowed = {c["person_id"]: c["name"] for c in candidates or ()
+               if c.get("person_id")}
+    if not snap or not snap.get("calibrated") or pid not in allowed \
+            or gate(pcm, sample_rate):
+        return None
+    t0 = time.perf_counter()
+    emb = embed_fn(pcm)
+    emb_e = eres_fn(pcm) if emb is not None else None
+    got = _bank_probs(emb, emb_e, len(pcm) / 2 / sample_rate, allowed,
+                      snap)
+    if pid not in got:
+        return None
+    return {"p_own": round(got[pid], 4),
+            "unnamed": got[pid] <= SHORT_CHECK_NOT,
+            "ms": round((time.perf_counter() - t0) * 1000, 1)}
 
 
 def turn_voices(spans, named):
