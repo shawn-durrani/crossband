@@ -8,12 +8,14 @@ events); these endpoints are the snapshots those events tell clients to
 refetch, exactly the guest-jobs pattern.
 """
 
+import asyncio
 import json
 import logging
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
-from .. import anchors, db, introductions, person_sync, room_state
+from .. import (anchors, db, introductions, person_sync, room_state,
+                voice_recording)
 
 router = APIRouter(tags=["room"])
 
@@ -362,6 +364,98 @@ def add_person_alias(person_id: str, body: dict = Body(...)):
     from .. import events
     events.notify_room_update()
     return {"ok": True}
+
+
+def _person_or_404(store, person_id: str) -> dict:
+    person = next((p for p in store.people()
+                   if p["person_id"] == person_id), None)
+    if person is None:
+        raise HTTPException(404, "no such remembered voice")
+    return person
+
+
+def _record_voice(person_id: str, data: bytes, cfg: dict) -> dict:
+    """The blocking half of the record route, on a worker thread: the
+    person and boundary checks, the speech check, the save and the
+    hygiene audit. Raises HTTPException for the route to return."""
+    from .. import events, voice_calibration, voiceid
+    store = anchors.store()
+    person = _person_or_404(store, person_id)
+    # The #77 boundary holds at every door: a guard entry under an AI
+    # participant's name is never a person, so nothing is recorded for it.
+    con = db.connect()
+    try:
+        pnames = introductions._participant_names(con)
+    finally:
+        con.close()
+    names = [person["name"], person["preferred_name"]] \
+        + list(person["merged_names"])
+    if any(introductions.participant_alias(n, pnames) for n in names if n):
+        raise HTTPException(400, "an AI participant's name can never be a "
+                                 "person in the room")
+    seconds = len(data) / 2 / voice_recording.SAMPLE_RATE
+    try:
+        pcm, speech = voice_recording.check(voice_recording.read_wav(data))
+    except voice_recording.Refused as refused:
+        log.info("voice recording refused: bytes=%d seconds=%.1f reason=%s",
+                 len(data), seconds, refused.reason)
+        raise HTTPException(422, refused.message)
+    out = voice_recording.save(store, person_id, pcm)
+    if not out["saved"]:
+        log.info("voice recording refused: bytes=%d seconds=%.1f "
+                 "speech=%.1f offered=%d reason=nothing_kept", len(data),
+                 seconds, speech, out["offered"])
+        raise HTTPException(422, "None of it could be kept as clean speech. "
+                                 "Try again somewhere quieter.")
+    # A changed bank is re-audited, as a correction's or a merge's is.
+    # No-op while the matcher is cold; never raises.
+    voiceid.audit_banks_if_changed(cfg)
+    events.notify_room_update()
+    log.info("voice recorded: bytes=%d seconds=%.1f speech=%.1f offered=%d "
+             "saved=%d saved_seconds=%.1f", len(data), seconds, speech,
+             out["offered"], out["saved"], out["seconds"])
+    return {"ok": True, "saved": out["saved"], "seconds": out["seconds"],
+            "speech_seconds": round(speech, 1),
+            **voice_calibration.person_readiness(cfg, person_id),
+            "summary": voice_calibration.status(cfg)}
+
+
+@router.post("/api/voice/people/{person_id}/record")
+async def record_person_voice(person_id: str, request: Request):
+    """Record someone's voice on purpose (#504): the Voices page sends
+    about 30 seconds of them reading a passage aloud, as a 16 kHz mono
+    PCM-16 WAV in the request body. The speech check trims and judges it,
+    it's cut into clips at its pauses, and each is banked as an
+    introduction, so the bank is vouched and rotation keeps them first.
+
+    The body is read in memory, never spooled to a temp file, and the
+    audio goes only to the local store, like any clip. Refusals are 422
+    with a plain sentence the page shows as it is. The answer carries
+    what was kept and the person's readiness: `state` "checking" means
+    the background build hasn't covered the new clips yet, and the page
+    asks /readiness until it has. Session-gated like every /api route."""
+    cap = voice_recording.MAX_UPLOAD_BYTES
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > cap:
+            raise HTTPException(413, "That recording ran over a minute. "
+                                     "Record about 30 seconds.")
+    cfg = request.app.state.settings.as_cfg()
+    return await asyncio.to_thread(_record_voice, person_id, bytes(data),
+                                   cfg)
+
+
+@router.get("/api/voice/people/{person_id}/readiness")
+def get_person_readiness(person_id: str, request: Request):
+    """One person's readiness and whether it covers their clips as they
+    are now (#504), for the Voices page to ask after a recording until
+    the background build lands. Reads only, content-free."""
+    from .. import voice_calibration
+    _person_or_404(anchors.store(), person_id)
+    cfg = request.app.state.settings.as_cfg()
+    return {**voice_calibration.person_readiness(cfg, person_id),
+            "summary": voice_calibration.status(cfg)}
 
 
 @router.post("/api/voice/people/{person_id}/clips/{fname}/move")

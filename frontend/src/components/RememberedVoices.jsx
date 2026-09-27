@@ -6,8 +6,8 @@
 // audio from disk. All wording and derivations live in ../roomState.js
 // (pure, unit-tested); this file is markup and wiring only.
 import { useEffect, useRef, useState } from 'react'
-import { AudioLines, ChevronDown, ChevronRight, Ear, Pause, Pencil, Play,
-         Trash2 } from 'lucide-react'
+import { AudioLines, ChevronDown, ChevronRight, Ear, Mic, Pause, Pencil,
+         Play, Trash2 } from 'lucide-react'
 
 import { api } from '../api.js'
 import { auditionNotice, selfCollectedNotice } from '../roomState.js'
@@ -15,6 +15,7 @@ import { cleanPreferredName, FORGET_EXPLAINER, personSummary,
          sufficiencyProgress } from '../roomState.js'
 import { clipRow, DELETE_CLIP_EXPLAINER, moveTargets } from '../voiceClips.js'
 import VoiceReadiness from './VoiceReadiness'
+import VoiceRecorder from './VoiceRecorder'
 
 export default function RememberedVoices() {
   const [open, setOpen] = useState(false)
@@ -43,6 +44,8 @@ export default function RememberedVoices() {
   // move-target select is open.
   const [newPerson, setNewPerson] = useState(null)   // null closed, '' open
   const [movingFile, setMovingFile] = useState(null)
+  // Recording a voice on purpose (#504): whose recorder is open.
+  const [recordingFor, setRecordingFor] = useState(null)
 
   async function createPerson() {
     const name = cleanPreferredName(newPerson || '')
@@ -140,6 +143,17 @@ export default function RememberedVoices() {
     } catch (e) {
       setError(`Could not delete clip: ${e.message}`)
     }
+  }
+
+  // A recording changed this person's bank: refresh the list, and their
+  // clips when they're open.
+  async function afterRecording(personId) {
+    await load()
+    if (clipsFor !== personId) return
+    try {
+      const d = await api.voiceClips(personId)
+      setClips(d.clips || [])
+    } catch { /* the list itself already refreshed */ }
   }
 
   async function load() {
@@ -278,7 +292,8 @@ export default function RememberedVoices() {
             <p className="text-xs text-ink-faint">
               Nobody yet. When someone is introduced in a voice chat ("say hi
               to Alex"), their voice is learned here so later sessions
-              recognise them without another introduction.
+              recognise them without another introduction. You can also add
+              someone with New person and record their voice.
             </p>
           )}
           {(people || []).map((p) => {
@@ -385,15 +400,37 @@ export default function RememberedVoices() {
                   )}
                   {/* Clip audition (#68): hear exactly what this voice was
                       built from, and delete a recording that is wrong. */}
-                  <button
-                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-ink-dim hover:text-ink"
-                    aria-expanded={clipsFor === p.person_id}
-                    onClick={() => toggleClips(p.person_id)}
-                    title="Listen to the stored recordings this voice was learnt from"
-                  >
-                    <Ear size={11} />
-                    {clipsFor === p.person_id ? 'hide clips' : 'listen to clips'}
-                  </button>
+                  <div className="mt-1 flex items-center gap-3 flex-wrap">
+                    <button
+                      className="inline-flex items-center gap-1 text-[11px] text-ink-dim hover:text-ink"
+                      aria-expanded={clipsFor === p.person_id}
+                      onClick={() => toggleClips(p.person_id)}
+                      title="Listen to the stored recordings this voice was learnt from"
+                    >
+                      <Ear size={11} />
+                      {clipsFor === p.person_id ? 'hide clips' : 'listen to clips'}
+                    </button>
+                    {/* #504: record them reading a short passage, so the
+                        bank doesn't have to wait for a voice chat. */}
+                    <button
+                      className="inline-flex items-center gap-1 text-[11px] text-ink-dim hover:text-ink"
+                      aria-expanded={recordingFor === p.person_id}
+                      onClick={() => setRecordingFor(
+                        (f) => (f === p.person_id ? null : p.person_id))}
+                      title="Record them reading a short passage aloud, about 30 seconds. It's kept as clips of their voice, the same as an introduction."
+                    >
+                      <Mic size={11} />
+                      Record their voice
+                    </button>
+                  </div>
+                  {recordingFor === p.person_id && (
+                    <VoiceRecorder
+                      personId={p.person_id}
+                      name={s.name}
+                      onSaved={() => afterRecording(p.person_id)}
+                      onClose={() => setRecordingFor(null)}
+                    />
+                  )}
                   {clipsFor === p.person_id && (
                     <div className="mt-1.5 space-y-1">
                       {clips.length === 0 && (

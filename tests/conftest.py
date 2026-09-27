@@ -139,6 +139,14 @@ def _voiceid_offline(monkeypatch):
     # data directory.
     monkeypatch.setattr(voice_calibration, "_spawn_eres2net_fetch",
                         lambda cfg: None)
+    # The session naming's warm (#482) waits up to two minutes for the
+    # speaker model on its own thread, asking voiceid for it every quarter
+    # second. Started by a test's first voice feed, it outlived that test
+    # and claimed the model fetch inside later ones, so a startup test saw
+    # a fetch nobody made (#504's CI). Offline the model never comes, so a
+    # warm gives up at once; a test that makes the model ready still warms.
+    from backend import voice_session_shadow
+    monkeypatch.setattr(voice_session_shadow, "WARM_READY_WAIT_S", 0.0)
     yield
     voice_calibration._reset_for_tests()
     voiceid._reset_for_tests()

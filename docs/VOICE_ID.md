@@ -297,7 +297,9 @@ always scores just under it gets named but never learns. You can teach
 it yourself. Tap the name on the turn and pick "Yes, that's Sam: learn
 from this". The name stays, and the app learns from that turn whatever
 it scored. The bank counts as vouched, and the clip is kept through
-rotation, the same as a clip from a correction.
+rotation, the same as a clip from a correction. To give a voice a lot
+of clean speech at once, record them reading a passage, as set out in
+[Recording someone's voice](#recording-someones-voice).
 
 The app keeps the audio of the last 24 turns in memory, up to the last
 30 seconds of each, so confirm soon after the turn. When the recording
@@ -340,6 +342,44 @@ The page shows "Ready" or what the voice still needs.
   be someone else's voice.
 - "87% of pieces named right, 95% needed" means too many pieces were
   left unnamed.
+
+### Recording someone's voice
+
+Most banks hold too little clean speech to be ready, since clips only
+arrive when a voice chat is sure who spoke. You can fill a bank
+yourself. On the Voices page, press "Record their voice" beside the
+person, sit them at the microphone and press Start. They read the
+short passage on screen, which takes about 30 seconds, and the meter
+moves while the app hears them. Press Stop when they finish, or it
+stops by itself at 45 seconds. It records with the same microphone
+setting a voice chat uses.
+
+The app checks the recording is speech, trims the silence off both
+ends, and cuts it into clips of up to 10 seconds at the pauses. Each
+clip is kept as an introduction. The bank counts as vouched, and
+rotation keeps these clips ahead of the ones the app collects itself.
+A recording that's mostly noise, silent, or under 10 seconds of speech
+is turned away with the reason, and nothing is kept. You can listen to
+the new clips and delete one like any other, and Forget removes them
+too.
+
+Straight after, the page says how much it kept and checks whether the
+voice is ready. That takes a few seconds while the test fingerprints
+the new clips. If the voice isn't ready, the page says what's missing.
+When it needs speech from another day, or too few pieces were named
+right, record again on another day or in another room. A second
+setting is what the test is missing. With `voice_calibrated_scorer`
+off, the clips are still kept and the page skips the check.
+
+A voice chat that's still listening would hear the reading too, so the
+recorder won't start until you end it. The next recording of the same
+person shows a different passage. The audio goes only into the app's
+own store of clips, and from there to membro with every other clip.
+
+`POST /api/voice/people/{person_id}/record` takes the recording as a
+16 kHz mono WAV. `GET /api/voice/people/{person_id}/readiness` gives
+the person's result and says whether it covers their clips as they
+are now.
 
 ### How the test names a piece
 

@@ -201,6 +201,15 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to }),
     }).then(json),
+  // Recording a voice on purpose (#504): the WAV goes as the raw body, so
+  // the server reads it in memory. The answer says what was kept and the
+  // person's readiness, which /readiness answers again until it's current.
+  recordVoice: (personId, wavBytes) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/record`, {
+      method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wavBytes,
+    }).then(json),
+  voiceReadiness: (personId) => fetch(
+    `/api/voice/people/${encodeURIComponent(personId)}/readiness`).then(json),
   addVoiceAlias: (personId, name) => fetch(
     `/api/voice/people/${encodeURIComponent(personId)}/alias`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

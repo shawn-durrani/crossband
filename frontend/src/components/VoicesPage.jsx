@@ -25,7 +25,8 @@ export default function VoicesPage({ onClose, onOpenMenu }) {
             <p className="text-sm text-ink-mid mt-0.5">
               Who this app can recognise by voice, what each voice was learnt
               from, and every control over that: listen to the stored clips,
-              fix names and spellings, move a recording to the right person,
+              record someone reading a short passage, fix names and
+              spellings, move a recording to the right person,
               confirm a bank you have auditioned, or forget someone entirely.
               Nothing here ever leaves this machine except inside your own
               room-mode transcription requests.
