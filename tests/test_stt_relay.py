@@ -15,7 +15,9 @@ skipped, and the words kept in each turn's own time, across a reconnect.
 that silence itself and keeps its final, the next turn keeps its own id and
 its words' times, and every backup-path turn logs why, content-free.
 #537: a session Scribe ends (its time limit, or too little audio) closes
-cleanly instead of reading as an error, and a real error says its kind."""
+cleanly instead of reading as an error, and a real error says its kind.
+#540: a commit is paired with its own final even when taking its audio for
+the voice check fails."""
 
 import asyncio
 import base64
@@ -1003,3 +1005,73 @@ def test_a_scribe_error_carries_its_kind(app, monkeypatch):
             assert ws.receive_json() == {"error": "Invalid API key",
                                          "kind": "auth_error"}
             ws.send_json({"done": True})
+
+
+# ---- #540: a commit is paired even when its audio can't be taken ----
+#
+# The relay recorded each commit for pairing only after it took the turn's
+# audio for the voice check. When that step threw, the commit still went
+# up to Scribe unrecorded, and a Scribe running behind handed its answer
+# the next turn's id.
+
+class BehindEleven(FakeEleven):
+    """Scribe running behind: nothing comes back until the second commit
+    is in, then both answers, in order, each a plain final and its timed
+    twin."""
+
+    def __init__(self):
+        super().__init__()
+        self.held = []
+
+    async def send(self, raw):
+        msg = json.loads(raw)
+        self.sent.append(msg)
+        if not msg.get("commit"):
+            self.queue.put_nowait(json.dumps(
+                {"message_type": "partial_transcript", "text": "hello"}))
+            return
+        self.held.append(f"piece {len(self.held) + 1}")
+        if len(self.held) < 2:
+            return
+        for text in self.held:
+            self.queue.put_nowait(json.dumps({"message_type": PLAIN,
+                                              "text": text}))
+            self.queue.put_nowait(json.dumps({"message_type": TIMED,
+                                              "text": text, "words": []}))
+        self.held = []
+
+
+def test_a_commit_whose_audio_cant_be_taken_still_gets_its_own_final(
+        only_app, monkeypatch):
+    from backend import diarize, voice_sessions as vss
+    ended = []
+    monkeypatch.setattr(vss, "end_turn",
+                        lambda chat_id, tid, cfg, after=None: ended.append(tid))
+    real_take = diarize.RoomSession.take_utterance
+    takes = []
+
+    def take_that_fails_once(self):
+        takes.append(1)
+        if len(takes) == 1:
+            raise RuntimeError("the audio slice failed")
+        return real_take(self)
+
+    monkeypatch.setattr(diarize.RoomSession, "take_utterance",
+                        take_that_fails_once)
+    _timed_relay(only_app, monkeypatch, BehindEleven())
+    with TestClient(only_app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            for tid in ("t1", "t2"):
+                frames = _speech(0.2)
+                ws.send_json(frames[0])
+                assert ws.receive_json() == {"partial": "hello"}
+                ws.send_json(dict(frames[-1], turn_id=tid))
+            assert ws.receive_json() == {"final": "piece 1", "turn_id": "t1"}
+            assert ws.receive_json() == {"final": "piece 2", "turn_id": "t2"}
+            ws.send_json({"done": True})
+    assert len(takes) == 2
+    # The session naming heard both turns end, the failed one included.
+    assert ended == ["t1", "t2"]
