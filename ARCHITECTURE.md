@@ -23,15 +23,16 @@ egress.py       - the vetting proxy every model-influenced URL exits by
 url_ledger.py   - fetchable means already seen from a non-model source
 browse.py       - rendered viewing; browse_worker.py is the keyless child
 guest.py        - Claude Code as a summonable participant
-voiceid.py      - the voice matcher; anchors.py is its clip store,
-                  introductions.py the phrase and seating layer, and
-                  diarize.py crosstalk splitting and the label passes
-voice_session_shadow.py - follows each voice through a voice session
-                  on the loopback diariser, names voices from pooled
-                  speech, and feeds the live check when switched on
+voice_pass.py   - the one voice check every spoken turn gets, in every
+                  mode: the label, and whether to arm, seat or ask
+voice_sessions.py - follows each voice through a voice session on the
+                  loopback diariser, and names voices from pooled speech
+diarize.py      - schedules the check and writes its label on the turn
 crosstalk.py    - splits a two-voice turn's words by voice, from the
                   tracker's spans and the live transcript's word times
-voice_calibration.py - the calibrated scorer behind voice readiness
+voiceid.py      - the speaker model and the matcher; anchors.py is the
+                  clip store, introductions.py the phrase and seating layer
+voice_calibration.py - the calibrated scorer and voice readiness
 voice_recording.py - checks and cuts a voice recorded on the Voices page
 tts_v3.py       - how replies are shaped for the Eleven v3 voices
 accounting.py   - cost with provenance; provenance.py defines the axes

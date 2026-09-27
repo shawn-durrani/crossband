@@ -163,42 +163,20 @@ def voice_health(request: Request, chat_id: int | None = None):
     return out
 
 
-@router.get("/api/voice/shadow")
-def voice_shadow_rows(request: Request, chat_id: int | None = None,
-                      limit: int = 100, rows: bool = False):
-    """The shadow test's comparison (#465 stage 1): for each recent armed
-    voice turn, today's live label beside what every shadow method would
-    have named (whole turn and split, TitaNet-Small, every kept clip one by
-    one, TitaNet-Large, the strict-agreement consensus and the fused
-    score) and what a per-person banking bar would have done (#477), a
-    tally per method, and the shadow's own state. `rows=true` adds the full rows, with every
-    score. Names, scores, counts and timings only: no transcript text and no
-    audio exist in a shadow row. Session-gated like every /api route."""
-    from .. import voice_shadow
+@router.get("/api/voice/sessions")
+def voice_session_rows(request: Request, chat_id: int | None = None,
+                       limit: int = 200, rows: bool = False):
+    """The session naming's recent turns (#482): for each voice turn the
+    feed saw, the name its session voice had then and at the end of its
+    session, a tally, and the feed's state. `rows=true` adds the full
+    rows. Slots, names, scores and timings only: no transcript text and no
+    audio exist in a row. Session-gated like every /api route."""
+    from .. import voice_sessions
     cfg = request.app.state.settings.as_cfg()
     limit = max(1, min(int(limit), 2000))
-    recent = voice_shadow.read_rows(limit=limit, chat_id=chat_id)
-    out = {"status": voice_shadow.status(cfg),
-           **voice_shadow.compare(recent)}
-    if rows:
-        out["rows"] = recent
-    return out
-
-
-@router.get("/api/voice/shadow/sessions")
-def voice_session_shadow_rows(request: Request, chat_id: int | None = None,
-                              limit: int = 200, rows: bool = False):
-    """The session shadow's comparison (#482 stage 2): for each recent
-    voice turn, today's live label beside the name its session voice had
-    then and at the end of its session, a tally, and the module's state.
-    `rows=true` adds the full rows. Slots, names, scores and timings only.
-    Session-gated like every /api route."""
-    from .. import voice_session_shadow
-    cfg = request.app.state.settings.as_cfg()
-    limit = max(1, min(int(limit), 2000))
-    recent = voice_session_shadow.read_rows(limit=limit, chat_id=chat_id)
-    out = {"status": voice_session_shadow.status(cfg),
-           **voice_session_shadow.compare(recent)}
+    recent = voice_sessions.read_rows(limit=limit, chat_id=chat_id)
+    out = {"status": voice_sessions.status(cfg),
+           **voice_sessions.view(recent)}
     if rows:
         out["rows"] = recent
     return out
@@ -692,16 +670,16 @@ def reassign_speaker(chat_id: int, message_id: int, request: Request,
                         link_existing=True, con=con)
     finally:
         con.close()
-    # #482 stage 3: the voice that spoke this turn is that person for the
-    # rest of the session, and its other unnamed turns take the name now.
-    # Not for a two-voice turn (#482 item D): the tap names the turn but
-    # doesn't say which of its voices it meant, and naming the wrong one
-    # would carry the mistake through the rest of the session.
+    # #482: the voice that spoke this turn is that person for the rest of
+    # the session, and its other unnamed turns take the name now. Not for
+    # a two-voice turn (#482 item D): the tap names the turn but doesn't
+    # say which of its voices it meant, and naming the wrong one would
+    # carry the mistake through the rest of the session.
     try:
-        from .. import voice_session_shadow
+        from .. import voice_sessions
         if old.get("crosstalk") is not True:
-            voice_session_shadow.human_named(chat_id, row["voice_turn_id"],
-                                             name, pid, cfg)
+            voice_sessions.human_named(chat_id, row["voice_turn_id"], name,
+                                       pid, cfg)
     except Exception:
         log.debug("session naming hand-off failed", exc_info=True)
     if learned:

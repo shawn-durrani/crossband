@@ -21,8 +21,10 @@ What these tests pin, in order:
    well under a second; builds happen on the worker thread only, at
    startup and after a bank change; every live-model embedding waits for
    a live check in flight and holds the live lock for one embedding.
-7. LIVE NAMING UNCHANGED. The same turns get the same labels with the
-   scorer on as off, and a build never writes to the anchor store.
+7. THE SCORER NAMES VOICES. Clear turns get the same names from the
+   calibrated scorer as from the fallback scorer it takes over from, with
+   a build in flight beside the check, and a build never writes to the
+   anchor store.
 8. THE ROUTE. /api/voice/people carries each person's readiness and the
    test's state beside the unchanged `sufficient`.
 
@@ -46,7 +48,8 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import anchors, db, diarize, voice_calibration as vc, voiceid
+from backend import (anchors, db, diarize, voice_calibration as vc,
+                     voice_pass, voice_sessions as vss, voiceid)
 from backend.app import create_app
 from backend.config import Settings
 from roomkit import _insert_user_message
@@ -666,22 +669,12 @@ def test_a_bank_change_listener_never_reaches_the_store(store):
     assert len(kicked) >= 2
 
 
-# ── 7. live naming unchanged ────────────────────────────────────────────────
-
-def _live_embed(_ex, audio, sr):
-    """The live matcher's fake: reads the pitch, one axis per person."""
-    x = np.asarray(audio, dtype=float) * 32768
-    who = min(PITCH, key=lambda n: abs(PITCH[n] - _peak(x, 80, 400)))
-    vec = [0.0] * len(PITCH)
-    vec[list(PITCH).index(who)] = 1.0
-    return vec
-
+# ── 7. the scorer names voices ──────────────────────────────────────────────
 
 def _armed_chat(client, roster):
     chat = client.post("/api/chats", json={"participant_ids": []}).json()
     con = db.connect()
     db.set_chat_room_mode(con, chat["id"], True)
-    diarize.set_room_enabled(chat["id"], True)
     for name, pid in roster:
         db.add_room_person(con, chat["id"], name, person_id=pid)
     con.close()
@@ -699,36 +692,39 @@ def _labels(msg_id):
 
 
 def _turn(chat_id, pcm, turn_id, cfg):
-    async def drive():
-        await diarize.run_pass(chat_id, pcm, SR, time.time(),
-                               diarize.RoomSession(enabled=True), cfg,
-                               turn_id=turn_id)
-    asyncio.run(drive())
+    asyncio.run(voice_pass.run(chat_id, pcm, SR, time.time(),
+                               diarize.RoomSession(), cfg, turn_id))
 
 
-def test_the_live_label_is_the_same_with_the_scorer_on(tmp_path, monkeypatch):
-    """The real live matcher (its extractor faked) names the same turns
-    with the scorer stopped and with it running, mid-build, beside it."""
-    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
-    monkeypatch.setattr(voiceid, "_embed", _live_embed)
-    monkeypatch.setattr("backend.voice.transcribe_diarized",
-                        lambda *a, **k: pytest.fail("no EL call expected"))
+def test_the_calibrated_scorer_names_the_turns_the_fallback_names(
+        tmp_path, monkeypatch):
+    """The session naming, with both models faked the way the fit sees
+    them, names each clear turn the same with the calibrated scorer off
+    (the fallback scorer) and on - mid-build - and says which named it."""
+    fake = fake_embed_factory()
+    monkeypatch.setattr(vss, "embed_live",
+                        lambda pcm, sr, cfg: fake(vc.SMALL, pcm, sr, cfg))
+    monkeypatch.setattr(vss, "embed_eres_live",
+                        lambda pcm, sr, cfg: fake(vc.ERES, pcm, sr, cfg))
     monkeypatch.setattr("backend.mismatch.schedule_check",
                         lambda *a, **k: None)
-    monkeypatch.setattr(vc, "embed", fake_embed_factory())
+    monkeypatch.setattr(vc, "embed", fake)
     monkeypatch.setattr(vc, "models_state", lambda cfg: "ready")
     monkeypatch.setattr(vc, "DEBOUNCE_S", 0.01)
     settings = Settings(data_dir=str(tmp_path / "data"),
                         memory_url="http://127.0.0.1:1", user_name="Alex")
+    methods = []
+    real_name_all = vss._name_all
+    monkeypatch.setattr(vss, "_name_all", lambda *a, **k: (
+        lambda out: methods.append(out[3]) or out)(real_name_all(*a, **k)))
     with TestClient(create_app(settings), base_url="http://127.0.0.1") as c:
         store = anchors.store()
         roster = [(n, bank(store, n, HOUSEHOLD[n], source="introduction"))
                   for n in ("Alex", "Sam")]
         chat = _armed_chat(c, roster)
-        cands = diarize.remembered_candidates()
         turns = {"Alex": voice("Alex", 3, 2, take=21),
                  "Sam": voice("Sam", 3, 2, take=22)}
-        labels, verdicts = {}, {}
+        labels = {}
         for mode, cfg in (("off", OFF), ("on", ON)):
             if mode == "on":
                 assert vc.start(ON)
@@ -741,13 +737,11 @@ def test_the_live_label_is_the_same_with_the_scorer_on(tmp_path, monkeypatch):
                 if mode == "on":
                     vc._worker["kick"].set()        # a build in flight too
                 _turn(chat["id"], pcm, tid, cfg)
-                labels[tid] = _labels(msg["id"])
-                verdicts[tid] = voiceid.identify_utterance(pcm, SR, cands,
-                                                           cfg)
+                labels[tid] = json.loads(_labels(msg["id"]))
         for name in turns:
-            assert json.loads(labels[f"off-{name}"])["labels"] == [name]
-            assert labels[f"on-{name}"] == labels[f"off-{name}"]
-            assert verdicts[f"on-{name}"] == verdicts[f"off-{name}"]
+            assert labels[f"off-{name}"]["labels"] == [name]
+            assert labels[f"on-{name}"]["labels"] == [name]
+        assert methods == ["multi", "multi", "calibrated", "calibrated"]
         assert vc.readiness(ON)
     assert _calibration_threads() == []             # stopped with the app
 

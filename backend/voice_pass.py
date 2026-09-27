@@ -1,44 +1,51 @@
-"""The single naming pass (#482 stage 3, `voice_session_only`).
+"""The voice check (#482): one pass names every spoken turn, in every mode.
 
-With the switch on, every spoken turn in every mode goes through this one
-pass, and the old matcher's three routes (armed room, room off, solo) don't
-run. The session naming (backend/voice_session_shadow.py) has already
-followed each voice through the voice session while the person talked, so
-the pass mostly reads its answer:
+The session naming (backend/voice_sessions.py) has already followed each
+voice through the voice session while the person talked, so the pass mostly
+reads its answer:
 
-  1. Ask the live feed for this turn's main voice, waiting at most
-     voice_session_shadow.LIVE_WAIT_S. When no feed saw the turn (the
-     diariser is down, or the backup transcript path carried it), the turn
-     is named on its own as one voice, with the same scorer.
+  1. Ask the feed for this turn's main voice, waiting at most
+     voice_sessions.LIVE_WAIT_S. When no feed saw the turn (no diariser
+     is configured, it is down, or the backup transcript path carried the
+     turn), the turn is named on its own as one voice, with the same
+     scorer.
   2. Decide, as a pure rule (`decide`), from that answer and the chat's
      room state: the label, and whether to arm the room, seat someone, or
      ask who a new voice is. The room follows the main voice.
-  3. When a second voice spoke for a second or more (#482 item D), the
-     label is crosstalk instead: it names every voice and splits the words
-     between them on this computer (backend/crosstalk.py). Only such a
-     turn waits for Scribe's word times, at most crosstalk.WORDS_WAIT_S.
-     They come with the final the browser sends the message on, and the
-     relay hands them over first, so the label is normally parked before
-     the message is saved and the seats read the split, not a single name
-     that would pass one person's words off as another's.
-  4. Deliver the label through the one label path, then act.
-  5. Save the turn's clean speech to the named person's bank when the
+  3. When a second voice spoke for a second or more, the label is
+     crosstalk instead: it names every voice and splits the words between
+     them on this computer (backend/crosstalk.py). Only such a turn waits
+     for Scribe's word times, at most crosstalk.WORDS_WAIT_S. They come
+     with the final the browser sends the message on, and the relay hands
+     them over first, so the label is normally parked before the message
+     is saved and the seats read the split, not a single name that would
+     pass one person's words off as another's.
+  4. Arm the room and seat the named person first, so by the time the
+     label is claimable the room state already agrees with it. Then
+     deliver the label through the one label path, then ask about a new
+     voice, pointing at the turn.
+  5. A named single-voice turn gets the mismatch cross-check
+     (backend/mismatch.py), which can flag a name the words don't fit and
+     never changes a label.
+  6. Save the turn's clean speech to the named person's bank when the
      naming is near certain (BANK_PROB) and the voice has BANK_MIN_CLEAN_S
      of clean speech behind it, at most BANK_PER_SESSION clips per voice
-     per session, never from a turn with two voices in it.
+     per session, never from a turn with two voices in it. A saved clip
+     re-runs the hygiene audit.
 
-What stays exactly as it was: the owner's name is never learnt by ear as a
-second person, an AI participant is never a person, solo ("just me") never
-arms, seats, asks or learns, and every write goes through the same guarded
-helpers the old passes used (room_state.arm and seat, the one open ask per
-chat, the label path, anchors.add_clip and its gate).
+The rules that hold whatever the scores say: the owner's name is never
+learnt by ear as a second person, an AI participant is never a person,
+solo ("just me") never arms, seats, asks or learns, a turn the pass can't
+name is never read as the owner's, and every write goes through the same
+guarded helpers (room_state.arm and seat, the one open ask per chat, the
+label path, anchors.add_clip and its gate).
 """
 
 import asyncio
 import logging
 import time
 
-from . import crosstalk, db, voice_session_shadow as vss
+from . import crosstalk, db, voice_sessions as vss
 
 log = logging.getLogger("crossband.voice_pass")
 
@@ -46,6 +53,7 @@ BANK_PROB = 0.99            # calibrated probability a clip is saved at
 BANK_MIN_CLEAN_S = 8.0      # clean speech a voice needs before it saves
 BANK_PER_SESSION = 3        # clips one session voice may save
 BANK_MIN_SPAN_S = 2.0       # the shortest clean span worth saving
+MISMATCH_MIN_S = 1.5        # a named turn this long gets the cross-check
 
 LISTENING = "listening"     # the unresolved reasons this pass writes
 NEW_VOICE = "new_voice"
@@ -101,12 +109,12 @@ def decide(got, plan):
     return out
 
 
-def should_bank(got):
+def should_bank(got, cfg=None):
     """Is this turn's naming sure enough to save its clean speech? Only a
     single-voice turn of a voice named by the calibrated scorer at
-    BANK_PROB, or by the fallback scorer over the banking bar, with
-    BANK_MIN_CLEAN_S behind it. A voice a person named by hand is saved by
-    that correction itself, not here."""
+    BANK_PROB, or by the fallback scorer over the banking bar
+    (voiceid.score_banks), with BANK_MIN_CLEAN_S behind it. A voice a
+    person named by hand is saved by that correction itself, not here."""
     if not got or got.get("state") != "named" or got.get("human"):
         return False
     if (got.get("voices_in_turn") or 1) > 1 or got.get("overlap_s"):
@@ -116,8 +124,20 @@ def should_bank(got):
     if got.get("method") == "calibrated":
         return (got.get("prob") or 0.0) >= BANK_PROB
     from . import voiceid
-    return (got.get("score") or 0.0) >= voiceid._threshold({}) \
-        + voiceid._banking_extra({})
+    return voiceid.score_banks(got.get("score"), cfg or {})
+
+
+def cross_checks(decision, plan, seconds):
+    """Does a single-voice turn get the mismatch cross-check (pure)? Only
+    when it's named, not marked learning, and MISMATCH_MIN_S or longer: a
+    guest's name in every mode, and the owner's own name only while the
+    room is on, where the owner is one of several people."""
+    if not decision["labels"] or decision["learning"] \
+            or decision["uncertain"]:
+        return False
+    if seconds < MISMATCH_MIN_S:
+        return False
+    return not (decision["owner"] and not plan.get("room_on"))
 
 
 def _plan(chat_id, cfg):
@@ -146,10 +166,13 @@ def _plan(chat_id, cfg):
                          and introductions.owner_alias(n, owner))}
 
 
-def _act(chat_id, decision, cfg, target_id, got):
-    """Arm, seat and ask (worker thread), through the old passes' guarded
-    helpers, so the rules on who may arm and seat are the ones that were
-    already tested."""
+def _arm_and_seat(chat_id, decision, cfg, got):
+    """Arm and seat (worker thread), through room_state's guarded writers,
+    before the label is delivered (#28 remembered-first). The turn's
+    message may not exist yet, so a seat's trigger is the path,
+    message-less. A remembered voice seated in an armed room answers an
+    open "who's this?" ask, as a naming introduction does. Past the
+    roster cap the turn is still named; the roster just doesn't grow."""
     from . import diarize, room_state
     if decision["arm"] == "known" and decision["seat"]:
         diarize._arm_known(chat_id, {"session": decision["seat"]}, cfg)
@@ -158,16 +181,14 @@ def _act(chat_id, decision, cfg, target_id, got):
     elif decision["seat"]:
         room_state.seat(chat_id, decision["seat"], cfg, via="voice-match",
                         person_id=(got or {}).get("pid") or "",
-                        message_id=target_id, enforce_cap=True)
-    if decision["ask"]:
-        diarize._raise_unknown_voice(chat_id, target_id)
+                        enforce_cap=True, resolve_ask=True)
 
 
-def _bank(chat_id, got, pcm, sample_rate):
+def _bank(chat_id, got, pcm, sample_rate, cfg):
     """Save the voice's longest clean stretch in this turn (worker thread),
     once per BANK_PER_SESSION. The store's own gate, 10 s cap and rotation
-    apply as for any clip."""
-    from . import anchors, voice_shadow
+    apply as for any clip, and a saved clip re-runs the hygiene audit."""
+    from . import anchors, voiceid
     spans = [s for s in got.get("clean_spans") or ()
              if s[1] - s[0] >= BANK_MIN_SPAN_S]
     if not spans or not got.get("pid"):
@@ -176,10 +197,13 @@ def _bank(chat_id, got, pcm, sample_rate):
                                    BANK_PER_SESSION):
         return False
     start, end = max(spans, key=lambda s: s[1] - s[0])
-    clip = voice_shadow.span_pcm(pcm, sample_rate, [(start, end)])
-    return anchors.store().add_clip(got["pid"], clip, sample_rate,
-                                    source="accumulated",
-                                    score=got.get("score"))
+    clip = vss.span_pcm(pcm, sample_rate, [(start, end)])
+    added = anchors.store().add_clip(got["pid"], clip, sample_rate,
+                                     source="accumulated",
+                                     score=got.get("score"))
+    if added:
+        voiceid.audit_banks_if_changed(cfg)
+    return added
 
 
 # ================= the pass =================================================
@@ -234,23 +258,35 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
             chat_id, diarize.DECISION_LOCAL if decision["labels"]
             else diarize.DECISION_UNRESOLVED, ms, decision["unresolved"],
             turn_id=turn_id)
+        if not plan.get("solo"):
+            await diarize._in_voice_thread(_arm_and_seat, chat_id, decision,
+                                           cfg, got)
         target_id = await diarize._deliver_label(
             chat_id, pcm, sample_rate, commit_ts, session, payload,
             turn_id=turn_id,
             clusters_remembered=(got or {}).get("voices_in_turn") or 1)
-        if not plan.get("solo"):
-            await diarize._in_voice_thread(_act, chat_id, decision, cfg,
-                                           target_id, got)
+        if decision["ask"] and not plan.get("solo"):
+            # The room has armed on a voice nobody knows, so the question
+            # stands whether or not a row came back; the id, when there is
+            # one, lets the ask point at the turn (#461).
+            await diarize._in_voice_thread(diarize._raise_unknown_voice,
+                                           chat_id, target_id)
+        checked = bool(target_id) and len(listed) < 2 and cross_checks(
+            decision, plan, len(pcm) / 2 / (sample_rate or 16000))
+        if checked:
+            from . import mismatch
+            mismatch.schedule_check(chat_id, target_id, decision["labels"][0],
+                                    cfg)
         banked = False
-        if not plan.get("solo") and should_bank(got):
+        if not plan.get("solo") and should_bank(got, cfg):
             banked = await diarize._in_voice_thread(_bank, chat_id, got, pcm,
-                                                    sample_rate)
+                                                    sample_rate, cfg)
         log.info("voice pass: chat=%s ms=%.0f state=%s method=%s single=%s "
-                 "arm=%s ask=%s banked=%s voices=%d split=%s", chat_id, ms,
-                 (got or {}).get("state", "none"),
+                 "arm=%s ask=%s banked=%s voices=%d split=%s checked=%s",
+                 chat_id, ms, (got or {}).get("state", "none"),
                  (got or {}).get("method", "-"), bool((got or {}).get(
                      "single")), decision["arm"], decision["ask"], banked,
-                 len(listed), bool(payload.get("segments")))
+                 len(listed), bool(payload.get("segments")), checked)
     except Exception:
         log.info("voice pass failed: chat=%s", chat_id)
         log.debug("voice pass failure detail", exc_info=True)

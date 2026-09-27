@@ -952,7 +952,7 @@ def _iso(ts):
 
 # ---- room-mode voice labels in the projection (#28 phase 3) ----
 #
-# The model-facing half of multi-human attribution: when the diarization pass
+# The model-facing half of multi-human attribution: when the voice check
 # has confidently NAMED who spoke a user turn, that turn is projected as that
 # person - "[Alex (in the room) · ts]:" - so "who said that?" is answerable.
 # The rules are deliberately asymmetric in what they may claim:
@@ -963,18 +963,18 @@ def _iso(ts):
 # - Confident OWNER label, alone: the owner's name with the voice-confirmed
 #   marker (#28 PR-C - the owner's identity is shown, not hidden). This
 #   deliberately replaced the owner-confident-equals-unlabelled pin: the
-#   ambient check voice-verifies the owner constantly, and hiding that fact
+#   voice check verifies the owner's voice constantly, and hiding that fact
 #   made seats say "identity pending" about a person already identified.
 #   Unlabelled-chat byte-identity above is untouched - only a turn that
 #   CARRIES a confident owner label renders the marker.
 # - Confident named labels: the named person (or people - one utterance can
 #   confidently hold two voices), marked "(in the room)" so a human guest is
 #   never mistaken for an AI seat.
-# - A COLD-START label (#28): the named person plus "(learning this voice)".
+# - A LEARNING label (#28): the named person plus "(learning this voice)".
 #   The app knows who spoke because the room could hold nobody else, and it
 #   is honest that the voice itself is not recognised yet. This is the one
 #   place a still-uncertain label speaks its name, and it is earned by
-#   elimination rather than guessed - see diarize.cold_start_person.
+#   elimination rather than guessed - see voice_pass.decide.
 # - Uncertain labels (ordinals, still-learning voices, elimination guesses):
 #   "unidentified speaker" - NEVER the owner, and never the guessed name.
 #   The chips may show "probably Alex"; the models must not be told Alex.
@@ -982,8 +982,8 @@ def _iso(ts):
 _VOICE_ORDINAL_RE = re.compile(r"^Voice \d+$")
 UNIDENTIFIED_SPEAKER = "unidentified speaker"
 IN_ROOM_SUFFIX = " (in the room)"
-# The owner's voice-confirmed marker (#28 PR-C): a turn the matcher
-# confidently matched to the OWNER alone, in any mode - room on, ambient,
+# The owner's voice-confirmed marker (#28 PR-C): a turn the voice check
+# confidently named as the OWNER alone, in any mode - room on, room off,
 # or solo. Deliberately NOT "(in the room)": the owner is not a guest, and
 # the marker's whole point is that it applies with room mode off too.
 VOICE_CONFIRMED_SUFFIX = " (voice confirmed)"
@@ -1018,18 +1018,18 @@ UNRESOLVED_HEAD_COPY = {
 # Honest pending identity (#28, night test 4; meaning narrowed by PR-B).
 # A room-mode user turn whose label has not landed yet projects this head,
 # so a seat says "the name is still coming" rather than misattributing the
-# turn. Since the cloud identity fallback retired (#28 PR-B), identity is
-# local or honestly uncertain: the local matcher (usually pre-warmed by the
-# speculative silence-start check) either names the turn within a few
-# hundred milliseconds or never will - a deferred verdict fires no
-# ElevenLabs call, so past this window an unlabelled turn simply IS
-# unresolved and today's owner rendering is the honest reading again. The
-# window survives at its measured-era width as slack for a slow matcher
-# and for the crosstalk split (the one batch call left).
+# turn. Identity is local or honestly uncertain: the voice check (the
+# session naming has followed the voice while it spoke) labels the turn
+# within a few hundred milliseconds of the end of speech, or a second for
+# a two-voice turn waiting on its word times, and every turn it checks
+# gets a label, named or not. Past this window an unlabelled turn is one
+# no check ran for, and today's owner rendering is the honest reading
+# again. The window survives at its measured-era width as slack for a
+# slow check.
 PENDING_IDENTITY_HEAD = "Identity pending" + IN_ROOM_SUFFIX
 PENDING_IDENTITY_SECS = 4.0
 
-# Crosstalk in the projection (#28 phase 4). The batch pass marks a turn
+# Crosstalk in the projection (#28 phase 4). The voice check marks a turn
 # whose utterance carried two or more voices; the projection passes that on
 # so the seats can do the human thing - ask the quieter person to repeat -
 # instead of trusting a transcript that may have silently dropped words.

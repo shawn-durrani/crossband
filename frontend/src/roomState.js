@@ -236,14 +236,13 @@ export function rosterTitle(roster, sufficientSeconds, minShortClips) {
       }
       return name
     })
-  // #28 PR-B: the cloud identity fallback is retired, so the cost story is
-  // simpler and the copy says so - overlap splitting is the ONLY second
-  // transcription left, and an unplaceable voice stays unnamed, never
-  // guessed and never sent to the cloud to be guessed at.
+  // #482: every voice is named on this device, overlapping voices are split
+  // there too, and no voice clip is sent to the cloud for any of it. A
+  // voice that cannot be placed stays unnamed, never guessed.
   const base =
     'Room mode is on: turns are attributed by voice, on this device, at no '
-    + 'extra cost. A second transcription runs only when voices overlap, to '
-    + 'untangle who said what; a voice that cannot be placed stays unnamed. '
+    + 'extra cost. When voices overlap, their words are split here too; a '
+    + 'voice that cannot be placed stays unnamed. '
     + 'Say "X has left" to remove someone, or "solo mode" to switch off.'
   if (!learning.length) return base
   return `${base} Still learning: ${learning.join(', ')} - their turns stay `

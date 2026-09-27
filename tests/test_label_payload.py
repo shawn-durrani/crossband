@@ -1,47 +1,47 @@
-"""The one payload builder behind every label write (#237).
+"""The one payload builder behind every label write (#237, #482).
 
-Six passes hand-built the labels_json payload and two drifted. The builder
-is pure, so the six shapes are pinned here without a room, byte-for-byte
-against what each pass wrote before the consolidation.
+Six passes once hand-built the labels_json payload and two drifted. One
+builder, diarize.label_payload, now makes every shape the voice check and
+the session naming write, so the shapes are pinned here without a room.
 """
-from backend.diarize import COLD_START_SOURCE, label_payload
+from backend.diarize import label_payload
+
+SESSION = ("session",)
 
 
-def test_fast_pass_shape():
-    assert label_payload(["Blair"], score=0.912345) == {
-        "clusters": ["local"], "labels": ["Blair"], "uncertain": [],
-        "source": "local", "score": 0.912}
+def test_a_named_turn_carries_its_score():
+    assert label_payload(["Blair"], clusters=SESSION, source="session",
+                         score=0.912345) == {
+        "clusters": ["session"], "labels": ["Blair"], "uncertain": [],
+        "source": "session", "score": 0.912}
 
 
 def test_owner_shapes_carry_the_marker():
-    p = label_payload(["Alex"], score=0.9, owner=True)
-    assert p["owner"] is True and p["source"] == "local"
+    p = label_payload(["Alex"], clusters=SESSION, source="session",
+                      score=0.9, owner=True)
+    assert p["owner"] is True and p["source"] == "session"
     assert "learning" not in p
 
 
-def test_cold_start_is_both_label_and_guess():
-    assert label_payload(["Robin"], uncertain=["Robin"],
-                         source=COLD_START_SOURCE, learning=True) == {
-        "clusters": ["local"], "labels": ["Robin"], "uncertain": ["Robin"],
-        "source": COLD_START_SOURCE, "learning": True}
+def test_learning_is_both_label_and_guess():
+    assert label_payload(["Robin"], clusters=SESSION, uncertain=["Robin"],
+                         source="session", learning=True) == {
+        "clusters": ["session"], "labels": ["Robin"], "uncertain": ["Robin"],
+        "source": "session", "learning": True}
 
 
-def test_room_and_ambient_shapes_have_no_source():
-    room = label_payload(["Blair", "Voice 2"], clusters=["c1", "c2"],
-                         uncertain=["Voice 2"], source=None)
-    assert room == {"clusters": ["c1", "c2"], "labels": ["Blair", "Voice 2"],
-                    "uncertain": ["Voice 2"]}
-    amb = label_payload(["Voice 1"], clusters=["ambient_unknown"],
-                        uncertain=["Voice 1"], source=None)
-    assert amb == {"clusters": ["ambient_unknown"], "labels": ["Voice 1"],
-                   "uncertain": ["Voice 1"]}
+def test_an_unnamed_turn_names_nobody_and_says_why():
+    assert label_payload([], clusters=SESSION, source="session",
+                         unresolved="new_voice") == {
+        "clusters": ["session"], "labels": [], "uncertain": [],
+        "source": "session", "unresolved": "new_voice"}
 
 
-def test_a_missing_matcher_score_is_zero_never_omitted():
-    """The three scored passes always wrote a score, `or 0` when the
-    matcher gave none. The call sites keep that byte; only the unscored
-    passes (room, cold start, ambient) omit the key."""
+def test_a_missing_score_is_zero_never_omitted():
+    """A named turn always writes a score, `or 0` when the naming gave
+    none; only an unnamed turn omits the key."""
     assert label_payload(["Blair"], score=0) == {
         "clusters": ["local"], "labels": ["Blair"], "uncertain": [],
         "source": "local", "score": 0}
     assert "score" not in label_payload(["Blair"])
+    assert "source" not in label_payload(["Blair"], source=None)

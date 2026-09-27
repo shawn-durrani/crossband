@@ -126,22 +126,16 @@ a default install records it.
 | `stt_model` | `scribe_v2` | The transcription model. The realtime variant is used on its own when available. |
 | `voice_pricing` | built in | The ElevenLabs rate card used to price speech in and out. |
 | `room_roster_max` | `6` | How many people the room's roster may hold at once. The cap frees as people leave. An explicit `0` seats no guests, and your tap-correction still seats. |
-| `voice_id_enabled` | `true` | Room mode's offline local speaker matcher, and the only identity path. Off, or with `sherpa-onnx` or the model file absent, turns are not named and the room never arms on its own. [VOICE_ID.md](VOICE_ID.md). |
-| `voice_id_threshold` | `0.5` | The cosine similarity a voice must reach to be named. On the bundled model the same speaker scores about 0.63 to 0.73 and a stranger about 0.12 to 0.31, so 0.5 sits in the gap. Raise it to name fewer matches. |
-| `voice_id_margin` | `0.12` | How clearly the best match must beat the runner-up before it's claimed. The knob for a house with similar voices, and the hygiene guard also widens it on its own for any two stored voices it finds close together. |
-| `voice_id_pending_extra` | `0.08` | How much the naming bar rises while anyone on the roster is unlearnt. It protects a new guest from having their turns claimed by a similar-sounding regular. `0` turns it off. [VOICE_ID.md](VOICE_ID.md). |
-| `voice_id_banking_extra` | `0.1` | How much higher than the naming bar a match must score before its audio is stored as an anchor clip. It keeps borderline matches from feeding the bank that produced them. `0` turns it off. [VOICE_ID.md](VOICE_ID.md). |
+| `voice_id_enabled` | `true` | Room mode's offline speaker identification. Off, or with `sherpa-onnx` or the model file absent, no spoken turn is checked or named and the room never arms on its own. [VOICE_ID.md](VOICE_ID.md). |
+| `voice_id_threshold` | `0.5` | The fallback scorer's naming bar, on the matcher's scale: the bundled model scores the same speaker about 0.63 to 0.73 and a stranger about 0.12 to 0.31. The scorer moves it onto its own scale. Raise it to name fewer voices. |
+| `voice_id_margin` | `0.12` | How clearly the fallback scorer's best person must beat the next before a voice is named. The knob for a house with similar voices. The matcher's own checks widen it for any two stored voices the hygiene guard finds close together. |
+| `voice_id_banking_extra` | `0.1` | How much higher than the naming bar the fallback scorer's score must be before the app saves a clip by itself. It keeps borderline names from feeding the bank that produced them. `0` turns it off. [VOICE_ID.md](VOICE_ID.md). |
 | `voice_id_sufficient_seconds` | `6.0` | The seconds of clear speech a person's stored voice needs before identification trusts it. Under the bar their turns stay uncertain. |
 | `voice_id_min_short_clips` | `2` | The second half of the sufficiency bar: how many short clips, of one to two seconds, the stored voice must include, so a quick interjection can be recognised as well as a full sentence. |
 | `voice_id_model_url` | `""` | Overrides the local speaker model's download URL. Empty uses the built-in pinned URL. Pin the hash too, because a URL override checked against the default hash fails verification and the matcher stays unavailable. |
 | `voice_id_model_sha256` | `""` | Overrides the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched once to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
-| `diarize_shadow_url` | `""` | The address of a diariser on this computer that the shadow test splits each voice turn with, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty turns that part off. [The shadow test](#the-shadow-test). |
-| `voice_session_shadow` | `false` | Adds the session test to the shadow test: it follows each voice through the whole voice session and names each voice from everything it has said. Needs `diarize_shadow_url` and a diariser with session routes. [The session test](#the-session-test). |
-| `voice_session_only` | `false` | Lets the session naming name every spoken turn, in every mode, and stops the matcher's own passes. Two voices in one turn are then split on your computer. Needs `voice_session_live`. [Letting the session name every turn](VOICE_ID.md#letting-the-session-name-every-turn). |
-| `voice_session_live` | `false` | Runs the session test live. The app sends your audio to the diariser while you talk, and a turn the voice check can't name takes its session voice's name before the AIs read it. Needs `voice_session_shadow`. [The session test](#the-session-test). |
-| `voice_session_labels` | `false` | Lets the session test fill in names. A voice turn today's naming left unnamed takes the name the session test gave its voice. It never replaces a name, and nothing else changes. Needs `voice_session_shadow`. [The session test](#the-session-test). |
-| `voice_shadow_model` | `""` | A second speaker model the shadow test scores beside the live one. It knows `titanet_large`, about 100MB, downloaded once and checked against a pinned hash, and only while this is set. Empty turns that part off. [The shadow test](#the-shadow-test). |
-| `voice_calibrated_scorer` | `false` | Shows on the Voices page whether each stored voice is ready. On, it downloads the ERes2Net speaker model once, about 26MB, checks it against a pinned hash, and works in the background. It never names a turn. [When a voice is ready](VOICE_ID.md#when-a-voice-is-ready). |
+| `diarize_shadow_url` | `""` | The address of the diariser on this computer that follows each voice through a voice session, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty names each turn on its own. [The diariser](#the-diariser). |
+| `voice_calibrated_scorer` | `false` | Turns on the calibrated scorer, which names voices once its first build finishes, and the readiness shown on the Voices page. It downloads the ERes2Net speaker model once, about 26MB, checked against a pinned hash. [How a voice is named](VOICE_ID.md#how-a-voice-is-named). |
 
 ### Choosing the voice model
 
@@ -228,123 +222,51 @@ per setting and compare the saved clips.
 
 ### When the matcher is off or missing
 
-A known voice is named on your computer in a fraction of a second, and
-a voice the matcher can't place stays unnamed. The only ElevenLabs
-batch call left runs when voices overlap, to split the crosstalk. With
-`voice_session_only` on, that split runs on your computer too.
+Every spoken turn is named on your computer, and a voice the app can't
+place stays unnamed. No voice clip goes to a cloud service to be
+named, and two voices in one turn are split on your computer too.
 
 With `voice_id_enabled` false, or the `sherpa-onnx` wheel or the model
 file absent, turns are not named and the room never arms on its own.
 Introductions, spoken commands and the switch in the voice settings
 still arm it by hand.
 
-### The shadow test
+### The diariser
 
-The shadow test measures two possible changes to how room mode names
-people, on your own voice turns, and changes nothing. One splits each
-turn into who spoke when before naming each piece. The other scores each
-turn with a second, larger speaker model beside the live one. Either part
-runs on its own, and both are off until you set them.
-
-For every voice turn while room mode is on, the test writes one line to
-`data/voice_shadow.jsonl`. The line holds the turn id, the message the
-turn became, today's label, what each method would have named, the scores
-and the timings. It holds no words and no audio. Past 5,000 lines the
-file keeps the newest 4,000.
-
-To split turns, run a diariser on this computer and set
-`diarize_shadow_url` to its address. The diariser takes raw 16 kHz mono
-16-bit audio at `POST /diarize` and answers with a list of segments, each
-a `start`, an `end` and a `speaker_slot`. One that fits is
+The diariser follows each voice through a voice session, so a voice is
+named from everything it has said, and a turn two people spoke in can
+be split between them. Run one on this computer and set
+`diarize_shadow_url` to its address, then restart the app. One that
+fits is workbench's diarserve, running
 [Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)
-run through [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp),
-served on `http://127.0.0.1:8910`. To add the second model, set
-`voice_shadow_model` to `titanet_large`. Restart the app after either
-change.
+through [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) on
+`http://127.0.0.1:8910`. It needs session routes: one opens a tracking
+session, one takes raw 16 kHz mono 16-bit audio and answers with spans,
+each a `slot`, a `start`, an `end` and whether another voice spoke over
+it, one ends a turn, and one closes the session.
+[How a turn is named](VOICE_ID.md#how-a-turn-is-named) says what the
+app does with them.
 
-The test stays out of the live path. It starts after today's label is
-written, runs on its own worker, and never labels a turn, seats anyone,
-changes the room, stores a voice clip or reaches memory. A diariser
-that's slow or down costs the turn nothing. The call gives up after three
-seconds, the line records the error, and the log says so once. The
-address has to be on this computer, the call follows no redirects and
-ignores proxy settings, so the audio stays here.
+The address has to be on this computer. The calls follow no redirects
+and ignore proxy settings, so the audio stays here, and a call gives up
+after five seconds. With no diariser set, or with it down, each turn is
+named on its own, the log says so once, and tracking resumes the moment
+it answers again.
 
-### The session test
+Each turn the diariser saw gets one line in
+`data/voice_session_shadow.jsonl`: the turn id, which voice spoke when,
+every voice's name or state, the scores, the seconds and the timings.
+It holds no words and no audio, and past 5,000 lines the file keeps the
+newest 4,000. `GET /api/voice/sessions` shows the recent turns, newest
+first, each with the name its voice had then and at the end of its
+session, a tally, and the diariser's state. Add `chat_id` for one chat,
+or `rows=true` for the full lines.
 
-The session test is a third part of the shadow test, switched on with
-`voice_session_shadow`. It follows each voice through the whole voice
-session instead of one turn at a time. For each chat it opens a
-tracking session on the diariser, sends it every turn in order, and
-gets back which voice spoke when, with each voice keeping its number
-for the session. It builds up each voice's fingerprint from every clean
-stretch it has said, and names the voice once there's enough of it, one
-person per voice. Each turn gets one line in
-`data/voice_session_shadow.jsonl`, with today's label beside what the
-session test named, and `GET /api/voice/shadow/sessions` shows them
-side by side, including the name each voice ended the session with. A
-voice clip saved during the session is left out of the comparison, so
-no voice is scored against its own audio.
-
-Setting `voice_session_labels` as well takes the first step past
-measuring. When the session test names a voice, every turn of that
-voice in the session that today's naming left unnamed takes the name,
-and the chat updates. A name today's naming gave, a turn you corrected
-or confirmed, and a turn with two voices at once are never touched. It
-seats nobody and saves no voice clips. Memory treats a session name as
-a voice match, so a fact from a guest's turn links to them by itself
-only when the naming's score is 0.8 or more.
-
-Setting `voice_session_live` moves the session test into the live
-check. The app sends each piece of your audio to the diariser while
-you're still talking, so when you stop, only the naming is left. When
-the voice check can't name a turn, it waits up to 0.8 seconds for the
-session test's name and uses it, so the AIs read the name with your
-turn instead of a moment later. If no name comes in time, the turn
-stays unnamed as before, and filling in can still name it later.
-
-`GET /api/voice/shadow` shows the comparison, newest turn first. Each
-line puts today's label beside what each method named. The methods are
-the live model on the whole turn and on the split pieces (`small` and
-`small_split`), and the live model against every stored clip (`multi`
-and `multi_split`). The others are the second model (`large` and
-`large_split`), both models agreeing (`consensus` and
-`consensus_split`), and the blended score (`fused` and `fused_split`).
-A tally counts, for each method, the turns it
-named, the turns it left unnamed, and the turns it named differently from
-today. Add `chat_id` for one chat, or `rows=true` for every score.
-
-The two models score on different scales, so the blend first measures
-each score against that model's impostors in your household. Those are
-every remembered person's clips scored against everyone else's voice. The
-blended score is the average of the two, in those units. The second
-model's naming bar sits where the live bar sits on the live model's
-scale, and the agreement rule names a person only when both models name
-them. With one remembered person there are no impostors to measure. Then
-there's no blend, and the second model uses a fixed bar nobody has tuned.
-Each line keeps the raw scores, so any bar can be tried again later.
-
-#### Every clip, and a banking bar per person
-
-Two more measures run whenever either part is on. The live check compares
-a turn with one average of each person's best three clips. `multi`
-compares it with every clip the person has stored, one at a time, and
-scores each person by their two best clips. A voice recorded in two
-different rooms can then match the room it's in today. The best of
-several clips scores higher for strangers too, so `multi` gets a bar of
-its own, set the way the second model's is.
-
-`bank_would` asks whether a named turn's audio would have been stored if
-each person had a banking bar of their own. Today a named turn is stored
-only when it clears the naming bar plus `voice_id_banking_extra`, and
-that bar is the same for everyone. A voice that always scores just under
-it never gets another clip. The per-person bar asks whether the score
-is at least three standard deviations higher than the scores strangers
-get against that person's stored voice. With the second model on, both models must
-also name the same person. The line records the decision, how far the
-score was over or under the bar, and what today's bar said. The tally
-counts the turns the per-person bar would have stored where today's bar
-refused, and the reverse. Nothing is stored either way.
+A `config.local.json` that still names `voice_shadow_model`,
+`voice_session_shadow`, `voice_session_labels`, `voice_session_live`,
+`voice_session_only` or `voice_id_pending_extra` loads as before. The
+app ignores a key it doesn't know, and what those switches turned on
+always runs.
 
 ## Memory, the companion service
 

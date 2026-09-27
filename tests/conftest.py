@@ -41,12 +41,11 @@ def _room_state_clean():
     """Reset every process global the room subsystem keeps, before and after
     each test (#238).
 
-    These were reset per file, and the lists had drifted: 13 files cleared
-    `diarize._ROOM_ENABLED`, 12 cleared `_STASHED`, 5 cleared `_AMBIENT_OFF`,
-    4 cleared `_LAST_DECISION`, 1 cleared `_PENDING_LABELS`, and nothing ever
-    cleared `introductions._TASKS` or `mismatch._TASKS`. A fourteenth global
-    meant a thirteen-file audit, and a test leaking room state into the next
-    one was a matter of which file happened to clear which name.
+    These were reset per file, and the lists had drifted: 4 files cleared
+    `diarize._LAST_DECISION`, 1 cleared `_PENDING_LABELS`, and nothing ever
+    cleared `introductions._TASKS` or `mismatch._TASKS`. A new global meant
+    a many-file audit, and a test leaking room state into the next one was
+    a matter of which file happened to clear which name.
 
     This is the single list. Adding a global here is the whole change.
     """
@@ -57,15 +56,12 @@ def _room_state_clean():
 
 def _reset_room_state():
     from backend import (anchors, crosstalk, diarize, introductions,
-                         mismatch, tts_v3, voice_shadow)
+                         mismatch, tts_v3)
     from backend.routers import voice as voice_router
 
     for mod, name in (
         (diarize, "_TASKS"),
-        (diarize, "_ROOM_ENABLED"),
-        (diarize, "_STASHED"),
         (diarize, "_PENDING_LABELS"),
-        (diarize, "_AMBIENT_OFF"),
         (diarize, "_LAST_DECISION"),
         (diarize, "_LABEL_EVENTS"),
         (diarize, "_DECISION_HISTORY"),
@@ -83,11 +79,6 @@ def _reset_room_state():
         (voice_router, "_auto_dumps"),
         (introductions, "_TASKS"),
         (mismatch, "_TASKS"),
-        # The shadow test (#465): its queue, its warn-once memory and its
-        # in-memory second-model anchors must not leak between tests.
-        (voice_shadow, "_TASKS"),
-        (voice_shadow, "_warned"),
-        (voice_shadow, "_anchor_cache"),
         # The v3 settings' warn-once memory (#493).
         (tts_v3, "_warned"),
         # Word times waiting for the crosstalk split (#482 item D).
@@ -127,32 +118,26 @@ def _voiceid_offline(monkeypatch):
     automatically (there is no cloud fallback). Tests that exercise the
     matcher seed a fake (or the real) extractor explicitly; this fixture
     just guarantees the default is 'absent'."""
-    from backend import voice_calibration, voice_shadow, voiceid
+    from backend import voice_calibration, voice_sessions, voiceid
     voiceid._reset_for_tests()
-    voice_shadow._reset_for_tests()
+    voice_sessions._reset_for_tests()
     voice_calibration._reset_for_tests()
     monkeypatch.setattr(voiceid, "_spawn_fetch", lambda cfg: None)
-    # The shadow's second model (#465) is fetched the same way, and is kept
-    # offline the same way.
-    monkeypatch.setattr(voice_shadow, "_spawn_large_fetch",
-                        lambda cfg, key: None)
     # So is the calibrated scorer's ERes2Net (#482 stage 2). Its worker
     # thread is stopped between tests, so it never reads another test's
     # data directory.
     monkeypatch.setattr(voice_calibration, "_spawn_eres2net_fetch",
                         lambda cfg: None)
     # The session naming's warm (#482) waits up to two minutes for the
-    # speaker model on its own thread, asking voiceid for it every quarter
-    # second. Started by a test's first voice feed, it outlived that test
-    # and claimed the model fetch inside later ones, so a startup test saw
-    # a fetch nobody made (#504's CI). Offline the model never comes, so a
-    # warm gives up at once; a test that makes the model ready still warms.
-    from backend import voice_session_shadow
-    monkeypatch.setattr(voice_session_shadow, "WARM_READY_WAIT_S", 0.0)
+    # speaker model on its own thread. Started by a test's app or first
+    # voice feed, it outlived that test and ran inside later ones (#504's
+    # CI). Offline the model never comes, so a warm gives up at once; a
+    # test that makes the model ready still warms.
+    monkeypatch.setattr(voice_sessions, "WARM_READY_WAIT_S", 0.0)
     yield
     voice_calibration._reset_for_tests()
     voiceid._reset_for_tests()
-    voice_shadow._reset_for_tests()
+    voice_sessions._reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

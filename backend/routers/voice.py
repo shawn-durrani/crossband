@@ -72,27 +72,13 @@ from fastapi import WebSocketDisconnect
 from pydantic import BaseModel
 
 from .. import (config, crosstalk, db, diagnostics, diarize, engine,
-                room_state, seat_trace, tts_models, voice,
-                voice_session_shadow, voice_trace)
+                seat_trace, tts_models, voice, voice_sessions, voice_trace)
 
 router = APIRouter(tags=["voice"])
 
 log = logging.getLogger("crossband.voice")
 
 PREFERRED_VOICES = ["Adam", "Rachel", "Antoni", "Bella", "Josh", "Domi", "Elli", "Sam"]
-
-# The two mic capture profiles a client may report (#28 phase 4, the
-# crosstalk capture experiment - see frontend/src/captureProfile.js).
-# Allowlisted so the log line stays content-free by construction: anything
-# else a client sends is simply not logged.
-CAPTURE_PROFILES = {"solo-tuned", "room-open"}
-
-
-def capture_profile(msg) -> str:
-    """The client-reported capture profile out of an init or control frame,
-    or '' when absent/unrecognised."""
-    p = (msg or {}).get("capture_profile")
-    return p if p in CAPTURE_PROFILES else ""
 
 
 @router.get("/api/voice/status")
@@ -253,25 +239,23 @@ def _meter_batch_stt(chat_id, seconds, cfg):
 
 
 async def _batch_turn_check(chat_id, turn_id, wav, cfg):
-    """Schedule the identity check for one batch-transcribed turn (#461),
-    through the same routing rule as the relay's commits. Returns the
-    route, or None when there was nothing to do: the relay already
-    checked this turn, or the copy was not a PCM-16 mono WAV. Content-free
-    log line: a route word and a duration."""
+    """Schedule the voice check for one batch-transcribed turn (#461), the
+    same check the relay's commits get. Returns the check's task, or None
+    when there was nothing to do: the relay already checked this turn, the
+    copy was not a PCM-16 mono WAV, or the matcher is off. Content-free
+    log line: whether a check started, and a duration."""
     if diarize.turn_checked(turn_id):
         return None
     audio = diarize.wav_pcm16(wav)
     if audio is None:
         return None
     pcm, rate = audio
-    room_on, ambient_ok = await asyncio.to_thread(
-        diarize.turn_check_state, chat_id, cfg)
-    route = diarize.schedule_turn_check(
+    task = diarize.schedule_turn_check(
         chat_id, pcm, rate, diarize.batch_session(chat_id), cfg,
-        room_on=room_on, ambient_ok=ambient_ok, turn_id=turn_id)
-    log.info("batch turn check: chat=%s route=%s seconds=%.1f", chat_id,
-             route, len(pcm) / 2 / rate)
-    return route
+        turn_id=turn_id)
+    log.info("batch turn check: chat=%s checked=%s seconds=%.1f", chat_id,
+             task is not None, len(pcm) / 2 / rate)
+    return task
 
 
 @router.post("/api/voice/trace")
@@ -693,15 +677,17 @@ async def stt_stream_relay(ws: WebSocket):
     batch /stt POST - the key stays server-side (xi-api-key header). One session
     handles many utterances, so it stays open until the client closes.
 
-    Room mode (#28 phase 1): with `room_mode` set in the init message (or a
-    later control frame `{"room_mode": true/false}` with no audio), the relay
-    TEES each utterance's already-decoded PCM into a per-session buffer,
-    sliced on the same commit boundaries the realtime path produces, and on
-    each commit fires backend/diarize.py's fire-and-forget parallel pass.
-    THE INVARIANT, pinned by tests/test_room_mode.py: the frames sent
-    upstream to ElevenLabs are byte-for-byte identical with room mode on,
-    off, or never mentioned, and nothing in this handler ever awaits the
-    diarization task - the live path cannot be slowed or broken by it.
+    The voice check (#28, #482): the relay TEES each utterance's
+    already-decoded PCM into a per-session buffer, sliced on the same
+    commit boundaries the realtime path produces, hands every chunk to the
+    session naming's feed as it arrives, and on each commit fires the
+    check (backend/diarize.py's schedule_turn_check). THE INVARIANT,
+    pinned by tests/test_room_mode.py: the frames sent upstream to
+    ElevenLabs are byte-for-byte identical whatever the room is doing,
+    and nothing in this handler ever awaits the check - the live path
+    cannot be slowed or broken by it. A control frame with no audio, the
+    `room_mode` toggle or an older client's silence-start hint, sends
+    nothing upstream and changes nothing.
 
     Word times (#482 item D): the socket asks Scribe for them, so each
     commit is answered twice. voice.CommitFinals pairs the two answers so
@@ -742,14 +728,6 @@ async def stt_stream_relay(ws: WebSocket):
     log.info("stt capture open: sid=%s chat=%s live_now=%d",
              sid, chat_id, len(_captures))
     await ws.send_json({"session": sid})
-    # Capture experiment (#28 phase 4): record which mic profile this session
-    # captured with, so field tests can compare crosstalk label rates between
-    # suppression-on and suppression-off capture. INFO and content-free
-    # (an allowlisted profile name, never audio or text); older clients send
-    # nothing and nothing is logged.
-    profile = capture_profile(init)
-    if profile:
-        log.info("stt capture profile: chat=%s profile=%s", chat_id, profile)
     seconds = 0.0
     up = down = None
     last_partial = ""  # freshest partial transcript - the prewarm query
@@ -766,24 +744,16 @@ async def stt_stream_relay(ws: WebSocket):
     # where the current turn began on it. Each commit is recorded with both
     # ends, so its word times can be read in the turn's own time.
     stt_clock = {"sent": 0.0, "began": None}
-    # The words go to the crosstalk split, which only the session naming's
-    # pass reads; with it off they're not kept at all.
-    keep_words = voice_session_shadow.only_enabled(cfg)
-    # Room-mode session state (utterance tee + label bookkeeping). Constructed
-    # unconditionally. Phase 2 (#28): the tee itself now runs on EVERY
-    # session - a bounded local buffer append per frame, still nothing on the
-    # upstream byte path - because the spoken introduction that flips room
-    # mode on arrives BEFORE the mode is on, and the introduction utterance's
-    # own audio is the owner's first voice anchor. With the mode off the
-    # buffer is only ever stashed locally at each commit; no batch call, no
-    # task, no label - the phase-1 pins in tests/test_room_mode.py still hold.
-    room = diarize.RoomSession(enabled=bool(init.get("room_mode")))
+    # The words go to the crosstalk split, which needs the tracker's spans;
+    # with no feed (no diariser, or the matcher off) there is no split, and
+    # they're not kept.
+    keep_words = voice_sessions.enabled(cfg)
+    # The session's utterance tee and label bookkeeping. The tee runs on
+    # every session - a bounded local buffer append per frame, nothing on
+    # the upstream byte path - so every turn in every mode gets its check.
+    room = diarize.RoomSession()
     # Session-open reads (one worker-thread trip, NEVER on the audio path):
-    # seed the server-side room-mode mirror from the chat row, and collect the
-    # names the transcriber should spell consistently. A chat whose room mode
-    # was flipped durably in an earlier session diarizes from the first
-    # utterance of this one: that is what "voices are remembered" means end
-    # to end.
+    # the names the transcriber should spell consistently.
     #
     # Keyterms (#28 phase 3): the owner's `user_name` plus the present
     # roster's display names ride the upstream connection URL's keyterms
@@ -797,9 +767,6 @@ async def stt_stream_relay(ws: WebSocket):
             def _session_open_reads():
                 con = db.connect()
                 try:
-                    row = con.execute("SELECT room_mode, ambient_off "
-                                      "FROM chats WHERE id=?",
-                                      (chat_id,)).fetchone()
                     roster = db.get_room_roster(con, chat_id,
                                                 present_only=True)
                 finally:
@@ -825,27 +792,11 @@ async def stt_stream_relay(ws: WebSocket):
                     # transcriber re-mints the very spelling drift the
                     # merge just resolved.
                     names.extend(p["merged_names"])
-                on = bool(row and row["room_mode"])
-                disarmed = bool(row and row["ambient_off"])
-                # Ambient local check (#28): matcher enabled, and some
-                # sufficient remembered voice to match. Since PR-B this is
-                # the ONLY automatic arming door - the bounded EL
-                # session-start sniff retired with the cloud identity path,
-                # so no arming decision ever costs a batch call. #461: this
-                # is eligibility only. Whether the room is on, off or solo
-                # is decided per commit, because it can change mid-session;
-                # folding the open-time state in here left a session that
-                # opened armed with no check at all once the room went solo.
-                ambient = diarize.ambient_eligible(people, cfg)
-                return on, names, disarmed, ambient
-            enabled, roster_names, disarmed, ambient_ok = \
-                await asyncio.to_thread(_session_open_reads)
-            room_state.seed_mirrors(chat_id, enabled=enabled,
-                                    ambient_disarmed=disarmed)
-            keyterm_names += roster_names
-            room.ambient_on = ambient_ok
+                return names
+            keyterm_names += await asyncio.to_thread(_session_open_reads)
         except Exception:
-            log.warning("room-mode seed failed; session continues", exc_info=True)
+            log.warning("keyterm names not read; session continues",
+                        exc_info=True)
     try:
         async with websockets.connect(
             voice.stt_ws_url(keyterm_names, timestamps=True),
@@ -869,39 +820,14 @@ async def stt_stream_relay(ws: WebSocket):
                         if msg.get("done"):
                             _close_reason = "client_done"
                             return
-                        if "room_mode" in msg and "audio" not in msg:
-                            # Control frame, ours alone: toggle the tee and send
-                            # NOTHING upstream - the ElevenLabs byte stream stays
-                            # identical to a session that never toggled. A
-                            # mid-session capture-profile change (#28 phase 4)
-                            # rides the same frame and is logged the same
-                            # content-free way as the init's.
-                            room.set_enabled(msg.get("room_mode"))
-                            p = capture_profile(msg)
-                            if p:
-                                log.info("stt capture profile: chat=%s profile=%s",
-                                         chat_id, p)
-                            continue
-                        if msg.get("speculative") and "audio" not in msg:
-                            # Silence-start hint (#28 PR-B), ours alone - NOTHING
-                            # goes upstream for it, pinned like the room_mode
-                            # control frame. Fire the LOCAL-ONLY identity check
-                            # on the buffered utterance now, so the verdict is
-                            # cached before the commit frame arrives. create_task
-                            # inside, never awaited; a failure to schedule must
-                            # not break live transcription.
-                            try:
-                                # #461: solo runs the check too (labelling
-                                # only), so its head start runs as well.
-                                if chat_id and (room.enabled
-                                                or diarize.room_enabled(chat_id)
-                                                or room.ambient_on):
-                                    diarize.schedule_speculative(chat_id, room,
-                                                                 cfg)
-                            except Exception:
-                                log.warning("speculative scheduling failed; live "
-                                            "transcription continues",
-                                            exc_info=True)
+                        if "audio" not in msg and ("room_mode" in msg
+                                                   or msg.get("speculative")):
+                            # A control frame, ours alone: an older client's
+                            # room toggle or silence-start hint. NOTHING goes
+                            # upstream and nothing runs - the ElevenLabs byte
+                            # stream stays identical to a session that never
+                            # sent one, and every turn gets its check at the
+                            # commit whatever the room is doing.
                             continue
                         audio = msg.get("audio") or ""
                         sr = int(msg.get("sample_rate", 16000))
@@ -914,20 +840,16 @@ async def stt_stream_relay(ws: WebSocket):
                                 stt_clock["sent"] += len(raw) / 2 / sr
                                 # The tee: a local buffer append of bytes the
                                 # metering above already decoded. Nothing here
-                                # touches the upstream payload below. Always on
-                                # (phase 2) so the introduction utterance itself
-                                # can seed the owner's anchor - see the RoomSession
-                                # comment above for why that is safe.
+                                # touches the upstream payload below.
                                 room.add_audio(raw, sr)
                             except Exception:
                                 pass
                             try:
-                                # #482 stage 3: the live session step's feed.
-                                # A queue put, never blocking; off unless
-                                # voice_session_live is set.
+                                # The session naming's feed (#482): a queue
+                                # put, never blocking; a no-op with no
+                                # diariser configured.
                                 if chat_id:
-                                    voice_session_shadow.feed(chat_id, raw,
-                                                              sr, cfg)
+                                    voice_sessions.feed(chat_id, raw, sr, cfg)
                             except Exception:
                                 pass
                         payload = {
@@ -966,16 +888,11 @@ async def stt_stream_relay(ws: WebSocket):
                                 else stt_clock["began"], stt_clock["sent"])
                             stt_clock["began"] = None
                             # Commit boundary = utterance boundary: slice the teed
-                            # audio. With room mode effective (the client's toggle
-                            # OR the server-side flag an introduction flipped -
-                            # diarize.room_enabled is a dict lookup, no I/O), fire
-                            # the parallel diarization pass; otherwise stash the
-                            # utterance locally so a confirmed introduction can
-                            # claim it as the owner's anchor. create_task only -
-                            # NEVER awaited here; the commit frame below goes
-                            # upstream exactly as it always has, and a failure to
-                            # even schedule must not break live transcription
-                            # (same posture as the prewarm hook).
+                            # audio and fire the voice check on it. create_task
+                            # only - NEVER awaited here; the commit frame below
+                            # goes upstream exactly as it always has, and a
+                            # failure to even schedule must not break live
+                            # transcription (same posture as the prewarm hook).
                             #
                             # The commit frame's `turn_id` (#28 phase 3) is the
                             # client's voice-trace correlation id - the SAME id
@@ -986,44 +903,31 @@ async def stt_stream_relay(ws: WebSocket):
                             # identical whether or not it is sent.
                             try:
                                 pcm, pcm_sr = room.take_utterance()
-                                # Claim the speculative silence-start entry (#28
-                                # PR-B) synchronously, so it can never leak onto
-                                # the next utterance. A dict pop - no I/O; the
-                                # staleness judgment happens inside the pass, on
-                                # a worker thread.
-                                spec = room.take_speculative(len(pcm)) \
-                                    if room.speculative else None
                                 commit_turn_id = (str(msg.get("turn_id") or "")
                                                   .strip()[:64] or None)
                                 finals.commit(commit_turn_id, *turn_on_stt)
                                 # Before the check is scheduled, so the
-                                # turn's live result slot exists when the
-                                # check asks for it (#482 stage 3).
+                                # turn's result slot exists when the check
+                                # asks for it (#482).
                                 try:
-                                    voice_session_shadow.end_turn(
+                                    voice_sessions.end_turn(
                                         chat_id, commit_turn_id, cfg)
                                 except Exception:
                                     pass
-                                # One routing rule for every voiced turn
-                                # (#461), shared with the batch /stt path: an
-                                # armed room runs the armed pass; otherwise
-                                # the turn is stashed for an introduction to
-                                # claim, and the ambient local check runs -
-                                # the on-device matcher, which NEVER calls
-                                # ElevenLabs. In solo that check labels and
-                                # never arms (the sacred disarm is read
-                                # inside it, from the chat row). create_task
-                                # only, NEVER awaited; the upstream byte
-                                # stream is untouched either way.
+                                # One check for every voiced turn (#461,
+                                # #482), shared with the batch /stt path, in
+                                # every mode: the check reads the room from
+                                # the chat row itself. It runs on this
+                                # computer and never calls ElevenLabs.
+                                # create_task only, NEVER awaited; the
+                                # upstream byte stream is untouched.
                                 diarize.schedule_turn_check(
                                     chat_id, pcm, pcm_sr, room, cfg,
-                                    room_on=(room.enabled
-                                             or diarize.room_enabled(chat_id)),
-                                    ambient_ok=room.ambient_on,
-                                    turn_id=commit_turn_id, speculative=spec)
+                                    turn_id=commit_turn_id)
                             except Exception:
-                                log.warning("diarize scheduling failed; live "
-                                            "transcription continues", exc_info=True)
+                                log.warning("voice check scheduling failed; "
+                                            "live transcription continues",
+                                            exc_info=True)
                         await eleven.send(json.dumps(payload))
 
                 except Exception as exc:

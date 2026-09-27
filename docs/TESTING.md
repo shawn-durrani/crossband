@@ -98,26 +98,42 @@ microphone, and counts the loops reading it on every frame.
 
 ### Identity and the live turn
 
-Identity work never starves a reply. Everything the identity pass runs
-on threads, which is clip banking, the hygiene audit and the crosstalk
-call, uses its own bounded executor and never the default pool the
-request path shares. The audit runs at most once per cool-down window
-without ever dropping a changed bank, and a source-level guard keeps
+Identity work never starves a reply. Everything the voice check runs on
+threads, which is naming, clip banking and the hygiene audit, uses its
+own bounded executor and never the default pool the request path
+shares. The audit runs at most once per cool-down window without ever
+dropping a changed bank, and a source-level guard keeps
 `asyncio.to_thread` out of the module.
 
-Identity is local or it stays uncertain. The on-device matcher names a
-turn or the turn stays unresolved. No ElevenLabs call ever fires
-because the matcher deferred: a solo utterance can never trigger one,
-every defer reason takes the same silent exit, and with the matcher off
-nothing automatic happens at all. The manual doors still arm. One
-trigger survives, the batch diarize call for speech that overlaps, and
-it's pinned as the only metered voice-identity spend.
+Identity is local or it stays uncertain. Every spoken turn gets one
+check, in every mode and from either transcription path, and it names
+the turn or says why it didn't. No ElevenLabs call ever fires for
+naming or for splitting two voices, and with the matcher off no turn is
+checked at all. The manual doors still arm. With no diariser, or with
+it down, each turn is named on its own, and the suite runs that path
+end to end with nothing but the speaker model faked.
 
-The identity pass costs the live turn nothing. Every pass is a
-background task nobody awaits, pinned by wedging the call open and
-watching the send complete anyway. With the toggle off the realtime
-relay sends byte for byte the frames it always sent. A failed pass
-leaves the turn unlabelled with everything else working.
+The rule the check applies is pure and pinned case by case: the owner
+is labelled and never seated, a known guest arms a room that was off
+and is seated before the label lands, a new voice arms and asks only
+once the owner's voice is known, and solo labels and does nothing else.
+A clip is saved only from a single-voice turn named near certain, with
+enough clean speech behind it.
+
+The session naming follows each voice through a session on a fake
+diariser. A voice is named from its pooled speech, one person per
+voice, and a short turn is named from what the voice said before. Only
+clean speech is fingerprinted, a clip saved during the session never
+scores that session's voices, and a late name fills the voice's earlier
+turns, never a correction, a two-voice turn or the turn still being
+named. The diariser's address must be on this computer.
+
+The voice check costs the live turn nothing. Every check is a
+background task nobody awaits, pinned by wedging it open and watching
+the send complete anyway. The realtime relay sends byte for byte the
+frames it always sent, whatever the room is doing, and a control frame
+never reaches upstream. A failed check leaves the turn unlabelled with
+everything else working.
 
 A label lands on its own turn, or on nothing. Writes key on the
 client's turn id, the same id `/send` stores on the message, so a
@@ -147,15 +163,17 @@ An AI participant can never be seated as a person. Its name, spelt by
 ear variants included, is dropped before seating, and the seat writer
 refuses the exact names outright as a final guard.
 
-Learning a voice is narrow and labelled as such. Identification under
-the sufficiency bar stays uncertain, and the bar has two parts, a
+Learning a voice is narrow and labelled as such. Only a person over the
+sufficiency bar is compared with a voice, and the bar has two parts, a
 seconds target and a minimum of short clips, so long clips can't starve
-the short class. Cold-start elimination applies only when one present
-person can't yet be identified. An overlapping-speech verdict, two or
-more unidentifiable people, a confident match, and an outright matcher
-failure each have their own pin against qualifying. A learning label
+the short class. Elimination names a new voice only when one present
+person has no learnt voice, and it saves nothing. Two voices at once,
+two or more unlearnt people, a confident name, a voice still listening
+and solo each have their own pin against qualifying. A learning label
 carries `learning` beside `uncertain`, so a consumer written before the
-marker still treats it as a guess.
+marker still treats it as a guess. The owner's first clip comes from
+the introduction's own audio, never from a turn the check heard as
+someone else.
 
 The hygiene guard audits every bank change. A clip closer to another
 person's centroid than its own is quarantined: kept on disk, excluded
@@ -163,12 +181,13 @@ from matching, and shown as set aside. Close centroid pairs widen the
 match margin for that pair alone. A bank nobody vouched for can't
 re-seat anyone until the owner confirms it.
 
-The readiness test measures and never names. With its setting off it
-starts no thread, downloads nothing and embeds nothing. On, it builds
-on its own thread, lets a live check go first, and the same turns get
-the same labels as with it off. Its calibration is checked on a made-up
-household where the right answer is known, down to which day leaves
-with which piece and a voice with no bank coming out as someone new.
+The calibrated scorer is off until its setting is on. Off, it starts no
+thread, downloads nothing and embeds nothing. On, it builds on its own
+thread, lets a live check go first, and names clear turns the same as
+the fallback scorer it takes over from. Its calibration is checked on a
+made-up household where the right answer is known, down to which day
+leaves with which piece and a voice with no bank coming out as someone
+new.
 
 The health surface holds no content. `GET /api/voice/health` returns
 states, counts and milliseconds, never a name and never transcript

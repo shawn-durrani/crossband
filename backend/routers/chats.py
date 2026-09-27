@@ -211,11 +211,11 @@ def update_chat(chat_id: int, body: ChatIn, request: Request):
     con.commit()
     if body.room_mode is not None:
         # The room flags ride the single write path (#239): durable commit
-        # first, then diarize's live mirror, then the owner seat and the
-        # bell - room_state owns that ordering. A manual enable is an
-        # explicit owner re-enable: it clears any sacred ambient-off and
-        # seats the owner every time (linked to their anchors when
-        # remembered) so the pass runs ANCHORED (#28, fifth field test). A
+        # first, then the owner seat and the bell - room_state owns that
+        # ordering. A manual enable is an explicit owner re-enable: it
+        # clears any sacred ambient-off and seats the owner every time
+        # (linked to their anchors when remembered, #28, fifth field
+        # test). A
         # manual disable's off means off (#294): the same full disarm
         # spoken "solo mode" does, so a switched-off room cannot re-arm
         # itself from the next voice it hears.
@@ -491,9 +491,10 @@ async def _send(chat_id: int, body: SendIn, request: Request):
                 title = body.text.strip().splitlines()[0][:60]
                 con.execute("UPDATE chats SET title=? WHERE id=?", (title, chat_id))
             # Claim a finished voice label INSIDE the insert (#28, twelfth
-            # field test). The identity check normally completes seconds
-            # before this row exists - it fires at the start of the silence
-            # gap - but the label could only ever be written after the row,
+            # field test). The voice check normally completes before this
+            # row exists - it starts at the commit and the session naming
+            # has followed the voice while it spoke - but the label could
+            # only ever be written after the row,
             # and the round that renders the transcript dispatches the moment
             # this returns. Result: models read "identity pending" on the very
             # turn they were answering while the browser already showed the

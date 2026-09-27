@@ -1,74 +1,80 @@
-"""The session shadow (#482 stage 2): the redesigned naming, measured on
-real turns beside today's, changing nothing.
+"""Voice sessions (#482): follow each voice through a voice session, and
+name each voice once, from everything it has said.
 
-Today a voice turn is named on its own, from the whole turn. The redesign
-(docs/VOICE_ID_REDESIGN.md) follows each voice through the whole voice
-session with a local diariser and names each VOICE once, from everything
-it has said so far. This module runs that idea in shadow:
+A voice turn used to be named on its own, from the whole turn. This
+module follows each voice through the whole voice session with a local
+diariser instead (docs/VOICE_ID.md), and backend/voice_pass.py reads its
+answer for every spoken turn:
 
-  1. Per chat, it opens a streaming tracking session on the loopback
-     diariser (workbench's diarserve, its /sessions routes) the first
-     time a turn arrives, and reopens one after SESSION_IDLE_S of quiet.
-  2. Each turn's audio is pushed to that session, then end-turn pushes
-     a short silence so the tracker labels the turn's last second. The
-     answer is spans in session time: which voice slot, start, end, and
-     whether another slot spoke over it. A slot keeps its number for the
-     session, so each slot is a session voice.
-  3. Every span of MIN_SPAN_S or more that one voice has alone, and that
-     passes the live matcher's speech gates, is fingerprinted with the live
-     model (TitaNet-Small) and added to that session voice's evidence.
-  4. After each turn every session voice is named from its pooled
-     fingerprint, against every kept clip of every candidate (the #477
-     multi scorer and its bar, so the only difference from the per-turn
-     multi measure is the pooling), one person per voice.
+  1. The relay hands every audio chunk inside a turn to feed() as it
+     arrives, and end_turn() at the commit. A per-chat feed thread opens a
+     streaming tracking session on the loopback diariser (workbench's
+     diarserve, its /sessions routes) the first time a turn arrives, and
+     reopens one after SESSION_IDLE_S of quiet. It pushes the chunks in
+     quarter-second pieces, and at the end of a turn pushes a short
+     silence so the tracker labels the turn's last second. The answer is
+     spans in session time: which voice slot, start, end, and whether
+     another slot spoke over it. A slot keeps its number for the session,
+     so each slot is a session voice.
+  2. Every span of MIN_SPAN_S or more that one voice has alone, and that
+     passes the speech gates, is fingerprinted with TitaNet-Small and,
+     once the calibrated scorer has loaded it, ERes2Net, and added to that
+     session voice's evidence. A span the tracker calls final while the
+     person is still talking is fingerprinted then.
+  3. After each turn every session voice is named from its pooled
+     fingerprints, one person per voice: by the calibrated two-model
+     scorer when its snapshot is ready (backend/voice_calibration.py),
+     else by the multi scorer on the matcher's bar carried onto its scale.
+  4. When a voice is named, its earlier turns in the session that carry
+     no name, or a name this module wrote, take the name (FILLING IN).
   5. One content-free row per turn records the turn's spans and main
-     voice, every session voice's state, and today's live label beside it.
+     voice and every session voice's state.
 
-THE RULES, pinned in tests/test_voice_session_shadow.py:
+With no diariser configured, or with it down, no feed answers and the
+pass names the turn on its own as one voice (name_single_turn), with the
+same scorer and no session behind it.
 
-  * Never alters anything. It writes one JSON line per turn to
-    <data_dir>/voice_session_shadow.jsonl and nothing else. It never
-    labels, seats, banks or asks.
-  * It rides the shadow test's own worker, after the shadow row, so it
-    can't delay the live path, and it needs the shadow's loopback diariser
-    URL plus its own switch, `voice_session_shadow`. Both default off.
+THE RULES, pinned in tests/test_voice_sessions.py:
+
+  * The diariser URL must name this machine, or the feed stays off.
+    Redirects are not followed and proxy environment variables are
+    ignored, so the audio can't be sent anywhere else.
+  * Nothing here runs on the event loop, and a failure never reaches the
+    relay or the pass: a turn with no answer is named on its own.
   * Clips added to a bank after the tracking session opened are left out
-    of the comparison, so a voice is never scored against audio from the
-    same session that the live path banked (the flaw found in the
-    #465 shadow on 26 September).
-  * Content-free rows: ids, slots, names, scores, seconds and timings. The
-    turn's audio lives in memory for the pass, and the diariser keeps the
-    session's audio in memory only.
+    of the multi scorer's comparison, so a voice is never scored against
+    audio from the same session that the pass saved.
+  * Content-free rows and logs: ids, slots, names, scores, seconds and
+    timings. The turn's audio lives in memory for the pass, and the
+    diariser keeps the session's audio in memory only.
 
-FILLING IN (`voice_session_labels`, off by default, the first live step of
-the cut-over, asked for by the owner on 26 September): when a session
-voice is named, every turn of the session whose main voice it is, and
-that today's pass left with no name, takes that name as its label, with
-source "session". Rules, pinned in the same test file:
+FILLING IN, rules pinned in the same test file:
 
-  * Only a turn with no label is filled. A name from the live pass, a
-    turn a person corrected or confirmed, a crosstalk turn and a label that
-    doesn't parse are never touched. A label this module wrote may move
-    when its voice's name changes.
-  * Nothing else happens: no seat, no banked clip, no ask. Memory reads
-    source "session" as by-elimination, the weakest method, which membro
-    never binds on by itself.
+  * Only a turn with no label is filled, or one whose label this module
+    or the pass wrote (source "session"). A turn a person corrected or
+    confirmed, a crosstalk turn and a label that doesn't parse are never
+    touched, and neither is the turn being named right now: the pass
+    labels that one, and it may hold two voices.
+  * Nothing else happens: no seat, no saved clip, no ask.
   * The owner's own name (or a spelling of it) is written with the owner
-    marker, as the live pass writes it.
+    marker, as the pass writes it.
 """
 
 import collections
+import ipaddress
 import json
 import logging
+import math
 import os
 import queue
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from . import db, voice_shadow, voiceid
+from . import db, voiceid
 
-log = logging.getLogger("crossband.voice_session_shadow")
+log = logging.getLogger("crossband.voice_sessions")
 
 SESSION_IDLE_S = 600.0          # a quieter chat gets a fresh session
 MIN_SPAN_S = 0.8                # shorter spans aren't fingerprinted
@@ -77,57 +83,119 @@ NEW_VOICE_MIN_S = 4.0           # clean speech before a voice can be "new"
 REQUEST_TIMEOUT_S = 5.0
 SAMPLE_RATE = 16000
 MAX_SPANS = 64                  # spans read per turn; the rest are ignored
+# The rows file keeps the name it had while the session naming ran in
+# shadow, so the rows written then stay readable.
 ROWS_FILE = "voice_session_shadow.jsonl"
 ROWS_MAX = 5000
 ROWS_KEEP = 4000
 ROW_VERSION = 1
-SESSION_SOURCE = "session"      # the label source a filled-in turn carries
+SESSION_SOURCE = "session"      # the label source the pass and filling write
 TURNS_KEPT = 400                # turns per session a late name can fill
-LIVE_WAIT_S = 0.8               # longest the live check waits for a name
-FEED_CHUNK_BYTES = int(0.25 * 16000) * 2   # audio pushed at a time, live
+LIVE_WAIT_S = 0.8               # longest the pass waits for a name
+FEED_CHUNK_BYTES = int(0.25 * 16000) * 2   # audio pushed at a time
 FEED_QUEUE_MAX = 4000           # chunks held before new ones are dropped
-RESULTS_MAX = 256               # turns whose live result is remembered
+RESULTS_MAX = 256               # turns whose result is remembered
+# The multi scorer (#477): a person's score is the mean of their best
+# MULTI_TOP_K clip scores, so one lucky clip can't carry a name alone. A
+# bank with fewer clips uses what it has.
+MULTI_TOP_K = 2
+MIN_IMPOSTOR_SCORES = 4
+SPREAD_FLOOR = 0.02             # a near-zero spread would blow z up
+CLIP_CACHE_MAX = 1024           # per-clip embeddings kept for the scorer
+ANCHOR_CACHE_MAX = 64           # per-person centroids kept for the bar
 
-_lock = threading.Lock()        # guards _sessions and _stats
+_lock = threading.Lock()        # guards _sessions, _stats and the caches
 _rows_lock = threading.Lock()
 _sessions: dict = {}            # chat_id -> session dict
 _stats = {"rows": 0, "diariser": "", "sessions_opened": 0}
+_clip_cache: dict = {}          # (clip file, bytes) -> TitaNet-Small embedding
+_anchor_cache: dict = {}        # (pid, fingerprint) -> {"emb", "clips"}
+_warned: set = set()
+
+
+# ================= settings =================================================
+
+def _is_loopback_host(host) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
+
+
+def loopback_base_url(raw):
+    """The diariser's base URL when `raw` is an http(s) URL naming this
+    machine, else None. A trailing /diarize is dropped. User info, a query
+    or a fragment refuses the URL: none belongs in a loopback base."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or parts.username \
+            or parts.password or parts.query or parts.fragment:
+        return None
+    host = (parts.hostname or "").lower()
+    if not _is_loopback_host(host):
+        return None
+    netloc = f"[{host}]" if ":" in host else host
+    if port:
+        netloc += f":{port}"
+    path = parts.path.rstrip("/")
+    if path.endswith("/diarize"):
+        path = path[:-len("/diarize")]
+    return f"{parts.scheme}://{netloc}{path}"
+
+
+def diariser_url(cfg):
+    """The configured diariser base URL (`diarize_shadow_url`, named for
+    the stage that introduced it), or None: unset, or refused as not
+    loopback (logged once)."""
+    raw = ((cfg or {}).get("diarize_shadow_url") or "").strip()
+    if not raw:
+        return None
+    url = loopback_base_url(raw)
+    if url is None:
+        _warn_once("url", "diarize_shadow_url refused: it must be an http "
+                          "URL on this machine (127.0.0.1, ::1 or "
+                          "localhost); each voice turn is named on its own")
+    return url
 
 
 def enabled(cfg) -> bool:
-    """On only with its own switch AND the shadow's loopback diariser."""
-    return bool((cfg or {}).get("voice_session_shadow")
-                and voice_shadow.diariser_url(cfg))
+    """Does the feed run? Only with the matcher on and a loopback
+    diariser configured."""
+    return bool(voiceid.enabled(cfg) and diariser_url(cfg))
 
 
-def labels_enabled(cfg) -> bool:
-    """Filling in unnamed turns needs the session shadow on as well."""
-    return bool(enabled(cfg) and (cfg or {}).get("voice_session_labels"))
+# ================= log once =================================================
+
+def _warn_once(key, msg, *args):
+    if key in _warned:
+        return
+    _warned.add(key)
+    log.warning("voice sessions: " + msg, *args)
 
 
-def only_enabled(cfg) -> bool:
-    """Stage 3's switch (`voice_session_only`): the session naming names
-    every spoken turn, in every mode, and the old matcher's passes don't
-    run. Needs the live feed on as well."""
-    return bool(live_enabled(cfg) and (cfg or {}).get("voice_session_only"))
-
-
-def live_enabled(cfg) -> bool:
-    """The live step: the relay feeds the tracker as audio arrives, and the
-    live check names an otherwise unnamed turn from it. Needs the session
-    shadow on as well."""
-    return bool(enabled(cfg) and (cfg or {}).get("voice_session_live"))
+def _recovered(key, msg):
+    if key in _warned:
+        _warned.discard(key)
+        log.info("voice sessions: %s", msg)
 
 
 # ================= the live feed ============================================
-# LIVE (`voice_session_live`, #482 stage 3). The relay hands every audio
-# chunk inside a turn to feed() as it arrives, and end_turn() at the commit.
-# A per-chat feed thread pushes the chunks to the tracking session in
-# quarter-second pieces, so when the turn ends only the end-turn flush and
-# the naming are left to do (about a tenth of a second). The live check
-# asks wait_turn() for the turn's main voice, for at most LIVE_WAIT_S, and
-# falls back to today's behaviour when nothing comes. Nothing here runs on
-# the event loop, and a failure never reaches the relay or the live check.
+# The relay hands every audio chunk inside a turn to feed() as it arrives,
+# and end_turn() at the commit. A per-chat feed thread pushes the chunks to
+# the tracking session in quarter-second pieces, so when the turn ends only
+# the end-turn flush and the naming are left to do (about a tenth of a
+# second). The pass asks await_turn() for the turn's main voice, for at
+# most LIVE_WAIT_S, and names the turn on its own when nothing comes.
 
 _feeds: dict = {}               # chat_id -> _Feed
 _results: "collections.OrderedDict" = collections.OrderedDict()
@@ -153,11 +221,10 @@ def _resolve(turn_id, result):
 
 
 def wait_turn(turn_id, timeout=LIVE_WAIT_S):
-    """The live result for one turn: the main voice's {"voice", "state",
-    "name", "score", ...}, plus every voice heard in the turn and the spans
-    in turn time for the crosstalk split (see _name_turn), or None when
-    there is none within `timeout` (blocking; call it off the event
-    loop)."""
+    """The result for one turn: the main voice's {"voice", "state", "name",
+    "score", ...}, plus every voice heard in the turn and the spans in turn
+    time for the crosstalk split (see _name_turn), or None when there is
+    none within `timeout` (blocking; call it off the event loop)."""
     tid = str(turn_id or "")[:64]
     if not tid:
         return None
@@ -171,7 +238,7 @@ def wait_turn(turn_id, timeout=LIVE_WAIT_S):
 
 def peek_turn(turn_id):
     """(known, done, result) for one turn without waiting: known is False
-    when no slot was opened for it (no live feed saw the turn)."""
+    when no slot was opened for it (no feed saw the turn)."""
     tid = str(turn_id or "")[:64]
     with _lock:
         slot = _results.get(tid) if tid else None
@@ -182,7 +249,7 @@ def peek_turn(turn_id):
 
 async def await_turn(turn_id, timeout=LIVE_WAIT_S, step=0.02):
     """wait_turn for the event loop: polls every `step` seconds instead of
-    holding a thread, so the live check never borrows a worker to wait."""
+    holding a thread, so the pass never borrows a worker to wait."""
     import asyncio
     deadline = time.monotonic() + timeout
     while True:
@@ -200,15 +267,15 @@ def feed(chat_id, pcm, sample_rate, cfg):
     """One audio chunk from inside a turn (the relay, on the event loop):
     queued for the chat's feed thread, never blocking."""
     if not chat_id or not pcm or sample_rate != SAMPLE_RATE \
-            or not live_enabled(cfg):
+            or not enabled(cfg):
         return
     _feed_for(chat_id, cfg).put(("audio", bytes(pcm)))
 
 
 def end_turn(chat_id, turn_id, cfg):
     """The relay's commit: the turn so far is done. Opens the turn's result
-    slot at once, so the live check can wait on it."""
-    if not chat_id or not live_enabled(cfg):
+    slot at once, so the pass can wait on it."""
+    if not chat_id or not enabled(cfg):
         return
     tid = str(turn_id or "")[:64] or None
     if tid:
@@ -237,19 +304,19 @@ def _feed_for(chat_id, cfg):
 
 
 # ================= warming ==================================================
-# The first live turn after a restart took 5.4 s on 27 September, because
-# every saved clip was embedded then, on the turn's clock, while the live
-# check waited. start_warm() does that work at startup and when a voice
-# chat begins, on its own thread, so the first turn finds the caches full.
+# The first turn after a restart took 5.4 s on 27 September, because every
+# saved clip was embedded then, on the turn's clock, while the pass waited.
+# start_warm() does that work at startup and when a voice chat begins, on
+# its own thread, so the first turn finds the caches full.
 
 WARM_READY_WAIT_S = 120.0       # how long a warm waits for the model to load
 _warming = threading.Event()
 
 
 def start_warm(cfg) -> bool:
-    """Embed every remembered person's clips in the background, once at a
-    time. True when a warm started."""
-    if not enabled(cfg) or _warming.is_set():
+    """Embed every remembered person's clips in the background, one warm at
+    a time, while the matcher is on. True when a warm started."""
+    if not voiceid.enabled(cfg) or _warming.is_set():
         return False
     _warming.set()
     threading.Thread(target=_warm, args=(dict(cfg),), daemon=True,
@@ -259,12 +326,14 @@ def start_warm(cfg) -> bool:
 
 def _warm(cfg):
     """The warm itself (its own thread): wait for the speaker model, then
-    fill the clip cache the naming reads and the anchors its bar uses."""
+    fill the clip cache the naming reads and the centroids its bar uses.
+    It waits on the matcher's state and never starts the model loading
+    itself: startup and the first voice check do that."""
     from . import diarize
     t0 = time.perf_counter()
     try:
         deadline = time.monotonic() + WARM_READY_WAIT_S
-        while voiceid._get_extractor(cfg) is None:
+        while voiceid.matcher_status(cfg) != "ready":
             if time.monotonic() >= deadline:
                 log.info("session naming warm: speaker model not ready")
                 return
@@ -273,7 +342,7 @@ def _warm(cfg):
         people = bank(candidates, SAMPLE_RATE, cfg,
                       before=time.time() + 1.0,
                       embed_fn=lambda pcm: embed_live(pcm, SAMPLE_RATE, cfg))
-        _bar(people, candidates, SAMPLE_RATE, cfg, False)
+        _bar(people, candidates, SAMPLE_RATE, cfg)
         log.info("session naming warm: people=%d clips=%d ms=%.0f",
                  len(people), sum(len(p["clips"]) for p in people.values()),
                  (time.perf_counter() - t0) * 1000)
@@ -284,9 +353,8 @@ def _warm(cfg):
 
 
 def embed_live(pcm, sample_rate, cfg):
-    """TitaNet-Small on one clean span, for the live step. Unlike the
-    shadow's embed it doesn't wait for the live check to finish, because
-    the live check is waiting on this. Tests replace this one function."""
+    """TitaNet-Small on one clean span or clip, L2-normalised, or None
+    while the matcher isn't ready. Tests replace this one function."""
     audio = voiceid._pcm_to_float(pcm)
     if audio is None or len(audio) == 0:
         return None
@@ -297,9 +365,9 @@ def embed_live(pcm, sample_rate, cfg):
 
 
 def embed_eres_live(pcm, sample_rate, cfg):
-    """ERes2Net on one clean span for the calibrated naming, without
-    waiting for the live check (it's waiting on this). None until the
-    calibrated scorer has loaded ERes2Net. Tests replace this function."""
+    """ERes2Net on one clean span for the calibrated naming. None until
+    the calibrated scorer has loaded ERes2Net. Tests replace this
+    function."""
     from . import voice_calibration as vc
     audio = voiceid._pcm_to_float(pcm)
     if audio is None or len(audio) == 0:
@@ -315,7 +383,7 @@ def embed_eres_live(pcm, sample_rate, cfg):
             vec = list(ex.compute(stream))
         return voiceid.l2_normalize(vec) if vec else None
     except Exception:
-        log.debug("ERes2Net live embedding failed", exc_info=True)
+        log.debug("ERes2Net embedding failed", exc_info=True)
         return None
 
 
@@ -340,15 +408,13 @@ def human_named(chat_id, turn_id, name, person_id, cfg):
         if (other.get("human") or {}).get("pid") == person_id:
             other.pop("human", None)
     voice["human"] = {"name": name, "pid": person_id}
-    if labels_enabled(cfg) or only_enabled(cfg):
-        fill_labels(chat_id, sess, {slot: {"state": "named", "name": name}},
-                    cfg)
+    fill_labels(chat_id, sess, {slot: {"state": "named", "name": name}}, cfg)
     return True
 
 
 def take_bank_allowance(chat_id, voice, limit):
     """One of `limit` clips a session voice may save per session: True and
-    counted, or False once they're used."""
+    counted, or False once they're used, or with no session."""
     with _lock:
         sess = _sessions.get(chat_id)
         if not sess:
@@ -361,11 +427,12 @@ def take_bank_allowance(chat_id, voice, limit):
 
 
 def name_single_turn(chat_id, pcm, sample_rate, cfg):
-    """No tracker saw this turn (the diariser is down, or the backup
-    transcript path carried it): treat the whole turn as one voice with no
-    session behind it, and name it with the same scorer. Returns the same
-    shape as a live result, or None when the audio isn't speech."""
-    if not pcm or voice_shadow.gate(pcm, sample_rate):
+    """No tracker saw this turn (no diariser configured, the diariser is
+    down, or the backup transcript path carried it): treat the whole turn
+    as one voice with no session behind it, and name it with the same
+    scorer. Returns the same shape as a feed's result, or None when the
+    audio isn't speech or the speaker model isn't ready."""
+    if not pcm or gate(pcm, sample_rate):
         return None
     secs = len(pcm) / 2 / sample_rate
     emb = embed_live(pcm, sample_rate, cfg)
@@ -377,7 +444,7 @@ def name_single_turn(chat_id, pcm, sample_rate, cfg):
         voice["prints_eres"] = [(emb_e, secs)]
     solo = {"voices": {0: voice}, "opened_at": time.time() + 1.0}
     named, _, _, method = _name_all(
-        solo, _live_candidates(chat_id), sample_rate, cfg, False,
+        solo, _live_candidates(chat_id), sample_rate, cfg,
         lambda seg: embed_live(seg, sample_rate, cfg),
         (lambda seg: embed_eres_live(seg, sample_rate, cfg)))
     v = named.get(0) or {}
@@ -394,8 +461,8 @@ def name_single_turn(chat_id, pcm, sample_rate, cfg):
 
 
 def _live_candidates(chat_id):
-    """The live check's own candidates: every remembered person, with the
-    people seated in this chat kept even while their bank is paused."""
+    """The naming's candidates: every remembered person, with the people
+    seated in this chat kept even while their bank is paused."""
     from . import diarize
     con = db.connect()
     try:
@@ -407,8 +474,8 @@ def _live_candidates(chat_id):
 
 
 class _Feed:
-    """One chat's feed thread. It owns the chat's tracking session while
-    live, so nothing else pushes audio to it."""
+    """One chat's feed thread. It owns the chat's tracking session, so
+    nothing else pushes audio to it."""
 
     def __init__(self, chat_id, cfg):
         self.chat_id = chat_id
@@ -459,7 +526,7 @@ class _Feed:
                 _close(sess)
 
     def _session(self):
-        base = voice_shadow.diariser_url(self.cfg)
+        base = diariser_url(self.cfg)
         if not base:
             raise _SessionError("no_diariser")
         return _session_for(self.chat_id, base, time.time())
@@ -502,15 +569,14 @@ class _Feed:
                 continue
             try:
                 a, b = s["start"] - self.turn_start, s["end"] - self.turn_start
-                seg = voice_shadow.span_pcm(pcm, SAMPLE_RATE, [(a, b)])
+                seg = span_pcm(pcm, SAMPLE_RATE, [(a, b)])
                 if len(seg) < int((b - a) * SAMPLE_RATE) * 2 - 64 \
-                        or voice_shadow.gate(seg, SAMPLE_RATE):
+                        or gate(seg, SAMPLE_RATE):
                     continue
                 emb = embed_live(seg, SAMPLE_RATE, self.cfg)
                 if emb is None:
                     continue
-                emb_e = embed_eres_live(seg, SAMPLE_RATE, self.cfg) \
-                    if only_enabled(self.cfg) else None
+                emb_e = embed_eres_live(seg, SAMPLE_RATE, self.cfg)
                 self.early[_span_key(s)] = (emb, emb_e,
                                             len(seg) / 2 / SAMPLE_RATE)
             except Exception:
@@ -522,9 +588,9 @@ class _Feed:
         with _lock:
             _sessions.pop(self.chat_id, None)
             _stats["diariser"] = reason
-        voice_shadow._warn_once(
-            "session", "the diariser's tracking session failed (%s); live "
-                       "naming falls back until it answers", reason)
+        _warn_once("session", "the diariser's tracking session failed (%s); "
+                              "each voice turn is named on its own until it "
+                              "answers", reason)
 
     def _end(self, turn_id):
         t0 = time.perf_counter()
@@ -532,7 +598,7 @@ class _Feed:
         result = None
         row = {"v": ROW_VERSION, "at": round(time.time(), 3),
                "chat_id": self.chat_id, "turn_id": turn_id or "",
-               "message_id": None, "live": True,
+               "message_id": None,
                "seconds": round(len(pcm) / 2 / SAMPLE_RATE, 3)}
         try:
             if self.pending:
@@ -551,16 +617,14 @@ class _Feed:
             result = _name_turn(
                 self.chat_id, sess, turn_id, pcm, SAMPLE_RATE,
                 self.spans + got, self.turn_start, self.cfg,
-                _live_candidates(self.chat_id), False,
+                _live_candidates(self.chat_id),
                 lambda seg: embed_live(seg, SAMPLE_RATE, self.cfg), row,
-                eres_fn=(lambda seg: embed_eres_live(seg, SAMPLE_RATE,
-                                                     self.cfg))
-                if only_enabled(self.cfg) else None,
+                eres_fn=lambda seg: embed_eres_live(seg, SAMPLE_RATE,
+                                                    self.cfg),
                 precomputed=dict(self.early))
             with _lock:
                 _stats["diariser"] = "ok"
-            voice_shadow._recovered("session", "the tracking sessions "
-                                               "answer again")
+            _recovered("session", "the tracking sessions answer again")
         except _SessionError as err:
             if not self.broken:
                 self._fail(err.reason)
@@ -585,8 +649,11 @@ class _Feed:
 
 
 def status(cfg) -> dict:
+    """Content-free state for the read route."""
+    raw = bool((cfg or {}).get("diarize_shadow_url"))
     with _lock:
-        return {"on": enabled(cfg), "live": live_enabled(cfg),
+        return {"on": enabled(cfg),
+                "diariser_refused": raw and not diariser_url(cfg),
                 "feeds": len(_feeds), "open_sessions": len(_sessions),
                 "sessions_opened": _stats["sessions_opened"],
                 "rows_written": _stats["rows"],
@@ -609,6 +676,68 @@ def pooled(prints):
     return voiceid.l2_normalize([v / total for v in acc])
 
 
+def topk_mean(query, clips, k=None):
+    """A person's multi score: the mean of the query's best `k` cosines
+    against that person's clip embeddings, or of all of them when there
+    are fewer. None with no clips."""
+    k = MULTI_TOP_K if k is None else k
+    sims = sorted((voiceid.cosine(query, c) for c in clips or ()),
+                  reverse=True)[:max(1, k)]
+    return sum(sims) / len(sims) if sims else None
+
+
+def _spread(scores):
+    """Mean, spread (floored) and count of a list of impostor scores, or
+    None with fewer than MIN_IMPOSTOR_SCORES of them."""
+    if len(scores) < MIN_IMPOSTOR_SCORES:
+        return None
+    mean = sum(scores) / len(scores)
+    spread = math.sqrt(sum((x - mean) ** 2 for x in scores) / len(scores))
+    return {"mean": round(mean, 4), "std": round(max(spread, SPREAD_FLOOR), 4),
+            "n": len(scores)}
+
+
+def impostor_stats(anchors):
+    """Mean and spread of the matcher's cross-speaker scores on this
+    household: each person's clip embeddings against every OTHER person's
+    centroid. None when there are fewer than MIN_IMPOSTOR_SCORES."""
+    return _spread([voiceid.cosine(clip, other["emb"])
+                    for pid, a in (anchors or {}).items()
+                    for clip in a["clips"]
+                    for opid, other in anchors.items() if opid != pid])
+
+
+def multi_impostor_stats(multi):
+    """Impostor statistics under the multi scorer's own rule: each person's
+    clips scored against every OTHER person's clips by topk_mean. None
+    with too few scores."""
+    return _spread([topk_mean(clip, other["clips"])
+                    for pid, a in (multi or {}).items() for clip in a["clips"]
+                    for opid, other in multi.items()
+                    if opid != pid and other["clips"]])
+
+
+def multi_bar(cfg, small_stats, multi_stats):
+    """The multi scorer's naming bar. The best of several clips scores
+    higher than an average does, for strangers as much as for the right
+    person, so the matcher's own threshold would name too much. The bar is
+    the matcher's threshold carried onto the multi scale at the same z,
+    measured against this household's impostors, with the margin scaled
+    by the spread ratio. Without statistics it is the matcher's own bar,
+    and `source` says so."""
+    t = voiceid._threshold(cfg)
+    m = voiceid._margin(cfg)
+    if small_stats and multi_stats:
+        ratio = multi_stats["std"] / small_stats["std"]
+        z = (t - small_stats["mean"]) / small_stats["std"]
+        return {"threshold": round(multi_stats["mean"]
+                                   + z * multi_stats["std"], 4),
+                "margin": round(m * ratio, 4), "stats": multi_stats,
+                "source": "matched", "k": MULTI_TOP_K}
+    return {"threshold": t, "margin": m, "stats": multi_stats,
+            "source": "live", "k": MULTI_TOP_K}
+
+
 def _human_first(voices, out, taken):
     """A voice a person named (by tapping a turn) is that person, whatever
     the scores say, and nobody else's voice can take the name."""
@@ -621,7 +750,7 @@ def _human_first(voices, out, taken):
 
 
 def name_voices_calibrated(voices, allowed, snapshot):
-    """name_voices on the calibrated two-model scorer (#482 stage 3): each
+    """Name every session voice on the calibrated two-model scorer: each
     voice's pooled TitaNet-Small and ERes2Net fingerprints, and its clean
     seconds, give a probability per allowed person (voice_calibration,
     with the prior of 1 in N+1). One person per voice, highest first:
@@ -671,11 +800,11 @@ def name_voices_calibrated(voices, allowed, snapshot):
 
 def name_voices(voices, people, bar):
     """Name every session voice from its pooled evidence, one person per
-    voice. `voices` is {slot: {"prints": [(emb, secs)], "clean_s"}},
-    `people` is {pid: {"name", "clips": [emb]}}, `bar` carries the multi
-    scorer's "threshold" and "margin". Returns {slot: {"state", "name",
-    "pid", "score", "second", "clean_s"}} where state is listening, named
-    or new.
+    voice, on the multi scorer. `voices` is {slot: {"prints": [(emb,
+    secs)], "clean_s"}}, `people` is {pid: {"name", "clips": [emb]}},
+    `bar` carries the multi scorer's "threshold" and "margin". Returns
+    {slot: {"state", "name", "pid", "score", "second", "clean_s"}} where
+    state is listening, named or new.
 
     One-to-one is greedy on score, highest first: exact for the two or
     three people a home room holds, and never gives one person two voices.
@@ -690,7 +819,7 @@ def name_voices(voices, people, bar):
         if pool is None:
             continue
         scores[slot] = {pid: s for pid, s in (
-            (pid, voice_shadow.topk_mean(pool, p["clips"]))
+            (pid, topk_mean(pool, p["clips"]))
             for pid, p in people.items()) if s is not None}
     out = {}
     for slot, v in voices.items():
@@ -768,6 +897,33 @@ def main_voice(spans):
     return pick.most_common(1)[0][0] if pick else None
 
 
+def span_pcm(pcm, sample_rate, spans):
+    """The PCM-16 bytes of the given (start, end) second spans, joined."""
+    out = bytearray()
+    total = len(pcm) // 2
+    for s, e in spans:
+        a = max(0, min(total, int(round(s * sample_rate))))
+        b = max(0, min(total, int(round(e * sample_rate))))
+        out += pcm[a * 2:b * 2]
+    return bytes(out)
+
+
+def gate(pcm, sample_rate):
+    """The matcher's audio gates, in its order: None when the audio may be
+    judged, else the reason it may not (too_short or not_speech)."""
+    from . import anchors
+    sr = sample_rate or 16000
+    seconds = len(pcm) / 2 / sr
+    if seconds < voiceid.MIN_IDENTIFY_SECONDS:
+        return "too_short"
+    if seconds < voiceid.SHORT_IDENTIFY_SECONDS \
+            and anchors.pcm_rms(pcm) < voiceid.MIN_SHORT_IDENTIFY_RMS:
+        return "too_short"
+    if not voiceid.is_speech(pcm, sr):
+        return voiceid.NOT_SPEECH
+    return None
+
+
 # ================= the diariser calls =======================================
 
 def _request(method, url, content=None):
@@ -833,17 +989,21 @@ def _session_for(chat_id, base, now):
     return sess
 
 
-# ================= the bank, as it stood when the session opened ============
+# ================= the banks, as they stood when the session opened =========
 
 def bank(candidates, sample_rate, cfg, before, embed_fn=None):
-    """{pid: {"name", "clips"}} like voice_shadow.build_multi, but without
-    any clip added at or after `before` (epoch seconds), so audio the live
-    path banked during this session never scores this session's voices.
-    Clip embeddings come from, and go to, the shadow's own clip cache."""
+    """{pid: {"name", "clips"}} for the multi scorer: every kept clip of
+    each candidate (anchors.enrollment_clips with no limit, so the same
+    gates as the matcher), embedded one by one, but without any clip added
+    at or after `before` (epoch seconds), so audio the pass saved during
+    this session never scores this session's voices. Each clip's embedding
+    is cached on its file and length, so a bank that gains a clip embeds
+    only the new one."""
     from . import anchors as anchor_store
     ids = [c["person_id"] for c in candidates or () if c.get("person_id")]
     if not ids:
         return {}
+    embed_fn = embed_fn or (lambda pcm: embed_live(pcm, sample_rate, cfg))
     names = {c["person_id"]: c.get("name") for c in candidates}
     store = anchor_store.store()
     clips = store.enrollment_clips(ids, sample_rate, max_clips=None)
@@ -852,107 +1012,80 @@ def bank(candidates, sample_rate, cfg, before, embed_fn=None):
         added = {c["file"]: c.get("added_at") or 0
                  for c in store.clips_of(pid) or ()}
         pcms = info["pcms"]
+        # The fingerprint ends with the clip files, in the order of pcms.
         files = tuple(info["fingerprint"])[-len(pcms):] if pcms else ()
         embs = []
         for fname, pcm in zip(files, pcms):
             if added.get(fname, 0) >= before:
                 continue
             key = (fname, len(pcm))
-            with voice_shadow._lock:
-                emb = voice_shadow._clip_cache.get(key)
+            with _lock:
+                emb = _clip_cache.get(key)
             if emb is None:
-                emb = embed_fn(pcm) if embed_fn else voice_shadow.embed(
-                    "small", pcm, sample_rate, cfg)
+                emb = embed_fn(pcm)
                 if emb is None:
                     continue
-                with voice_shadow._lock:
-                    voice_shadow._clip_cache[key] = emb
+                with _lock:
+                    _clip_cache[key] = emb
+                    while len(_clip_cache) > CLIP_CACHE_MAX:
+                        _clip_cache.pop(next(iter(_clip_cache)))
             embs.append(emb)
         if embs:
             out[pid] = {"name": names.get(pid) or info["name"], "clips": embs}
     return out
 
 
-def _bar(people, candidates, sample_rate, cfg, pending):
-    """The multi scorer's bar (voice_shadow.multi_bar), the live bar carried
-    onto multi's scale at the same z."""
-    small = voice_shadow.build_anchors("small", candidates, sample_rate, cfg)
-    return voice_shadow.multi_bar(
-        cfg, voice_shadow.impostor_stats(small),
-        voice_shadow.multi_impostor_stats(people), pending)
+def build_anchors(candidates, sample_rate, cfg, embed_fn=None):
+    """{pid: {"name", "emb", "clips"}}: each candidate's enrolment clips
+    (the matcher's own, anchors.enrollment_clips) embedded with
+    TitaNet-Small, and their centroid. Cached in memory per person and
+    kept clip set, so a bank change re-embeds that person and nothing is
+    ever written to the store."""
+    from . import anchors as anchor_store
+    ids = [c["person_id"] for c in candidates or () if c.get("person_id")]
+    if not ids:
+        return {}
+    embed_fn = embed_fn or (lambda pcm: embed_live(pcm, sample_rate, cfg))
+    names = {c["person_id"]: c.get("name") for c in candidates}
+    clips = anchor_store.store().enrollment_clips(ids, sample_rate)
+    out = {}
+    for pid, info in clips.items():
+        key = (pid, tuple(info["fingerprint"]))
+        with _lock:
+            entry = _anchor_cache.get(key)
+        if entry is None:
+            embs = [e for e in (embed_fn(pcm) for pcm in info["pcms"]) if e]
+            centroid = voiceid.average_embeddings(embs)
+            if centroid is None:
+                continue
+            entry = {"emb": centroid, "clips": embs}
+            with _lock:
+                _anchor_cache[key] = entry
+                while len(_anchor_cache) > ANCHOR_CACHE_MAX:
+                    _anchor_cache.pop(next(iter(_anchor_cache)))
+        out[pid] = {"name": names.get(pid) or info["name"], **entry}
+    return out
+
+
+def _bar(people, candidates, sample_rate, cfg):
+    """The multi scorer's bar (multi_bar), from this household's impostor
+    statistics under both the matcher's rule and the multi rule."""
+    small = build_anchors(candidates, sample_rate, cfg)
+    return multi_bar(cfg, impostor_stats(small),
+                     multi_impostor_stats(people))
 
 
 # ================= one turn =================================================
 
-def observe(chat_id, turn_id, pcm, sample_rate, cfg, today):
-    """Track and name one turn (worker thread), and write its row. Never
-    raises: a failure is one row with an error and a log line once."""
-    t0 = time.perf_counter()
-    base = voice_shadow.diariser_url(cfg)
-    if not base or not pcm or sample_rate != SAMPLE_RATE \
-            or live_enabled(cfg):
-        # Live, the relay's feed pushes the audio as it arrives; pushing it
-        # again here would give the tracker every turn twice.
-        return None
-    now = time.time()
-    seconds = len(pcm) / 2 / sample_rate
-    row = {"v": ROW_VERSION, "at": round(now, 3), "chat_id": chat_id,
-           "turn_id": str(turn_id or "")[:64],
-           "message_id": voice_shadow._message_id(chat_id, turn_id),
-           "seconds": round(seconds, 3),
-           "today": voice_shadow._today(today)}
-    try:
-        sess = _session_for(chat_id, base, now)
-        offset = sess["pushed_s"]
-        url = f"{base}/sessions/{sess['id']}"
-        pushed = clean_spans(_call("POST", url + "/audio", content=pcm))
-        flushed = clean_spans(_call("POST", url + "/end-turn"))
-        if pushed is None or flushed is None:
-            raise _SessionError("bad_response")
-        sess["pushed_s"] = offset + seconds
-        sess["last_at"] = now
-        sess["turns"] += 1
-        _name_turn(chat_id, sess, turn_id, pcm, sample_rate, pushed + flushed,
-                   offset, cfg, today.get("candidates") or [],
-                   bool(today.get("pending")),
-                   lambda seg: voice_shadow.embed("small", seg, sample_rate,
-                                                  cfg), row)
-        with _lock:
-            _stats["diariser"] = "ok"
-        voice_shadow._recovered("session", "the tracking sessions answer "
-                                           "again")
-    except _SessionError as err:
-        with _lock:
-            _sessions.pop(chat_id, None)
-            _stats["diariser"] = err.reason
-        voice_shadow._warn_once(
-            "session", "the diariser's tracking session failed (%s); the "
-                       "session shadow records the error until it answers",
-            err.reason)
-        row["error"] = err.reason
-    except Exception:
-        with _lock:
-            _sessions.pop(chat_id, None)
-        voice_shadow._warn_once("session_row", "a session shadow row could "
-                                               "not be built; the live path "
-                                               "is unaffected")
-        log.debug("session shadow failure detail", exc_info=True)
-        row["error"] = "error"
-    row["ms"] = round((time.perf_counter() - t0) * 1000, 1)
-    write_row(row)
-    return row
-
-
 def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
-               cfg, candidates, pending, embed_fn, row, eres_fn=None,
+               cfg, candidates, embed_fn, row, eres_fn=None,
                precomputed=None):
-    """The naming step, shared by the shadow's observe and the live feed:
-    move the tracker's spans into turn time, fingerprint the clean ones,
-    name every session voice, fill in unnamed turns when that's on, and
-    put it all on `row`. Returns the turn's main voice as {"voice",
-    "state", "name", "score", ...} with every voice heard in the turn
-    ("voices"), the spans in turn time and the turn's length ("turn_s"),
-    or None when no voice spoke."""
+    """The naming step for one turn of the feed: move the tracker's spans
+    into turn time, fingerprint the clean ones, name every session voice,
+    fill in unnamed turns, and put it all on `row`. Returns the turn's
+    main voice as {"voice", "state", "name", "score", ...} with every
+    voice heard in the turn ("voices"), the spans in turn time and the
+    turn's length ("turn_s"), or None when no voice spoke."""
     seconds = len(pcm) / 2 / sample_rate
     spans, ready = [], {}
     for s in raw_spans:
@@ -963,58 +1096,52 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             got = (precomputed or {}).get(_span_key(s))
             if got is not None:
                 ready[(s["slot"], round(a, 3), round(b, 3))] = got
-    if True:
-        embedded = 0
-        for s in spans:
-            # Every voice heard is on the table, even one heard only over
-            # someone else: it listens with no evidence.
-            sess["voices"].setdefault(s["slot"],
-                                      {"prints": [], "clean_s": 0.0})
-            if s["overlap"] or s["end"] - s["start"] < MIN_SPAN_S:
+    embedded = 0
+    for s in spans:
+        # Every voice heard is on the table, even one heard only over
+        # someone else: it listens with no evidence.
+        sess["voices"].setdefault(s["slot"], {"prints": [], "clean_s": 0.0})
+        if s["overlap"] or s["end"] - s["start"] < MIN_SPAN_S:
+            continue
+        early = ready.get((s["slot"], s["start"], s["end"]))
+        if early is not None:
+            # Fingerprinted while the person was still talking.
+            emb, emb_e, secs = early
+        else:
+            seg = span_pcm(pcm, sample_rate, [(s["start"], s["end"])])
+            if gate(seg, sample_rate):
                 continue
-            early = ready.get((s["slot"], s["start"], s["end"]))
-            if early is not None:
-                # Fingerprinted while the person was still talking.
-                emb, emb_e, secs = early
-            else:
-                seg = voice_shadow.span_pcm(pcm, sample_rate,
-                                            [(s["start"], s["end"])])
-                if voice_shadow.gate(seg, sample_rate):
-                    continue
-                emb = embed_fn(seg)
-                secs = len(seg) / 2 / sample_rate
-                emb_e = eres_fn(seg) if (eres_fn is not None
-                                         and emb is not None) else None
-            if emb is None:
-                continue
-            v = sess["voices"].setdefault(s["slot"],
-                                          {"prints": [], "clean_s": 0.0})
-            v["prints"].append((emb, secs))
-            v["clean_s"] += secs
-            if emb_e is not None:
-                v.setdefault("prints_eres", []).append((emb_e, secs))
-            embedded += 1
-        named, bar, n_people, method = _name_all(
-            sess, candidates, sample_rate, cfg, pending, embed_fn, eres_fn)
-        main = main_voice(spans)
-        if main is not None and turn_id:
-            sess["turn_voice"].append((str(turn_id), main))
-            del sess["turn_voice"][:-TURNS_KEPT]
-        filled = fill_labels(chat_id, sess, named, cfg) \
-            if labels_enabled(cfg) else None
-        row.update(
-            session=sess["id"], turn=sess["turns"],
-            offset=round(offset, 3),
-            spans=spans, main=main,
-            main_state=(named.get(main) or {}).get("state", "listening")
-            if main is not None else "",
-            main_name=(named.get(main) or {}).get("name", "")
-            if main is not None else "",
-            voices={str(k): v for k, v in sorted(named.items())},
-            bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
-            embedded=embedded, people=n_people, method=method)
-        if filled is not None:
-            row["filled"] = filled
+            emb = embed_fn(seg)
+            secs = len(seg) / 2 / sample_rate
+            emb_e = eres_fn(seg) if (eres_fn is not None
+                                     and emb is not None) else None
+        if emb is None:
+            continue
+        v = sess["voices"][s["slot"]]
+        v["prints"].append((emb, secs))
+        v["clean_s"] += secs
+        if emb_e is not None:
+            v.setdefault("prints_eres", []).append((emb_e, secs))
+        embedded += 1
+    named, bar, n_people, method = _name_all(
+        sess, candidates, sample_rate, cfg, embed_fn, eres_fn)
+    main = main_voice(spans)
+    if main is not None and turn_id:
+        sess["turn_voice"].append((str(turn_id), main))
+        del sess["turn_voice"][:-TURNS_KEPT]
+    # The turn being named right now is the pass's to label: it may hold
+    # two voices, and its message may already be saved.
+    filled = fill_labels(chat_id, sess, named, cfg, skip=str(turn_id or ""))
+    row.update(
+        session=sess["id"], turn=sess["turns"], offset=round(offset, 3),
+        spans=spans, main=main,
+        main_state=(named.get(main) or {}).get("state", "listening")
+        if main is not None else "",
+        main_name=(named.get(main) or {}).get("name", "")
+        if main is not None else "",
+        voices={str(k): v for k, v in sorted(named.items())},
+        bar={k: bar.get(k) for k in ("threshold", "margin", "source")},
+        embedded=embedded, people=n_people, method=method, filled=filled)
     if main is None:
         return None
     voice = named.get(main) or {}
@@ -1030,10 +1157,10 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             "voices_in_turn": len({s["slot"] for s in spans}),
             "overlap_s": round(sum(s["end"] - s["start"] for s in spans
                                    if s["overlap"]), 3),
-            # #482 item D: what the crosstalk split reads. Every voice heard
-            # in the turn with its name and seconds, the spans in turn
-            # time, and how much audio the turn held (its clock, for lining
-            # up Scribe's word times). Content-free, like the rows.
+            # What the crosstalk split reads (#482 item D). Every voice
+            # heard in the turn with its name and seconds, the spans in
+            # turn time, and how much audio the turn held (its clock, for
+            # lining up Scribe's word times). Content-free, like the rows.
             "voices": turn_voices(spans, named),
             "spans": [dict(s) for s in spans],
             "turn_s": round(seconds, 3)}
@@ -1057,11 +1184,10 @@ def turn_voices(spans, named):
     return out
 
 
-def _name_all(sess, candidates, sample_rate, cfg, pending, embed_fn,
-              eres_fn):
+def _name_all(sess, candidates, sample_rate, cfg, embed_fn, eres_fn):
     """Name every session voice: the calibrated two-model scorer when its
     snapshot is ready and the voices carry ERes2Net fingerprints, else the
-    multi scorer on the matcher's own bar. Returns (named, bar, people,
+    multi scorer on the matcher's bar. Returns (named, bar, people,
     method)."""
     from . import voice_calibration as vc
     snap = vc.current() if eres_fn is not None else None
@@ -1071,11 +1197,11 @@ def _name_all(sess, candidates, sample_rate, cfg, pending, embed_fn,
         named = name_voices_calibrated(sess["voices"], allowed, snap)
         return (named, {"threshold": vc.NAME_BAR, "margin": None,
                         "source": "calibrated"}, len(allowed), "calibrated")
-    # A second's grace: a clip banked by the live pass that opened the
-    # session carries a timestamp just after the session's own.
+    # A second's grace: a clip saved by the pass as the session opened
+    # carries a timestamp just after the session's own.
     people = bank(candidates, sample_rate, cfg,
                   before=sess["opened_at"] - 1.0, embed_fn=embed_fn)
-    bar = _bar(people, candidates, sample_rate, cfg, pending)
+    bar = _bar(people, candidates, sample_rate, cfg)
     return name_voices(sess["voices"], people, bar), bar, len(people), "multi"
 
 
@@ -1095,7 +1221,7 @@ def _labels_of(raw):
 
 def fillable(old):
     """May a turn with these labels take a session name? Only when it has
-    no name, or the name there is one this module wrote."""
+    no name, or the name there is one this module or the pass wrote."""
     if old is None or old.get("corrected") or old.get("crosstalk"):
         return False
     names = [n for n in old.get("labels") or () if isinstance(n, str)
@@ -1103,9 +1229,10 @@ def fillable(old):
     return not names or old.get("source") == SESSION_SOURCE
 
 
-def fill_labels(chat_id, sess, named, cfg):
+def fill_labels(chat_id, sess, named, cfg, skip=""):
     """Write each named session voice's name onto its unnamed turns in this
-    session (see FILLING IN above). Returns how many labels it wrote."""
+    session (see FILLING IN above), all but the turn `skip`. Returns how
+    many labels it wrote."""
     from . import diarize, introductions
     owner = ((cfg or {}).get("user_name") or "").strip()
     done = sess.setdefault("filled", {})
@@ -1116,7 +1243,7 @@ def fill_labels(chat_id, sess, named, cfg):
             voice = named.get(slot) or {}
             name = voice.get("name")
             if voice.get("state") != "named" or not name \
-                    or done.get(turn_id) == name:
+                    or done.get(turn_id) == name or turn_id == skip:
                 continue
             msg = db.get_message_by_voice_turn(con, chat_id, turn_id)
             if not msg or not fillable(_labels_of(msg["voice_labels"])):
@@ -1139,6 +1266,8 @@ def rows_path() -> Path:
 
 
 def write_row(row):
+    """Append one row, owner-only, and cut the file back to ROWS_KEEP rows
+    once it passes ROWS_MAX."""
     path = rows_path()
     line = json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n"
     with _rows_lock:
@@ -1160,8 +1289,24 @@ def write_row(row):
                 os.replace(tmp, path)
 
 
+def _message_id(chat_id, turn_id):
+    """The user message a turn became, found by its voice turn id, so a
+    row can be joined to the chat. None when there is no id or the row
+    isn't there."""
+    if not turn_id:
+        return None
+    con = db.connect()
+    try:
+        row = db.get_message_by_voice_turn(con, chat_id, turn_id)
+        return row["id"] if row else None
+    finally:
+        con.close()
+
+
 def read_rows(limit=200, chat_id=None) -> list:
-    """The newest rows first, at most `limit`, optionally for one chat."""
+    """The newest rows first, at most `limit`, optionally for one chat. A
+    row is written before its message is saved, so its message id is
+    filled in from the turn id now."""
     keep = collections.deque(maxlen=max(1, int(limit)))
     try:
         with _rows_lock, open(rows_path()) as f:
@@ -1174,12 +1319,20 @@ def read_rows(limit=200, chat_id=None) -> list:
                     keep.append(row)
     except FileNotFoundError:
         return []
-    return list(reversed(keep))
+    rows = list(reversed(keep))
+    for row in rows:
+        if row.get("message_id") is None and row.get("turn_id"):
+            try:
+                row["message_id"] = _message_id(row["chat_id"],
+                                                row["turn_id"])
+            except Exception:
+                pass
+    return rows
 
 
-def compare(rows) -> dict:
-    """Per turn, today's label beside the session voice's name at the time
-    and at the end of its session, plus a tally. Rows newest first."""
+def view(rows) -> dict:
+    """Per turn, its voice's name at the time and at the end of its
+    session, plus a tally. Rows newest first."""
     final = {}
     for row in rows:                    # newest first: first seen is final
         if row.get("session") and row["session"] not in final:
@@ -1191,23 +1344,19 @@ def compare(rows) -> dict:
             continue
         main = row.get("main")
         at_end = (final.get(row.get("session")) or {}).get(str(main)) or {}
-        today = row.get("today") or {}
+        then = row.get("main_name") or ""
         line = {"turn_id": row.get("turn_id"),
                 "message_id": row.get("message_id"),
                 "seconds": row.get("seconds"),
-                "today": "+".join(today.get("labels") or []),
-                "today_reason": today.get("reason", ""),
-                "then": row.get("main_name") or row.get("main_state") or "",
+                "then": then or row.get("main_state") or "",
                 "at_end": at_end.get("name") or at_end.get("state", ""),
-                "voice": main}
+                "voice": main, "method": row.get("method", "")}
         lines.append(line)
         tally["turns"] += 1
-        tally["today_named"] += bool(line["today"])
-        tally["then_named"] += bool(row.get("main_name"))
-        tally["at_end_named"] += bool(at_end.get("name"))
-        if line["today"] and at_end.get("name") \
-                and at_end["name"] not in line["today"].split("+"):
-            tally["at_end_differs_from_today"] += 1
+        tally["named_then"] += bool(then)
+        tally["named_at_end"] += bool(at_end.get("name"))
+        if then and at_end.get("name") and at_end["name"] != then:
+            tally["renamed_by_end"] += 1
     return {"tally": dict(tally), "lines": lines}
 
 
@@ -1218,4 +1367,7 @@ def _reset_for_tests():
         _feeds.clear()
         _results.clear()
         _sessions.clear()
+        _clip_cache.clear()
+        _anchor_cache.clear()
         _stats.update(rows=0, diariser="", sessions_opened=0)
+    _warned.clear()

@@ -112,12 +112,16 @@ test('a degraded matcher makes the listening tooltip honest about arming', () =>
 test('the pulse formats path and latency exactly', () => {
   assert.equal(pulseReadout({ path: 'local', ms: 227, age_s: 1 }).label,
     'local · 227ms')
-  assert.equal(pulseReadout({ path: 'cloud', ms: 1900, age_s: 2 }).label,
-    'cloud · 1.9s')
+  assert.equal(pulseReadout({ path: 'local', ms: 1900, age_s: 2 }).label,
+    'local · 1.9s')
   assert.equal(pulseReadout({ path: 'local', ms: 999.4, age_s: 0 }).label,
     'local · 999ms')
-  assert.equal(pulseReadout({ path: 'cloud', ms: 1000, age_s: 0 }).label,
-    'cloud · 1.0s')
+  assert.match(pulseReadout({ path: 'local', ms: 227 }).title,
+    /identified on this device/)
+  // #482: the cloud crosstalk split is gone, so a stray "cloud" pulse from
+  // an older server reads as nothing to show
+  assert.equal(pulseReadout({ path: 'cloud', ms: 1000, age_s: 0 }, true).label,
+    'pending')
 })
 
 test('the pulse says pending only while a session is live', () => {

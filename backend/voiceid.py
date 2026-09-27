@@ -1,28 +1,29 @@
-"""Offline local speaker identification (#28): THE identity path.
+"""Offline local speaker identification (#28): the speaker model, and the
+matcher built on it.
 
-Since PR-B (#28, eighth field test) this module is not an accelerator in
-front of a cloud fallback - it is the only way a voice ever gets a name.
-The owner decision on the issue: identity is local or honestly uncertain,
-full stop. The matcher names a confident single enrolled speaker in roughly
-commit + 100-300ms (a 33-59ms embedding plus a few short-window embeddings);
-anything it cannot decide leaves the turn UNRESOLVED - the seats' honest
-"cannot determine" state - and NO ElevenLabs pass ever fires because the
-matcher deferred. The batch diarize call survives with exactly one job:
-per-word crosstalk splitting when this module's window analysis returns the
-"multi" verdict (genuinely overlapping speech), which is also room mode's
-only remaining cloud spend.
+Every voice is named on this computer, and identity is local or honestly
+uncertain: a turn nobody can name stays UNRESOLVED, and no cloud pass ever
+names a voice. This module holds TitaNet-Small, the speaker model the
+session naming (backend/voice_sessions.py) fingerprints every clean span
+with, and the pieces around it:
+
+  * the model's pinned fetch, its background load at startup, and the
+    extractor every embedding goes through;
+  * the speech gate, the dead-air trim and the speech-only fingerprints
+    every clip and span goes through;
+  * the whole-turn matcher (identify_utterance), still asked two narrow
+    questions: whether a tap-to-correct turn is the owner's own voice, and
+    whether an introduction's voice is someone remembered;
+  * the bank hygiene audit, run after every bank change.
 
 THE CORE LAW, absolute: this adds ZERO latency to the live voice path. It runs
-ONLY inside diarize.py's already-never-awaited fire-and-forget passes; nothing
-a round dispatches on ever awaits it. Every embedding runs on a worker thread
-via the caller's asyncio.to_thread.
+ONLY inside never-awaited fire-and-forget work and owner endpoints; nothing a
+round dispatches on ever awaits it. Every embedding runs on a worker thread.
 
 Degradation is HONEST, never wrong. If sherpa-onnx is not installed, or the
-model has not been fetched yet, identify_utterance defers and the turn simply
-stays unnamed - and automatic voice arming does not happen at all
-(introductions, spoken commands and the toggle still arm, so degraded means
-manual). A wrong name asserted by a cloud pass is structurally impossible;
-the worst case is uncertainty, stated as such.
+model has not been fetched yet, nothing is named and the turn simply stays
+unnamed - and automatic voice arming does not happen at all (introductions,
+spoken commands and the toggle still arm, so degraded means manual).
 
 Privacy: embeddings are derived locally from the anchor clips crossband already
 stores (backend/anchors.py); nothing about a voice is sent anywhere. The model
@@ -30,14 +31,13 @@ runs fully offline after a one-time fetch of the pinned public model file.
 
 Design map:
   * Pure math seam (no third-party imports, no ONNX) - normalise/average/cosine,
-    the identify+open-set+multi-voice DECISION (classify_utterance), and the
-    pairwise hygiene rules (#28 PR-B: quarantine_verdicts /
-    close_centroid_pairs). This is what the keyless unit tests exercise with
-    synthetic vectors, no model present.
+    the open-set DECISION (classify_utterance), and the pairwise hygiene rules
+    (#28 PR-B: quarantine_verdicts / close_centroid_pairs). This is what the
+    keyless unit tests exercise with synthetic vectors, no model present.
   * Impure edges (guarded) - the sherpa-onnx extractor wrapper, the pinned
     model fetch-and-verify, the enrolment cache, and the bank audit
     (audit_banks). All degrade to "matcher unavailable" / no-op rather than
-    raising into the pass.
+    raising into the caller.
 """
 
 import array
@@ -91,23 +91,6 @@ DEFAULT_THRESHOLD = 0.5
 # ambiguous cases honestly unresolved without ever rejecting a clean match.
 # Overridable via CROSSBAND_VOICE_ID_MARGIN (#28 PR-B).
 MATCH_MARGIN = 0.12
-# Short-window multi-voice detection. A single speaker's 1.5s windows can be as
-# little as 0.19 cosine apart (calib.py), so raw window cohesion is NOT a usable
-# split signal; instead we count DISTINCT enrolled people that each WIN
-# >= MIN_STRONG_WINDOWS windows above the threshold. A two-speaker utterance
-# splits cleanly into two winners (calib.py concat mixes); a single speaker only
-# ever has one winner, its impostors staying well under the threshold.
-# The pending-present bump (#81). When someone on the roster is still
-# anchor-pending, the open-set risk changes shape: the very person most
-# likely to be speaking has NO bank to score against, so a borderline
-# cosine to a remembered person is exactly how a new guest's turns get
-# confidently mislabelled as someone else - and her own seat never banks a
-# first clip. Raising the naming bar by this much while a pending seat
-# exists keeps genuine matches (measured 0.63-0.73 on this machine) passing
-# and pushes the borderline impostor case to an honest defer, which is what
-# lets elimination bank the pending person. Overridable via
-# voice_id_pending_extra; 0 disables.
-PENDING_EXTRA_THRESHOLD = 0.08
 # The banking bar (#222). A verdict clearing the threshold may LABEL a turn,
 # but a borderline match must not also feed the very bank that produced it -
 # accumulated clips of borderline matches are how a bank is taken over, one
@@ -115,9 +98,6 @@ PENDING_EXTRA_THRESHOLD = 0.08
 # therefore demand this much score on top of the threshold; naming keeps its
 # existing bar. Overridable via voice_id_banking_extra; 0 disables the split.
 BANKING_EXTRA_THRESHOLD = 0.10
-WINDOW_SECONDS = 1.5
-WINDOW_HOP_SECONDS = 0.75
-MIN_STRONG_WINDOWS = 2
 # Short-utterance floor (#28 PR-B): was 0.8s flat. Second-long interjections
 # are exactly what the two-part bank bar exists to identify, so utterances
 # down to 0.5s are now embedded WHERE QUALITY ALLOWS - below
@@ -126,7 +106,6 @@ MIN_STRONG_WINDOWS = 2
 MIN_IDENTIFY_SECONDS = 0.5
 SHORT_IDENTIFY_SECONDS = 0.8
 MIN_SHORT_IDENTIFY_RMS = 500
-MIN_WINDOW_UTTERANCE_SECONDS = 2.25  # need >= 2 windows before a split is meaningful
 
 # Pairwise hygiene (#28 PR-B, sixth/eighth field tests). Two enrolled
 # centroids whose cosine reaches CLOSE_PAIR_COSINE sound alike enough that
@@ -194,19 +173,17 @@ SPEECH_ONLY_MIN_SECONDS = 1.0
 # re-embeds every bank instead of reusing a fingerprint of the old audio.
 SPEECH_ONLY_VERSION = "speech-v1"
 
-# A verdict's status. "match" means name this turn locally; "defer" means the
-# turn stays unresolved - honestly uncertain - EXCEPT the "multi" reason,
-# which routes the one remaining ElevenLabs job (crosstalk word-splitting).
+# A verdict's status. "match" means the matcher named one enrolled voice;
+# "defer" means it didn't, and the reason says why.
 MATCH = "match"
 DEFER = "defer"
-MULTI = "multi"  # the defer reason that is the batch pass's only trigger
 NOT_SPEECH = "not_speech"  # the speech gate's defer: audio, but not a voice
 
 
 # ================= pure math seam (no numpy, no ONNX) =====================
 # Everything below operates on plain lists of floats, so the keyless suite can
-# pin the identify / threshold / averaging / open-set / multi-voice logic with
-# synthetic vectors and no model.
+# pin the identify / threshold / averaging / open-set logic with synthetic
+# vectors and no model.
 
 def l2_normalize(vec):
     """Unit-length copy of a vector; a zero vector comes back unchanged."""
@@ -265,35 +242,11 @@ def _defer(reason, score=0.0):
             "score": round(score, 4), "reason": reason}
 
 
-def window_multi_voice(window_embs, enrolled, threshold,
-                       min_strong=MIN_STRONG_WINDOWS):
-    """Do the utterance's short windows show TWO OR MORE distinct enrolled
-    voices? Each window votes for its best enrolled match if that match clears
-    the threshold; two different people each winning >= min_strong windows is a
-    genuine multi-speaker turn (crosstalk), which belongs on the batch path so
-    its word-splitting and ordinals are preserved. Pure and unit-tested."""
-    if len(enrolled) < 2:
-        return False
-    wins = {}
-    for w in window_embs:
-        pid, score, _ = best_two(w, enrolled)
-        if pid is not None and score >= threshold:
-            wins[pid] = wins.get(pid, 0) + 1
-    strong = [pid for pid, n in wins.items() if n >= min_strong]
-    return len(strong) >= 2
-
-
-def classify_utterance(whole_emb, window_embs, enrolled, threshold=DEFAULT_THRESHOLD,
-                       margin=MATCH_MARGIN, min_strong=MIN_STRONG_WINDOWS,
-                       close_pairs=(), pending_extra=0.0):
+def classify_utterance(whole_emb, enrolled, threshold=DEFAULT_THRESHOLD,
+                       margin=MATCH_MARGIN, close_pairs=()):
     """THE DECISION, pure and fully testable with synthetic vectors.
 
     - no enrolled candidates -> defer ("no_candidates")
-    - two enrolled voices across the windows -> defer ("multi"). Checked
-      FIRST since #28 PR-B: a two-voice blend's whole-utterance embedding
-      often resembles nobody (below threshold) or everybody (ambiguous), and
-      "multi" is now the ONLY door to the ElevenLabs crosstalk split - so
-      window evidence of two voices must outrank the blended whole verdict.
     - best match below the threshold -> defer ("below_threshold": a stranger,
       an insufficiently-anchored person, or a two-voice blend that resembles
       nobody). This is the open-set "none of the enrolled" verdict.
@@ -303,22 +256,12 @@ def classify_utterance(whole_emb, window_embs, enrolled, threshold=DEFAULT_THRES
       WIDENS by CLOSE_PAIR_EXTRA_MARGIN - similar-sounding households get
       stricter matching, not confident mistakes.
     - otherwise -> a confident single match, named.
-    Every defer leaves the turn honestly unresolved; "multi" alone routes
-    the batch crosstalk pass. `close_pairs` is an iterable of person-id
-    pairs, order-insensitive."""
+    `close_pairs` is an iterable of person-id pairs, order-insensitive."""
     if not enrolled:
         return _defer("no_candidates")
     best_pid, best_score, second = best_two(whole_emb, enrolled)
-    if window_multi_voice(window_embs, enrolled, threshold, min_strong):
-        return _defer(MULTI, best_score)
     if best_score < threshold:
         return _defer("below_threshold", best_score)
-    if pending_extra and best_score < threshold + pending_extra:
-        # #81: over the ordinary bar, under the pending-present one. Named
-        # distinctly so the trace says WHY the room deferred: someone
-        # unlearnt is in the roster, and this score is exactly the shape a
-        # new guest mislabelled as a remembered person takes.
-        return _defer("pending_present", best_score)
     required = margin
     if second >= 0.0:
         second_pid, _, _ = best_two(whole_emb,
@@ -342,13 +285,6 @@ def _is_close_pair(a, b, close_pairs) -> bool:
 
 def matched(verdict) -> bool:
     return bool(verdict) and verdict.get("status") == MATCH
-
-
-def is_multi(verdict) -> bool:
-    """The one verdict that may still spend ElevenLabs money (#28 PR-B):
-    the window analysis heard genuinely overlapping speech."""
-    return bool(verdict) and verdict.get("status") == DEFER \
-        and verdict.get("reason") == MULTI
 
 
 # ---- pairwise bank hygiene, the pure half (#28 PR-B) --------------------
@@ -665,8 +601,8 @@ def speech_only(pcm, sample_rate, spans=None) -> bytes:
 # ================= config helpers =========================================
 
 def enabled(cfg) -> bool:
-    """Feature flag (CROSSBAND_VOICE_ID_ENABLED, default true). When false the
-    pass is byte-for-byte today's ElevenLabs-only path."""
+    """Feature flag (CROSSBAND_VOICE_ID_ENABLED, default true). When false no
+    voice turn is checked, named or learnt from."""
     val = (cfg or {}).get("voice_id_enabled", True)
     return bool(val)
 
@@ -689,20 +625,9 @@ def _margin(cfg) -> float:
     return m if 0.0 < m < 1.0 else MATCH_MARGIN
 
 
-def _pending_extra(cfg) -> float:
-    """The pending-present bump knob (#81; voice_id_pending_extra). Same
-    guard shape as the others; 0.0 is a valid value (feature off)."""
-    try:
-        raw = (cfg or {}).get("voice_id_pending_extra")
-        e = PENDING_EXTRA_THRESHOLD if raw is None else float(raw)
-    except (TypeError, ValueError):
-        return PENDING_EXTRA_THRESHOLD
-    return e if 0.0 <= e < 0.5 else PENDING_EXTRA_THRESHOLD
-
-
 def _banking_extra(cfg) -> float:
     """The banking bump knob (#222; voice_id_banking_extra). Same guard
-    shape as _pending_extra; 0.0 is a valid value (split off)."""
+    shape as the margin's; 0.0 is a valid value (split off)."""
     try:
         raw = (cfg or {}).get("voice_id_banking_extra")
         e = BANKING_EXTRA_THRESHOLD if raw is None else float(raw)
@@ -712,12 +637,12 @@ def _banking_extra(cfg) -> float:
 
 
 def score_banks(score, cfg) -> bool:
-    """May a confident match's audio be BANKED (#222)? Naming and banking
-    are split bars: the threshold names a turn, while accumulation and
-    short-slice harvesting also require the score to clear the threshold
-    plus voice_id_banking_extra. A borderline match keeps its label and
-    feeds nothing. Cold-start banking is by elimination, not score, so it
-    never passes through here."""
+    """May a named turn's audio be BANKED (#222)? Naming and banking are
+    split bars: the threshold names a voice, while saving a clip also
+    requires the score to clear the threshold plus voice_id_banking_extra.
+    A borderline match keeps its label and feeds nothing. The session
+    naming's fallback scorer asks this; the calibrated scorer banks on its
+    own probability instead."""
     try:
         s = float(score or 0.0)
     except (TypeError, ValueError):
@@ -778,15 +703,15 @@ def ensure_model(cfg) -> Path | None:
     """Return the verified model path, fetching it once if needed. Owner-only
     posture (dir 0o700, file 0o600), atomic install (temp + os.replace), SHA-256
     verified before the file is put in place AND on every reuse. Returns None on
-    any failure - the matcher then reports unavailable and the pass falls back.
+    any failure - the matcher then reports unavailable and nothing is named.
     Blocking (hashes/downloads 38MB); ALWAYS called on a worker thread."""
     return fetch_verified(_model_url(cfg), _model_sha(cfg), model_path())
 
 
 def fetch_verified(url, sha, path: Path) -> Path | None:
     """The fetch-and-verify behind ensure_model, for any pinned model file
-    in the models dir: the shadow test's second model (#465) arrives by
-    exactly this path. Present and matching -> returned with no network;
+    in the models dir: the calibrated scorer's ERes2Net arrives by exactly
+    this path. Present and matching -> returned with no network;
     otherwise downloaded once, SHA-256 checked, installed atomically at
     0o600. None on any failure. Blocking; worker threads only."""
     if file_valid(path, sha):
@@ -841,7 +766,7 @@ def _quiet_unlink(path: Path):
 #
 # State machine, process-global: cold -> fetching -> (ready | unavailable).
 # The fetch+build runs on ONE background daemon thread so no pass ever blocks on
-# the 38MB download; until it is ready, identify_utterance defers to the EL path.
+# the 38MB download; until it is ready, nothing is named.
 # Sticky terminal states mean we never hammer the network: a restart re-attempts.
 # App startup claims the warm (warm_at_startup, #473) when the model is already
 # on disk; otherwise the first caller of _get_extractor does.
@@ -888,8 +813,8 @@ def _set_state(state):
 
 def _get_extractor(cfg):
     """The ready extractor, or None while cold/fetching/unavailable. On the very
-    first cold call it kicks off the background warm and returns None - the pass
-    defers to the EL path until the matcher is ready. Startup normally makes
+    first cold call it kicks off the background warm and returns None - nothing
+    is named until the matcher is ready. Startup normally makes
     that first call (warm_at_startup, #473), so this lazy claim is the fallback
     for a model not yet on disk. Never blocks, never raises."""
     global _state
@@ -936,7 +861,7 @@ def warm_at_startup(cfg) -> bool:
 def matcher_status(cfg) -> str:
     """The matcher's state for the voice health strip (#28): one of
     'disabled' (feature flag off), 'unavailable' (no sherpa-onnx wheel, or
-    the fetch/build failed - identification runs on the cloud fallback),
+    the fetch/build failed - nothing is named),
     'cold' (not loaded yet: startup loads a model already on disk, #473,
     and otherwise the first voice check fetches it), 'fetching' (the model
     is being loaded, or downloaded the one time) or 'ready'.
@@ -987,20 +912,6 @@ def _embed(ex, audio_float, sample_rate):
         return None
 
 
-def _windows(audio_float, sample_rate):
-    """Overlapping fixed windows over the utterance for multi-voice detection."""
-    win = int(WINDOW_SECONDS * sample_rate)
-    hop = int(WINDOW_HOP_SECONDS * sample_rate)
-    if win <= 0 or hop <= 0 or len(audio_float) < win:
-        return []
-    out = []
-    i = 0
-    while i + win <= len(audio_float):
-        out.append(audio_float[i:i + win])
-        i += hop
-    return out
-
-
 def _enrolled_embeddings(candidates, sample_rate, ex):
     """{person_id: {"name", "emb"}} for the candidate people, from their stored
     anchor clips. Averaged per person and CACHED keyed by the person's kept clip
@@ -1037,18 +948,19 @@ def _enrolled_embeddings(candidates, sample_rate, ex):
 
 # ================= the public entry point =================================
 
-def identify_utterance(pcm, sample_rate, candidates, cfg,
-                       pending_present=False):
-    """Name a confident single enrolled speaker for one utterance, or defer.
+def identify_utterance(pcm, sample_rate, candidates, cfg):
+    """Name a confident single enrolled speaker for one whole utterance, or
+    defer. Two callers ask it narrow questions: tap-to-correct (is this
+    turn the owner's own voice?) and the introduction scan (is this voice
+    someone remembered?). Voice turns themselves are named by the session
+    naming, never here.
 
     `candidates`: [{"person_id", "name"}, ...] - the SUFFICIENT people the
     caller is prepared to name. Returns a verdict dict {status, person_id,
-    name, score, reason}; matched(verdict) is the naming branch, is_multi()
-    the crosstalk one, and every other defer leaves the turn honestly
-    unresolved (#28 PR-B: there is no cloud identity fallback to route to).
-    NEVER raises and NEVER blocks the live path: it runs on the pass's worker
-    thread. The first call in a process kicks off the one-time model fetch in
-    the background and defers until it is ready."""
+    name, score, reason}; matched(verdict) is the naming branch, and every
+    defer names nobody. NEVER raises: it runs on the caller's worker
+    thread. The first call in a process kicks off the one-time model fetch
+    in the background and defers until it is ready."""
     if not enabled(cfg):
         return _defer("disabled")
     if not candidates:
@@ -1078,29 +990,16 @@ def identify_utterance(pcm, sample_rate, candidates, cfg,
         return _defer("unavailable")
     if not enrolled:
         return _defer("no_enrolled")
-    audio = _pcm_to_float(pcm)
-    whole = _embed(ex, audio, sr)
+    whole = _embed(ex, _pcm_to_float(pcm), sr)
     if whole is None:
         return _defer("unavailable")
-    # Window embeddings run whenever a split is even possible (#28 PR-B).
-    # The old confident-match pre-check skipped them for below-threshold and
-    # ambiguous utterances - but a two-voice blend lands EXACTLY there, and
-    # the "multi" verdict is now the only door to the ElevenLabs crosstalk
-    # split, so the window analysis must see those utterances too. A few
-    # short embeddings, tens of milliseconds, on a worker thread.
-    windows = []
-    if len(enrolled) >= 2 and seconds >= MIN_WINDOW_UTTERANCE_SECONDS:
-        windows = [e for e in (_embed(ex, w, sr) for w in _windows(audio, sr))
-                   if e is not None]
     close = []
     try:
         close = anchors.store().close_pairs()
     except Exception:
         log.debug("voiceid: close-pair read failed", exc_info=True)
-    return classify_utterance(whole, windows, enrolled, _threshold(cfg),
-                              margin=_margin(cfg), close_pairs=close,
-                              pending_extra=_pending_extra(cfg)
-                              if pending_present else 0.0)
+    return classify_utterance(whole, enrolled, _threshold(cfg),
+                              margin=_margin(cfg), close_pairs=close)
 
 
 # ================= the bank audit (#28 PR-B, impure half) =================

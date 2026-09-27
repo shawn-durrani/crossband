@@ -2,10 +2,10 @@
 
 Crossband can hear you and talk back. When more than one person is in
 the room, it also works out who is speaking and puts a name on each
-turn. To do that it keeps a short recording of each person it has
-learnt, compares every new turn against those recordings on your own
-computer, and names the speaker only when the match is clear. The app
-calls this room mode, and the readme's
+turn. To do that it follows each voice through the conversation on your
+own computer, keeps short recordings of each person it has learnt, and
+names a voice only when it's sure. The app calls this room mode, and
+the readme's
 [Have more than one person in the room](../README.md#what-you-can-do)
 has the short version.
 
@@ -13,14 +13,95 @@ The defaults were set using the voices of one family. If the app names
 the wrong person, or nobody, start with
 [What to check when identification misbehaves](#what-to-check-when-identification-misbehaves).
 
-The app puts a name on a turn only when the voice check on your own
-computer is sure. That check is called the matcher. When it isn't sure,
-the turn stays unnamed, and no cloud service is asked to guess instead.
-The only cloud transcription left in room mode runs when two people
-talk over each other, to work out which words were whose. When
-[the session names every turn](#letting-the-session-name-every-turn),
-that split happens on your computer as well, and no voice clips leave
+When the app isn't sure who spoke, the turn stays unnamed and says why,
+and no cloud service is asked to guess instead. Naming happens on your
+computer, and so does splitting the words when two people talk at once.
+The only audio that goes to a cloud service is each turn itself, sent
+to ElevenLabs to be transcribed, and no stored voice clip goes with
 it.
+
+## How a turn is named
+
+Every spoken turn gets the same voice check, whether the room is on,
+off or solo, and whichever way the turn was transcribed. Here's what
+happens, in order.
+
+1. A voice session starts when you start talking in a chat, and ends
+   after 10 minutes with no speech. The app opens a tracking session on
+   the diariser, a service on your computer that works out who spoke
+   when.
+2. While you talk, the app sends the diariser your audio a quarter of a
+   second at a time. The silence between turns isn't sent.
+3. The diariser gives each voice it hears a number that lasts the whole
+   session, for up to 8 voices. That's a session voice. A voice that
+   comes back after a long quiet keeps its number.
+4. Every stretch of 0.8 seconds or more where one voice speaks alone is
+   fingerprinted and added to that session voice. Speech where two
+   people overlap never is.
+5. After each turn, every session voice is named from all its
+   fingerprints so far, one person per voice. A short reply is named
+   from everything that voice has said, not from one second of audio.
+6. The turn takes the name of the voice that spoke most on its own. The
+   name is usually ready a tenth of a second after you stop, and the
+   app waits up to 0.8 seconds for it, so the AIs read the name with
+   your turn.
+
+A session voice is in one of these states.
+
+| State | When | What the turn shows |
+|---|---|---|
+| Listening | under 1.5 seconds of clean speech, or nobody clears the bar yet | no name, "still listening" |
+| Named | one person clears the bar, and nobody else has that voice | their name |
+| Learning | named by elimination at a first meeting | their name, marked learning |
+| New | 4 seconds or more of clean speech that matches nobody | no name, "a new voice" |
+
+When a voice is named later in the session, its earlier turns take the
+name too, and the chat updates. A name you set yourself is never
+replaced, and neither is a turn with two voices in it.
+
+### How a voice is named
+
+Two scorers can name a voice. The calibrated scorer is the one the app
+is built around, and it's on once you set `voice_calibrated_scorer`
+and its first build has finished. Until then the fallback scorer names
+voices.
+
+The calibrated scorer fingerprints each stretch with two speaker
+models, TitaNet-Small and ERes2Net. A voice's score against a person
+is the average of its three best matches among that person's kept
+clips, and the two models' scores are averaged. A calibration fitted
+on your household turns that score, and the seconds of speech behind
+it, into the chance the voice is that person. Every known person and
+someone new start out equally likely. A voice is named at 0.9 or more,
+and marked new under 0.1 for everyone.
+[When a voice is ready](#when-a-voice-is-ready) says how the
+calibration is fitted.
+
+The fallback scorer uses TitaNet-Small alone. It scores a voice against
+every clip a person has kept, by the average of their two best clips.
+Its bar is the matcher's naming bar, `voice_id_threshold`, moved onto
+its own scale by how your household's voices score against each other.
+The best person also has to beat the next best by `voice_id_margin`,
+scaled the same way.
+
+Either way, a voice is only ever compared with people the app
+[remembers](#the-owners-ear), and two voices can't both be the same
+person.
+
+### When there's no diariser
+
+The diariser is workbench's diarserve, running
+[Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization)
+through [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp),
+and you point the app at it with `diarize_shadow_url`.
+[The diariser](CONFIG.md#the-diariser) in CONFIG.md has the details.
+
+With no diariser set, or with it down, each turn is named on its own.
+The whole turn is treated as one voice, with the same scorer, and
+nothing is remembered from one turn to the next. Naming still works,
+more slowly for short turns, and a turn with two voices in it can't be
+split. A diariser that stops answering is logged once, and the app
+goes back to tracking the moment it answers again.
 
 ## How the room switches on and off
 
@@ -37,10 +118,11 @@ app won't switch it back on by itself.
 
 The room arms itself from "listening" when:
 
-- a voice the app remembers speaks, and it isn't yours
-- a clear voice the app doesn't know speaks, and the app asks who's
-  joined. This one needs your own voice learnt first, or the app
-  can't tell a stranger from you.
+- a voice the app remembers is named, and it isn't yours. That person
+  is seated.
+- a new voice is heard, and the app asks who's speaking. This one needs
+  your own voice learnt first, or the app can't tell a stranger from
+  you. You're seated beside them.
 - someone is introduced out loud
 - you say or type "group mode", or use "switch on now" in the voice
   settings
@@ -52,16 +134,15 @@ only an introduction, "group mode" or "switch on now" brings the room
 back.
 
 In solo the app still checks each spoken turn. Your voice gets your
-name, a voice the app remembers gets that person's name, and a clear
-voice it doesn't know is marked "voice not recognised". A turn it
-can't decide on stays unmarked, the same as in "listening". None of
-these switch the room on, seat anyone or ask who's joined.
+name, a voice the app remembers gets that person's name, and a voice it
+doesn't know is marked "a new voice". Nothing in solo switches the room
+on, seats anyone, asks who's speaking or saves a voice clip.
 
-Once the room is on, each spoken turn lands in one of three states.
-If the voice matches a remembered person, the turn gets their name.
-If only one person in the room has no learnt voice, an unmatched turn
-is theirs by elimination, and it's labelled with their name and
-"learning this voice". If nobody fits, the app asks who joined.
+Once the room is on, a remembered voice that isn't seated yet is seated
+the moment it's named, before its turn reaches the AIs. When only one
+person seated in the room has no voice saved, a new voice is named as
+them by elimination and marked learning. When nobody fits, the app asks
+who's speaking, once, however long the new voice keeps talking.
 
 ```mermaid
 stateDiagram-v2
@@ -72,14 +153,14 @@ stateDiagram-v2
   state "room on" as room {
     named: turn named
     learning: learning this voice
-    asked: asks who joined
+    asked: asks who's speaking
     [*] --> named: a voice it knows
     [*] --> learning: one unlearnt person, by elimination
-    [*] --> asked: nobody fits
-    learning --> named: 6s of speech and 2 short clips stored
+    [*] --> asked: a new voice, nobody fits
+    learning --> named: confirmed, and 6s of speech and 2 short clips saved
   }
   [*] --> listening
-  listening --> room: a voice it remembers, or a new clear voice
+  listening --> room: a voice it remembers, or a new voice
   listening --> room: an introduction, saying group mode, or the switch in settings
   listening --> solo: saying solo mode
   room --> solo: saying solo mode, or the switch in settings
@@ -100,18 +181,13 @@ reads every turn you send once and says which of these it holds, so an
 unusual phrasing lands the same way a common one does. It reads typed
 turns as well as spoken ones, whether or not room mode is on.
 
-- Recognising a voice needs no wording at all. Every spoken turn gets
-  a quiet voice check on your own computer, so a person the app
-  already knows is recognised however they were greeted. That holds
-  whether the room is on, off or solo. It holds when live
-  transcription fails too. The app then sends each turn's recording to
-  be transcribed, with a small copy of the turn's audio for the check,
-  about 32 KB a second. With the room armed, the check compares
-  against everyone the app remembers, and a remembered person who
-  isn't seated yet joins the room on their first turn.
-- The other door is the ask. When a clearly new voice appears and
-  nothing on record explains it, the app asks who's speaking. It
-  doesn't guess.
+- Recognising a voice needs no wording at all. The voice check names a
+  person the app already knows however they were greeted, whether the
+  room is on, off or solo. It holds when live transcription fails too.
+  The app then sends each turn's recording to be transcribed, with a
+  small copy of the turn's audio for the check, about 32 KB a second.
+- The other door is the ask. When a new voice appears and nothing on
+  record explains it, the app asks who's speaking. It doesn't guess.
 
 When a spoken command switches the room on or off, one system line
 says what changed and what to say to undo it. When the model hears an
@@ -161,81 +237,31 @@ check, unless you ask how they know who spoke. Everyone in the room
 already knows they read a transcript. Asked who's speaking, they give the name
 on the newest turn, or say they don't know yet.
 
-## Following each voice through a session
+A turn the voice check couldn't name reaches the models as an
+unidentified speaker, never as you. Memory treats it the same way, as
+a doubted guest's turn. Once your own voice is learnt, a spoken turn
+only reads as yours when the check named it as you.
 
-The matcher judges each turn on its own. A second way of naming
-follows each voice across the whole voice session, and names the voice
-once there's enough of it. It runs on your computer, on a diariser
-that works out who spoke when, and it's off until you turn it on.
-[The session test](CONFIG.md#the-session-test) in CONFIG.md has the
-settings and the diariser it needs.
+Memory gets the naming's score as the speaker's confidence. With the
+calibrated scorer that's the chance the voice is that person, so a
+fact from a guest's turn links to them by itself only when the app was
+80% sure or more.
 
-Here's what happens with all of it on.
+A named turn of 1.5 seconds or more also gets the mismatch cross-check.
+The same cheap model reads the turn beside the recent conversation and
+flags a name the words don't fit, like a turn named Sam that talks
+about Sam in the third person. The flag shows beside the turn for you
+to look at, and it never changes the name. Your own name is checked
+only while the room is on.
 
-1. When you start talking in a chat, the app opens a tracking session
-   on the diariser and sends it your audio as it arrives.
-2. The diariser gives each voice it hears a number that lasts the whole
-   session. A voice that comes back after a long quiet keeps its number.
-3. Each stretch of 0.8 seconds or more where one voice speaks alone
-   adds to that voice's fingerprint. Speech where two people overlap
-   never does.
-4. Once a voice has 1.5 seconds of clean speech, its fingerprint is
-   compared with every kept clip of every person. It's named when one
-   person clearly wins, and two voices can't both be the same person.
-5. When the matcher can't name your turn, the app waits up to 0.8
-   seconds for the session's name and uses it. The name is usually
-   ready about a tenth of a second after you stop.
-6. When a voice is named later, its earlier unnamed turns in the
-   session take the name too.
+## When two people talk at once
 
-A session's name never replaces a name the matcher gave or one you
-set. It seats nobody and saves no clips. Memory treats a session name
-as a voice match, with the naming's score as its confidence, so a fact
-from a guest's turn links to them by itself only when the score is 0.8
-or more. A voice that has 4 seconds of speech and matches nobody is
-marked as new, and a TV or radio in the room shows up the same way.
-
-### Letting the session name every turn
-
-With `voice_session_only` on as well, the session naming names every
-spoken turn, in every mode, and the matcher's own passes stop running.
-Here's what happens to each turn.
-
-1. The app takes the session's name for the turn's main voice, waiting
-   up to 0.8 seconds. If the diariser didn't see the turn, the whole
-   turn is named as one voice, with the same scorer.
-2. When the calibrated scorer is on and ready, it names each voice from
-   two fingerprints, TitaNet-Small and ERes2Net, as a probability. A
-   voice is named at 0.9 or more, and marked new under 0.1. Until then
-   the session uses the matcher's own bar.
-3. The owner's voice is labelled as you and changes nothing else.
-4. Someone else you know arms a room that was off, and is seated.
-5. A new voice arms the room and asks who it is, once your own voice
-   is known. When only one person seated in the room has no voice
-   saved yet, a new voice is named as them and marked learning.
-6. Anything else is labelled "still listening", and fills in once the
-   voice is named.
-7. When a second voice spoke for a second or more, the turn is
-   labelled with every voice in it and marked as two voices at once.
-   The room follows the voice that spoke most on its own.
-8. When a voice is named at 0.99 or more, with 8 seconds of clean
-   speech behind it, the turn's longest clean stretch is saved to that
-   person's voice, at most 3 times per voice per session. A turn with
-   two voices in it is never saved.
-
-Solo still labels and never arms, seats, asks or saves. Naming a turn
-by hand names its voice for the rest of the session, and the voice's
-other unnamed turns take the name at once. A turn with two voices in it
-is the exception. Tapping its name changes that turn's label, but it
-can't say which of the voices you meant, so no voice takes the name.
-
-### When two people talk at once
-
-With the session naming every turn, a turn with two voices in it is
-split on your computer. The live transcription sends the start and end
-of every word, and each word goes to the voice speaking at that moment.
-Under the turn you see who said which words, like "Alex: are we going /
-Sam: yes soon".
+When a second voice spoke for a second or more in a turn, the turn is
+labelled with every voice in it and marked as two voices at once. The
+room follows the voice that spoke most on its own. The live
+transcription sends the start and end of every word, and each word goes
+to the voice speaking at that moment. Under the turn you see who said
+which words, like "Alex: are we going / Sam: yes soon".
 
 - A word spoken while both voices were going goes to the turn's main
   speaker, marked unsure, because one microphone can't tell whose it
@@ -247,6 +273,7 @@ Sam: yes soon".
   microphone the quieter voice's words often are.
 - Memory never files a two-voice turn under anyone's name, whoever
   spoke.
+- No voice clip is saved from a turn with two voices in it.
 
 The word times and the voice tracker each count time from their own
 start, and either can restart on its own. The app lines them up at the
@@ -258,39 +285,51 @@ only its last piece.
 
 The turn waits up to a second for its word times. They come with the
 transcript itself, so the split is normally ready before the message is
-saved, and the AIs read it with the turn.
+saved, and the AIs read it with the turn. Tapping the name on a
+two-voice turn changes that turn's label and keeps the note. It can't
+say which of the voices you meant, so no session voice takes the name.
 
-## Starting from nothing
+## Learning a voice
 
-Learning a voice from nothing is called a cold start, and it has one
-route of its own. Every other route assumes the app has something to
-work with. If a person's stored voice is empty, because you forgot
-them or cleared your own record, none of them can help. Being
-recognised needs stored clips, an introduction needs an
-introduction-shaped sentence, and correcting a name needs a name on
-the turn to correct.
+A person's voice is learnt from clips the app saves of them, called
+anchors, and one person's set of anchors is their bank. A bank with 6
+seconds of clear speech and 2 short clips in it is enough to name
+someone, and the app calls such a bank sufficient. The two numbers are
+the settings `voice_id_sufficient_seconds` and
+`voice_id_min_short_clips`. Only people with a sufficient bank are
+compared with a voice.
 
-The cold start needs room mode on, only one person in the room whose
-voice isn't learnt yet, and everyone else present already
-recognisable. A turn the matcher can't place is then worked out by
-elimination. Anyone else in the room would have been recognised, so it
-can only be the one unlearnt person. The app stores short clips of
-each person's voice, called anchors, and one person's set of anchors
-is their bank. The audio goes into that person's bank, and the turn is
-labelled with their name and "learning this voice". That's a name
-worth using and not yet worth trusting.
+A clip is saved in only these ways.
 
-A bank with 6 seconds of clear speech and 2 short clips in it is
-enough to identify someone, and the app calls such a bank sufficient.
-The two numbers are the settings `voice_id_sufficient_seconds` and
-`voice_id_min_short_clips`. Once a person's bank is sufficient, their
-voice is remembered and ordinary recognition takes over. From then
-on, a match that clears the naming bar with room to spare tops up
-their bank with that turn's audio, which the app calls accumulation.
-The cold start is what lets a new guest be learnt while you sit in
-the room, already recognised.
+- A voice named at 0.99 or more by the calibrated scorer, with 8
+  seconds of clean speech behind it, saves the longest clean stretch of
+  the turn, 2 seconds or more. The fallback scorer saves at its score
+  plus `voice_id_banking_extra`. Either way, at most 3 clips per voice
+  per session, and never from a turn with two voices.
+- You name or confirm a turn, as set out in
+  [Teaching it a voice yourself](#teaching-it-a-voice-yourself).
+- Someone the app has just named says their own name.
+- Your first introduction, in a room that was off, gives your own
+  voice its first clip.
+- You record someone on the Voices page, as set out in
+  [Recording someone's voice](#recording-someones-voice).
 
-### Where elimination never applies
+Nothing else is saved: not overlapped speech, not a voice that's still
+listening, not a new voice nobody has named, and not a voice named by
+elimination alone. A saved clip re-runs the
+[hygiene audit](#when-two-people-sound-alike).
+
+### The first meeting
+
+The first meeting is how a new guest gets a name while you sit in the
+room already recognised. The room has to be on, with one person seated
+whose voice isn't learnt yet, and only one. A new voice can then only
+be theirs, so the turn is named as them and marked learning. That's a
+name worth using and not yet worth trusting.
+
+Nothing is saved from it. When you tap the turn and confirm the name,
+or they say their own name, the turn's audio goes into their bank.
+Once their bank is sufficient, ordinary naming takes over.
 
 Elimination is only sound when there's one candidate, so the rule is
 kept narrow. It never applies:
@@ -298,12 +337,24 @@ kept narrow. It never applies:
 - with two or more unlearnt people in the room, which is what the ask
   is for
 - when two voices overlap on one turn
-- with room mode off, where the app can't tell you from a stranger
-  with nothing on record
-- in place of a confident match
+- with room mode off, or in solo
+- to a voice that's still listening
+- in place of a confident name
 
 If the app got it wrong, tap the "learning" label to correct it, the
 same as any other label, and the correction feeds the right person.
+
+### Your first introduction
+
+In a room that was off, the app takes the voice that speaks an
+introduction or "group mode" to be yours. The voice check keeps the
+audio of every spoken turn, so that turn's audio gives your own voice
+its first clip, and you're seated. The introduction waits up to 2
+seconds for the check to finish with its turn. A typed introduction has
+no audio, and seeds nothing. Neither does a turn with two voices in it.
+A turn the check heard as someone else seeds nothing either, which
+means a name that isn't yours, or a new voice once your own voice is
+learnt.
 
 ### An introduction outranks a voice match
 
@@ -322,11 +373,11 @@ addressed by name in nearly every spoken sentence, and a mishearing
 like "This is Claude..." looks like an introduction. Elimination is
 only as sound as the roster it reads. If that mishearing seated the
 model as a person, elimination would learn a human voice under the
-model's name, clip by clip, until a person who doesn't exist was a
-remembered voice. The app spots your own name in its misspelt forms,
-and it spots a model's name the same way. Any such name is dropped
-before seating, and the seat writer refuses the exact names outright
-as a final guard.
+model's name, until a person who doesn't exist was a remembered voice.
+The app spots your own name in its misspelt forms, and it spots a
+model's name the same way. Any such name is dropped before seating,
+and the seat writer refuses the exact names outright as a final guard.
+Your own name never creates a second you, however it's misheard.
 
 ## How a bank keeps its clips
 
@@ -350,12 +401,11 @@ covers a clip from an introduction, a clip from a turn you corrected,
 and a clip you moved into the bank yourself. If a bank has more of
 those than it can hold, they compete with each other by the same rule.
 
-The voice fingerprint the matcher compares against is built from the
-speech in each clip. A pause longer than about half a second is left
-out, and the gaps between words stay in. The stored clip keeps its
-pauses, so a clip you play back on the Voices page sounds as it was
-recorded. A clip with less than a second of speech in it is used
-whole.
+A fingerprint is built from the speech in each clip. A pause longer
+than about half a second is left out, and the gaps between words stay
+in. The stored clip keeps its pauses, so a clip you play back on the
+Voices page sounds as it was recorded. A clip with less than a second
+of speech in it is used whole.
 
 ### When a voice settles
 
@@ -383,15 +433,19 @@ rotation, as it always has.
 
 ## Teaching it a voice yourself
 
-A named turn adds to its person's bank only when the match clears the
-banking bar, which sits a little higher than the naming bar. A voice that
-always scores just under it gets named but never learns. You can teach
-it yourself. Tap the name on the turn and pick "Yes, that's Sam: learn
+Tap the name on a turn and pick someone to correct it. The name
+changes, and the turn's audio goes into that person's bank as ground
+truth. To confirm a name that's right, pick "Yes, that's Sam: learn
 from this". The name stays, and the app learns from that turn whatever
-it scored. The bank counts as vouched, and the clip is kept through
-rotation, the same as a clip from a correction. To give a voice a lot
-of clean speech at once, record them reading a passage, as set out in
+it scored. Either way the bank counts as vouched, and the clip is kept
+through rotation. To give a voice a lot of clean speech at once,
+record them reading a passage, as set out in
 [Recording someone's voice](#recording-someones-voice).
+
+Naming a turn by hand also names its session voice for the rest of the
+session. The voice's other turns in the session that carry no name
+take the name at once, and later turns from that voice are named
+straight away.
 
 The app keeps the audio of the last 24 turns in memory, up to the last
 30 seconds of each, so confirm soon after the turn. When the recording
@@ -411,9 +465,9 @@ bank.
 
 The Voices page can tell you whether each stored voice is ready, which
 means the app should name that person on a day it hasn't heard them
-yet. It's a test, and it changes nothing about how turns are named.
-Turn it on with `voice_calibrated_scorer` in [CONFIG.md](CONFIG.md) and
-restart the app.
+yet. Turn it on with `voice_calibrated_scorer` in [CONFIG.md](CONFIG.md)
+and restart the app. The same setting turns on the calibrated scorer
+that names voices.
 
 The test cuts the speech in a person's clips into 2 second pieces. It
 takes each day's clips out of their bank in turn, and checks whether
@@ -434,6 +488,9 @@ The page shows "Ready" or what the voice still needs.
   be someone else's voice.
 - "87% of pieces named right, 95% needed" means too many pieces were
   left unnamed.
+
+A voice that isn't ready can still be named in a session, once its
+session voice has enough speech behind it.
 
 ### Recording someone's voice
 
@@ -473,18 +530,7 @@ own store of clips, and from there to membro with every other clip.
 the person's result and says whether it covers their clips as they
 are now.
 
-### How the test names a piece
-
-Two speaker models fingerprint every clip: TitaNet-Small, the model the
-matcher runs, and
-[ERes2Net](https://github.com/modelscope/3D-Speaker), a speaker model
-from the 3D-Speaker project under the Apache 2.0 licence. A person's
-score is the average of the three best matches among all their clips,
-and the two models' scores are averaged. A calibration fitted on your
-household turns that score, and the seconds of speech behind it, into
-the chance the voice is that person. Every known person and someone
-new start out equally likely, and a piece is named when one person
-reaches 0.9.
+### How the calibration is fitted
 
 The calibration learns from your own clips. Pieces of 1, 2, 4 and 8
 seconds are scored against every bank, with the piece's own day left
@@ -496,8 +542,10 @@ clips all come from one day, each clip leaves on its own.
 The work runs on its own thread, at startup and after every change to
 a bank, and lets any live voice check go first. The first run after a
 start takes a few minutes, and later runs only fingerprint new clips.
-Fingerprints stay in memory and are never written anywhere. ERes2Net is
-about 26MB, downloaded once from the sherpa-onnx releases into
+Fingerprints stay in memory and are never written anywhere.
+[ERes2Net](https://github.com/modelscope/3D-Speaker) is a speaker model
+from the 3D-Speaker project under the Apache 2.0 licence. It's about
+26MB, downloaded once from the sherpa-onnx releases into
 `<data_dir>/voice_models/` and checked against a pinned SHA-256 before
 first use.
 
@@ -516,25 +564,24 @@ Use the switches in the voice settings drawer, or type the command.
 Recognising a voice the app already knows still works in any language,
 because it listens to the voice and not to the words.
 
-The second is the speaker model, which ships trained on English, and
-every threshold here was calibrated with English speech. Matching goes
-on how a voice sounds more than on what it says, so other languages
-are expected to work. Nobody has measured them, so the calibration
-promises hold for English only.
+The second is the speaker models, which ship trained on English, and
+every bar here was set with English speech. Naming goes on how a voice
+sounds more than on what it says, so other languages are expected to
+work. Nobody has measured them, so the calibration promises hold for
+English only.
 
-When the matcher can't name a turn, the turn stays unnamed, and the
-turn says why in the words the voice panel uses: too short to judge,
-voice not recognised, too close to call, no voices learnt yet. The
-seats read that reason, so when you ask who's speaking they can say
-what stopped the match. Memory treats such a turn as a doubted guest's,
-never as yours. Room mode then arms only through a voice it knows or
-the manual doors.
+When the app can't name a turn, the turn stays unnamed, and the turn
+says why in the words the voice panel uses: "still listening" or "a new
+voice". The seats read that reason, so when you ask who's speaking they
+can say what stopped the name.
 
-## The model itself
+## The models themselves
 
-The matcher runs `nemo_en_titanet_small`, Nvidia's
+The fallback scorer and the hygiene audit run `nemo_en_titanet_small`,
+Nvidia's
 [NeMo TitaNet-Small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small)
-speaker model. It's about 38MB and licensed
+speaker model, which the app calls the matcher. It's about 38MB and
+licensed
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/), which lets
 anyone use it as long as Nvidia is credited. It runs on your computer
 through
@@ -544,9 +591,16 @@ address and its SHA-256, a hash of the file that changes if a single
 byte does. It fetches the file once from the sherpa-onnx releases into
 `<data_dir>/voice_models/` and checks that hash before first use. Once
 the file is there, the app loads it in the background every time it
-starts, so the first turn after a restart can be named.
+starts, and embeds everyone's saved clips while it does, so the first
+turn after a restart can be named.
 `GET /api/voice/health` reports the live model's file name, the start
 of its hash, and whether the built-in pin was overridden.
+
+The matcher also answers two narrow questions about a whole turn. When
+you tap a turn to correct it, it checks whether the voice is your own,
+so a misheard spelling of your name never mints a second you. When
+someone introduces themselves, it checks whether the voice is someone
+the app remembers.
 
 You can swap the pin: `voice_id_model_url` and `voice_id_model_sha256`
 in [CONFIG.md](CONFIG.md) override it together, both or neither. A new
@@ -555,14 +609,14 @@ matcher stays unavailable. It never runs an unverified file.
 
 Before you swap, know what a swap costs.
 
-- Every threshold here was calibrated for TitaNet-Small's score
-  distribution. A different model needs its own calibration, using
-  the knobs in [The tuning knobs](#the-tuning-knobs).
+- The fallback scorer's bar was set for TitaNet-Small's scores. A
+  different model needs its own, using the knobs in
+  [The tuning knobs](#the-tuning-knobs).
 - Stored voices survive a swap on their own, because the app keeps the
   anchor clips and never the model's output. A voice fingerprint lives
   only in memory and is rebuilt from the clips by whichever model is
   loaded, so after a swap and a restart there's nothing to migrate and
-  no mixed comparisons. Matching warms up again from the same clips.
+  no mixed comparisons. The calibration refits from the same clips.
 
 ## The tuning knobs
 
@@ -570,8 +624,8 @@ The full list, each knob with its default and what it controls, is
 the Voice table in [CONFIG.md](CONFIG.md). Every one can be set in
 `config.local.json` or as a `CROSSBAND_*` environment variable. The
 defaults may need moving when voices in your house sound alike, like
-siblings or a parent and an adult child. They were calibrated on the
-model's published benchmarks plus the voices in one home.
+siblings or a parent and an adult child. They were set on the model's
+published benchmarks plus the voices in one home.
 
 Change one knob at a time, and check the voice dock first. Its top
 row leads with the room state ("room on · N", "listening" or "solo").
@@ -581,9 +635,9 @@ learnt, and the row ends with how fast the last turn was identified.
 While the room is off, the only chip is yours, once the app has started
 learning your voice. Everyone it remembers is listed on the Voices
 page. The tick describes the stored voice and says nothing about the
-turn being spoken. Each turn's own label shows the live attribution,
-and a hard turn can stay uncertain under a green tick. The matcher's
-own state and any "sound close" warning sit behind the settings button
+turn being spoken. Each turn's own label shows who it was named as, and
+a hard turn can stay unnamed under a green tick. The matcher's own
+state and any "sound close" warning sit behind the settings button
 beside the controls, along with the manual room switches.
 
 ## When two people sound alike
@@ -595,13 +649,15 @@ the turn unnamed.
 - The hygiene guard audits the stored voices whenever they change. A
   stored clip that sounds more like a different person than its own
   is set aside, kept on disk, shown as "clips set aside" under
-  Remembered voices, and left out of matching. Two people whose
-  stored voices sit too close are flagged behind the settings button
-  ("Alex and Sam sound close - matching is stricter"), and the
-  matcher demands a wider winning margin between those two.
-- If mix-ups still slip through, raise `voice_id_margin` first, then
-  `voice_id_threshold`. Expect more unnamed turns in exchange for
-  fewer wrong names. No setting buys certainty for free.
+  Remembered voices, and left out of naming. Two people whose stored
+  voices sit too close are flagged behind the settings button ("Alex
+  and Sam sound close - matching is stricter"), and the matcher's own
+  checks demand a wider margin between those two.
+- One person per voice stops two voices both taking one name, and the
+  calibrated scorer waits until one person is clearly likelier.
+- With the fallback scorer, raise `voice_id_margin` first, then
+  `voice_id_threshold`. Expect more unnamed turns in exchange for fewer
+  wrong names. No setting buys certainty for free.
 - Tapping a named turn to correct it fixes the label and feeds the
   corrected audio to the right person as ground truth. That's the
   fastest way to pull two confusable voices apart.
@@ -613,42 +669,39 @@ voice under the wrong name, because every clip in it agrees with every
 other. It compares clips in pairs, so what it catches is a bank with
 someone else's clips mixed in. A bank that's wholly wrong has one
 shape. It reached enough speech without a single spoken introduction
-or correction from you, by cold start and accumulation alone.
+or correction from you, by automatic saves alone.
 
 A bank is vouched the moment a human stands behind it, which happens
-when an introduction banks into it or when you correct a turn into it.
-The stamp is on the person, so it survives
-[rotation](#how-a-bank-keeps-its-clips) and merges.
+when an introduction banks into it, when you correct or confirm a turn
+into it, or when you record them on the Voices page. The stamp is on
+the person, so it survives [rotation](#how-a-bank-keeps-its-clips)
+and merges.
 
 A sufficient bank nobody vouched for asks for your ear under
 Remembered voices: listen to its clips and confirm. Until you do, a
 bank the app watched become sufficient is paused. A paused bank is
-left out of the candidate list the matcher checks a voice against, so
-it can neither name nor seat anyone in a session. The armed room, the
-room-off check and the early check that runs in the pause before a
-turn ends all build that list the same way, so no path can drift.
+left out of the people a voice is compared with, so it can neither name
+nor seat anyone in a session. Every voice check builds that list the
+same way, so no path can drift.
 
 The one exception to the pause is a person already seated in the live
-chat, whether the session is still learning them by elimination or a
-human placed the seat. They keep being identified, because the pause
-guards re-seating and leaves the seat alone. A real person unlocks a
-paused bank at once by introducing themselves, since the introduction
-vouches the bank. A bank that was already sufficient before the app
-began recording that crossing keeps working while flagged, so an
-upgrade takes nothing away.
+chat. They keep being named, because the pause guards re-seating and
+leaves the seat alone. A real person unlocks a paused bank at once by
+introducing themselves, since the introduction vouches the bank. A
+bank that was already sufficient before the app began recording that
+crossing keeps working while flagged, so an upgrade takes nothing away.
 
-Vouching can also be outlived. Each time accumulation banks a clip,
-the app records the score it matched at. Rotation keeps the clips a
-human stood behind, but you can delete or move them, and the hygiene
-guard can set them aside. When none is left in the bank, those scores
-decide the bank's standing. Weak scores pause identification until
-your ear confirms the voice again, and strong scores keep it working,
-with a note under Remembered voices. Weak means a middle score under
-0.6, the score a clip needs to be saved at all, so a voice that saves
-its clips cleanly keeps working even when its matches never score
-high. The exception for someone already
-seated applies to this pause too. Clips stored before scores were
-recorded carry none, and a bank made of those keeps working.
+Vouching can also be outlived. Each time the app saves a clip by
+itself, it records the score the voice was named at. Rotation keeps the
+clips a human stood behind, but you can delete or move them, and the
+hygiene guard can set them aside. When none is left in the bank, those
+scores decide the bank's standing. Weak scores pause naming until your
+ear confirms the voice again, and strong scores keep it working, with a
+note under Remembered voices. Weak means a middle score under 0.6, so a
+voice that saves its clips cleanly keeps working even when its scores
+never run high. The exception for someone already seated applies to
+this pause too. Clips stored before scores were recorded carry none,
+and a bank made of those keeps working.
 
 ## The durable home
 
@@ -664,7 +717,7 @@ then asks the hygiene guard to check them. Forgetting a person
 in either app deletes the stored audio in both. The pass runs at
 startup, after rounds, and the moment you forget someone, always on a
 worker thread that no turn waits for. If membro is down, the pass logs
-once and does nothing. Identification never waits on it.
+once and does nothing. Naming never waits on it.
 
 Your corrections travel too. Moving a clip to the right person,
 deleting one, merging duplicate people, or forgetting someone here is
@@ -717,10 +770,12 @@ reaches it.
 
 - The roster holds 6 people at once by default (`room_roster_max`),
   and the cap frees as people leave. It's a product choice, and
-  nothing technical forces it.
-- When the matcher's own passes split crosstalk, the transcription
-  service can tell apart up to 32 voices in one request. The roster
-  cap keeps real sessions nowhere near that.
+  nothing technical forces it. Past the cap a remembered voice is still
+  named, and the roster just doesn't grow.
+- The diariser follows up to 8 voices in a session. The roster cap
+  keeps real sessions under that.
+- A session's voices live in memory only, and are dropped when the
+  session ends. Only clips saved by the rules for learning stay.
 - One Crossband instance belongs to one person, and everything about
   memory, spend and trust assumes it. Guests are remembered voices
   with names, never co-owners. That's how the whole fleet is built,
@@ -732,9 +787,14 @@ reaches it.
    summary to open it. Is the matcher `ready`? A `fetching` or
    `unavailable` matcher means no turns are named, and nothing arms by
    itself until it recovers.
-2. The chips on the dock's top row, and Remembered voices on the
+2. The diariser. `GET /api/voice/sessions` shows whether the feed is
+   on, the diariser's last answer, and each recent turn with the name
+   its voice had then and at the end of its session. A diariser that's
+   down means each turn is named on its own.
+3. The chips on the dock's top row, and Remembered voices on the
    Voices page. Does each person show a tick, or are they still
-   learning? Are clips set aside? Is there a "sound close" warning?
-3. The knobs, one at a time.
-4. If a name is wrong, tap the name on the turn and correct it. The
+   learning? Are clips set aside? Is there a "sound close" warning? Is
+   each voice ready?
+4. The knobs, one at a time.
+5. If a name is wrong, tap the name on the turn and correct it. The
    correction is final, and no automated step will change it back.

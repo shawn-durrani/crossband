@@ -1,35 +1,33 @@
-"""Local speaker identification (#28): THE identity path.
+"""Local speaker identification (#28): the speaker model and the matcher.
 
-Since PR-B (the eighth field test's owner decision) the matcher is not an
-accelerator in front of a cloud fallback - identity is local or honestly
-uncertain, and the only ElevenLabs trigger left is the matcher's own "multi"
-verdict (crosstalk splitting). These pins, all of which run WITHOUT the 38MB
-model and WITHOUT sherpa-onnx present:
+Identity is local or honestly uncertain: no cloud pass ever names a voice.
+Voice turns are named by the session naming (tests/test_voice_sessions.py);
+the whole-turn matcher here answers the two narrow questions still asked of
+it, tap-to-correct's owner guard and the introduction's voice check. These
+pins all run WITHOUT the 38MB model and WITHOUT sherpa-onnx present:
 
 1. The pure decision seam (normalise/average/cosine + classify_utterance) -
-   identify, open-set "none of the enrolled", the ambiguity margin (widened
-   for flagged close pairs), and the two-voice split - proved with synthetic
-   vectors, no ONNX.
+   identify, open-set "none of the enrolled", and the ambiguity margin
+   (widened for flagged close pairs) - proved with synthetic vectors, no
+   ONNX.
 2. Enrolment averages a person's stored anchor clips and caches the embedding
    keyed by the clip set, so identification re-embeds anchors only when they
    change (exercised with a MOCKED extractor - no model).
 3. The pinned-model fetch verifies SHA-256 before use and refuses a mismatch,
    with no network (httpx mocked).
-4. run_pass wiring (#28 PR-B): a confident match fast-labels with NO batch
-   call; a solo utterance and EVERY deferred verdict fire NO batch call
-   either; ONLY the "multi" verdict runs the ElevenLabs crosstalk split; and
-   with the matcher disabled nothing automatic happens at all.
+4. The speech gate: non-speech never reaches the matcher, and is never
+   named by elimination.
 5. The pairwise hygiene rules (#28 PR-B): contaminated clips quarantine,
    close centroid pairs are flagged, and the audit persists both through the
    anchor store.
 6. The EL sniff is RETIRED (#28 PR-B): pinned structurally - the functions
    are gone, so no code path can fire it.
-7. An integration test that builds the real extractor when the model is
+7. The banking bar the fallback scorer saves clips at.
+8. An integration test that builds the real extractor when the model is
    present and SKIPS cleanly when it is not (the CI case).
 """
 
 import time
-import asyncio
 import hashlib
 import math
 import os
@@ -80,14 +78,14 @@ def _enr(**people):
 
 def test_classify_confident_single_match():
     enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0, 1, 0]))
-    v = voiceid.classify_utterance(voiceid.l2_normalize([0.98, 0.05, 0.0]), [], enr)
+    v = voiceid.classify_utterance(voiceid.l2_normalize([0.98, 0.05, 0.0]), enr)
     assert v["status"] == "match" and v["name"] == "Alex" and v["person_id"] == "p1"
 
 
 def test_classify_open_set_stranger_defers():
     """A voice matching nobody (below the threshold) is the open-set None."""
     enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0, 1, 0]))
-    v = voiceid.classify_utterance(voiceid.l2_normalize([0.3, 0.3, 0.9]), [], enr)
+    v = voiceid.classify_utterance(voiceid.l2_normalize([0.3, 0.3, 0.9]), enr)
     assert v["status"] == "defer" and v["reason"] == "below_threshold"
 
 
@@ -96,53 +94,13 @@ def test_classify_ambiguous_two_close_voices_defers():
     # the runner-up is too close to claim it (a blend, or two similar voices).
     enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0.95, 0.31, 0]))
     q = voiceid.l2_normalize([1.0, 0.15, 0.0])
-    v = voiceid.classify_utterance(q, [], enr)
+    v = voiceid.classify_utterance(q, enr)
     assert v["status"] == "defer" and v["reason"] == "ambiguous"
 
 
-def test_classify_multi_voice_is_the_crosstalk_verdict():
-    enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0, 1, 0]))
-    whole = voiceid.l2_normalize([0.98, 0.1, 0.0])          # Alex dominates
-    a = voiceid.l2_normalize([1, 0, 0])
-    s = voiceid.l2_normalize([0, 1, 0])
-    windows = [a, a, s, s]                                  # two clear winners
-    v = voiceid.classify_utterance(whole, windows, enr)
-    assert v["status"] == "defer" and v["reason"] == "multi"
-    assert voiceid.is_multi(v) is True   # the one batch-pass trigger (PR-B)
-    assert voiceid.is_multi(voiceid.classify_utterance(whole, [], enr)) is False
-
-
-def test_classify_multi_outranks_a_blended_whole_verdict():
-    """#28 PR-B: the window evidence is checked FIRST. A two-voice blend
-    whose whole-utterance embedding resembles nobody (below threshold) must
-    still classify as "multi" - it is now the only door to the crosstalk
-    split, and the blend landing exactly there was the reason the old
-    confident-only pre-check had to go."""
-    enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0, 1, 0]))
-    blend = voiceid.l2_normalize([0.5, 0.5, 0.9])   # resembles nobody enrolled
-    a = voiceid.l2_normalize([1, 0, 0])
-    s = voiceid.l2_normalize([0, 1, 0])
-    v = voiceid.classify_utterance(blend, [a, a, s, s], enr)
-    assert v["reason"] == "multi"
-    # without window evidence the same blend stays an open-set defer
-    v2 = voiceid.classify_utterance(blend, [], enr)
-    assert v2["reason"] == "below_threshold"
-
-
 def test_classify_no_candidates_defers():
-    v = voiceid.classify_utterance([1, 0, 0], [], {})
+    v = voiceid.classify_utterance([1, 0, 0], {})
     assert v["status"] == "defer" and v["reason"] == "no_candidates"
-
-
-def test_window_multi_voice_rules():
-    enr = _enr(p1=("Alex", [1, 0, 0]), p2=("Sam", [0, 1, 0]))
-    a = voiceid.l2_normalize([1, 0, 0])
-    s = voiceid.l2_normalize([0, 1, 0])
-    assert voiceid.window_multi_voice([a, a, a], enr, 0.5) is False   # one winner
-    assert voiceid.window_multi_voice([a, a, s, s], enr, 0.5) is True  # two winners
-    assert voiceid.window_multi_voice([a, s], enr, 0.5) is False       # one each < min
-    # A single enrolled candidate can never be "multi".
-    assert voiceid.window_multi_voice([a, a], {"p1": enr["p1"]}, 0.5) is False
 
 
 def test_close_pair_widens_the_required_margin():
@@ -152,16 +110,16 @@ def test_close_pair_widens_the_required_margin():
     confident mistake."""
     enr = _enr(p1=("Alex", [1.0, 0.0, 0.0]), p2=("Sam", [0.9, 0.4359, 0.0]))
     q = voiceid.l2_normalize([1.0, 0.05, 0.0])
-    plain = voiceid.classify_utterance(q, [], enr, margin=0.05)
+    plain = voiceid.classify_utterance(q, enr, margin=0.05)
     assert plain["status"] == "match" and plain["name"] == "Alex"
-    strict = voiceid.classify_utterance(q, [], enr, margin=0.05,
+    strict = voiceid.classify_utterance(q, enr, margin=0.05,
                                         close_pairs=[("p1", "p2")])
     assert strict["status"] == "defer" and strict["reason"] == "ambiguous"
     # pair order is irrelevant, and an unrelated pair changes nothing
-    strict2 = voiceid.classify_utterance(q, [], enr, margin=0.05,
+    strict2 = voiceid.classify_utterance(q, enr, margin=0.05,
                                          close_pairs=[("p2", "p1")])
     assert strict2["reason"] == "ambiguous"
-    other = voiceid.classify_utterance(q, [], enr, margin=0.05,
+    other = voiceid.classify_utterance(q, enr, margin=0.05,
                                        close_pairs=[("p1", "p9")])
     assert other["status"] == "match"
 
@@ -561,16 +519,6 @@ def test_identify_open_set_unknown_defers(store, monkeypatch):
     assert v["status"] == "defer" and v["reason"] == "below_threshold"
 
 
-def test_identify_two_voices_defers_multi(store, monkeypatch):
-    monkeypatch.setattr(voiceid, "_get_extractor", lambda cfg: object())
-    monkeypatch.setattr(voiceid, "_embed", _fake_embed)
-    # 5s of Alex then 3s of Sam: Alex dominates the whole embedding but the
-    # windows split, so the turn defers to the batch path.
-    pcm = _tone(_ALEX_VAL, 5) + _tone(_SAM_VAL, 3)
-    v = voiceid.identify_utterance(pcm, 16000, _candidates(store), _cfg())
-    assert v["status"] == "defer" and v["reason"] == "multi"
-
-
 def test_identify_disabled_defers_without_embedding(store, monkeypatch):
     monkeypatch.setattr(voiceid, "_get_extractor",
                         lambda cfg: pytest.fail("must not touch the extractor"))
@@ -750,152 +698,25 @@ def test_identify_defers_non_speech_before_embedding(store, monkeypatch):
         assert v["status"] == "defer" and v["reason"] == "not_speech"
 
 
-def test_cold_start_never_banks_non_speech():
-    """#217 acceptance: a not_speech defer is nobody's by elimination."""
-    v = {"status": "defer", "person_id": None, "name": None, "score": 0.0,
-         "reason": "not_speech"}
-    assert diarize.cold_start_person(v, "Mateo") is None
-    # an ordinary defer still elects the solo pending person
-    assert diarize.cold_start_person(
-        dict(v, reason="below_threshold"), "Mateo") == "Mateo"
+def test_non_speech_is_never_named_by_elimination(monkeypatch):
+    """#217 acceptance: static is nobody's by elimination. The session
+    naming's speech gate turns it away before any fingerprint, and a turn
+    with nothing named is left listening, never the one unlearnt person."""
+    from backend import voice_pass, voice_sessions
+    monkeypatch.setattr(voice_sessions, "embed_live", lambda *a: pytest.fail(
+        "non-speech must never be fingerprinted"))
+    for pcm in (_noise(1.5), _hiss(1.5)):
+        assert voice_sessions.gate(pcm, 16000) == "not_speech"
+        assert voice_sessions.name_single_turn(1, pcm, 16000, _cfg()) is None
+    plan = {"room_on": True, "unlearnt": ["Mateo"], "owner_known": True}
+    d = voice_pass.decide(None, plan)
+    assert d["labels"] == [] and not d["learning"]
 
 
 def test_not_speech_reason_reaches_the_pulse():
     diarize.record_decision(991, diarize.DECISION_UNRESOLVED, 12.0,
                             "not_speech")
     assert diarize.last_decision(991)["reason"] == "not_speech"
-
-
-# ============================ 4b. run_pass wiring =========================
-
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro) \
-        if False else asyncio.run(coro)
-
-
-def _plan(solo_pending=None):
-    # (prefix_pcm, segments, pending, num_speakers, solo_pending,
-    # remembered) as _room_plan returns. The fifth item arrived with
-    # cold-start enrolment (#28): the ONE present person whose bank cannot
-    # identify them yet, or None when the roster is not that shape.
-    # Defaulting it to None keeps every pin below asserting exactly what it
-    # always did - with no by-elimination candidate, cold start cannot
-    # fire. The sixth is the remembered-first candidate list (#28,
-    # fourteenth field test) - the armed pass's local candidates became
-    # every sufficient remembered person; mirroring the one rostered
-    # person here keeps these wiring pins byte-identical in behaviour.
-    return (b"\x00\x40" * 16000,
-            [{"person_id": "p1", "name": "Alex", "start": 0.0, "end": 1.0}],
-            [], 2, solo_pending,
-            [{"person_id": "p1", "name": "Alex"}])
-
-
-def test_run_pass_fast_match_skips_batch(monkeypatch):
-    monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: {"status": "match", "person_id": "p1",
-                                         "name": "Alex", "score": 0.9,
-                                         "reason": "match"})
-
-    def no_batch(*a, **k):
-        raise AssertionError("batch STT must NOT run on a confident match")
-    monkeypatch.setattr(diarize.voice, "transcribe_diarized", no_batch)
-
-    seen = {}
-
-    async def fake_attach(chat_id, commit_ts, payload, session, turn_id=None):
-        seen["payload"] = payload
-        return 42
-    monkeypatch.setattr(diarize, "_attach_until_deadline", fake_attach)
-    monkeypatch.setattr(diarize, "_accumulate_fast_anchor", lambda *a: None)
-    monkeypatch.setattr(diarize, "_meter",
-                        lambda *a: pytest.fail("no metering without a batch call"))
-
-    session = diarize.RoomSession(enabled=True)
-    _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
-                          _cfg(), turn_id="t1"))
-    assert seen["payload"]["labels"] == ["Alex"]
-    assert seen["payload"]["uncertain"] == []
-
-
-def test_run_pass_defer_fires_no_batch_call(monkeypatch):
-    """THE RETIREMENT PIN (#28 PR-B; deliberately inverts the pre-PR-B
-    test_run_pass_defer_runs_batch): a deferred verdict leaves the turn
-    unnamed - NO ElevenLabs call, NO name, NO metering. Every defer reason
-    takes the same exit. Since #411 that exit writes one marker on the row,
-    with no label and the matcher's reason, so the seats and memory can read
-    that it looked and could not tell."""
-    for reason in ("below_threshold", "ambiguous", "too_short", "not_speech",
-                   "unavailable", "no_candidates", "no_enrolled"):
-        written = []
-        monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
-        monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                            lambda *a, _r=reason, **k: {
-                                "status": "defer", "person_id": None,
-                                "name": None, "score": 0.1, "reason": _r})
-        monkeypatch.setattr(
-            diarize.voice, "transcribe_diarized",
-            lambda *a, **k: pytest.fail("no EL call on a deferred verdict"))
-
-        async def capture(chat_id, commit_ts, payload, session, turn_id=None):
-            written.append(payload)
-            return None
-        monkeypatch.setattr(diarize, "_attach_until_deadline", capture)
-        monkeypatch.setattr(
-            diarize, "_meter",
-            lambda *a: pytest.fail("no metering without a batch call"))
-        session = diarize.RoomSession(enabled=True)
-        _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
-                              _cfg(), turn_id="t1"))
-        assert [w["labels"] for w in written] == [[]]
-        assert written[0]["unresolved"] == reason
-
-
-def test_run_pass_multi_verdict_runs_the_crosstalk_split(monkeypatch):
-    """The ONE surviving ElevenLabs trigger (#28 PR-B): the matcher's window
-    analysis heard overlapping speech, so the batch diarize call runs (with
-    the anchor prefix) for per-word crosstalk splitting, and is metered."""
-    monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: {"status": "defer", "person_id": None,
-                                         "name": None, "score": 0.4,
-                                         "reason": "multi"})
-    ran = {"batch": False, "metered": False, "labelled": False}
-
-    def fake_batch(wav, mime, cfg, num_speakers=None):
-        ran["batch"] = True
-        assert num_speakers == 2          # the roster+1 hint rides along
-        return {"words": []}
-    monkeypatch.setattr(diarize.voice, "transcribe_diarized", fake_batch)
-
-    async def fake_room_label(*a, **k):
-        ran["labelled"] = True
-    monkeypatch.setattr(diarize, "_room_label_pass", fake_room_label)
-    monkeypatch.setattr(diarize, "_meter",
-                        lambda *a: ran.__setitem__("metered", True))
-
-    session = diarize.RoomSession(enabled=True)
-    _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
-                          _cfg(), turn_id="t1"))
-    assert ran == {"batch": True, "metered": True, "labelled": True}
-
-
-def test_run_pass_disabled_does_nothing_automatic(monkeypatch):
-    """#28 PR-B (deliberately replaces the pre-PR-B pin that disabling the
-    matcher ran the EL path): with the matcher off there is NO identity at
-    all - no matcher call, no ElevenLabs call, no labels. Degraded means
-    manual, never wrong."""
-    monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan())
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: pytest.fail("matcher must be untouched"))
-    monkeypatch.setattr(diarize.voice, "transcribe_diarized",
-                        lambda *a, **k: pytest.fail("no EL call with the matcher off"))
-    monkeypatch.setattr(diarize, "_meter",
-                        lambda *a: pytest.fail("no metering either"))
-
-    session = diarize.RoomSession(enabled=True)
-    _run(diarize.run_pass(1, b"\x00\x40" * 32000, 16000, 1000.0, session,
-                          _cfg(voice_id_enabled=False), turn_id="t1"))
 
 
 # ============================ 4c. the sniff is retired ====================
@@ -939,44 +760,15 @@ def test_integration_real_extractor_embeds(tmp_path, monkeypatch):
     assert abs(sum(x * x for x in emb) - 1.0) < 1e-4   # L2-normalised
 
 
-# ── the pending-present bump (#81) ───────────────────────────────────────────
-
-def test_pending_extra_defers_the_borderline_match():
-    """Over the ordinary bar, under the pending-present one: exactly the
-    shape a new guest mislabelled as a remembered person takes - defers,
-    named distinctly, so elimination can bank the pending person."""
-    enr = _enr(p1=("Alex", [1, 0, 0]))
-    q = voiceid.l2_normalize([0.66, 0.75, 0.0])   # cosine ~0.66 to Alex... 
-    v = voiceid.classify_utterance(q, [], enr, threshold=0.6,
-                                   pending_extra=0.08)
-    assert v["status"] == "defer" and v["reason"] == "pending_present"
-    # the same score names confidently once nobody is pending
-    v2 = voiceid.classify_utterance(q, [], enr, threshold=0.6)
-    assert v2["status"] == "match" and v2["name"] == "Alex"
-
-
-def test_pending_extra_never_blocks_a_strong_match():
-    enr = _enr(p1=("Alex", [1, 0, 0]))
-    q = voiceid.l2_normalize([0.98, 0.05, 0.0])
-    v = voiceid.classify_utterance(q, [], enr, threshold=0.6,
-                                   pending_extra=0.08)
-    assert v["status"] == "match" and v["name"] == "Alex"
-
-
-def test_pending_extra_zero_is_the_old_behaviour():
-    enr = _enr(p1=("Alex", [1, 0, 0]))
-    q = voiceid.l2_normalize([0.66, 0.75, 0.0])
-    v = voiceid.classify_utterance(q, [], enr, threshold=0.6, pending_extra=0.0)
-    assert v["status"] == "match"
-
-
 # ── the banking bar (#222) ───────────────────────────────────────────────────
 #
 # A verdict clearing the threshold both LABELLED the turn and BANKED its
 # audio, so borderline wrong matches fed the very bank that produced them -
 # the compounding half of the 2026-08-24 takeover. Naming and banking are
-# split bars now: labelling keeps the threshold, banking demands
-# voice_id_banking_extra on top.
+# split bars: labelling keeps the threshold, banking demands
+# voice_id_banking_extra on top. The session naming's fallback scorer
+# saves clips at this bar (voice_pass.should_bank, pinned in
+# test_voice_pass).
 
 def test_score_banks_splits_the_bars():
     cfg = _cfg()   # threshold 0.5, banking extra 0.1
@@ -987,41 +779,3 @@ def test_score_banks_splits_the_bars():
     assert voiceid.score_banks(0.55, _cfg(voice_id_banking_extra=0)) is True
     # the knob guards like its siblings: junk keeps the default
     assert voiceid.score_banks(0.55, _cfg(voice_id_banking_extra="wat")) is False
-
-
-def test_borderline_match_labels_but_does_not_bank(store):
-    """#222 acceptance, through the accumulation path: a score under the
-    banking bar leaves the matched person's bank untouched - no accumulated
-    clip and no harvested short slice."""
-    before = store["store"].clips_of(store["alex"])
-    diarize._accumulate_fast_anchor(store["alex"], _tone(_ALEX_VAL, 5), 16000,
-                                    _cfg(), score=0.55)
-    assert store["store"].clips_of(store["alex"]) == before
-
-
-def test_strong_match_still_banks_and_harvests(store):
-    before = len(store["store"].clips_of(store["alex"]))
-    diarize._accumulate_fast_anchor(store["alex"], _tone(_ALEX_VAL, 5), 16000,
-                                    _cfg(), score=0.85)
-    clips = store["store"].clips_of(store["alex"])
-    assert len(clips) > before
-    assert any(c["source"] == "harvested-short" for c in clips)
-
-
-def test_fast_label_pass_carries_the_score_to_banking(monkeypatch):
-    """The wiring: the verdict's score reaches _accumulate_fast_anchor, so
-    the banking decision is made from the real match confidence."""
-    seen = {}
-
-    async def fake_attach(chat_id, commit_ts, payload, session, turn_id=None):
-        return 7
-    monkeypatch.setattr(diarize, "_attach_until_deadline", fake_attach)
-    monkeypatch.setattr(diarize, "_accumulate_fast_anchor",
-                        lambda pid, pcm, sr, cfg=None, score=None:
-                        seen.__setitem__("score", score))
-    verdict = {"status": "match", "person_id": "p1", "name": "Alex",
-               "score": 0.55, "reason": "match"}
-    _run(diarize._fast_label_pass(1, b"\x00\x40" * 32000, 16000, 1000.0,
-                                  diarize.RoomSession(enabled=True), _cfg(),
-                                  verdict, turn_id="t1"))
-    assert seen["score"] == 0.55

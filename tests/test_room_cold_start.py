@@ -1,28 +1,32 @@
-"""Cold-start enrolment (#28): a person who forgets their voice can get it
-back by talking.
+"""The first meeting (#28, #482): a voice nobody knows, in a room holding
+one person with no voice saved yet, is named as them by elimination.
 
 THE DEADLOCK. Every door into the anchor bank needed something an empty bank
 does not have. A confident match needs clips to match against. The
 introduction scan needs an introduction-shaped sentence. Tap-to-correct needs
-a label to tap. So once a bank was emptied, the matcher deferred on every
-single turn, nothing ever accumulated, and the seats were told "identity
-pending" over and over about the only person in the room.
+a label to tap. So once a bank was emptied, every turn stayed unnamed and the
+seats were told "identity pending" over and over about the only person in
+the room.
 
-THE WAY OUT is elimination rather than recognition: in an ARMED room holding
-exactly ONE person whose bank cannot identify them yet, an utterance the
-matcher could not place can only be theirs. That is enough to bank the audio
-and to name the turn - marked, honestly, as still being learned.
+THE WAY OUT is elimination rather than recognition: in an ARMED room where
+exactly ONE present person has no learnt voice, a new voice can only be
+theirs. That is enough to name the turn - marked, honestly, as still being
+learned. Nothing is saved from it until someone confirms it: tapping the
+turn, or the person saying their own name.
 
 What these tests pin, in order:
 
-1. The decision table, pure: which verdicts and which rosters qualify, and
-   the four shapes that must never qualify (a multi verdict, two or more
-   people present, a confident match, a matcher that failed outright).
-2. _room_plan derives the by-elimination candidate from the roster it
-   already read - and stops offering one the moment the bank is sufficient.
-3. run_pass end to end: the turn is labelled learning, the audio is banked
-   under source='cold-start', the roster row is linked, and NO ElevenLabs
-   call fires (elimination is free).
+1. The rule, pure (voice_pass.decide): a new voice with exactly one
+   unlearnt person present is named learning; two unlearnt people, a
+   voice still listening, nothing to name, solo and a confident match
+   never are; and a turn with two voices in it is a crosstalk label, never
+   a learning one.
+2. The plan (voice_pass._plan) derives the unlearnt people from the roster
+   it already read, and stops listing someone the moment their bank is
+   sufficient.
+3. The pass end to end: the turn is labelled learning, nothing is saved,
+   the decision is local, and no ElevenLabs call fires; without anyone to
+   eliminate to, the turn names nobody and says why.
 4. The learning state reaches the seats: the projection heads the turn
    "<name> (learning this voice)" - not the pending head, not voice
    confirmed - and the stable-block explainer says what it means.
@@ -36,7 +40,7 @@ import time
 
 import pytest
 
-from backend import anchors, db, diarize, voiceid
+from backend import anchors, crosstalk, db, diarize, voice_pass
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import (LEARNING_SUFFIX, PENDING_IDENTITY_HEAD,
@@ -44,18 +48,7 @@ from backend.providers import (LEARNING_SUFFIX, PENDING_IDENTITY_HEAD,
                                build_anthropic_messages, split_system_prompt)
 from tests.conftest import make_msg
 from tests.test_projection import PARTICIPANT, ROSTER
-from tests.conftest import speech_pcm
-from roomkit import loud_pcm
-
-
-def _defer(reason, score=0.3):
-    return {"status": voiceid.DEFER, "person_id": None, "name": None,
-            "score": score, "reason": reason}
-
-
-def _match(name, pid, score=0.9):
-    return {"status": voiceid.MATCH, "person_id": pid, "name": name,
-            "score": score, "reason": "match"}
+from roomkit import fake_naming, loud_pcm, naming_answer
 
 
 @pytest.fixture
@@ -65,224 +58,165 @@ def app(tmp_path):
     return create_app(settings)
 
 
-# ── 1. the decision table, pure ─────────────────────────────────────────────
-
-def test_every_non_multi_defer_qualifies_when_one_person_is_pending():
-    """The whole point: the reasons a cold bank actually produces - nobody
-    to match against, or a best match under the bar - must all bank. Any
-    other defer does too; there is no reason to be pickier once the room
-    can hold only one person."""
-    for reason in ("no_candidates", "below_threshold", "ambiguous",
-                   "no_enrolled", "too_short", "unavailable"):
-        assert diarize.cold_start_person(_defer(reason), "Alex") == "Alex", reason
+def _plan(**kw):
+    base = {"room_on": True, "solo": False, "present": ["Sam", "Dave"],
+            "unlearnt": ["Dave"], "owner_known": True,
+            "is_owner": lambda n: n == "Sam"}
+    base.update(kw)
+    return base
 
 
-def test_a_multi_verdict_never_qualifies():
-    """Overlapping speech is the one thing elimination cannot survive: two
-    people spoke, so the audio is ground truth for neither. It has its own
-    path (the crosstalk split) and must keep it."""
-    assert diarize.cold_start_person(_defer(voiceid.MULTI), "Alex") is None
+# ── 1. the rule, pure ───────────────────────────────────────────────────────
+
+def test_a_new_voice_with_one_unlearnt_person_is_named_learning():
+    d = voice_pass.decide(naming_answer("new"), _plan())
+    assert d["labels"] == ["Dave"] and d["uncertain"] == ["Dave"]
+    assert d["learning"] is True
+    assert d["arm"] is None and d["seat"] is None and not d["ask"]
 
 
-def test_two_or_more_unidentifiable_people_never_qualify():
-    """_room_plan offers no candidate unless exactly one present person is
-    unidentifiable (reworded by remembered-first, #28 fourteenth field
-    test - the rule generalised from one present person TOTAL); with two
-    unplaceable people in the room the audio could be either, which is
-    what the ask-fallback exists for."""
-    assert diarize.cold_start_person(_defer("below_threshold"), None) is None
-    assert diarize.cold_start_person(_defer("below_threshold"), "") is None
+def test_two_or_more_unlearnt_people_never_qualify():
+    """With two unlearnt people in the room the voice could be either,
+    which is what the ask exists for."""
+    d = voice_pass.decide(naming_answer("new"),
+                          _plan(unlearnt=["Dave", "Mateo"]))
+    assert d["labels"] == [] and d["unresolved"] == "new_voice"
+    assert d["ask"] is True
 
 
 def test_a_confident_match_never_qualifies():
-    """A named turn already has a better answer than elimination, and the
-    ordinary accumulation path takes it."""
-    assert diarize.cold_start_person(_match("Sam", "p1"), "Sam") is None
-    assert diarize.cold_start_person(_match("Sam", "p1"), "Alex") is None
+    """A named turn already has a better answer than elimination."""
+    d = voice_pass.decide(naming_answer(name="Mateo", pid="p3"), _plan())
+    assert d["labels"] == ["Mateo"] and not d["learning"]
 
 
-def test_a_failed_matcher_never_qualifies():
-    """verdict None means the matcher itself fell over - it did not defer,
-    it did not answer. Banking is cheap to skip and awkward to undo, so an
-    unknown state skips."""
-    assert diarize.cold_start_person(None, "Alex") is None
-    assert diarize.cold_start_person({}, "Alex") is None
+def test_listening_nothing_to_name_and_solo_never_qualify():
+    """A voice with too little speech to judge, a turn the naming had
+    nothing for (not speech, or the model not ready), and solo each leave
+    the turn unnamed: elimination needs a clear voice and an armed room."""
+    for got, plan in ((naming_answer("listening"), _plan()),
+                      (None, _plan()),
+                      (naming_answer("new"), _plan(solo=True)),
+                      (naming_answer("new"), _plan(room_on=False))):
+        d = voice_pass.decide(got, plan)
+        assert not d["learning"] and d["labels"] == [], (got, plan)
 
 
-# ── 2. _room_plan derives the candidate ─────────────────────────────────────
+def test_a_two_voice_turn_is_crosstalk_never_learning():
+    """Overlapping speech is the one thing elimination cannot survive: two
+    people spoke, so the label lists both voices, and the unlearnt person's
+    name is on neither."""
+    got = naming_answer("new", voices_in_turn=2, voices={
+        0: {"state": "new", "name": "", "seconds": 2.0, "first": 0.0},
+        1: {"state": "listening", "name": "", "seconds": 1.5,
+            "first": 1.0}}, spans=[], turn_s=3.5)
+    listed = crosstalk.listed_voices(got)
+    assert len(listed) == 2
+    payload = crosstalk.label(got, listed, None)
+    assert payload["crosstalk"] is True and "learning" not in payload
+    assert "Dave" not in payload["labels"]
 
-def test_room_plan_offers_the_one_pending_person_and_stops_when_sufficient(app):
+
+# ── 2. the plan derives the unlearnt people ─────────────────────────────────
+
+def test_the_plan_lists_the_unlearnt_and_stops_once_the_bank_is_sufficient(
+        app):
     from fastapi.testclient import TestClient
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
         con = db.connect()
         try:
-            db.add_room_person(con, chat["id"], "Alex")
+            db.set_chat_room_mode(con, chat["id"], True)
+            db.add_room_person(con, chat["id"], "Dave")
         finally:
             con.close()
-        # Empty bank: Alex is the by-elimination candidate.
-        assert diarize._room_plan(chat["id"], 16000)[4] == "Alex"
-        # A second UNIDENTIFIABLE person ends it - elimination needs one
-        # door. (Deliberately reworded by remembered-first, #28 fourteenth
-        # field test: the rule generalised from "exactly one present
-        # person" to "exactly one present person whose bank cannot
-        # identify them"; Sam here has no bank, so both people are
-        # unidentifiable and the candidate honestly disappears. The
-        # sufficient-other-people shape is pinned in
-        # test_room_remembered_first.)
-        con = db.connect()
-        try:
-            db.add_room_person(con, chat["id"], "Sam")
-        finally:
-            con.close()
-        assert diarize._room_plan(chat["id"], 16000)[4] is None
-
-
-def test_room_plan_stops_offering_once_the_bank_is_sufficient(app):
-    from fastapi.testclient import TestClient
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        plan = voice_pass._plan(chat["id"], {"user_name": "Alex"})
+        assert plan["unlearnt"] == ["Dave"] and plan["room_on"] is True
         store = anchors.store()
-        pid = store.ensure_person("Alex")
+        pid = store.ensure_person("Dave")
         store.add_clip(pid, loud_pcm(anchors.SUFFICIENT_SECONDS + 1), 16000,
                        source="introduction")
         con = db.connect()
         try:
-            db.add_room_person(con, chat["id"], "Alex", person_id=pid)
+            db.link_room_person(con, chat["id"], "Dave", pid)
         finally:
             con.close()
-        # Alex can be identified now, so cold start has nothing left to do -
+        # Dave can be named now, so elimination has nothing left to do -
         # this is the exit condition, and it is what ends the deadlock.
-        assert diarize._room_plan(chat["id"], 16000)[4] is None
+        assert voice_pass._plan(chat["id"],
+                                {"user_name": "Alex"})["unlearnt"] == []
 
 
-# ── 3. run_pass end to end ──────────────────────────────────────────────────
+# ── 3. the pass end to end ──────────────────────────────────────────────────
 
-def _plan(solo_pending):
-    # The trailing [] is _room_plan's remembered-first candidate list (#28,
-    # fourteenth field test) - the plan tuple grew when the armed pass's
-    # candidates became every sufficient remembered person. Empty keeps
-    # these pins exercising the defer/cold-start paths unchanged.
-    return (b"", [], ["Alex"], 2, solo_pending, [])
-
-
-def test_cold_start_labels_learning_banks_the_audio_and_calls_no_cloud(
-        app, monkeypatch):
+def _room(app, *people):
     from fastapi.testclient import TestClient
-    monkeypatch.setattr(diarize, "_room_plan",
-                        lambda *a, **k: _plan("Alex"))
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: _defer("below_threshold"))
-    monkeypatch.setattr(
-        diarize.voice, "transcribe_diarized",
-        lambda *a, **k: pytest.fail("cold start must make NO ElevenLabs call"))
-    seen = {}
-
-    async def fake_attach(chat_id, commit_ts, payload, session, turn_id=None):
-        seen["payload"] = payload
-        return 77
-    monkeypatch.setattr(diarize, "_attach_until_deadline", fake_attach)
-
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        con = db.connect()
-        try:
-            db.add_room_person(con, chat["id"], "Alex")
-        finally:
-            con.close()
-        session = diarize.RoomSession(enabled=True)
-        asyncio.run(diarize.run_pass(chat["id"], loud_pcm(3.0), 16000,
-                                     time.time(), session, {}, turn_id="t1"))
-
-    payload = seen["payload"]
-    assert payload["learning"] is True
-    assert payload["labels"] == ["Alex"]
-    # The name rides `uncertain` too, so every consumer written before the
-    # learning marker existed keeps treating it as a guess rather than a
-    # confident identification.
-    assert payload["uncertain"] == ["Alex"]
-    assert payload["source"] == diarize.COLD_START_SOURCE
-
-    # The audio is banked, tagged with how it was earned, and the roster row
-    # is linked - 'anchor pending' honestly ends for Alex.
-    people = anchors.store().people()
-    assert [p["name"] for p in people] == ["Alex"]
-    assert people[0]["clip_count"] == 1
     con = db.connect()
     try:
-        roster = db.get_room_roster(con, chat["id"])
+        db.set_chat_room_mode(con, chat["id"], True)
+        for name, pid in people:
+            db.add_room_person(con, chat["id"], name, person_id=pid)
     finally:
         con.close()
-    assert roster[0]["person_id"] == people[0]["person_id"]
+    return chat["id"]
 
 
-def test_cold_start_records_the_local_pulse(app, monkeypatch):
-    """A by-elimination decision IS a decision the health strip should show,
-    and it came from this device, so it stamps a 'local' pulse."""
-    from fastapi.testclient import TestClient
-    monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan("Alex"))
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: _defer("no_candidates"))
-    monkeypatch.setattr(diarize, "_bank_cold_start", lambda *a, **k: None)
-
-    async def fake_attach(*a, **k):
-        return 5
-    monkeypatch.setattr(diarize, "_attach_until_deadline", fake_attach)
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        session = diarize.RoomSession(enabled=True)
-        asyncio.run(diarize.run_pass(chat["id"], loud_pcm(3.0), 16000,
-                                     time.time(), session, {}))
-        got = diarize.last_decision(chat["id"])
-        assert got and got["path"] == "local"
-
-
-def test_without_a_candidate_a_defer_names_nobody_and_says_why(app, monkeypatch):
-    """THE RETIREMENT PIN (#28 PR-B), with #411's one addition: outside the
-    cold-start shape a deferred verdict leaves the turn unnamed - no name,
-    no banking, no cloud call - and the row now carries the matcher's own
-    reason, so the seats and memory can read that it looked and could not
-    tell. The write holds no label of any kind."""
-    from fastapi.testclient import TestClient
-    written = []
-    monkeypatch.setattr(diarize, "_room_plan", lambda *a, **k: _plan(None))
-    monkeypatch.setattr(diarize.voiceid, "identify_utterance",
-                        lambda *a, **k: _defer("below_threshold"))
+def _run(chat_id, monkeypatch, got, written):
+    fake_naming(monkeypatch)["answers"] = [got]
     monkeypatch.setattr(
-        diarize.voice, "transcribe_diarized",
-        lambda *a, **k: pytest.fail("no cloud call on a defer"))
+        "backend.voice.httpx.post",
+        lambda *a, **k: pytest.fail("the check must make NO ElevenLabs call"))
 
     async def capture(chat_id, commit_ts, payload, session, turn_id=None):
         written.append(payload)
         return None
     monkeypatch.setattr(diarize, "_attach_until_deadline", capture)
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        session = diarize.RoomSession(enabled=True)
-        asyncio.run(diarize.run_pass(chat["id"], loud_pcm(3.0), 16000,
-                                     time.time(), session, {}))
-        decision = diarize.last_decision(chat["id"])
-        assert decision["path"] == diarize.DECISION_UNRESOLVED
-        assert decision["reason"] == "below_threshold"
-        assert anchors.store().people() == []
-        assert written == [{"clusters": ["local"], "labels": [], "uncertain": [],
-                            "source": "local", "unresolved": "below_threshold"}]
+    asyncio.run(voice_pass.run(chat_id, loud_pcm(3.0), 16000, time.time(),
+                               diarize.RoomSession(), {"user_name": "Alex"},
+                               None))
 
 
-def test_a_clip_that_fails_the_quality_gate_is_not_banked(app):
-    """A cold start is a reason to accumulate, never a reason to accept
-    noise: the ordinary quality gate still decides what lands in the bank."""
-    from fastapi.testclient import TestClient
-    with TestClient(app, base_url="http://127.0.0.1") as c:
-        chat = c.post("/api/chats", json={"participant_ids": []}).json()
-        con = db.connect()
-        try:
-            db.add_room_person(con, chat["id"], "Alex")
-        finally:
-            con.close()
-        diarize._bank_cold_start(chat["id"], "Alex", b"\x01\x00" * 48000,
-                                 16000, {})
-        assert anchors.store().people()[0]["clip_count"] == 0
+def test_the_first_meeting_labels_learning_saves_nothing_and_stays_local(
+        app, monkeypatch):
+    from roomkit import _remember
+    owner = _remember("Alex")
+    chat = _room(app, ("Alex", owner), ("Dave", ""))
+    written = []
+    _run(chat, monkeypatch, naming_answer("new"), written)
+    payload = written[0]
+    assert payload["learning"] is True
+    assert payload["labels"] == ["Dave"]
+    # The name rides `uncertain` too, so every consumer written before the
+    # learning marker existed keeps treating it as a guess rather than a
+    # confident identification.
+    assert payload["uncertain"] == ["Dave"]
+    assert payload["source"] == "session"
+    # Nothing is saved until someone confirms it.
+    dave = anchors.store().find_by_name("Dave")
+    assert dave is None or dave["clip_count"] == 0
+    # A by-elimination decision IS a decision the health strip should show,
+    # and it came from this device, so it stamps a 'local' pulse.
+    assert diarize.last_decision(chat)["path"] == "local"
+
+
+def test_without_anyone_to_eliminate_to_a_new_voice_names_nobody(
+        app, monkeypatch):
+    """Outside the first-meeting shape a new voice leaves the turn unnamed
+    - no name, nothing saved, no cloud call - and the row carries the
+    reason, so the seats and memory can read that it looked and could not
+    tell."""
+    chat = _room(app)
+    written = []
+    _run(chat, monkeypatch, naming_answer("new"), written)
+    decision = diarize.last_decision(chat)
+    assert decision["path"] == diarize.DECISION_UNRESOLVED
+    assert decision["reason"] == "new_voice"
+    assert anchors.store().people() == []
+    assert written == [{"clusters": ["session"], "labels": [],
+                        "uncertain": [], "source": "session",
+                        "unresolved": "new_voice"}]
 
 
 # ── 4. the learning state reaches the seats ─────────────────────────────────

@@ -65,7 +65,7 @@ def world(tmp_path):
                            seated_via="voice-match")
     finally:
         con.close()
-    # What _accumulate_fast_anchor did with the mis-matched utterance.
+    # What an automatic save from the mis-matched utterance left behind.
     assert store.add_clip(dave, utterance, 16000, source="accumulated")
     anchors.remember_audio(message_id, utterance, 16000, 1)
     return {"app": app, "cfg": cfg, "chat_id": chat_id,

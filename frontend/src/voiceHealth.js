@@ -114,8 +114,9 @@ export function modeReadout(health) {
 }
 
 // The live pulse: the most recent identification's path and latency.
-// "local · 227ms" or "cloud · 1.9s"; 'pending' while a session is live but
-// no decision has landed yet; null with no live session and nothing to say.
+// "local · 227ms"; 'pending' while a session is live but no decision has
+// landed yet; null with no live session and nothing to say. Every voice is
+// named on this device (#482), so there is no other path to show.
 // Why a turn went unnamed, in plain English (#28, thirteenth field test).
 // "Identity pending" hid two different problems: audio too poor to judge,
 // versus heard clearly but not sure who. The matcher already computes the
@@ -125,7 +126,7 @@ export const UNRESOLVED_COPY = {
   not_speech: ['not a voice', 'That sound was not speech, so no match was attempted.'],
   below_threshold: ['voice not recognised', 'Heard clearly, but it did not match a remembered voice closely enough.'],
   ambiguous: ['too close to call', 'It sat between two remembered voices, so it was left unnamed rather than guessed.'],
-  multi: ['more than one voice', 'Two people spoke over each other, so the turn went to the crosstalk split.'],
+  multi: ['more than one voice', 'Two people spoke over each other, so the turn was not named.'],
   no_candidates: ['no voices learnt yet', 'Nobody in this room has enough voice banked to match against.'],
   unavailable: ['matcher not ready', 'The on-device matcher was not available for that turn.'],
   disabled: ['matching off', 'Voice identification is switched off.'],
@@ -145,21 +146,16 @@ export function pulseReadout(lastDecision, sessionActive = false) {
   }
   if (!lastDecision || typeof lastDecision !== 'object'
       || typeof lastDecision.ms !== 'number'
-      || (lastDecision.path !== 'local' && lastDecision.path !== 'cloud')) {
+      || lastDecision.path !== 'local') {
     return sessionActive
       ? { label: 'pending', title: 'No spoken turn has been identified yet this session.' }
       : null
   }
   const ms = Math.max(0, lastDecision.ms)
   const shown = ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
-  // 'cloud' now means exactly one thing (#28 PR-B): the crosstalk split -
-  // the only ElevenLabs pass left after the identity fallback retired.
-  const how = lastDecision.path === 'local'
-    ? 'identified on this device'
-    : 'untangled by the cloud crosstalk split (overlapping voices)'
   return {
-    label: `${lastDecision.path} · ${shown}`,
-    title: `The last spoken turn was ${how} in ${shown}.`,
+    label: `local · ${shown}`,
+    title: `The last spoken turn was identified on this device in ${shown}.`,
   }
 }
 

@@ -1,12 +1,12 @@
-"""The calibrated voice scorer and the readiness test (#482 stage 2).
+"""The calibrated voice scorer and the readiness test (#482).
 
-Groundwork for the voice identity redesign (docs/VOICE_ID_REDESIGN.md:
+Part of the voice identity redesign (docs/VOICE_ID_REDESIGN.md:
 "Fingerprint the clean speech", "Name each voice", "When a voice is
-ready"). NOTHING HERE NAMES A TURN. Live naming, labels and banking still
-run through voiceid.identify_utterance and the old sufficiency bar. This
-module builds, in the background, the scorer the next stage will name
-voices with, and a readiness verdict per person for the Voices page and
-the settle rule (see READINESS).
+ready"). This module builds, in the background, the scorer the session
+naming (backend/voice_sessions.py) names voices with once a snapshot is
+ready, and a readiness verdict per person for the Voices page and the
+settle rule (see READINESS). Nothing here labels a turn: the session
+naming reads current() and probability().
 
 THE SCORER, the configuration the stage 1 naming spike recommended:
 
@@ -73,9 +73,8 @@ THE RULES, pinned in tests/test_voice_calibration.py:
     bank change (an anchors change listener, debounced). Request threads
     only read the last finished snapshot.
   * The live path goes first. Every embedding waits, briefly and
-    boundedly, for a live identity pass in flight, the way the shadow
-    test does, and holds the live matcher's lock for one embedding at a
-    time, through voiceid._embed.
+    boundedly, for a voice check in flight, and holds the live matcher's
+    lock for one embedding at a time, through voiceid._embed.
   * Cached. Fingerprints are kept in memory per clip file and content
     hash, so a refit after a bank change embeds only the new clips, and
     the fit itself takes a fraction of a second. Nothing is written to
@@ -401,9 +400,9 @@ def verdict(pieces, named_right, named_as_other, days, calibrated):
 # ================= fingerprints (the embedding seam) ==========================
 
 def _wait_for_quiet():
-    """Let a live identity pass go first, as the shadow test does: a
-    background embedding in flight could hold up the next turn's check by
-    one embedding. Bounded by QUIET_WAIT_MAX_S."""
+    """Let a voice check in flight go first: a background embedding could
+    hold up the next turn's check by one embedding. Bounded by
+    QUIET_WAIT_MAX_S."""
     from . import diarize
     deadline = time.monotonic() + QUIET_WAIT_MAX_S
     while diarize._TASKS and time.monotonic() < deadline:
@@ -784,7 +783,7 @@ def status(cfg) -> dict:
 
 # ================= ERes2Net's extractor =======================================
 # cold -> fetching -> ready | unavailable, on its own daemon thread, like the
-# shadow test's second model. Sticky: a restart tries again.
+# matcher's own model. Sticky: a restart tries again.
 
 def eres2net_path() -> Path:
     return Path(db.DATA_DIR) / voiceid.MODELS_DIR_NAME / ERES2NET["file"]

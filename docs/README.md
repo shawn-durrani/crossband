@@ -20,8 +20,9 @@ you, or an AI assistant you paste it to, can do the task it covers.
    something in README.md says "configured in `config.local.json`".
 4. [docs/VOICE_ID.md](VOICE_ID.md): how the app tells voices apart in
    room mode, where that falls short in a house it wasn't tuned in, and
-   what to change. How room mode hears what you say, the English bias,
-   every tuning knob, similar-sounding voices, and the scale bounds.
+   what to change. How a turn is named, how the room switches on, how a
+   voice is learnt, the English bias, every tuning knob,
+   similar-sounding voices, and the scale bounds.
 5. [docs/BENCHMARK.md](BENCHMARK.md): the benchmark on the Models page.
    The same scripted cases through the seats you pick, stage timings
    side by side, saved audio for your own ears, and what the numbers
@@ -70,11 +71,11 @@ it appears.
 5. [docs/LATENCY.md](LATENCY.md): where the wait before a reply goes,
    how to measure it on your own install, and the two ways the numbers
    mislead.
-6. [docs/VOICE_ID_REDESIGN.md](VOICE_ID_REDESIGN.md): the plan to
-   replace how the app names voices. It follows each voice through a
-   session and names the voice once, with a score calibrated to your
-   household. Read it beside docs/VOICE_ID.md, which covers what runs
-   today.
+6. [docs/VOICE_ID_REDESIGN.md](VOICE_ID_REDESIGN.md): the plan behind
+   how the app names voices. It follows each voice through a session
+   and names the voice once, with a score calibrated to your household,
+   and it says why each piece was chosen. docs/VOICE_ID.md covers what
+   runs.
 
 ### The eval harnesses, by kind
 

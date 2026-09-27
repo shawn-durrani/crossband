@@ -224,13 +224,19 @@ def test_low_trust_pause_honours_the_already_seated_exception(app):
         assert _candidate_ids(store, rostered={pid}) == {pid}
 
 
-def test_accumulation_stamps_the_match_score(app):
+def test_a_saved_clip_stamps_the_match_score(app):
+    """The score a clip was saved at rides it (#221), so a bank that
+    outlives its human backing can be judged by it."""
     with TestClient(app, base_url="http://127.0.0.1"):
-        from backend import diarize
+        from backend import voice_pass, voice_sessions
         store = anchors.store()
         pid = store.ensure_person("Alex")
-        diarize._accumulate_fast_anchor(pid, _pcm(5.0), 16000, {}, score=0.71)
+        voice_sessions._sessions[1] = {"id": "s1", "voices": {},
+                                       "turn_voice": []}
+        got = {"state": "named", "pid": pid, "voice": 0, "score": 0.71,
+               "prob": 0.995, "method": "calibrated", "voice_clean_s": 9.0,
+               "clean_spans": [(0.0, 5.0)], "voices_in_turn": 1}
+        assert voice_pass._bank(1, got, _pcm(5.0), 16000, {})
         clips = store._load()["people"][pid]["clips"]
         assert clips and all(c.get("match_score") == 0.71 for c in clips)
-        assert {c["source"] for c in clips} == {"accumulated",
-                                               "harvested-short"}
+        assert {c["source"] for c in clips} == {"accumulated"}

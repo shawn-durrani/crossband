@@ -5,8 +5,9 @@
 // stream to the relay kept every third sample, so sounds above 8 kHz
 // folded down into the speech band.
 // Pins: the mic is asked for the same setting in solo and in room mode;
-// changing mode mid-session leaves the mic alone and tells the relay only
-// the mode; and the relay still gets one 16 kHz PCM-16 frame per mic
+// changing mode mid-session leaves the mic alone and sends the relay
+// nothing (#482: the server reads the room from the chat on every turn);
+// and the relay still gets one 16 kHz PCM-16 frame per mic
 // callback, pre-roll included, made by the resampler with its filter
 // carried across callbacks, and a pause in capture starts it afresh.
 // Run: node --test frontend/src/voiceMicSetting.test.js
@@ -168,18 +169,15 @@ test('solo and room mode ask the mic for the same setting', async () => {
   assert.deepEqual(asked, [{ audio: SETTING }, { audio: SETTING }])
 })
 
-test('changing mode leaves the live mic alone and tells the relay only the mode', async () => {
+test('changing mode leaves the live mic alone and sends the relay nothing', async () => {
   const ctrl = await started()
   ctrl.setRoomMode(true)
   ctrl.setRoomMode(false)
   ctrl.setRoomMode(true)
+  assert.equal(ctrl.roomMode, true)
   assert.deepEqual(reapplied, [], 'the live track was never re-asked')
   assert.equal(asked.length, 1, 'and no second mic was opened')
-  const [init, ...toggles] = controlFrames(ctrl)
-  assert.deepEqual(init, { chat_id: 7, sample_rate: 16000, room_mode: false })
-  assert.deepEqual(toggles, [{ sample_rate: 16000, room_mode: true },
-                             { sample_rate: 16000, room_mode: false },
-                             { sample_rate: 16000, room_mode: true }])
+  assert.deepEqual(controlFrames(ctrl), [{ chat_id: 7, sample_rate: 16000 }])
 })
 
 for (const micRate of [48000, 44100]) {

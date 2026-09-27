@@ -837,16 +837,20 @@ def test_every_reason_the_matcher_gives_has_words_everywhere():
     """#484: voiceid could defer with pending_present and no_enrolled, which
     no list knew. The row still carried the reason, so memory filed the turn
     as an unknown guest while the seats read it as the owner. Every reason
-    voiceid can return is in DEFER_REASONS, and the browser's copy covers
-    the same set as the seats' copy."""
+    voiceid or the voice check can write is in DEFER_REASONS - and the
+    retired ones stay, because labels already stored carry them - and the
+    browser's copy covers the same set as the seats' copy."""
     import re as _re
     from pathlib import Path
-    from backend import diarize
+    from backend import diarize, voice_pass
     root = Path(__file__).resolve().parents[1]
     src = (root / "backend" / "voiceid.py").read_text()
     given = set(_re.findall(r'_defer\(\s*"([a-z_]+)"', src))
-    assert {"pending_present", "no_enrolled", "below_threshold"} <= given
+    given |= {voice_pass.LISTENING, voice_pass.NEW_VOICE}
+    assert {"no_enrolled", "below_threshold", "listening",
+            "new_voice"} <= given
     assert given <= diarize.DEFER_REASONS, given - diarize.DEFER_REASONS
+    assert {"pending_present", "multi"} <= diarize.DEFER_REASONS
     js = (root / "frontend" / "src" / "voiceHealth.js").read_text()
     block = js.split("export const UNRESOLVED_COPY = {", 1)[1].split("\n}", 1)[0]
     keys = set(_re.findall(r"^\s*([a-z_]+):", block, _re.M))

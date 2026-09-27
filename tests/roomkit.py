@@ -18,6 +18,11 @@ only difference was a default:
   superset.
 
 Import what you need. Nothing here is a fixture, so nothing here is magic.
+
+`fake_naming` and `naming_answer` (#482) stand in for the session naming,
+the one seam every voice-check suite drives: with no diariser configured,
+every turn is named on its own (voice_sessions.name_single_turn), so
+patching that one function decides what the pass hears for each turn.
 """
 import json
 import time
@@ -118,3 +123,36 @@ def as_utility_completion(reply_fn, *, input_tokens=120, output_tokens=8):
         return llm_util.UtilityCompletion(text=text, input_tokens=input_tokens,
                                           output_tokens=output_tokens)
     return fake
+
+
+def naming_answer(state="named", name="", pid="", score=0.97, **kw):
+    """One turn's answer from the session naming, as the pass reads it: one
+    voice, `state` named, listening or new."""
+    got = {"voice": 0, "state": state, "name": name, "pid": pid,
+           "score": score if state == "named" else None,
+           "prob": score if state == "named" else None, "human": False,
+           "method": "calibrated", "voice_clean_s": 3.0,
+           "clean_spans": [(0.0, 3.0)], "voices_in_turn": 1,
+           "overlap_s": 0.0, "single": True}
+    got.update(kw)
+    return got
+
+
+def fake_naming(monkeypatch):
+    """Stand in for the session naming (#482). Every turn is named on its
+    own, so voice_sessions.name_single_turn answers from a FIFO of
+    `answers` (None, "not speech", once they run out). `gate` (a
+    threading.Event) wedges the naming open; `calls` counts turns and
+    `pcms` keeps the audio each turn was named from."""
+    from backend import voice_sessions
+    state = {"answers": [], "calls": 0, "gate": None, "pcms": []}
+
+    def fake(chat_id, pcm, sample_rate, cfg):
+        if state["gate"] is not None:
+            state["gate"].wait(10)
+        state["calls"] += 1
+        state["pcms"].append(pcm)
+        return state["answers"].pop(0) if state["answers"] else None
+
+    monkeypatch.setattr(voice_sessions, "name_single_turn", fake)
+    return state
