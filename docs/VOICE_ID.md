@@ -98,6 +98,17 @@ counts for the voice it moved to, and the turn is labelled by that
 voice. The session rows at `GET /api/voice/sessions?rows=true` list
 every move with its scores.
 
+### When a session ends
+
+When the session ends, after 10 minutes with no speech, the app names
+every session voice once more from everything it heard. A turn whose
+name changed is relabelled, and so is a turn that never got its name,
+like the session's last turn. A turn whose voice ends the session with
+no name keeps the label it has. This last naming adds or changes a
+name, and it never takes one off. A name you set yourself and a turn
+with two voices are never touched. The session rows record the pass,
+with why the session ended and how many turns it relabelled.
+
 ### How a voice is named
 
 Two scorers can name a voice. The calibrated scorer is the one the app

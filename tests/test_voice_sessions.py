@@ -48,6 +48,12 @@ What these tests pin, in order:
    two people or splitting one. The bar is strict: enough evidence behind
    the voice it joins, a high score, and a clear lead over every rival.
    A normal session moves nothing, and every move is on the row.
+13. THE END-OF-SESSION PASS. When a session ends, on the feed thread and
+   before it's closed, every voice is named once more and each turn
+   whose name changed is relabelled, the last turn included. A voice
+   that ends unnamed takes no name off, corrections and crosstalk are
+   never touched, a failed session gets no pass, and the pass writes one
+   content-free row that the view counts apart from the turns.
 
 Keyless and offline: the diariser and the speaker model are fakes.
 Synthetic roster (Alex, Sam).
@@ -528,7 +534,8 @@ def test_the_feed_never_writes_to_the_store(fakes, monkeypatch):
 ROW_KEYS = {"v", "at", "chat_id", "turn_id", "message_id", "seconds",
             "session", "turn", "offset", "spans", "main", "main_state",
             "main_name", "voices", "bar", "embedded", "people", "ms",
-            "filled", "method", "error", "pieces", "moved", "span_lead"}
+            "filled", "method", "error", "pieces", "moved", "span_lead", "end", "turns",
+            "renamed"}
 
 
 def test_rows_are_content_free_and_owner_only(fakes):
@@ -1330,3 +1337,185 @@ def test_a_normal_session_moves_nothing(fakes, monkeypatch):
     leads = [r["span_lead"] for r in rows if "span_lead" in r]
     assert leads and max(leads) < 0
     assert vss._sessions[3]["voices"][2]["clean_s"] == 4.0
+
+
+# ---------- 13. the end-of-session pass ----------
+
+def _stale(monkeypatch):
+    """The clock moves past the idle limit: the next turn finds the
+    session stale and it ends."""
+    now = [vss.time.time() + vss.SESSION_IDLE_S + 5]
+    monkeypatch.setattr(vss.time, "time", lambda: now[0])
+
+
+def _end_row(session):
+    return next((r for r in vss.read_rows()
+                 if r.get("end") and r.get("session") == session), None)
+
+
+SURE = {"clusters": ["session"], "labels": ["Sam"], "uncertain": [],
+        "source": "session", "score": 0.97}
+
+
+def test_the_end_pass_names_the_sessions_last_turn(app, fakes, monkeypatch):
+    """No later turn ever fills a session's last turn, so a message whose
+    label never landed stayed unnamed. The pass at the end names it."""
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}],
+                    [{"slot": 1, "start": 0.0, "end": 2.0}]]
+    assert _live(chat, "t1", 3.0)["name"] == "Sam"
+    mid = _msg(chat, "t1", UNNAMED)       # its label never landed
+    _stale(monkeypatch)
+    _live(chat, "t2", 2.0)                # the next session's first turn
+    row = _wait_for(lambda: _end_row("s1"))
+    assert (row["end"], row["turns"], row["filled"]) == ("idle", 1, 1)
+    assert row["voices"]["1"]["name"] == "Sam" and row["renamed"] == []
+    assert _labels(mid)["labels"] == ["Sam"]
+    assert fakes.opened == 2 and ("DELETE", "/sessions/s1", 0) in fakes.calls
+
+
+def test_the_end_pass_writes_only_names_that_changed(app, fakes,
+                                                     monkeypatch):
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}], []]
+    _live(chat, "t1", 3.0)
+    mid = _msg(chat, "t1", SURE)          # the pass already said Sam
+    _stale(monkeypatch)
+    _live(chat, "t2", 1.0)
+    assert _wait_for(lambda: _end_row("s1"))["filled"] == 0
+    assert _labels(mid) == SURE
+
+
+def test_a_changed_name_is_relabelled_and_nothing_else_moves(app, fakes,
+                                                             monkeypatch):
+    """By the end of the session the banks name Sam's voice Samuel, and
+    Alex's voice is no longer anyone the banks know. Sam's plain turn takes
+    the new name. Alex's turn keeps its name: the pass never takes one off.
+    A corrected turn and a two-voice turn on Sam's voice are left alone."""
+    seq = [SAM, ALEX, SAM, SAM]
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: seq.pop(0))
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}],
+                    [{"slot": 2, "start": 3.0, "end": 6.0}],
+                    [{"slot": 1, "start": 6.0, "end": 8.0}],
+                    [{"slot": 1, "start": 8.0, "end": 10.0}], []]
+    for n, secs in enumerate((3.0, 3.0, 2.0, 2.0), start=1):
+        _live(chat, f"t{n}", secs)
+    alex = dict(SURE, labels=["Alex"], owner=True)
+    corrected = {"clusters": [], "labels": ["Dave"], "uncertain": [],
+                 "corrected": True, "source": "correction"}
+    crosstalk = {"clusters": ["session"], "labels": ["Sam", "Voice 2"],
+                 "uncertain": ["Voice 2"], "source": "session",
+                 "crosstalk": True}
+    ids = {"t1": _msg(chat, "t1", SURE), "t2": _msg(chat, "t2", alex),
+           "t3": _msg(chat, "t3", corrected),
+           "t4": _msg(chat, "t4", crosstalk)}
+    monkeypatch.setattr(vss, "bank", lambda cands, sr, cfg, before,
+                        embed_fn=None: {
+        "sam": {"name": "Samuel", "clips": [SAM]}})
+    _stale(monkeypatch)
+    _live(chat, "t5", 1.0)
+    row = _wait_for(lambda: _end_row("s1"))
+    assert row["filled"] == 1 and row["renamed"] == [1, 2]
+    assert row["voices"]["2"]["state"] == "listening"
+    assert _labels(ids["t1"])["labels"] == ["Samuel"]
+    assert _labels(ids["t2"]) == alex
+    assert _labels(ids["t3"]) == corrected
+    assert _labels(ids["t4"]) == crosstalk
+
+
+def test_the_end_pass_runs_on_the_feed_thread_before_the_close(
+        app, fakes, monkeypatch):
+    import threading
+    seen = []
+    real_fill, real_close = vss.fill_labels, vss._close
+
+    def fill(*a, **k):
+        seen.append(("fill", threading.current_thread().name))
+        return real_fill(*a, **k)
+
+    def close(sess):
+        seen.append(("close", sess["id"]))
+        real_close(sess)
+    monkeypatch.setattr(vss, "fill_labels", fill)
+    monkeypatch.setattr(vss, "_close", close)
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}], []]
+    _live(chat, "t1", 3.0)
+    _stale(monkeypatch)
+    got = _live(chat, "t2", 1.0)          # its answer comes first
+    assert got is None and _wait_for(lambda: ("close", "s1") in seen)
+    feed = f"voice-session-feed-{chat}"
+    assert seen[-2:] == [("fill", feed), ("close", "s1")]
+    assert all(who == feed for what, who in seen if what == "fill")
+
+
+def test_a_quiet_feed_ends_its_session_with_the_pass(app, fakes,
+                                                     monkeypatch):
+    """The feed thread exits after the idle limit, and the session it
+    held gets its pass before it's closed."""
+    monkeypatch.setattr(vss, "SESSION_IDLE_S", 0.4)
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}]]
+    _live(chat, "t1", 3.0)
+    row = _wait_for(lambda: _end_row("s1"), timeout=5)
+    assert row["end"] == "idle" and row["voices"]["1"]["name"] == "Alex"
+    assert _wait_for(lambda: ("DELETE", "/sessions/s1", 0) in fakes.calls)
+    assert _wait_for(lambda: chat not in vss._feeds)
+
+
+def test_a_new_diariser_url_ends_the_session_for_the_pass(app, fakes):
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}]]
+    _live(3, "t1", 3.0)
+    ended = []
+    sess = vss._sessions[3]
+    fresh = vss._session_for(3, "http://localhost:8910",
+                             vss.time.time(), ended=ended)
+    assert ended == [(sess, "diariser_changed")] and fresh is not sess
+    assert ("DELETE", "/sessions/s1", 0) not in fakes.calls   # the feed's
+
+
+def test_a_failed_session_and_an_empty_one_get_no_pass(app, fakes):
+    fakes.fail_on = "/end-turn"
+    assert _live(3, "t1", 2.0) is None
+    assert not any(r.get("end") for r in vss.read_rows())
+    assert vss.end_session(3, {"id": "s9", "turn_voice": []}, CFG,
+                           "idle") is None
+
+
+def test_the_end_row_is_content_free_and_the_view_counts_it_apart(
+        app, fakes, monkeypatch):
+    monkeypatch.setattr(vss, "embed_live", lambda pcm, sr, cfg: SAM)
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}], []]
+    _live(chat, "t1", 3.0)
+    _msg(chat, "t1", UNNAMED)
+    _stale(monkeypatch)
+    _live(chat, "t2", 1.0)
+    row = _wait_for(lambda: _end_row("s1"))
+    assert set(row) <= ROW_KEYS
+    text = json.dumps(row)
+    assert "prints" not in text and "pcm" not in text
+    view = vss.view(vss.read_rows())
+    assert view["tally"]["sessions_ended"] == 1
+    assert view["tally"]["relabelled_at_end"] == 1
+    assert [line["turn_id"] for line in view["lines"]] == ["t2", "t1"]
+    first = next(line for line in view["lines"] if line["turn_id"] == "t1")
+    assert first["at_end"] == "Sam"
+
+
+def test_the_end_pass_changes_nothing_but_labels(app, fakes, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("the end-of-session pass must not seat or bank")
+    from backend import room_state
+    monkeypatch.setattr(room_state, "seat", boom)
+    monkeypatch.setattr(anchors.AnchorStore, "add_clip", boom)
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}], []]
+    _live(chat, "t1", 3.0)
+    _msg(chat, "t1", UNNAMED)
+    _stale(monkeypatch)
+    _live(chat, "t2", 1.0)
+    assert _wait_for(lambda: _end_row("s1"))["filled"] == 1

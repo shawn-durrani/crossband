@@ -459,6 +459,11 @@ Live on this install:
   voice moves there before it's added. Plainly means that voice has 6
   seconds or more of clean speech, the span scores 0.7 or more against
   it by cosine, and it leads every other voice by 0.25 or more.
+- The naming pass at the end of a session. Every voice is named once
+  more over all its fingerprints, and each turn whose name changed is
+  relabelled, the last turn included. A turn whose voice ends the
+  session unnamed keeps its label, and a session dropped because the
+  diariser failed gets no pass.
 - A long turn sent in pieces is labelled from all its pieces together.
   Each piece names the piece before it, pieces with different voices
   make a two-voice turn, and a last piece too short to judge adds
@@ -474,7 +479,6 @@ Not built yet:
 - A spoken answer to the ask naming the voice, relabelling its turns
   and saving its held audio. Tapping a turn does all three. And "that's
   the TV".
-- The naming pass at the end of a session.
 - Stored trust scores recomputed in the new units, and the hygiene
   check on the new scorer.
 
