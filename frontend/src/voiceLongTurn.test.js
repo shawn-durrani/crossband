@@ -13,8 +13,10 @@
 // a too-short tail end a cut turn too; the batch path behaves the same;
 // an earlier piece's words no longer switch off the next piece's backup
 // or move the screen off Thinking; each piece after a cut names the piece
-// before it, so the server names the turn from all its pieces (#469); and
-// the diagnostics hold ids, never words.
+// before it, so the server names the turn from all its pieces (#469); a
+// backup copy starts after the words realtime already delivered, so a
+// rescued turn never repeats its earlier part, and it takes any piece
+// still waiting (#455); and the diagnostics hold ids, never words.
 // Run: node --test frontend/src/voiceLongTurn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -58,11 +60,18 @@ const PIECES = ['Alex measured the deck twice', 'then Sam cut the boards',
                 'and Dave sanded every edge']
 const BATCH = 'Mateo stacked the offcuts by the gate'
 const WORDS = ['measured', 'boards', 'sanded', 'offcuts', ...PIECES, BATCH]
+// #455: where each of BATCH's words sits in the backup recording, by its
+// middle, in ms from the recording's start. The fake server keeps the ones
+// at or after the form's from_ms, as the real one does.
+const BACKUP = [[2000, 'Mateo'], [4000, 'stacked'], [6000, 'the'], [8000, 'offcuts'],
+                [13000, 'by'], [14000, 'the'], [15000, 'gate']]
 
 // The realtime relay: answers each commit with that piece's words after
-// `latencyMs`, except the commits listed in `silent`.
+// `latencyMs` (or that commit's own entry in `lateMs`), except the commits
+// listed in `silent`.
 const relay = {
   latencyMs: 400,
+  lateMs: {},
   silent: new Set(),
   queue: [],
   commits: [],
@@ -70,7 +79,8 @@ const relay = {
     const i = this.commits.length
     this.commits.push({ turnId, after, at: Date.now() - START })
     if (this.silent.has(i)) return
-    this.queue.push({ ws, turnId, due: Date.now() + this.latencyMs, text: PIECES[i] || '' })
+    this.queue.push({ ws, turnId, due: Date.now() + (this.lateMs[i] ?? this.latencyMs),
+                      text: PIECES[i] || '' })
   },
   deliverDue() {
     const due = this.queue.filter((q) => q.due <= Date.now())
@@ -82,6 +92,7 @@ const relay = {
 }
 
 let posts
+let backupFrom   // each backup call's from_ms, 0 when it had none
 let sttGate      // when set, /stt waits on it
 let controllers
 const realDebug = console.debug
@@ -93,10 +104,12 @@ beforeEach(() => {
   mock.timers.enable({ apis: ['setTimeout', 'Date'], now: START })
   clear()
   relay.latencyMs = 400
+  relay.lateMs = {}
   relay.silent = new Set()
   relay.queue = []
   relay.commits = []
   posts = []
+  backupFrom = []
   sttGate = null
   controllers = []
   nextFrame = null
@@ -106,7 +119,10 @@ beforeEach(() => {
       if (sttGate) await sttGate
       // The backup copy holds speech only if it was never thrown away.
       const size = opts.body.get('file').size
-      return { ok: true, status: 200, json: async () => ({ text: size ? BATCH : '' }) }
+      const from = Number(opts.body.get('from_ms') || 0)
+      backupFrom.push(from)
+      const text = size ? BACKUP.filter(([at]) => at >= from).map(([, w]) => w).join(' ') : ''
+      return { ok: true, status: 200, json: async () => ({ text }) }
     }
     return { ok: true, status: 200, json: async () => ({ ok: true }) }
   }
@@ -433,14 +449,48 @@ test("an earlier piece's words no longer switch off the next piece's backup", as
   assert.equal(s.ctrl.state, 'transcribing')
   assert.deepEqual(s.restarts.filter((t) => t > relay.commits[0].at), [])
   await s.runUntil(last.at + sttCommitTimeoutMs(16000 - 12400) + 1000, talk)
-  // The backup ran for the last piece and the turn went out once. The
-  // backup is the whole recording, so its words can repeat the first
-  // piece's: a separate problem, not pinned here.
+  // The backup ran for the last piece and the turn went out once. #455:
+  // the backup is the whole recording, but the first piece's words were
+  // delivered, so it's transcribed from that piece's cut on. The turn
+  // doesn't say the first part twice.
   assert.equal(sttPosts().length, 1)
-  assert.equal(s.sent.length, 1)
-  assert.equal(s.sent[0].turnId, last.turnId)
-  assert.ok(s.sent[0].text.includes(BATCH))
+  assert.deepEqual(backupFrom, [relay.commits[0].at])
+  assert.deepEqual(s.sent.map((m) => [m.text, m.turnId]),
+                   [[`${PIECES[0]} by the gate`, last.turnId]])
   assert.equal(s.ctrl.state, 'listening')
+})
+
+test('a backup that covers a piece still waiting takes it, and its late words are dropped', async () => {
+  const s = liveSession()
+  // The first piece's words come back only after the last piece's backup
+  // has run, and the last piece's never do. The backup covers both.
+  relay.lateMs = { 0: 12000 }
+  relay.silent = new Set([1])
+  const talk = speech([500, 16000], [30000, 32000])
+  await s.runUntil(45000, talk)
+  assert.equal(sttPosts().length, 1)
+  assert.deepEqual(backupFrom, [0], 'nothing was delivered, so the whole copy')
+  // The whole turn once, from the backup, and the next turn on its own:
+  // the first piece's late words never reach it.
+  assert.deepEqual(s.sent.map((m) => [m.text, m.turnId]),
+                   [[BATCH, relay.commits[1].turnId],
+                    [PIECES[2], relay.commits[2].turnId]])
+})
+
+test('a backup after an earlier turn in the same recording leaves that turn out', async () => {
+  const s = liveSession()
+  // A short turn goes by realtime. The next one starts before the
+  // recording is due to be replaced, never hears back, and goes from the
+  // backup, which starts after the first turn's cut.
+  relay.silent = new Set([1])
+  const talk = speech([500, 3000], [6000, 8500])
+  await s.runUntil(30000, talk)
+  assert.equal(relay.commits.length, 2)
+  assert.deepEqual(s.restarts.filter((t) => t < relay.commits[1].at), [])
+  assert.deepEqual(backupFrom, [relay.commits[0].at])
+  assert.deepEqual(s.sent.map((m) => [m.text, m.turnId]),
+                   [[PIECES[0], relay.commits[0].turnId],
+                    ['the offcuts by the gate', relay.commits[1].turnId]])
 })
 
 test("a long turn's end is watched like any other hand-off", async () => {
