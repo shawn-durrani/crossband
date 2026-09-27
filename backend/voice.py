@@ -95,6 +95,12 @@ TIMED_FINAL = "committed_transcript_with_timestamps"
 TIMED_FINAL_WAIT_S = 0.3
 TIMED_MISSES_TO_STOP = 2
 
+# Scribe's ways of ending a session that aren't a failure (#537): its
+# session time limit, and too little audio to hold it open. The relay
+# closes the browser's socket cleanly for these, and the browser opens a
+# new session straight away.
+STT_SESSION_ENDS = {"session_time_limit_exceeded", "insufficient_audio_activity"}
+
 # ---- keeping a quiet socket open (#470) ----
 #
 # Scribe closes a realtime socket that has had no audio for about 15

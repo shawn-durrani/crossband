@@ -88,7 +88,11 @@ sent nothing for five seconds. It commits that silence itself before
 ElevenLabs would, and keeps the answer, so the next turn keeps its own
 id. A turn spoken while the connection was replaced goes from the backup
 recording, since realtime heard only its end. Every turn that takes the
-backup path tells the server why. The suites run the relay against a
+backup path tells the server why. When live transcription fails, the
+backup path takes over and live transcription is tried again after a
+wait, longer each time it fails. A failure no wait can mend, like a bad
+key, isn't retried. A session ElevenLabs ends at its time limit closes
+cleanly, and a new one opens straight away. The suites run the relay against a
 fake transcriber with the wait cut to milliseconds, and the voice client
 through a replaced socket.
 

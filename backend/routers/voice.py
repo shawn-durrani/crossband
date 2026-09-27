@@ -1101,9 +1101,21 @@ async def stt_stream_relay(ws: WebSocket):
                             await send_finals(finals.timed(
                                 data.get("text", ""), data.get("words"),
                                 time.monotonic()))
+                        elif mt in voice.STT_SESSION_ENDS:
+                            # #537: Scribe ended the session (its time limit,
+                            # or no audio), not a failure. The browser sees a
+                            # plain close and opens a new one, as it does
+                            # after any clean close, and live transcription
+                            # stays on.
+                            log.info("stt session ended by scribe: chat=%s kind=%s",
+                                     chat_id, mt)
+                            await send_finals(finals.close())
+                            return
                         elif mt == "error" or data.get("error"):
+                            # The kind says whether waiting can help (#537).
                             await ws.send_json({"error": data.get("message") or
-                                                data.get("error") or "stt error"})
+                                                data.get("error") or "stt error",
+                                                "kind": mt or "error"})
                 except (WebSocketDisconnect, RuntimeError):
                     return
                 finally:

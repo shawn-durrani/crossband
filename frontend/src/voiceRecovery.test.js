@@ -3,7 +3,8 @@
 // Run: node --test frontend/src/voiceRecovery.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
+import { REALTIME_RETRY_MS, realtimeCommitAction, realtimeRetryMs, recoveryPlan,
+         shouldReopenAfterClose } from './voiceRecovery.js'
 
 const live = {
   active: true, visible: true, ctxState: 'running',
@@ -115,4 +116,20 @@ test('a real utterance spoken across a socket change is salvaged', () => {
                                       socketChanged: true }), 'commit')
   assert.equal(realtimeCommitAction({ framesSent: 40, speechMs: 1800, minSpeechMs: 500,
                                       socketChanged: false }), 'commit')
+})
+
+// #537: live transcription is tried again after a failure, waiting longer
+// each time, unless the failure is one no wait can mend.
+test('a failed realtime session is retried, waiting longer each time', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 9].map((n) => realtimeRetryMs('network', n)),
+                   [10000, 30000, 60000, 120000, 300000, 300000, 300000])
+  assert.equal(realtimeRetryMs(undefined, 0), REALTIME_RETRY_MS[0], 'an older relay names no kind')
+  assert.equal(realtimeRetryMs('transcriber_error', 1), 30000)
+  assert.equal(realtimeRetryMs('rate_limited', -3), 10000)
+})
+
+test('a failure no wait can mend is not retried', () => {
+  for (const kind of ['auth_error', 'quota_exceeded', 'unaccepted_terms', 'invalid_request']) {
+    assert.equal(realtimeRetryMs(kind, 0), null, kind)
+  }
 })

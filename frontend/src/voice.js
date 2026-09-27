@@ -10,7 +10,8 @@ import { gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
 import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
 import { StreamPlayer } from './streamPlayer.js'
 import { playbackPath } from './streamFeed.js'
-import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
+import { realtimeCommitAction, realtimeRetryMs, recoveryPlan,
+         shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs, turnOverAfterCut } from './turnPolicy.js'
 import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
@@ -59,7 +60,7 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRuQDAABXQVZFZm10IBAAAAABAAEAQB8AAI
 let liveSession = null
 
 export default class VoiceController {
-  constructor({ getChatId, getParticipants, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onLevel, onSpeaker, onHeld, onStall }) {
+  constructor({ getChatId, getParticipants, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onSttBack, onLevel, onSpeaker, onHeld, onStall }) {
     this.getChatId = getChatId
     // #304: told the stall kind whenever a stall beacon fires, so the app
     // can save the diagnostics bundle automatically. Evidence only - it can
@@ -74,6 +75,7 @@ export default class VoiceController {
     this.onInterruptRound = onInterruptRound
     this.onPartial = onPartial            // live preview of the in-progress transcript (optional)
     this.onSttFallback = onSttFallback     // realtime gave up → UI should reflect batch mode
+    this.onSttBack = onSttBack             // #537: realtime is working again after a fallback
     // One shared audio sink, unlocked once in the start gesture and reused by
     // every reply - required for iOS Safari's per-element autoplay policy.
     this.sink = new Audio()
@@ -123,6 +125,12 @@ export default class VoiceController {
     this._ambient = 0
     // --- realtime STT (opt-in, parallel to the batch /stt POST) ---
     this.sttRealtime = true   // realtime by default; batch is the automatic fallback
+    // #537: after an automatic fallback, how many times realtime has been
+    // tried again, the timer for the next try, and whether it's still on
+    // the backup path because of a failure (a fresh start tries realtime).
+    this._sttRetries = 0
+    this._sttRetryTimer = null
+    this._sttFellBack = false
     // Room mode: this session's view of the chat's room, default OFF (App
     // resets it on every voice start), kept for the session log. The server
     // checks every spoken turn whatever the room is doing and reads the room
@@ -310,6 +318,9 @@ export default class VoiceController {
   // any failure so a hiccup never breaks a live session.
   setSttRealtime(on) {
     on = !!on
+    // A choice made here isn't a fallback: no retry follows it (#537).
+    clearTimeout(this._sttRetryTimer)
+    this._sttFellBack = false
     if (on === this.sttRealtime) return
     this.sttRealtime = on
     if (!this.active) return  // otherwise applied on next start()
@@ -362,6 +373,13 @@ export default class VoiceController {
         // know - drops here, which is exactly the doubled-turn case.
         const win = onFinal(this._ledger, msg.turn_id)
         if (win) this._heard = heardAfter(this._heard, win)
+        if (win && this._sttFellBack) {
+          // #537: a turn transcribed live again after a fallback.
+          this._sttFellBack = false
+          this._sttRetries = 0
+          this._vlog('stt:back', { turnId: win.turnId })
+          this.onSttBack?.()
+        }
         // #453: a transcript disarms only its own commit's salvage timer.
         // Clearing it on every final let a long turn's earlier piece, whose
         // words came in late, switch off the backup of the piece after it.
@@ -398,10 +416,10 @@ export default class VoiceController {
         }
       } else if (msg.error) {
         this.onError?.(`Realtime STT: ${msg.error}`)
-        this._fallbackToBatch(`relay error: ${msg.error}`)
+        this._fallbackToBatch(`relay error: ${msg.error}`, msg.kind)
       }
     }
-    ws.onerror = () => this._fallbackToBatch('websocket error')
+    ws.onerror = () => this._fallbackToBatch('websocket error', 'network')
     ws.onclose = (e) => {
       this._vlog('stt:close', { sid: this.captureSid || null, code: e?.code, reason: e?.reason,
                                 ourClose: !!this._sttClosing })
@@ -508,10 +526,11 @@ export default class VoiceController {
   // taken first and handed to the batch recorder, which ran the whole
   // time, so the turn is transcribed there and sent once (rescuePlan in
   // commitLedger.js decides what to salvage).
-  _fallbackToBatch(cause = 'unknown') {
+  _fallbackToBatch(cause = 'unknown', kind = null) {
     if (!this.sttRealtime) return
     this.sttRealtime = false
     this.sttFallbackCause = cause
+    this._sttFellBack = true
     console.warn('[voice] realtime STT fell back to batch:', cause)
     const inFlight = takeInFlight(this._ledger)
     debugRecord('stt:batchFallback', { cause: String(cause).slice(0, 200),
@@ -528,7 +547,26 @@ export default class VoiceController {
     } else if (this.active && this.state === 'transcribing') {
       this._state(this.roundActive ? 'working' : 'listening')
     }
-    this.onSttFallback?.(cause)
+    // #537: try realtime again later, unless waiting can't help.
+    const retryMs = this.active ? realtimeRetryMs(kind, this._sttRetries) : null
+    clearTimeout(this._sttRetryTimer)
+    if (retryMs != null) {
+      this._sttRetryTimer = setTimeout(() => this._retryRealtime(), retryMs)
+    }
+    this.onSttFallback?.(cause, retryMs != null)
+  }
+
+  // #537: live transcription back on after a fallback. On screen it opens
+  // now. A hidden tab would only lose the socket again, so it opens when
+  // the tab comes back (_recover). If it fails again, _fallbackToBatch
+  // waits longer before the next try.
+  _retryRealtime() {
+    this._sttRetryTimer = null
+    if (!this.active || this.sttRealtime || !this._sttFellBack) return
+    this._sttRetries++
+    this._vlog('stt:retry', { attempt: this._sttRetries })
+    this.sttRealtime = true
+    if (typeof document === 'undefined' || !document.hidden) this._openSttStream()
   }
 
   _sttSend(obj) {
@@ -625,6 +663,13 @@ export default class VoiceController {
     this._lastRoundEventAt = 0
     this._bargeIn = newBargeIn()
     resetHandoffWatch(this._handoff)
+    // #537: a session that fell back to the backup path starts again on
+    // live transcription.
+    if (this._sttFellBack) {
+      this.sttRealtime = true
+      this._sttFellBack = false
+    }
+    this._sttRetries = 0
     // Unlock audio while we still hold the start-button gesture, and on any
     // later click - so a session that auto-resumes on reload (no gesture) isn't
     // left permanently muted with no way to recover. Makes the "click anywhere"
@@ -741,6 +786,8 @@ export default class VoiceController {
     this._audioUnlocked = false
     clearTimeout(this._heldTimer)
     this._heldTimer = null
+    clearTimeout(this._sttRetryTimer)  // #537: no retry for an ended session
+    this._sttRetryTimer = null
     if (this.heldUtterances.length) {
       this.onError?.(`${this.heldUtterances.length} held message(s) discarded - the call ended before the connection returned.`)
     }
