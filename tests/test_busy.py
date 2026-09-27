@@ -5,7 +5,8 @@ The contract, fixed with the watcher (workbench#69):
 - `GET /api/busy` answers `{"busy": false, "reasons": []}` on a fresh app.
 - Each kind of in-flight work flips it true with its own fixed label: a
   round generating in any chat, a live voice capture, a guest visit, a
-  person sync pass, a benchmark, an import, a backup mid-copy. Settled
+  person sync pass, a benchmark, a measurement from the Analysis page
+  (#407), an import, a backup mid-copy. Settled
   work (a finished round whose buffer stays for catch-up, a completed
   guest job still in the registry) does not count.
 - Loopback reaches it without a session even once the owner has
@@ -21,7 +22,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import benchmark, busy, db, guestjobs, importer, person_sync, rounds
+from backend import (analysis, benchmark, busy, db, guestjobs, importer,
+                     person_sync, rounds)
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
@@ -41,12 +43,14 @@ def app(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _clean_registries():
-    """The round, guest-job and benchmark registries are process globals
-    that conftest's room-state reset does not cover."""
-    for reg in (rounds._rounds, guestjobs._jobs, benchmark._active):
+    """The round, guest-job, benchmark and measurement registries are
+    process globals that conftest's room-state reset does not cover."""
+    regs = (rounds._rounds, guestjobs._jobs, benchmark._active,
+            analysis._live)
+    for reg in regs:
         reg.clear()
     yield
-    for reg in (rounds._rounds, guestjobs._jobs, benchmark._active):
+    for reg in regs:
         reg.clear()
 
 
@@ -142,6 +146,20 @@ def test_a_benchmark_run(app):
     assert _busy(app) == IDLE
 
 
+def _fake_measurement(measurement_id, run_id):
+    m = analysis.get(measurement_id)
+    job = analysis.Job(m, {"run_id": run_id, "state": "running"}, None)
+    analysis._live[measurement_id] = job
+    return job
+
+
+def test_a_measurement_from_the_analysis_page(app):
+    _fake_measurement("recall", "recall-20260927-120000")
+    assert _busy(app) == {"busy": True, "reasons": ["measurement running"]}
+    analysis._live.clear()
+    assert _busy(app) == IDLE
+
+
 def test_an_import_mid_stream(app):
     """The counter is the real one: an import_stream suspended mid-stream
     counts, and closing it (the client dropping) releases it."""
@@ -217,6 +235,7 @@ def test_reasons_are_the_fixed_vocabulary_and_nothing_else(app, monkeypatch):
     _fake_capture(sid, chat_id, device)
     _fake_guest_job(chat_id, task, repo)
     benchmark._active[run_id] = {"note": "AcmeCo timings"}
+    _fake_measurement("voice", "voice-20260906-120000")
     monkeypatch.setattr(importer, "_in_flight", 1)
     monkeypatch.setattr(db, "_backups_running", 1)
     assert person_sync._lock.acquire(blocking=False)

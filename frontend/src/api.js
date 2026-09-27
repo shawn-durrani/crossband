@@ -125,6 +125,20 @@ export const api = {
   benchmarkDelete: (id) => fetch(`/api/benchmark/runs/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   }).then(json),
+  // The Analysis page (#407): the measurements, a run as a background job
+  // named by its id alone, its report, a stop, and deleting a stored run.
+  analysis: () => fetch('/api/analysis').then(json),
+  analysisStart: (measurement, practice = false) => fetch('/api/analysis/runs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ measurement, practice }),
+  }).then(json),
+  analysisRun: (id) => fetch(`/api/analysis/runs/${encodeURIComponent(id)}`).then(json),
+  analysisStop: (id) => fetch(`/api/analysis/runs/${encodeURIComponent(id)}/stop`, {
+    method: 'POST',
+  }).then(json),
+  analysisDelete: (id) => fetch(`/api/analysis/runs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }).then(json),
   distill: (id) => fetch(`/api/chats/${id}/distill`, { method: 'POST' }).then(json),
   uploadAttachment: (file) => {
     const fd = new FormData()

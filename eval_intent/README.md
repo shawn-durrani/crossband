@@ -87,6 +87,11 @@ turns bill the Mac's Claude Code login and never your metered key.
 `--env` takes the keys from the app's own file for this run alone, and
 the guest's own turns stay on the login.
 
+The Analysis page in the app runs the real comparison as a background job and
+keeps its reports on the Mac. [docs/ANALYSIS.md](../docs/ANALYSIS.md)
+says how. The page passes `--json-out`, which writes the JSON report
+to a file whatever `--format` says.
+
 `--mock` runs the whole pipeline against keyless stand ins that answer
 with the graded verdicts, wrong on a fixed few, so the report has
 misses to show. Its accuracy figures say nothing about any model. The

@@ -54,6 +54,11 @@ GPT-5 thinks before it answers, and that thinking counts against
 `--max-tokens`, so at the default of 40 every GPT-5 reply comes back
 empty and scores 0%.
 
+The Analysis page in the app runs the real experiment as a background job and
+keeps its reports on the Mac. [docs/ANALYSIS.md](../docs/ANALYSIS.md)
+says how. The page passes `--json-out`, which writes the JSON report
+to a file whatever `--format` says.
+
 `--mock` runs the whole pipeline against a keyless stand in that acts
 out the hypothesis. Under `current` it answers self probes wrongly, and
 under the labelled shapes it answers correctly bar a fixed few. That

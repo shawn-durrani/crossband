@@ -153,8 +153,8 @@ Send `GET /api/busy` from the same computer and it answers
 as the health route, `/api/auth/session`, which a deploy checks to see
 that the app is up. Busy means a round is still generating in any chat,
 a voice capture is live, a Claude Code guest is at work, or a sync of
-people to memory, a benchmark, an import or a backup is part way
-through. The reasons are fixed labels and never carry anything from a
+people to memory, a benchmark, a measurement from the Analysis page, an
+import or a backup is part way through. The reasons are fixed labels and never carry anything from a
 chat. Wait for `"busy": false`, then restart. A service too broken to
 answer is restarted anyway.
 

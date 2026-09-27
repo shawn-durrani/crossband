@@ -269,6 +269,10 @@ body {
 .md-body pre {
   @apply bg-panel border border-edge rounded-lg p-3 my-2 overflow-x-auto text-sm;
 }
+/* An Analysis report (#407): its tables keep whole words and scroll sideways
+   in the report's own box on a phone, instead of breaking "strategy" into
+   three lines of letters. */
+.md-body.report-md table { overflow-wrap: normal; }
 
 /* User turn: compact right-aligned bubble; AI turns are full-width prose */
 .user-bubble {

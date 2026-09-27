@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, person_sync
+from . import analysis
 from . import app_links
 from . import auth
 from . import db
@@ -34,6 +35,7 @@ from . import voiceid
 from .config import (ROOT, Settings, mmc_migration_state, key_status,
                      load_settings, report_missing_keys)
 from .memory_client import MemoryClient
+from .routers import analysis as analysis_router
 from .routers import app_links as app_links_router
 from .routers import attachments as attachments_router
 from .routers import auth as auth_router
@@ -348,6 +350,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.reflection_sweep.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await app.state.reflection_sweep
+            # #407: a measurement still running gets SIGINT, so its own
+            # cleanup runs (the voice rig's second app), and its record
+            # says the app restarted.
+            await analysis.stop_all()
             await app.state.mcp.stop()
             await memory.aclose()
             egress.set_proxy_url(None)
@@ -487,6 +493,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # keep running after you navigate away, so this is what lets the
             # sidebar show a background chat as busy - and clear it reliably.
             "running_chat_ids": rounds.active_chat_ids(),
+            # #407: which measurements the Analysis page has running, for
+            # the sidebar's dot. Fixed ids only.
+            "running_measurements": analysis.running_ids(),
             "config": {
                 "user_name": cfg["user_name"],
                 "max_attachment_mb": cfg["max_attachment_mb"],
@@ -512,6 +521,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(room_router.router)
     app.include_router(models_router.router)
     app.include_router(benchmark_router.router)
+    app.include_router(analysis_router.router)
     app.include_router(settings_router.router)
     app.include_router(pricing_router.router)
     app.include_router(setup_router.router)

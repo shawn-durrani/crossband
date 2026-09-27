@@ -57,6 +57,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "numbers you'd cite in the decision gate.")
     p.add_argument("--format", choices=("markdown", "json"), default="markdown")
     p.add_argument("--out", help="write the report to this path instead of stdout")
+    p.add_argument("--json-out", help="also write the whole report as JSON here")
     return p
 
 
@@ -92,6 +93,9 @@ def main(argv=None) -> int:
     args = build_arg_parser().parse_args(argv)
     report, models = asyncio.run(run(args))
 
+    if args.json_out:
+        with open(args.json_out, "w") as f:
+            f.write(json.dumps(report, indent=2, default=str))
     if args.format == "json":
         out = json.dumps(report, indent=2, default=str)
     else:

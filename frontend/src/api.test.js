@@ -93,6 +93,21 @@ test('URL, method and body shapes for a representative sample', async () => {
     '/api/models?provider=openai&api_key_env=KEY&base_url=http%3A%2F%2Fx')
 })
 
+test('an Analysis run sends its measurement and practice flag and nothing else', async () => {
+  // The backend refuses any other field (#407), so the page must never send one.
+  let calls = captureFetch()
+  await api.analysisStart('recall')
+  assert.deepEqual([calls[0].url, calls[0].method], ['/api/analysis/runs', 'POST'])
+  assert.deepEqual(JSON.parse(calls[0].body), { measurement: 'recall', practice: false })
+  calls = captureFetch()
+  await api.analysisStart('voice', true)
+  assert.deepEqual(JSON.parse(calls[0].body), { measurement: 'voice', practice: true })
+  calls = captureFetch()
+  await api.analysisStop('recall-20260927-120000')
+  assert.deepEqual([calls[0].url, calls[0].method],
+    ['/api/analysis/runs/recall-20260927-120000/stop', 'POST'])
+})
+
 test('path segments are encoded, so a slash in a model id cannot break routing', async () => {
   let calls = captureFetch()
   await api.saveRateCard('org/model:free', {})

@@ -50,6 +50,14 @@ embedding provider. Each lands in membro's access log under the origin
 fetched once, as it stands today, so a fact the summary learnt last
 week reads as carried even for a turn from last month.
 
+The Analysis page in the app runs the replay of your newest 200 turns as a background job and
+keeps its reports on the Mac. [docs/ANALYSIS.md](../docs/ANALYSIS.md)
+says how. The page passes `--json-out`, which writes the JSON report
+to a file whatever `--format` says.
+
+It never passes `--with-content`, so a report made there never holds
+the words of your chats.
+
 `--mock` runs the whole pipeline against a made up ledger and a stand
 in memory that scores facts by word overlap. It shows what the report
 looks like, and its numbers say nothing about your install.

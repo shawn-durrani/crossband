@@ -260,6 +260,7 @@ CONVERTED = {
     "docs/PRODUCERS.md",
     "docs/LATENCY.md",
     "docs/BENCHMARK.md",
+    "docs/ANALYSIS.md",
     "docs/COST_TELEMETRY.md",
     "docs/GUEST_PERMISSIONS.md",
     "docs/OPERATIONS.md",
