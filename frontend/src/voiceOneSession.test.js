@@ -1,10 +1,11 @@
 // One voice session per page, and one listening loop per session, end to
 // end through the real voice controller started with its own start().
 // On 25 September every spoken turn reached the chat twice. A restart
-// signs the browser out, since sessions live in the server's memory, and
-// the lock screen replaced the app while a voice call was live. The old
-// voice session was never ended: its microphone and listening loop kept
-// running unseen, and when the owner unlocked and started voice again,
+// signed the browser out then, since sign-ins lived only in the server's
+// memory (#528 keeps them across a restart now), and the lock screen
+// replaced the app while a voice call was live. The old voice session
+// was never ended: its microphone and listening loop kept running
+// unseen, and when the owner unlocked and started voice again,
 // two sessions heard every turn and each sent it. The saved diagnostics
 // show it: two sets of screen changes a frame apart, one turn transcribed
 // by realtime and the same turn by the backup copy.

@@ -422,7 +422,13 @@ export default class VoiceController {
     ws.onerror = () => this._fallbackToBatch('websocket error', 'network')
     ws.onclose = (e) => {
       this._vlog('stt:close', { sid: this.captureSid || null, code: e?.code, reason: e?.reason,
-                                ourClose: !!this._sttClosing })
+                                ourClose: !!this._sttClosing, stale: this.sttWs !== ws })
+      // #540: a socket we've already let go of has no say here either. Its
+      // close can land after a newer socket took over (voice off and on
+      // again). Clearing sttWs then orphaned the new socket, still open on
+      // the server as a second microphone, and the reopen below unhooked
+      // its audio and opened a third.
+      if (this.sttWs !== ws) return
       this.sttWs = null
       if (e && e.code === 4001) {
         // #134: the owner ended this capture from another surface. This
