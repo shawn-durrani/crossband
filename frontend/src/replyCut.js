@@ -20,7 +20,8 @@ export function keepsAudio(player) {
   return !player.stopped
 }
 
-// The held player (no MediaSource) plays a reply as one clip once its
+// The held player (a browser that can't stream the reply, or a phone
+// whose streaming source failed) plays a reply as one clip once its
 // speech stream has ended, and never once the reply is cut off. A cut
 // ends the wait at once instead of waiting for the stream.
 export function heldReplyPlays(player) {

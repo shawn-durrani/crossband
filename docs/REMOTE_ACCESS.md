@@ -135,7 +135,10 @@ your `PATH`, so run it by that full path.
    unlocks it.
 
 Once you're in, allow the microphone when the browser asks, and voice
-works as it does on the Mac. To unlock with Face ID or Touch ID next
+works as it does on the Mac. An iPhone needs iOS 17.1 or later to start
+playing a reply as its first audio arrives. An older iPhone plays each
+reply once all of it has arrived, and a long reply can sit silent for
+half a minute first. To unlock with Face ID or Touch ID next
 time, add a passkey from the phone under Settings, then Passkeys. A
 passkey belongs to the address it was made at, so one you added on the
 Mac won't offer itself at the tailnet name.
