@@ -62,6 +62,11 @@ What these tests pin, in order:
    said is a TV is never checked, and a TV's never takes the speech.
    The fallback scorer moves nothing, a normal session moves nothing,
    and the check fingerprints nothing more.
+15. THE SHORT-TURN CHECK (#541). A one-voice turn with nothing long
+   enough to fingerprint is scored whole, and listens when it plainly
+   isn't its voice's person: the voice keeps its name, and the turn is
+   never filled or named by hand as the voice's. A right short reply
+   keeps its name. It runs on no other turn, and the bar is stated.
 
 Keyless and offline: the diariser and the speaker model are fakes.
 Synthetic roster (Alex, Sam, Dave).
@@ -1746,9 +1751,10 @@ def test_a_normal_calibrated_session_moves_nothing(fakes, calibrated):
     dave = [near([0.05, 0.0, 1.0, 0.1 * i]) for i in range(3)]
     newcomer = near([0.0, 0.0, 0.5, 0.87])
     calibrated += [alex[0], sam[0], dave[0], alex[1], newcomer, sam[1],
-                   dave[1], newcomer, alex[2], dave[2], sam[2]]
+                   dave[1], newcomer, alex[2], dave[0], dave[2], sam[2]]
     # (voice, seconds of speech): Dave's short reply is too short to
-    # fingerprint, and is named from what his voice said before
+    # fingerprint, and is named from what his voice said before, once the
+    # whole turn is found to be him (THE SHORT-TURN CHECK)
     turns = [(0, 4.0), (1, 4.0), (2, 4.0), (0, 4.0), (4, 4.0), (1, 4.0),
              (2, 4.0), (4, 4.0), (0, 4.0), (2, 0.5), (2, 4.0), (1, 4.0)]
     fakes.script, t = [], 0.0
@@ -1760,6 +1766,9 @@ def test_a_normal_calibrated_session_moves_nothing(fakes, calibrated):
     assert not any("moved" in _row(f"t{i}") for i in range(len(names)))
     assert names == ["Alex", "Sam", "Dave", "Alex", "", "Sam", "Dave", "",
                      "Alex", "Dave", "Dave", "Sam"]
+    assert _row("t9")["short_check"]["unnamed"] is False
+    assert all("short_check" not in _row(f"t{i}")
+               for i in range(len(names)) if i != 9)
 
 
 def test_the_fallback_scorer_moves_nothing(fakes, calibrated,
@@ -1790,3 +1799,127 @@ def test_the_bank_check_fingerprints_nothing_more(fakes, calibrated,
     _live(3, "t1", 8.0)
     assert _live(3, "t2", 4.0)["name"] == "Alex"
     assert len(calls) == 2
+
+
+# ---------- 15. the short-turn check ----------
+
+def test_a_short_reply_filed_under_another_voice_is_left_unnamed(
+        app, fakes, calibrated, monkeypatch):
+    """The road on the voice rig: Dave's voice has 8 s behind it, and the
+    tracker files a 0.3 s reply of Alex's under it. Nothing in the turn is
+    long enough to fingerprint, so the whole turn is scored on its own,
+    and it plainly isn't Dave. The turn listens, Dave's voice keeps its
+    name, and nothing later writes Dave on the turn."""
+    chat = _chat(app)
+    calibrated += [DAVE, ALEX, DAVE]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 1, "start": 8.3, "end": 8.6}],
+                    [{"slot": 1, "start": 9.2, "end": 12.0}], []]
+    assert _live(chat, "t1", 8.0)["name"] == "Dave"
+    mid = _msg(chat, "t2", UNNAMED)
+    got = _live(chat, "t2", 1.1)
+    assert (got["voice"], got["state"], got["name"]) == (1, "listening", "")
+    assert got["voices"][1]["state"] == "listening"
+    row = _row("t2")
+    assert row["short_check"]["unnamed"] is True
+    assert row["short_check"]["p_own"] <= vss.SHORT_CHECK_NOT
+    assert (row["main_state"], row["main_name"]) == ("listening", "")
+    assert row["voices"]["1"]["name"] == "Dave"     # the voice is still his
+    assert vss.voice_of_turn(chat, "t2") is None
+    # Dave's next turn is his, and filling in passes the doubted turn by
+    assert _live(chat, "t3", 3.0)["name"] == "Dave"
+    assert _labels(mid) == UNNAMED
+    # so does the end-of-session pass, and a tap on the turn names no voice
+    _stale(monkeypatch)
+    _live(chat, "t4", 1.0)
+    assert _wait_for(lambda: _end_row("s1"))
+    assert _labels(mid) == UNNAMED
+    assert not vss.human_named(chat, "t2", "Alex", "alex", CFG)
+
+
+def test_a_right_short_reply_keeps_its_name(fakes, calibrated):
+    calibrated += [DAVE, DAVE]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 1, "start": 8.3, "end": 8.9}]]
+    _live(3, "t1", 8.0)
+    got = _live(3, "t2", 1.4)
+    assert (got["voice"], got["name"]) == (1, "Dave")
+    check = _row("t2")["short_check"]
+    assert check["unnamed"] is False and check["p_own"] >= 0.99
+    assert vss.voice_of_turn(3, "t2") == 1
+
+
+def test_the_short_check_bar(monkeypatch):
+    """0.01 or less for the voice's person leaves the turn unnamed. It
+    can't check a voice that isn't named as someone the banks hold, with
+    no calibrated snapshot or ERes2Net, or a turn the audio gates refuse."""
+    from backend import voice_calibration as vc
+    near = voiceid.l2_normalize
+    monkeypatch.setattr(vc, "current", lambda: _snap())
+    monkeypatch.setattr(vss, "gate", lambda pcm, sr: None)
+    cands = [{"person_id": pid, "name": n} for pid, n in ALLOWED.items()]
+    dave = {"state": "named", "name": "Dave", "pid": "dave"}
+
+    def check(emb, voice=dave, candidates=cands, eres=True):
+        return vss.short_check(voice, _turn(1.1), SR, candidates,
+                               lambda pcm: emb,
+                               (lambda pcm: emb) if eres else None)
+    # 0.30 against Dave is 0.006, and 0.37 is 0.025
+    assert check(near([0.95, 0.0, 0.3, 0.0]))["unnamed"] is True
+    kept = check(near([0.9, 0.0, 0.36, 0.0]))
+    assert kept["unnamed"] is False and kept["p_own"] > 0.01
+    assert check(DAVE)["unnamed"] is False
+    # nothing to check
+    assert check(ALEX, voice={"state": "listening", "pid": ""}) is None
+    assert check(ALEX, voice={"state": vss.MEDIA, "pid": ""}) is None
+    assert check(ALEX, candidates=cands[:2]) is None      # no Dave here
+    assert check(ALEX, eres=False) is None
+    monkeypatch.setattr(vss, "gate", lambda pcm, sr: "too_short")
+    assert check(ALEX) is None
+    monkeypatch.setattr(vss, "gate", lambda pcm, sr: None)
+    monkeypatch.setattr(vc, "current", lambda: None)
+    assert check(ALEX) is None
+    # a voice a person named is checked too: the doubt is which voice
+    # spoke the turn, not who the voice is
+    monkeypatch.setattr(vc, "current", lambda: _snap())
+    assert check(ALEX, voice=dict(dave, human=True))["unnamed"] is True
+    assert vss.SHORT_CHECK_NOT == 0.01
+
+
+def test_the_short_check_runs_on_no_other_turn(fakes, calibrated,
+                                               monkeypatch):
+    """No extra fingerprint for a turn with anything fingerprinted, a voice
+    that isn't named yet, a turn with two voices, a later piece of a long
+    turn, or the fallback scorer."""
+    from backend import voice_calibration as vc
+    calls = []
+    real = vss.embed_live
+    monkeypatch.setattr(vss, "embed_live",
+                        lambda pcm, sr, cfg: calls.append(1) or real(
+                            pcm, sr, cfg))
+    calibrated += [DAVE, SAM]
+    fakes.script = [
+        [{"slot": 1, "start": 0.0, "end": 8.0}],
+        # Sam's voice has 1 s, still listening: a short turn of it
+        [{"slot": 2, "start": 8.0, "end": 9.0}],
+        [{"slot": 2, "start": 9.3, "end": 9.8}],
+        # two voices, neither long enough
+        [{"slot": 1, "start": 10.5, "end": 11.0},
+         {"slot": 2, "start": 11.1, "end": 11.6}],
+        # the short last piece of that turn, Dave's
+        [{"slot": 1, "start": 12.0, "end": 12.5}]]
+    _live(3, "t1", 8.0)
+    _live(3, "t2", 1.0)
+    assert len(calls) == 2
+    _live(3, "t3", 1.0)
+    _live(3, "t4", 1.5)
+    assert len(calls) == 2
+    got = _live(3, "t5", 1.0, after="t4")
+    assert (got["pieces"], got["name"]) == (2, "Dave")
+    assert len(calls) == 2
+    assert not any("short_check" in _row(t) for t in ("t3", "t4", "t5"))
+    # the fallback scorer names: nothing to score the turn with
+    monkeypatch.setattr(vc, "current", lambda: None)
+    fakes.script = [[{"slot": 1, "start": 13.1, "end": 13.5}]]
+    _live(3, "t6", 1.0)
+    assert len(calls) == 2 and "short_check" not in _row("t6")

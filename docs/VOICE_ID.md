@@ -129,9 +129,35 @@ that voice isn't sure yet, the turn shows "still listening".
 
 The bar is strict, and a normal session moves nothing. The check reads
 fingerprints the turn already has, so it adds under a millisecond. A
-turn too short to fingerprint can't be checked, and takes its voice's
-name. The session rows list each move, marked `bank`, with both
+turn too short to fingerprint gets [its own check](#a-short-reply)
+instead. The session rows list each move, marked `bank`, with both
 chances.
+
+### A short reply
+
+A reply like "okay" is often too short to fingerprint. It takes the name
+its session voice already has, which trusts the diariser's call on which
+voice spoke it. In noise that call is sometimes wrong. When nothing in a
+turn was long enough to fingerprint, the app scores the whole turn on its
+own against everyone's kept clips, the way it does with no diariser. If
+that gives the voice's person a chance of 0.01 or less, the turn is left
+unnamed and shows "still listening".
+
+The check runs only when all of these hold:
+
+- nothing in the turn was long enough to fingerprint
+- one session voice spoke all of it
+- that voice has a name, and the calibrated scorer is on
+- the turn came in one piece
+
+The voice keeps its name, and nothing moves. The unnamed turn doesn't
+count as that voice's, so no name fills it later. Tapping it names that
+turn alone. A voice you named by hand gets the check too, since the doubt
+is about which voice spoke the turn. The check takes two fingerprints of
+the turn, about 40 to 50 milliseconds, and only these short turns pay
+it. In loud noise a right short reply can go unnamed now and then. The
+session rows record each check, with the chance and whether the turn was
+left unnamed.
 
 ### When a session ends
 
