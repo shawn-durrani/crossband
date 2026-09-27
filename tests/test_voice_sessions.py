@@ -54,6 +54,13 @@ What these tests pin, in order:
    that ends unnamed takes no name off, corrections and crosstalk are
    never touched, a failed session gets no pass, and the pass writes one
    content-free row that the view counts apart from the turns.
+14. THE BANK CHECK. A voice's clean speech in a turn that, on its own,
+   plainly names someone other than the person its voice says moves
+   before it's added: to that person's voice, or to a split-off voice
+   when they have none, the turn's short spans with it and overlap
+   aside. The bar is strict and two-sided, a voice a person named is
+   never checked, the fallback scorer moves nothing, a normal session
+   moves nothing, and the check fingerprints nothing more.
 
 Keyless and offline: the diariser and the speaker model are fakes.
 Synthetic roster (Alex, Sam).
@@ -1519,3 +1526,254 @@ def test_the_end_pass_changes_nothing_but_labels(app, fakes, monkeypatch):
     _stale(monkeypatch)
     _live(chat, "t2", 1.0)
     assert _wait_for(lambda: _end_row("s1"))["filled"] == 1
+
+
+# ---------- 14. the bank check ----------
+
+DAVE = [0.0, 0.0, 1.0, 0.0]
+BANKS = {"alex": ALEX, "sam": SAM, "dave": DAVE}
+ALLOWED = {"alex": "Alex", "sam": "Sam", "dave": "Dave"}
+
+
+def _snap(people=None):
+    """A calibrated snapshot over synthetic banks, one clip per person for
+    both models. Its calibration reads a fused score of 1 as all but
+    certain (0.9999) and 0 as nobody (under 0.0001): 0.79 or more clears
+    0.99, 0.66 or more NAME_BAR, and 0.32 or less is 0.01 or under."""
+    import numpy as np
+    from backend import voice_calibration as vc
+    people = BANKS if people is None else people
+    return {"calibrated": True, "people": len(people),
+            "calibration": [-10.0, 20.0, 0.0, 0.0],
+            "banks": {pid: {vc.SMALL: np.array([vec]),
+                            vc.ERES: np.array([vec])}
+                      for pid, vec in people.items()}}
+
+
+def _both(emb, secs):
+    """A session voice with `secs` of clean speech, both models alike."""
+    return _ev(emb, secs, eres=emb)
+
+
+def _heard(emb, secs):
+    return [(emb, emb, secs)]
+
+
+def test_speech_that_plainly_is_someone_else_is_found():
+    """Dave's voice, and a turn of Alex's speech the tracker gave it."""
+    voices = {1: _both(DAVE, 8.0)}
+    pid, scores = vss.bank_check(voices, 1, _heard(ALEX, 4.0), ALLOWED,
+                                 _snap())
+    assert pid == "alex"
+    assert scores["p"] >= 0.99 and scores["p_own"] <= 0.01
+    # the voice's own speech stays
+    assert vss.bank_check(voices, 1, _heard(DAVE, 4.0), ALLOWED,
+                          _snap()) == (None, {})
+
+
+def test_the_bank_check_bar_is_strict():
+    near = voiceid.l2_normalize
+    snap = _snap()
+    dave = {1: _both(DAVE, 8.0)}
+    # under 1.5 s of clean speech in the turn, even plainly Alex
+    assert vss.bank_check(dave, 1, _heard(ALEX, 1.4), ALLOWED,
+                          snap)[0] is None
+    # pieces of one voice's speech add up: two spans of 0.8 s
+    assert vss.bank_check(dave, 1, _heard(ALEX, 0.8) * 2, ALLOWED,
+                          snap)[0] == "alex"
+    # not sure enough who it is: 0.7 against Alex is under 0.99
+    assert vss.bank_check(dave, 1, _heard(near([0.7, 0.0, 0.0, 0.71]),
+                                          4.0), ALLOWED, snap)[0] is None
+    # sure it's Alex, but not plainly not Dave: 0.4 against Dave
+    pid, scores = vss.bank_check(dave, 1, _heard(near([0.92, 0.0, 0.4, 0.0]),
+                                                 4.0), ALLOWED, snap)
+    assert pid is None and scores["p"] >= 0.99 and scores["p_own"] > 0.01
+    # the voice's evidence names nobody at 0.9 yet: nothing to disagree with
+    between = {1: _both(near([0.0, 0.0, 0.6, 0.8]), 8.0)}
+    assert vss.bank_check(between, 1, _heard(ALEX, 4.0), ALLOWED,
+                          snap)[0] is None
+    # a voice with no evidence yet, a voice a person named, no calibrated
+    # snapshot, nobody the room may name, or no ERes2Net fingerprint
+    assert vss.bank_check({1: dict(EMPTY)}, 1, _heard(ALEX, 4.0), ALLOWED,
+                          snap)[0] is None
+    named = dict(_both(DAVE, 8.0), human={"name": "Dave", "pid": "dave"})
+    assert vss.bank_check({1: named}, 1, _heard(ALEX, 4.0), ALLOWED,
+                          snap)[0] is None
+    assert vss.bank_check(dave, 1, _heard(ALEX, 4.0), ALLOWED,
+                          None)[0] is None
+    assert vss.bank_check(dave, 1, _heard(ALEX, 4.0), {}, snap)[0] is None
+    assert vss.bank_check(dave, 1, [(ALEX, None, 4.0)], ALLOWED,
+                          snap)[0] is None
+    # someone the room may not name is nobody here
+    assert vss.bank_check(dave, 1, _heard(ALEX, 4.0),
+                          {"sam": "Sam", "dave": "Dave"}, snap)[0] is None
+    assert (vss.BANK_CHECK_MIN_S, vss.BANK_CHECK_SURE,
+            vss.BANK_CHECK_NOT) == (1.5, 0.99, 0.01)
+
+
+def test_the_speech_goes_to_the_voice_that_is_that_person():
+    snap = _snap()
+    # a voice still listening whose evidence says Alex
+    voices = {1: _both(DAVE, 8.0), 2: _both(ALEX, 1.0), 3: _both(SAM, 5.0)}
+    assert vss.bank_home(voices, 1, "alex", ALLOWED, snap) == 2
+    # a voice a person named Alex comes first
+    voices[4] = dict(_both(SAM, 5.0), human={"name": "Alex", "pid": "alex"})
+    assert vss.bank_home(voices, 1, "alex", ALLOWED, snap) == 4
+    # a voice a person named as someone else never takes it
+    voices = {1: _both(DAVE, 8.0),
+              2: dict(_both(ALEX, 5.0), human={"name": "Sam", "pid": "sam"})}
+    assert vss.bank_home(voices, 1, "alex", ALLOWED, snap) is None
+    # nobody's voice says Alex: a new split-off voice, numbered apart
+    voices = {1: _both(DAVE, 8.0), 3: _both(SAM, 5.0)}
+    assert vss.bank_home(voices, 1, "alex", ALLOWED, snap) is None
+    assert vss.split_slot(voices) == vss.SPLIT_SLOT_BASE == 100
+    voices[100] = dict(EMPTY)
+    assert vss.split_slot(voices) == 101
+
+
+@pytest.fixture
+def calibrated(fakes, monkeypatch):
+    """The feed with the calibrated scorer ready: both models give the
+    same synthetic fingerprint, and Alex, Sam and Dave are remembered."""
+    from backend import voice_calibration as vc
+    seq, last = [], []
+
+    def small(pcm, sr, cfg):
+        last[:] = [seq.pop(0)]
+        return last[0]
+
+    monkeypatch.setattr(vss, "embed_live", small)
+    monkeypatch.setattr(vss, "embed_eres_live", lambda pcm, sr, cfg: last[0])
+    monkeypatch.setattr(vss, "_live_candidates", lambda chat_id: [
+        {"person_id": pid, "name": name} for pid, name in ALLOWED.items()])
+    monkeypatch.setattr(vc, "current", lambda: _snap())
+    return seq
+
+
+def test_a_turn_filed_under_another_mans_voice_takes_its_own_name(
+        fakes, calibrated):
+    """The road on 27 September: Dave's voice has 8 s behind it, Alex's
+    own has only 1 s and listens, and the tracker files a turn of Alex's
+    under Dave's voice. It goes to Alex's voice, which is named, and
+    Dave's evidence stays his alone. The span check alone can't do it:
+    Alex's voice has under 6 s."""
+    calibrated += [DAVE, ALEX, ALEX, DAVE]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 2, "start": 8.0, "end": 9.0}],
+                    [{"slot": 1, "start": 9.0, "end": 13.0}],
+                    [{"slot": 1, "start": 13.0, "end": 16.0}]]
+    assert _live(3, "t1", 8.0)["name"] == "Dave"
+    assert _live(3, "t2", 1.0)["state"] == "listening"
+    got = _live(3, "t3", 4.0)
+    assert (got["voice"], got["name"], got["voices_in_turn"]) == (2, "Alex",
+                                                                  1)
+    move = _row("t3")["moved"][0]
+    assert (move["from"], move["to"], move["by"]) == (1, 2, "bank")
+    assert move["p"] >= 0.99 and move["p_own"] <= 0.01
+    voices = vss._sessions[3]["voices"]
+    assert (voices[1]["clean_s"], voices[2]["clean_s"]) == (8.0, 5.0)
+    # Dave's next turn is still his, and nothing moves
+    got = _live(3, "t4", 3.0)
+    assert (got["voice"], got["name"]) == (1, "Dave")
+    assert "moved" not in _row("t4")
+
+
+def test_with_no_voice_of_its_own_the_speech_is_split_off(fakes,
+                                                          calibrated):
+    """Alex has no session voice at all yet: his speech gets a split-off
+    voice of its own, named from that speech alone, and a later turn of
+    his the tracker files the same way joins it."""
+    calibrated += [DAVE, ALEX, ALEX]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 1, "start": 8.0, "end": 12.0}],
+                    [{"slot": 1, "start": 12.0, "end": 14.0}]]
+    _live(3, "t1", 8.0)
+    got = _live(3, "t2", 4.0)
+    assert (got["voice"], got["name"]) == (100, "Alex")
+    got = _live(3, "t3", 2.0)
+    assert (got["voice"], got["name"]) == (100, "Alex")
+    voices = vss._sessions[3]["voices"]
+    assert (voices[1]["clean_s"], voices[100]["clean_s"]) == (8.0, 6.0)
+
+
+def test_the_whole_turn_moves_together_but_overlap_stays(fakes,
+                                                         calibrated):
+    """Every span the tracker gave the voice in the turn moves with its
+    speech, the short ones too, so the turn isn't left with a second of
+    Dave's name in it. Speech over someone else stays where it was."""
+    calibrated += [DAVE, SAM, ALEX, ALEX]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 3, "start": 8.0, "end": 12.0}],
+                    [{"slot": 1, "start": 12.0, "end": 12.6},
+                     {"slot": 1, "start": 12.6, "end": 14.6},
+                     {"slot": 1, "start": 14.6, "end": 15.4},
+                     {"slot": 1, "start": 15.4, "end": 16.0,
+                      "overlap": True},
+                     {"slot": 3, "start": 15.4, "end": 16.0,
+                      "overlap": True},
+                     {"slot": 1, "start": 16.0, "end": 17.0}]]
+    _live(3, "t1", 8.0)
+    _live(3, "t2", 4.0)
+    got = _live(3, "t3", 5.0)
+    assert (got["voice"], got["name"]) == (100, "Alex")
+    slots = [(s["slot"], s["overlap"]) for s in _row("t3")["spans"]]
+    assert slots == [(100, False), (100, False), (100, False), (1, True),
+                     (3, True), (100, False)]
+    assert all(m["by"] == "bank" for m in _row("t3")["moved"])
+    assert vss._sessions[3]["voices"][1]["clean_s"] == 8.0
+
+
+def test_a_normal_calibrated_session_moves_nothing(fakes, calibrated):
+    """Three people, each heard as themselves with ordinary variation, a
+    newcomer whose voice sits between two of them, and a short reply:
+    nothing moves, and every known voice keeps its name."""
+    near = voiceid.l2_normalize
+    alex = [near([1.0, 0.1 * i, 0.05, 0.0]) for i in range(3)]
+    sam = [near([0.1 * i, 1.0, 0.0, 0.05]) for i in range(3)]
+    dave = [near([0.05, 0.0, 1.0, 0.1 * i]) for i in range(3)]
+    newcomer = near([0.0, 0.0, 0.5, 0.87])
+    calibrated += [alex[0], sam[0], dave[0], alex[1], newcomer, sam[1],
+                   dave[1], newcomer, alex[2], dave[2], sam[2]]
+    # (voice, seconds of speech): Dave's short reply is too short to
+    # fingerprint, and is named from what his voice said before
+    turns = [(0, 4.0), (1, 4.0), (2, 4.0), (0, 4.0), (4, 4.0), (1, 4.0),
+             (2, 4.0), (4, 4.0), (0, 4.0), (2, 0.5), (2, 4.0), (1, 4.0)]
+    fakes.script, t = [], 0.0
+    for slot, secs in turns:
+        fakes.script.append([{"slot": slot, "start": t, "end": t + secs}])
+        t += secs
+    names = [_live(3, f"t{i}", secs)["name"]
+             for i, (_, secs) in enumerate(turns)]
+    assert not any("moved" in _row(f"t{i}") for i in range(len(names)))
+    assert names == ["Alex", "Sam", "Dave", "Alex", "", "Sam", "Dave", "",
+                     "Alex", "Dave", "Dave", "Sam"]
+
+
+def test_the_fallback_scorer_moves_nothing(fakes, calibrated,
+                                           monkeypatch):
+    from backend import voice_calibration as vc
+    monkeypatch.setattr(vc, "current", lambda: None)
+    calibrated += [DAVE, ALEX]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 1, "start": 8.0, "end": 12.0}]]
+    _live(3, "t1", 8.0)
+    _live(3, "t2", 4.0)
+    assert "moved" not in _row("t2")
+    assert vss._sessions[3]["voices"][1]["clean_s"] == 12.0
+
+
+def test_the_bank_check_fingerprints_nothing_more(fakes, calibrated,
+                                                  monkeypatch):
+    """The check reads the fingerprints the turn already has: one per
+    clean span and model, as before."""
+    calls = []
+    real = vss.embed_live
+    monkeypatch.setattr(vss, "embed_live",
+                        lambda pcm, sr, cfg: calls.append(1) or real(
+                            pcm, sr, cfg))
+    calibrated += [DAVE, ALEX]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 1, "start": 8.0, "end": 12.0}]]
+    _live(3, "t1", 8.0)
+    assert _live(3, "t2", 4.0)["name"] == "Alex"
+    assert len(calls) == 2

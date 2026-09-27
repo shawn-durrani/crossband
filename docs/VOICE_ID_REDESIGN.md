@@ -120,7 +120,12 @@ service.
 6. Every clean span's fingerprint is checked against its session
    voice's fingerprint. A span that plainly belongs to another session
    voice is moved there. This catches the tracker splitting one person
-   whose voice changes, or mixing two up.
+   whose voice changes, or mixing two up. Each voice's speech in a turn
+   is also scored against the banks on its own. When it plainly names
+   someone other than the person that voice has sounded like, it moves
+   to that person's voice, or to a new voice of its own. This catches
+   the tracker filing someone under another voice before their own voice
+   has much behind it.
 7. When the session ends, the session voices are dropped.
 
 Why the tracker keeps the memory, from the spike on this Mac:
@@ -476,6 +481,13 @@ Live on this install:
   voice moves there before it's added. Plainly means that voice has 6
   seconds or more of clean speech, the span scores 0.7 or more against
   it by cosine, and it leads every other voice by 0.25 or more.
+- The bank check: each session voice's clean speech in a turn is scored
+  against the banks on its own before it's added. It moves when there's
+  1.5 seconds or more of it, it names a known person at 0.99 or more,
+  and it gives the person the voice's earlier speech names at 0.9 or
+  more a chance of 0.01 or less. It goes to that person's voice, or to
+  a new voice of its own when they have none. A voice named by hand is
+  never checked.
 - The naming pass at the end of a session. Every voice is named once
   more over all its fingerprints, and each turn whose name changed is
   relabelled, the last turn included. A turn whose voice ends the
@@ -511,7 +523,7 @@ Not built yet:
 
 | Risk | What happens | What limits it |
 |---|---|---|
-| The tracker loses track in a long session | Two voices swap | None in 15 recorded meetings. The fingerprint check on every span, and the end-of-session naming pass. |
+| The tracker loses track in a long session | Two voices swap | None in 15 recorded meetings. The fingerprint check on every span, the bank check on each voice's speech in a turn, and the end-of-session naming pass. |
 | A voice sounds unlike its bank (a cold, a whisper, a new mic) | Named late, or left listening | Probabilities fall, so the app waits instead of guessing. Confirming a turn teaches it. |
 | Two similar voices, like siblings | Both near the bar | The calibration sees them close, one to one stops both getting one name, and you confirm |
 | The AIs' own playback reaches the mic | A voice made of AI speech | A voice heard mostly while the AIs are talking is never named or saved |
