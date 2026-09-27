@@ -706,6 +706,43 @@ def readiness(cfg) -> dict:
                                                        {}).items()}
 
 
+def person_readiness(cfg, person_id) -> dict:
+    """One person's readiness, and whether it covers their bank as it is
+    now (#504): {"state", "readiness"}. Recording a voice changes the bank
+    and the worker rebuilds a few seconds later, so the page needs to know
+    when the answer it reads is about the new clips. States:
+
+      "off"          the test is switched off; readiness is None
+      "current"      the last build saw exactly the person's clips as they
+                     are now; readiness is its result (None when they have
+                     no clip the test can read)
+      "checking"     their clips have changed since the last build, or no
+                     build has finished yet
+      "unavailable"  a build can't run until a restart
+      "failed"       the last build failed
+
+    Reads only: one index read beside the last snapshot, never a build.
+    Content-free, like readiness()."""
+    if not enabled(cfg):
+        return {"state": "off", "readiness": None}
+    snap = current()
+    with _lock:
+        worker = _status["state"]
+    if snap is not None:
+        index = anchors.store().calibration_clips(SAMPLE_RATE, audio=False)
+        now = tuple(sorted(c["file"]
+                           for c in index.get(person_id, {}).get("clips", [])))
+        built = dict(item for item in snap["fingerprint"]
+                     if isinstance(item, tuple) and len(item) == 2)
+        if built.get(person_id, ()) == now:
+            found = snap["readiness"].get(person_id)
+            return {"state": "current",
+                    "readiness": dict(found) if found else None}
+    if worker in ("unavailable", "failed"):
+        return {"state": worker, "readiness": None}
+    return {"state": "checking", "readiness": None}
+
+
 def status(cfg) -> dict:
     """The scorer's state and the readiness rules, for the Voices page:
     "off", "waiting" (models loading), "building", "ready", "unavailable"

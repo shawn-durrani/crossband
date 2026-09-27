@@ -9,6 +9,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import ThreadView from './components/ThreadView'
 import VoiceReadiness from './components/VoiceReadiness'
+import { VoiceRecorderView } from './components/VoiceRecorder'
+import { PASSAGES } from './voiceRecording.js'
 
 const PARTICIPANTS = [
   { slug: 'claude', name: 'Claude', color: '#7aa2f7', enabled: true, model: 'claude-opus-4-8' },
@@ -104,5 +106,42 @@ export function renderSmoke() {
       throw new Error(`render smoke: expected ${JSON.stringify(needle)} in the readiness markup`)
     }
   }
-  return html.length + readiness.length
+  // #504: the recorder in each phase the owner sees - ready to start,
+  // recording with the meter and the clock, checking, a voice that needs
+  // another day, a ready one, and a refusal in plain words.
+  const saved = { saved: 4, seconds: 30, state: 'checking', summary }
+  const noop = () => {}
+  const recorder = renderToStaticMarkup(
+    <div>
+      {[
+        { phase: 'idle' },
+        { phase: 'starting' },
+        { phase: 'recording', elapsedMs: 12000, level: 0.6 },
+        { phase: 'saving', elapsedMs: 45000, auto: true },
+        { phase: 'checking', answer: saved },
+        { phase: 'done', answer: saved, readinessState: 'current', summary,
+          readiness: { ready: false, reason: 'one_day', pieces: 28, share_right: 0,
+                       named_as_other: 0, days: 1, speech_seconds: 27 } },
+        { phase: 'done', answer: saved, readinessState: 'current', summary,
+          readiness: { ready: true, reason: 'ready', pieces: 45, share_right: 1,
+                       named_as_other: 0, days: 2, speech_seconds: 54 } },
+        { phase: 'done', answer: saved, readinessState: 'off' },
+        { phase: 'refused', message: 'That didn\'t sound like someone speaking.' },
+      ].map((state, i) => (
+        <VoiceRecorderView key={i} name="Alex" passage={PASSAGES[0]} state={state}
+                           onStart={noop} onStop={noop} onClose={noop} />
+      ))}
+    </div>,
+  )
+  for (const needle of ['Ask Alex to sit at the microphone', 'To record again, ask Alex', PASSAGES[0].slice(0, 40), 'Start recording',
+                        'role="meter"', '0:12 of about 0:30', 'Stop and save',
+                        'Stopped at 45 seconds', 'Checking whether the voice is ready',
+                        'Kept 4 clips, 30 seconds of speech.', 'Needs speech from another day',
+                        'Record again, ideally on another day or in another room.',
+                        'Record again', 'didn&#x27;t sound like someone speaking']) {
+    if (!recorder.includes(needle)) {
+      throw new Error(`render smoke: expected ${JSON.stringify(needle)} in the recorder markup`)
+    }
+  }
+  return html.length + readiness.length + recorder.length
 }

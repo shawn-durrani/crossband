@@ -30,6 +30,7 @@ voice_session_shadow.py - follows each voice through a voice session
                   on the loopback diariser, names voices from pooled
                   speech, and feeds the live check when switched on
 voice_calibration.py - the calibrated scorer behind voice readiness
+voice_recording.py - checks and cuts a voice recorded on the Voices page
 tts_v3.py       - how replies are shaped for the Eleven v3 voices
 accounting.py   - cost with provenance; provenance.py defines the axes
 frontend/       - React UI; pure .js modules hold the rules and are tested
