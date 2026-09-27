@@ -24,10 +24,17 @@ export function newLedger() {
 // 'buffer' (a capped continuation segment, #104 - text accumulates and the
 // round waits for the real end of the turn). `speechMs`, when given, is how
 // much speech the commit carried, so a rescue (#304) can meter what it
-// transcribes.
-export function onCommit(ledger, turnId, dispatch = 'send', speechMs = null) {
+// transcribes. #455: `place` is { rec, cutAt }, the backup recording the
+// commit's audio is also in (its start time, which names it) and the
+// Date.now() of the commit, so the backup copy can skip what realtime
+// has already delivered (copyFrom below).
+export function onCommit(ledger, turnId, dispatch = 'send', speechMs = null, place = null) {
   const c = { turnId, dispatch }
   if (Number.isFinite(speechMs)) c.speechMs = speechMs
+  if (place && Number.isFinite(place.rec) && Number.isFinite(place.cutAt)) {
+    c.rec = place.rec
+    c.cutAt = place.cutAt
+  }
   ledger.pending.push(c)
   // A commit whose final never arrives (socket died mid-turn) must not pin
   // memory forever; the salvage timer handles its text.
@@ -40,12 +47,22 @@ export function onCommit(ledger, turnId, dispatch = 'send', speechMs = null) {
 // The salvage timer fired for `turnId`: the batch path takes over this
 // exact commit. Returns its dispatch, or null when the realtime final
 // already won (the timer lost the race - do nothing).
+// #455: each commit disarms the timer of the one before, so earlier
+// commits on the same recording may still be waiting too. Their audio is
+// in the same backup copy, which is transcribed from the last delivered
+// cut, so the copy owns them now: they're consumed with this one, and a
+// late final for any of them can't send its words a second time.
 export function onSalvage(ledger, turnId) {
   if (ledger.consumed.has(turnId)) return null
   const i = ledger.pending.findIndex((c) => c.turnId === turnId)
   if (i === -1) return null
   const [c] = ledger.pending.splice(i, 1)
   ledger.consumed.add(turnId)
+  if (c.rec !== undefined) {
+    const covered = (x) => x.rec === c.rec && x.cutAt <= c.cutAt
+    for (const e of ledger.pending.filter(covered)) ledger.consumed.add(e.turnId)
+    ledger.pending = ledger.pending.filter((x) => !covered(x))
+  }
   return c.dispatch
 }
 
@@ -117,6 +134,25 @@ export function endTurn(ledger, turnId) {
   if (!c) return null
   c.dispatch = 'send'
   return c
+}
+
+// #455: the backup recording holds every turn since it started, and
+// realtime may already have delivered some of them. `heard` is
+// { rec, at }: the recording, and the latest cut on it whose words were
+// delivered. heardAfter moves it on when a commit's final wins. copyFrom
+// says where in recording `rec` (by its start time, Date.now() based) the
+// copy's own words begin, in ms: after the last delivered cut, or 0 when
+// nothing on it was delivered. The server keeps only the words after
+// that point, so a rescued turn never repeats its earlier pieces.
+export function heardAfter(heard, commit) {
+  if (!commit || !Number.isFinite(commit.rec) || !Number.isFinite(commit.cutAt)) return heard
+  if (heard && heard.rec === commit.rec && heard.at >= commit.cutAt) return heard
+  return { rec: commit.rec, at: commit.cutAt }
+}
+
+export function copyFrom(heard, rec) {
+  if (!heard || heard.rec !== rec || !Number.isFinite(rec)) return 0
+  return Math.max(0, Math.round(heard.at - rec))
 }
 
 // Session teardown or STT reconnect: nothing in flight survives the socket.

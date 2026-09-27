@@ -8,8 +8,10 @@
 // Pins: the batch path transcribes the turn and it's sent once; a late
 // realtime final can't send it twice, whichever lands first; a failure with
 // nothing in flight and a normal turn behave as before; an empty last piece
-// of a long turn still sends the parts already buffered; and the rescue's
-// diagnostics hold ids, never words.
+// of a long turn still sends the parts already buffered; the backup copy
+// starts after the pieces realtime already delivered (#455), whether the
+// rescue runs at once or when the turn ends; and the rescue's diagnostics
+// hold ids, never words.
 // Run: node --test frontend/src/voiceFallbackRescue.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test } from 'node:test'
@@ -65,7 +67,8 @@ beforeEach(() => {
   sttGate = null
   controllers = []
   globalThis.fetch = async (url, opts) => {
-    posts.push({ url, body: opts && typeof opts.body === 'string' ? opts.body : '' })
+    posts.push({ url, body: opts && typeof opts.body === 'string' ? opts.body : '',
+                 form: opts && opts.body instanceof FormData ? opts.body : null })
     if (/\/api\/chats\/\d+\/stt$/.test(url)) {
       if (sttGate) await sttGate
       const r = sttReplies.shift() || { status: 200, body: { text: BATCH } }
@@ -301,4 +304,48 @@ test('the rescue is recorded by turn id, never by what was said', async () => {
   for (const word of [SAID, BATCH, ...WORDS]) {
     assert.ok(!all.includes(word), `"${word}" reached the diagnostics ring`)
   }
+})
+
+// #455: the backup recording holds the whole turn, and realtime already
+// delivered its first piece. The copy says where that piece was cut, so
+// the server returns only what came after it.
+test('a rescue after a delivered piece starts the copy at its cut', async () => {
+  const { ctrl, ws, sent } = liveSession()
+  ctrl.recStarted = Date.now() - 30000
+  const seg = await speak(ctrl, ws, { cause: 'cap', speechMs: 12000 })
+  relay(ws, { final: 'Alex asked about the ladder', turn_id: seg })
+  const end = await speak(ctrl, ws, { speechMs: 3000 })
+  relay(ws, { error: 'transcriber unavailable' })
+  await settle()
+  assert.equal(sttPosts().length, 1)
+  const from = Number(sttPosts()[0].form.get('from_ms'))
+  assert.ok(Math.abs(from - 30000) < 1000, `copy started at ${from} ms`)
+  assert.deepEqual(sent, [{ text: `Alex asked about the ladder ${BATCH}`, turnId: end }])
+})
+
+test('a rescue that waits for the turn to end starts the copy at the delivered cut', async () => {
+  const { ctrl, ws, sent } = liveSession()
+  ctrl.recStarted = Date.now() - 30000
+  const seg = await speak(ctrl, ws, { cause: 'cap', speechMs: 12000 })
+  relay(ws, { final: 'Alex asked about the ladder', turn_id: seg })
+  await speak(ctrl, ws, { cause: 'cap', speechMs: 12000 })
+  ctrl.speechStart = Date.now() - 1000  // still talking
+  relay(ws, { error: 'transcriber unavailable' })
+  await settle()
+  assert.equal(sttPosts().length, 0)
+  await speak(ctrl, null)  // the pause that ends the turn
+  await settle()
+  assert.equal(sttPosts().length, 1)
+  const from = Number(sttPosts()[0].form.get('from_ms'))
+  assert.ok(Math.abs(from - 30000) < 1000, `copy started at ${from} ms`)
+  assert.deepEqual(sent.map((m) => m.text), [`Alex asked about the ladder ${BATCH}`])
+})
+
+test('with nothing delivered the copy goes whole, as before', async () => {
+  const { ctrl, ws } = liveSession()
+  ctrl.recStarted = Date.now() - 30000
+  await speak(ctrl, ws)
+  relay(ws, { error: 'transcriber unavailable' })
+  await settle()
+  assert.equal(sttPosts()[0].form.get('from_ms'), null)
 })

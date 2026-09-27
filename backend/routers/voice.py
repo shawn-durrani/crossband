@@ -216,7 +216,7 @@ _BATCH_PCM_MAX_BYTES = diarize.MAX_UTTERANCE_SECONDS * 48000 * 2 + 4096
 async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
               duration_ms: int = Form(0), turn_id: str = Form(""),
               after: str = Form(""), pcm: UploadFile | None = File(None),
-              why: str = Form("")):
+              why: str = Form(""), from_ms: int = Form(0)):
     """Batch speech-to-text: the fallback once realtime transcription
     fails, and the salvage for a turn realtime lost.
 
@@ -231,7 +231,12 @@ async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
     run on worker threads.
 
     #470: `why` says why this turn took the backup path, one word from
-    STT_BACKUP_WHY, logged content-free so a rise shows in service.log."""
+    STT_BACKUP_WHY, logged content-free so a rise shows in service.log.
+
+    #455: `from_ms` is where in the recording this turn's own words begin,
+    when realtime already delivered the words before it (earlier pieces of
+    a long turn, or an earlier turn). Only the words from there on are
+    returned, so a rescued turn never repeats them."""
     cfg = request.app.state.settings.as_cfg()
     if voice.provider_for(cfg) != voice.PROVIDER_ELEVENLABS:
         raise HTTPException(400, voice.disabled_reason(cfg))
@@ -251,13 +256,35 @@ async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
             log.warning("batch identity check not started; transcription "
                         "continues", exc_info=True)
     try:
-        text, model_used = await asyncio.to_thread(
-            voice.transcribe, data, file.content_type, cfg)
+        if from_ms > 0:
+            text, model_used, words = await asyncio.to_thread(
+                voice.transcribe, data, file.content_type, cfg, with_words=True)
+            text = _backup_words(chat_id, text, words, from_ms / 1000)
+        else:
+            text, model_used = await asyncio.to_thread(
+                voice.transcribe, data, file.content_type, cfg)
     except RuntimeError as e:
         raise HTTPException(502, str(e))
     seconds = max(duration_ms, 0) / 1000
     await asyncio.to_thread(_meter_batch_stt, chat_id, seconds, cfg)
     return {"text": text, "model": model_used}
+
+
+def _backup_words(chat_id, text, words, from_s):
+    """#455: a backup copy's own words, from `from_s` on. Content-free log
+    line: where the cut was and how many words each side had. With no word
+    times to cut by, the whole text stands, and the line says so."""
+    if not text:
+        return text
+    cut = voice.words_from(words, from_s)
+    if cut is None:
+        log.warning("stt backup cut: chat=%s from_s=%.1f no word times; "
+                    "the whole text is kept", chat_id, from_s)
+        return text
+    kept_text, kept, dropped = cut
+    log.info("stt backup cut: chat=%s from_s=%.1f words_kept=%d words_dropped=%d",
+             chat_id, from_s, kept, dropped)
+    return kept_text
 
 
 def _meter_batch_stt(chat_id, seconds, cfg):

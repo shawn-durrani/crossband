@@ -73,7 +73,10 @@ A finished turn survives a transcription failure. The app records every
 turn a second time while it streams, and when realtime transcription
 fails with a turn still waiting for its words, that copy goes to
 standard transcription and the turn is sent once. A late realtime
-result can't send it again, whichever arrives first. A failure with no
+result can't send it again, whichever arrives first. A rescued turn never says its earlier part twice. That copy runs from
+before the turn, so it can hold earlier pieces whose words realtime
+already sent. The app tells the server where those end, and the server
+keeps only the words after that point, going by the time of each word. A failure with no
 turn waiting changes nothing else. When the last piece of a long turn
 comes back empty, the pieces already heard are still sent. The suite
 drives the real voice client through each case.

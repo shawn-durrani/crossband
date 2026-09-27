@@ -351,9 +351,12 @@ def subscription():
     }
 
 
-def transcribe(audio_bytes, mime, cfg):
+def transcribe(audio_bytes, mime, cfg, with_words=False):
     """Speech-to-text via Scribe v2. (No scribe_v1 fallback: ElevenLabs removes
-    it on 2026-07-09 - a fallback to a dead model is just a slower error.)"""
+    it on 2026-07-09 - a fallback to a dead model is just a slower error.)
+    With `with_words`, Scribe's word list comes back too, as a third item:
+    every word, space and sound with its start and end in seconds, which
+    joined in order make the text (#455)."""
     model_id = cfg.get("stt_model") or "scribe_v2"
     r = httpx.post(
         f"{ELEVEN_BASE}/v1/speech-to-text",
@@ -363,8 +366,39 @@ def transcribe(audio_bytes, mime, cfg):
         timeout=60,
     )
     if r.status_code < 400:
-        return r.json().get("text", "").strip(), model_id
+        body = r.json()
+        text = (body.get("text") or "").strip()
+        if with_words:
+            return text, model_id, body.get("words")
+        return text, model_id
     raise RuntimeError(f"Speech-to-text failed ({r.status_code}: {r.text[:200]})")
+
+
+def words_from(words, from_s):
+    """#455: the text of the words that start being said at `from_s`
+    seconds into the recording or later, judged by each word's middle.
+    A backup recording can hold earlier pieces of a long turn, or an
+    earlier turn, whose words realtime already delivered. The browser says
+    where those end, and only what follows is this turn's own. A word the
+    cut runs through goes with whichever side holds most of it, which is
+    the side realtime heard it on. Returns (text, kept, dropped), counting
+    words only, or None when there are no word times to cut by, and the
+    caller keeps the whole text."""
+    if not isinstance(words, list) or not words:
+        return None
+    kept, dropped = [], 0
+    for w in words:
+        if not isinstance(w, dict):
+            continue
+        start, end = w.get("start"), w.get("end")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            return None
+        if (start + end) / 2 >= from_s:
+            kept.append(w)
+        elif w.get("type") != "spacing":
+            dropped += 1
+    text = "".join(str(w.get("text") or "") for w in kept).strip()
+    return text, sum(1 for w in kept if w.get("type") != "spacing"), dropped
 
 
 def synthesize(text, voice_id, cfg):

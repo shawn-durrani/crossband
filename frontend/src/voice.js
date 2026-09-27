@@ -14,8 +14,8 @@ import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './vo
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs, turnOverAfterCut } from './turnPolicy.js'
 import { shouldForceRoundDone, speechStranded } from './roundGuard.js'
-import { endTurn, newLedger, onCommit, onFinal, onSalvage, rescuePlan, resetLedger,
-         takeInFlight } from './commitLedger.js'
+import { copyFrom, endTurn, heardAfter, newLedger, onCommit, onFinal, onSalvage, rescuePlan,
+         resetLedger, takeInFlight } from './commitLedger.js'
 import { VoiceTrace, traceMeta } from './voiceTrace.js'
 import { record as debugRecord } from './voiceDebug.js'
 import { STAGE_EMPTY, STAGE_FAILED, STAGE_HELD, STAGE_SENT, handoffBegan,
@@ -160,6 +160,10 @@ export default class VoiceController {
     // Which commit the salvage timer belongs to, so only that commit's
     // transcript disarms it (#453).
     this._sttCommitTurn = null
+    // #455: the latest cut on the backup recording whose words realtime
+    // delivered, as { rec, at } (commitLedger.js heardAfter). A backup copy
+    // is transcribed from there on, so it never repeats them.
+    this._heard = null
     // The listening loop's handle: each _vadLoop() call takes a new one,
     // and a tick holding an older one stops, so one loop reads the mic.
     this._vadLoopId = 0
@@ -357,6 +361,7 @@ export default class VoiceController {
         // whose commit was already salvaged - or that names no commit we
         // know - drops here, which is exactly the doubled-turn case.
         const win = onFinal(this._ledger, msg.turn_id)
+        if (win) this._heard = heardAfter(this._heard, win)
         // #453: a transcript disarms only its own commit's salvage timer.
         // Clearing it on every final let a long turn's earlier piece, whose
         // words came in late, switch off the backup of the piece after it.
@@ -1089,7 +1094,8 @@ export default class VoiceController {
       this._sttSend(cut ? { commit: true, turn_id: turnId, after: cut.turnId }
                         : { commit: true, turn_id: turnId })
       if (!tooShort) {
-        onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send', speechMs)
+        onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send', speechMs,
+                 { rec: this.recStarted, cutAt: Date.now() })
         // Only a real end of turn is a hand-off; a capped segment buffers.
         if (!continuation) this._watchHandoff(turnId)
         // A continuation commit is mid-speech: capture keeps flowing, so
@@ -1126,7 +1132,8 @@ export default class VoiceController {
     const why = this.sttRealtime ? 'reconnecting' : 'batch'
     const piece = this._trackPiece(turnId, continuation && !tooShort ? 'buffer' : 'send',
                                    { speechMs, endedAt: lastVoice,
-                                     after: cut ? cut.turnId : null, why })
+                                     after: cut ? cut.turnId : null, why,
+                                     fromMs: copyFrom(this._heard, this.recStarted) })
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
@@ -1217,8 +1224,7 @@ export default class VoiceController {
     try {
       const res = await fetch(`/api/chats/${this.getChatId()}/stt`,
                               { method: 'POST',
-                                body: batchSttForm(blob, speechMs, turnId, copy, piece.after,
-                                                   piece.why) })
+                                body: batchSttForm(blob, speechMs, turnId, copy, piece) })
       const data = await res.json().catch(() => ({}))
       if (this._batchPiece === piece) this._batchPiece = null
       dispatch = piece.dispatch || 'send'
@@ -1247,7 +1253,7 @@ export default class VoiceController {
         handoffStage(this._handoff, turnId || this._trace.current()?.turnId, STAGE_HELD)
       }
       this.heldUtterances.push({ blob, speechMs, turnId, copy, after: piece.after,
-                                 why: piece.why })
+                                 why: piece.why, fromMs: piece.fromMs })
       this.onHeld?.(this.heldUtterances.length)
       this._startHeldRetry()
       return false
@@ -1259,7 +1265,8 @@ export default class VoiceController {
   // turn that ends meanwhile can make it the last piece (_endLongTurn).
   // #461: `speech` is { speechMs, endedAt } when the turn's place in the
   // recording is known, which is what lets it send an identity copy. #470:
-  // and `why`, the word the server logs for a turn on this path.
+  // and `why`, the word the server logs for a turn on this path. #455:
+  // and `fromMs`, where in the recording the turn's own words begin.
   _trackPiece(turnId, dispatch, speech = {}) {
     const piece = { turnId, dispatch, ...speech }
     if (dispatch === 'buffer') this._batchPiece = piece
@@ -1283,7 +1290,10 @@ export default class VoiceController {
   }
 
   async _salvageUtterance(speechMs, turnId = null, dispatch = 'send', endedAt = null, why = '') {
-    const piece = this._trackPiece(turnId, dispatch, { speechMs, endedAt, why })
+    // #455: the copy's own words start after what realtime delivered.
+    const piece = this._trackPiece(turnId, dispatch, {
+      speechMs, endedAt, why, fromMs: copyFrom(this._heard, this.recStarted),
+    })
     const rec = this.recorder
     const chunks = this.recChunks
     await new Promise((res) => { rec.onstop = res; try { rec.stop() } catch { res() } })
@@ -1303,8 +1313,7 @@ export default class VoiceController {
       const item = this.heldUtterances[0]
       if (!item) { this.onHeld?.(0); return }
       try {
-        const body = batchSttForm(item.blob, item.speechMs, item.turnId, item.copy, item.after,
-                                  item.why)
+        const body = batchSttForm(item.blob, item.speechMs, item.turnId, item.copy, item)
         const res = await fetch(`/api/chats/${this.getChatId()}/stt`, { method: 'POST', body })
         const data = await res.json().catch(() => ({}))
         // Reached the server: this item is done either way (HTTP errors

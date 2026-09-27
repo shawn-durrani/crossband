@@ -79,11 +79,14 @@ export function identityWav(samples, srcRate, win) {
 // The batch upload's form: the recording and its length as always, plus
 // the turn id and the identity copy when there is one. A copy without a
 // turn id can't be matched to the message it becomes, so neither goes
-// alone, and the server checks nothing for that turn. A piece of a long
-// turn also names the piece before it (`after`, #469), so the server
-// names the turn from all its pieces. `why` is one word saying why the
-// turn took this path (#470), which the server logs.
-export function batchSttForm(blob, speechMs, turnId, copy, after = null, why = '') {
+// alone, and the server checks nothing for that turn. `extra` is the
+// piece's own details. A piece of a long turn names the piece before it
+// (`after`, #469), so the server names the turn from all its pieces.
+// `why` is one word saying why the turn took this path (#470), which the
+// server logs. `fromMs` is where in the recording this turn's own words
+// begin (#455), when realtime already delivered what came before.
+export function batchSttForm(blob, speechMs, turnId, copy, extra = {}) {
+  const { after = null, why = '', fromMs = 0 } = extra || {}
   const fd = new FormData()
   fd.append('file', blob, 'utterance.webm')
   fd.append('duration_ms', String(Math.round(speechMs)))
@@ -93,5 +96,6 @@ export function batchSttForm(blob, speechMs, turnId, copy, after = null, why = '
     if (after) fd.append('after', after)
   }
   if (why) fd.append('why', why)
+  if (Number.isFinite(fromMs) && fromMs > 0) fd.append('from_ms', String(Math.round(fromMs)))
   return fd
 }

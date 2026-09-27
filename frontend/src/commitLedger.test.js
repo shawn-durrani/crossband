@@ -6,12 +6,14 @@
 // flight. #304: when realtime transcription fails, the commits still in
 // flight are handed to the batch path once, and the rescue rule picks what
 // to salvage. #453: a long turn that ends while its cut piece is in flight
-// makes that piece the turn's last.
+// makes that piece the turn's last. #455: a backup copy is transcribed from
+// the last cut realtime delivered on its recording, and a salvage takes the
+// waiting commits that copy covers.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { endTurn, newLedger, onCommit, onFinal, onSalvage, rescuePlan, resetLedger,
-         takeInFlight } from './commitLedger.js'
+import { copyFrom, endTurn, heardAfter, newLedger, onCommit, onFinal, onSalvage, rescuePlan,
+         resetLedger, takeInFlight } from './commitLedger.js'
 
 test('the doubled-turn race: a salvaged commit drops its late final', () => {
   const l = newLedger()
@@ -151,4 +153,45 @@ test('ending a turn changes nothing once the cut piece is no longer waiting', ()
   endTurn(l, 'second')
   assert.equal(onFinal(l, 'first').dispatch, 'buffer')
   assert.equal(onFinal(l, 'second').dispatch, 'send')
+})
+
+// #455: the backup recording holds every commit since it started, so a
+// copy of it is transcribed from the last cut realtime delivered.
+test('a copy starts after the last delivered cut on its own recording', () => {
+  const REC = 1_000_000
+  let heard = null
+  assert.equal(copyFrom(heard, REC), 0, 'nothing delivered: the whole copy')
+  const l = newLedger()
+  onCommit(l, 'p1', 'buffer', 12000, { rec: REC, cutAt: REC + 12400 })
+  onCommit(l, 'p2', 'send', 3000, { rec: REC, cutAt: REC + 17600 })
+  heard = heardAfter(heard, onFinal(l, 'p1'))
+  assert.deepEqual(heard, { rec: REC, at: REC + 12400 })
+  assert.equal(copyFrom(heard, REC), 12400)
+  // a later recording owes nothing to the earlier one's words
+  assert.equal(copyFrom(heard, REC + 20000), 0)
+  // an older final never moves the mark back
+  assert.deepEqual(heardAfter(heard, { rec: REC, cutAt: REC + 5000 }), heard)
+  // a commit with no place leaves it where it was
+  assert.deepEqual(heardAfter(heard, { turnId: 'x' }), heard)
+})
+
+test('a salvage takes the waiting commits its copy covers', () => {
+  const REC = 1_000_000
+  const l = newLedger()
+  onCommit(l, 'old', 'send', 2000, { rec: REC - 30000, cutAt: REC - 20000 })
+  onCommit(l, 'p1', 'buffer', 12000, { rec: REC, cutAt: REC + 12400 })
+  onCommit(l, 'p2', 'send', 3000, { rec: REC, cutAt: REC + 17600 })
+  // p2's timer fires with p1 still waiting: the copy holds both
+  assert.equal(onSalvage(l, 'p2'), 'send')
+  assert.equal(onFinal(l, 'p1'), null, "p1's late words can't be sent again")
+  // a commit on another recording isn't in this copy, so it still waits
+  assert.equal(onFinal(l, 'old').turnId, 'old')
+})
+
+test('a salvage of a commit with no place takes only that commit', () => {
+  const l = newLedger()
+  onCommit(l, 'a', 'buffer')
+  onCommit(l, 'b', 'send')
+  assert.equal(onSalvage(l, 'b'), 'send')
+  assert.equal(onFinal(l, 'a').turnId, 'a')
 })
