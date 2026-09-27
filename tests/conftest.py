@@ -1,4 +1,5 @@
 import math
+import os
 import struct
 import sys
 import tempfile
@@ -106,6 +107,17 @@ def _private_tempdir(tmp_path, monkeypatch):
     private = tmp_path / "tmp"
     private.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(private))
+
+
+@pytest.fixture(autouse=True)
+def _umask_restored():
+    """db.init makes the process umask owner-only (0o077). Put the
+    runner's own back after each test, so one test's app never decides
+    the modes another test's files get."""
+    old = os.umask(0o022)
+    os.umask(old)
+    yield
+    os.umask(old)
 
 
 @pytest.fixture(autouse=True)

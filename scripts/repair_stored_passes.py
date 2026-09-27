@@ -187,6 +187,9 @@ def main(argv=None, settings=None, probe=running_work, out=print):
     settings = settings or load_settings()
     data_dir = str(settings.resolved_data_dir())
     db.configure(data_dir)
+    # The snapshot and the journal hold chat data: owner-only, like the
+    # app's own files.
+    db.secure_data_dir()
     if not os.path.exists(db.DB_PATH):
         # db.connect() would create an empty database here.
         raise SystemExit(f"no database at {db.DB_PATH}")

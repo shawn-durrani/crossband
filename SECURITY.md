@@ -162,6 +162,9 @@ limits.
 
 - Treat all of `data/` as sensitive. Transcripts, attachments,
   snapshots and logs all live there.
+- The app keeps `data/` private to your own account. The folder is
+  mode 700 and each file in it is mode 600. Anything looser is
+  tightened each time the app starts.
 - Redact before you paste logs into an issue.
 
 ## Voice identity in room mode
