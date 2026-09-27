@@ -52,6 +52,11 @@ whose voices disagree never give one name, and a piece too short to
 judge adds nothing. A piece the feed didn't answer is named on its own,
 and the pass then joins what each piece heard by the same rules
 (join_pieces), counting only the voices a piece named or found new.
+The turn's audio, the audio a tap on it or an introduction in it learns
+from, is the piece with the most clean speech when the whole turn is one
+voice (turn_audio), not a last piece that may be a one-word tail. Each
+piece that heard one voice with clean speech holds its audio for the
+pieces after it, at most PIECE_AUDIO_MAX pieces at a time.
 
 THE SPAN CHECK. The tracker can split one person into two voices, when
 their voice changes, or give one person's span to another voice. Each
@@ -205,6 +210,7 @@ FEED_CHUNK_BYTES = int(0.25 * 16000) * 2   # audio pushed at a time
 FEED_QUEUE_MAX = 4000           # chunks held before new ones are dropped
 RESULTS_MAX = 256               # turns whose result is remembered
 MAX_PIECES = 8                  # pieces of one long turn joined, newest kept
+PIECE_AUDIO_MAX = 16            # pieces whose audio is held for their turn
 # THE SPAN CHECK's bar, in cosine units. Strict on purpose: the tracker is
 # right about 99 times in 100, and a wrong move feeds one person's speech
 # into another's evidence.
@@ -331,6 +337,8 @@ _feeds: dict = {}               # chat_id -> _Feed
 _results: "collections.OrderedDict" = collections.OrderedDict()
 # turn id -> {"after": the piece before it, "verdict", "seconds"}
 _pieces: "collections.OrderedDict" = collections.OrderedDict()
+# turn id -> (clean seconds, pcm, sample rate) of a one-voice piece
+_piece_audio: "collections.OrderedDict" = collections.OrderedDict()
 
 
 def _turn_key(turn_id):
@@ -493,6 +501,49 @@ def join_pieces(turn_id, got, seconds):
         earlier = [(_pieces[t]["seconds"], _pieces[t]["voices"])
                    for t in before if "voices" in (_pieces.get(t) or {})]
     return join_verdicts(earlier + [(seconds, heard)], got)
+
+
+def piece_clean(got):
+    """The seconds of clean speech one piece's own answer found, or 0 when
+    the piece heard two voices or has no answer."""
+    if not got:
+        return 0.0
+    if len(got.get("piece_voices") or got.get("voices") or {}) > 1:
+        return 0.0
+    return sum(max(0.0, b - a) for a, b in got.get("clean_spans") or ())
+
+
+def hold_piece(turn_id, got, pcm, sample_rate):
+    """Hold one piece's audio for the pieces after it (LONG TURNS), when
+    its own answer `got` heard one voice with clean speech."""
+    tid = _turn_key(turn_id)
+    clean = piece_clean(got)
+    if not tid or not pcm or clean <= 0.0:
+        return
+    with _lock:
+        _piece_audio.pop(tid, None)
+        _piece_audio[tid] = (clean, bytes(pcm), sample_rate)
+        while len(_piece_audio) > PIECE_AUDIO_MAX:
+            _piece_audio.popitem(last=False)
+
+
+def turn_audio(turn_id, pcm, sample_rate, got):
+    """The audio a turn is remembered by, as (pcm, sample_rate): this
+    piece's, or for a long turn the whole of which is one voice (`got`,
+    the joined answer), the held piece with the most clean speech, the
+    later one on a tie. A piece with none held, or a two-voice turn, keeps
+    this piece's audio."""
+    tid = _turn_key(turn_id)
+    before = pieces_before(tid) if tid else []
+    if not before or ((got or {}).get("voices_in_turn") or 1) > 1:
+        return pcm, sample_rate
+    with _lock:
+        held = [(_piece_audio[t][0], i, _piece_audio[t])
+                for i, t in enumerate(before + [tid]) if t in _piece_audio]
+    if not held:
+        return pcm, sample_rate
+    _, _, (_, best, rate) = max(held, key=lambda h: (h[0], h[1]))
+    return best, rate
 
 
 def _feed_for(chat_id, cfg):
@@ -2057,6 +2108,7 @@ def _reset_for_tests():
         _feeds.clear()
         _results.clear()
         _pieces.clear()
+        _piece_audio.clear()
         _sessions.clear()
         _clip_cache.clear()
         _anchor_cache.clear()

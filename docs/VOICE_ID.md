@@ -568,7 +568,9 @@ straight away.
 The app keeps the audio of the last 24 turns in memory, up to the last
 30 seconds of each, so confirm soon after the turn. When the recording
 has gone, the turn says so and nothing is learnt. A turn with two
-voices in it is never learnt from. If the voice on the turn matches
+voices in it is never learnt from. A [long turn](#long-turns) of one
+voice is learnt from its piece with the most clean speech, since its
+last piece can be a single word. If the voice on the turn matches
 yours, the turn is labelled with your name, and the line under it says
 so.
 

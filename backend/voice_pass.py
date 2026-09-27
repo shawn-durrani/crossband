@@ -26,7 +26,9 @@ reads its answer:
   4. Arm the room and seat the named person first, so by the time the
      label is claimable the room state already agrees with it. Then
      deliver the label through the one label path, then ask about a new
-     voice, pointing at the turn.
+     voice, pointing at the turn. The turn's audio is remembered for a tap
+     on it or an introduction in it: for a long turn of one voice, the
+     piece with the most clean speech (voice_sessions.turn_audio).
   5. A named single-voice turn gets the mismatch cross-check
      (backend/mismatch.py), which can flag a name the words don't fit and
      never changes a label.
@@ -246,7 +248,9 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
         if got is None:
             got = await diarize._in_voice_thread(
                 vss.name_single_turn, chat_id, pcm, sample_rate, cfg)
-        # A long turn cut into pieces is named from all of them (#469).
+        # A long turn cut into pieces is named from all of them (#469),
+        # and remembered by the piece with the most clean speech (#540).
+        vss.hold_piece(turn_id, got, pcm, sample_rate)
         got = vss.join_pieces(turn_id, got, len(pcm) / 2 / (sample_rate
                                                               or 16000))
         pieces = (got or {}).get("pieces") or 1
@@ -281,8 +285,10 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
         if not plan.get("solo"):
             await diarize._in_voice_thread(_arm_and_seat, chat_id, decision,
                                            cfg, got)
+        heard_pcm, heard_rate = vss.turn_audio(turn_id, pcm, sample_rate,
+                                               got)
         target_id = await diarize._deliver_label(
-            chat_id, pcm, sample_rate, commit_ts, session, payload,
+            chat_id, heard_pcm, heard_rate, commit_ts, session, payload,
             turn_id=turn_id,
             clusters_remembered=(got or {}).get("voices_in_turn") or 1)
         if decision["ask"] and not plan.get("solo"):

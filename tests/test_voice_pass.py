@@ -16,7 +16,9 @@ What these tests pin, in order:
    saw is named on its own, and a sure naming saves one clip and re-runs
    the hygiene audit. A named turn gets the mismatch cross-check. A long
    turn's tail takes the name its pieces had, and a long turn with two
-   voices keeps the note without waiting for words (#469).
+   voices keeps the note without waiting for words (#469). A long turn of
+   one voice is remembered, for a tap on it, by its piece with the most
+   clean speech, never a piece that heard two voices (#540).
 4. ONE PATH. Every voiced turn goes through this pass, whatever the room
    is doing, and nothing else runs.
 5. NAMING. The calibrated scorer names one person per voice at its bar
@@ -376,6 +378,82 @@ def test_a_long_turn_with_two_voices_keeps_the_note_without_the_split(
     assert labels["crosstalk"] is True and labels["labels"] == ["Sam",
                                                                 "Dave"]
     assert "segments" not in labels and waited == []
+
+
+def _run_pieces(chat_id, pieces, monkeypatch):
+    """Each piece of a long turn through the pass, as the relay commits
+    them: (turn id, audio, the feed's answer for it)."""
+    answers = {turn: got for turn, _, got in pieces}
+
+    async def await_turn(turn_id, timeout=vss.LIVE_WAIT_S, step=0.02):
+        return answers.get(turn_id)
+    monkeypatch.setattr(vss, "await_turn", await_turn)
+    monkeypatch.setattr(vss, "name_single_turn", lambda *a, **k: None)
+    before = None
+    for turn, pcm, _ in pieces:
+        vss.note_piece(turn, before)
+        asyncio.run(voice_pass.run(chat_id, pcm, SR, db.now(),
+                                   diarize.RoomSession(), dict(ONLY_CFG),
+                                   turn))
+        before = turn
+
+
+def test_a_long_turn_is_remembered_by_its_piece_with_the_most_speech(
+        app, monkeypatch):
+    """Three pieces of Sam, the last a one-word tail. The message carries
+    the tail's turn id, and a tap on it learns from the 11 s middle
+    piece, the one with the most clean speech, not from the tail."""
+    monkeypatch.setattr(diarize, "ID_ATTACH_WINDOW_SECS", 0.05)
+    first, middle, tail = (speech_pcm(6.0, amp=3000),
+                           speech_pcm(11.0, amp=3500),
+                           speech_pcm(0.8, amp=4000))
+    added = []
+    real_add = anchors.AnchorStore.add_clip
+
+    def add_clip(self, pid, pcm, sample_rate, **kw):
+        added.append((pcm, kw.get("source")))
+        return real_add(self, pid, pcm, sample_rate, **kw)
+    monkeypatch.setattr(anchors.AnchorStore, "add_clip", add_clip)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _chat(c, room_on=True)
+        m = _insert_user_message(chat, voice_turn_id="t3")
+        _run_pieces(chat, [
+            ("t1", first, _got(clean_spans=[(0.3, 5.5)], pieces=1)),
+            ("t2", middle, _got(clean_spans=[(0.2, 10.8)], pieces=2)),
+            ("t3", tail, _got(clean_spans=[], pieces=3))], monkeypatch)
+        assert anchors.peek_audio(m["id"]) == (middle, SR, 1)
+        r = c.post(f"/api/chats/{chat}/messages/{m['id']}/speaker",
+                   json={"name": "Sam"})
+        assert r.json()["learned"] is True
+    assert added[-1] == (middle, "correction")
+
+
+def test_a_long_turn_is_never_remembered_by_a_piece_with_two_voices(
+        app, monkeypatch):
+    """The first piece has the most speech but heard two voices, one still
+    listening, so the joined turn counts one voice. The second piece is
+    the one a tap learns from. A two-voice turn keeps its last piece's
+    audio, marked two voices, as before."""
+    monkeypatch.setattr(diarize, "ID_ATTACH_WINDOW_SECS", 0.05)
+    first, second, tail = (speech_pcm(10.0, amp=3000),
+                           speech_pcm(4.0, amp=3500),
+                           speech_pcm(0.8, amp=4000))
+    two = {1: {"state": "named", "name": "Sam", "seconds": 7.0},
+           2: {"state": "listening", "name": "", "seconds": 3.0}}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = _chat(c, room_on=True)
+        m = _insert_user_message(chat, voice_turn_id="t3")
+        _run_pieces(chat, [
+            ("t1", first, _got(clean_spans=[(0.0, 7.0)], piece_voices=two)),
+            ("t2", second, _got(clean_spans=[(0.2, 3.8)], pieces=2)),
+            ("t3", tail, _got(clean_spans=[], pieces=3))], monkeypatch)
+        assert anchors.peek_audio(m["id"]) == (second, SR, 1)
+        m2 = _insert_user_message(chat, voice_turn_id="u2")
+        _run_pieces(chat, [
+            ("u1", first, _got(clean_spans=[(0.0, 9.0)])),
+            ("u2", tail, _got(clean_spans=[], pieces=2,
+                              voices_in_turn=2))], monkeypatch)
+        assert anchors.peek_audio(m2["id"]) == (tail, SR, 2)
 
 
 # ---------- 4. one path ----------
