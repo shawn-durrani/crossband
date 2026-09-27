@@ -417,7 +417,10 @@ def test_a_quiet_chat_gets_a_fresh_session(fakes, monkeypatch):
     monkeypatch.setattr(vss.time, "time", lambda: now[0])
     _live(3, "t2", 2.0)
     assert fakes.opened == 2
-    assert ("DELETE", "/sessions/s1", 0) in fakes.calls
+    # The stale session is closed on the feed thread after t2 has its
+    # answer and its end-of-session pass has run, so wait for the close
+    # rather than catching the thread part way (#540).
+    assert _wait_for(lambda: ("DELETE", "/sessions/s1", 0) in fakes.calls)
 
 
 def test_a_failed_call_drops_the_session_and_the_next_turn_reopens(
@@ -1380,7 +1383,9 @@ def test_the_end_pass_names_the_sessions_last_turn(app, fakes, monkeypatch):
     assert (row["end"], row["turns"], row["filled"]) == ("idle", 1, 1)
     assert row["voices"]["1"]["name"] == "Sam" and row["renamed"] == []
     assert _labels(mid)["labels"] == ["Sam"]
-    assert fakes.opened == 2 and ("DELETE", "/sessions/s1", 0) in fakes.calls
+    # The end row is written just before the close, on the feed thread.
+    assert fakes.opened == 2
+    assert _wait_for(lambda: ("DELETE", "/sessions/s1", 0) in fakes.calls)
 
 
 def test_the_end_pass_writes_only_names_that_changed(app, fakes,
