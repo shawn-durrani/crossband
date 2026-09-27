@@ -96,6 +96,17 @@ again replaces the running loop and never adds a second. The suite
 starts the real voice client twice on one page, with one scripted
 microphone, and counts the loops reading it on every frame.
 
+Talking over a reply stops it straight away, on an iPhone too. On an
+iPhone the app can't stream a reply's audio, so it holds the audio
+until the whole reply has arrived, and a cut stops it while it waits.
+Audio for a cut reply never plays, whether it turns up after the cut or
+after voice is switched off. A reply queued behind the cut one never
+plays either. Speech that carries on after the cut is the same barge-in,
+so it cuts once, the mic opens and the words are sent. A new reply or a
+new round can be cut again. The suite talks over a reply through the
+real voice client's listening loop, with a scripted microphone and
+clock, on the iPhone's kind of player and on the streaming kind.
+
 ### Identity and the live turn
 
 Identity work never starves a reply. Everything the voice check runs on

@@ -26,23 +26,29 @@ export function initGate() {
   return { roundActive: false, dropQueue: false }
 }
 
+// Whether this event starts a new round. A new user turn, or a fresh "Let
+// them continue" round marker, always does. A speaker starting while NO round
+// is active means an autonomous round began without a user message - but
+// inside an already-active round a speaker_start is just the next seat, or a
+// barge-in in this round would be undone the instant its next speaker starts.
+// The gate un-drops a new round below, and the barge-in may cut it
+// (replyCut.js).
+export function roundBegins(state, type) {
+  if (type === 'user_saved' || type === 'round') return true
+  return type === 'speaker_start' && !state.roundActive
+}
+
 // Advance the gate for one incoming SSE event type. Pure: returns a new state,
 // never mutates. Event types other than the ones below leave gating untouched
 // (delta / speaker_end / error / tool_activity / guest_job / work_status all
 // pass through).
 export function gateEvent(state, type) {
   const s = { roundActive: state.roundActive, dropQueue: state.dropQueue }
-  if (type === 'user_saved' || type === 'round') {
-    // A new user turn, or a fresh "Let them continue" round marker: a new round
-    // begins - un-drop so an earlier interrupt can't silence it.
+  if (roundBegins(state, type)) {
+    // A new round - un-drop so an earlier interrupt can't silence it.
     s.roundActive = true
     s.dropQueue = false
   } else if (type === 'speaker_start') {
-    // A speaker starting while NO round is active means an autonomous round began
-    // without a user message ("Let them continue") - un-drop it. Inside an
-    // already-active round we must NOT clear dropQueue, or a barge-in in this
-    // round would be undone the instant its next speaker starts.
-    if (!s.roundActive) s.dropQueue = false
     s.roundActive = true
   }
   return s

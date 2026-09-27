@@ -6,7 +6,7 @@
 // rounds became detached (a false barge-in muted every following reply).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { initGate, gateEvent, gateRoundDone } from './voiceGate.js'
+import { initGate, gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
 
 // Simulate the interrupt() side of the controller: a barge-in sets dropQueue.
 const bargeIn = (s) => ({ ...s, dropQueue: true })
@@ -79,5 +79,23 @@ test('unrelated event types leave gating untouched', () => {
   const g = { roundActive: true, dropQueue: true }
   for (const t of ['delta', 'speaker_end', 'error', 'tool_activity', 'guest_job']) {
     assert.deepEqual(gateEvent(g, t), g)
+  }
+})
+
+test('roundBegins names exactly the events that un-drop', () => {
+  // The same events arm a barge-in again (replyCut.js): a new round is
+  // something new to cut, and the next seat of the round already cut is not.
+  const idle = { roundActive: false, dropQueue: true }
+  const busy = { roundActive: true, dropQueue: true }
+  assert.equal(roundBegins(busy, 'user_saved'), true)
+  assert.equal(roundBegins(busy, 'round'), true)
+  assert.equal(roundBegins(idle, 'speaker_start'), true)
+  assert.equal(roundBegins(busy, 'speaker_start'), false)
+  for (const t of ['delta', 'speaker_end', 'passed', 'done', 'work_status']) {
+    assert.equal(roundBegins(idle, t), false)
+    assert.equal(gateEvent(idle, t).dropQueue, true)
+  }
+  for (const [state, t] of [[busy, 'user_saved'], [busy, 'round'], [idle, 'speaker_start']]) {
+    assert.equal(gateEvent(state, t).dropQueue, false)
   }
 })

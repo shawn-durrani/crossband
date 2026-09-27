@@ -6,7 +6,9 @@ import { playbackFailureMessage } from './voiceErrors.js'
 import { PassSpeechGate, couldBePass, isPassShaped } from './passView.js'
 import { WrittenFilter } from './writtenChannel.js'
 import { effectiveVolume } from './voiceGain.js'
-import { gateEvent, gateRoundDone } from './voiceGate.js'
+import { gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
+import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
+import { StreamPlayer } from './streamPlayer.js'
 import { realtimeCommitAction, recoveryPlan, shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
          sttCommitTimeoutMs, turnOverAfterCut } from './turnPolicy.js'
@@ -38,129 +40,8 @@ const CONFIRM_MS = 280          // sustained voicing needed to count as speech
 const INTERRUPT_CONFIRM_MS = 500 // sustained voicing needed to barge in
 const RECORDER_ROTATE_MS = 9000 // bound the pre-speech audio we keep
 
-function b64ToBytes(b64) {
-  const bin = atob(b64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes
-}
-
 function wsBase() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
-}
-
-// Plays one reply's audio. Streams via MediaSource when the browser supports
-// mp3 MSE; otherwise buffers the chunks and plays a single blob at the end.
-class StreamPlayer {
-  // `sink` is a single shared, pre-unlocked <audio> element. iOS Safari unlocks
-  // autoplay PER ELEMENT, so every reply must reuse the one element that was
-  // unlocked during the start-button gesture - a fresh Audio() per reply would
-  // be locked again and silently blocked.
-  constructor(sink) {
-    this.audio = sink || new Audio()
-    this.chunks = []
-    this.ended = false
-    this.useMse = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg')
-    if (this.useMse) this.mediaSource = new MediaSource()
-    // DO NOT touch this.audio here. The sink is shared by every reply in the
-    // round, and players are constructed while the previous reply is still
-    // playing - assigning audio.src now would hijack the element mid-speech
-    // (speaker 2 goes silent, its play() never resolves, the chain jams and
-    // interrupt dies with it). The sink becomes ours only inside play().
-  }
-
-  _attach() {
-    this.audio.src = URL.createObjectURL(this.mediaSource)
-    this.mediaSource.addEventListener('sourceopen', () => {
-      this.sb = this.mediaSource.addSourceBuffer('audio/mpeg')
-      this.sb.addEventListener('updateend', () => this._pump())
-      this._pump()
-    })
-  }
-
-  push(b64) {
-    this.chunks.push(b64ToBytes(b64))
-    if (this.useMse) this._pump()
-  }
-
-  end() {
-    this.ended = true
-    if (this.useMse) this._pump()
-  }
-
-  // #460: the reply was a pass and nothing was sent to TTS. The play chain
-  // skips an abandoned player, so it never claims the shared sink.
-  abandon() {
-    this.abandoned = true
-    this.end()
-    this.stopNow?.()
-  }
-
-  _pump() {
-    if (!this.sb || this.sb.updating) return
-    if (this.chunks.length) {
-      try { this.sb.appendBuffer(this.chunks.shift()) } catch { /* aborted */ }
-    } else if (this.ended && this.mediaSource.readyState === 'open') {
-      try { this.mediaSource.endOfStream() } catch { /* already closed */ }
-    }
-  }
-
-  async play(onPlayFailed, onStart) {
-    // Deterministic teardown of the previous reply's state on the shared
-    // element BEFORE claiming it - stale ended/error events from the last
-    // src must not leak into our turn and resolve it unplayed (the residual
-    // race the legacy per-reply-element design was immune to).
-    this.audio.onended = null
-    this.audio.onerror = null
-    this.audio.onplaying = null
-    try { this.audio.pause() } catch { /* */ }
-    if (this.useMse) {
-      this._attach() // our turn: chunks buffered so far pump in on sourceopen
-    } else {
-      while (!this.ended) await new Promise((r) => setTimeout(r, 100))
-      if (!this.chunks.length) return
-      this.audio.src = URL.createObjectURL(new Blob(this.chunks, { type: 'audio/mpeg' }))
-    }
-    const ourSrc = this.audio.src
-    await new Promise((resolve) => {
-      let done = false
-      let watch = null
-      const finish = () => { if (!done) { done = true; clearInterval(watch); resolve() } }
-      // Fire onStart exactly once, when audio becomes AUDIBLE (the 'playing'
-      // event, which follows buffering/decode) on OUR source: this is the true
-      // playback-start the end-to-end latency trace needs, distinct from the
-      // earlier play() invocation. Never load-bearing for playback itself.
-      if (onStart) {
-        this.audio.onplaying = () => {
-          if (this.audio.src !== ourSrc) return
-          this.audio.onplaying = null
-          try { onStart() } catch { /* diagnostics must never disturb playback */ }
-        }
-      }
-      this.audio.onended = finish
-      // Only a REAL error on OUR source ends the turn - a stray event from
-      // the src swap must not silently skip this speaker.
-      this.audio.onerror = () => {
-        if (this.audio.src === ourSrc && this.audio.error) finish()
-      }
-      this.stopNow = () => { try { this.audio.pause() } catch { /* */ } finish() }
-      // Watchdog: a wedged element (swallowed error, ended never firing) must
-      // not jam the chain and kill interrupt with it. Stream done + no
-      // playback progress across two checks = give up the turn.
-      let lastT = -1, stalls = 0
-      watch = setInterval(() => {
-        if (this.audio.src !== ourSrc) { finish(); return }
-        const t = this.audio.currentTime
-        if (this.ended && t === lastT && (++stalls >= 2)) { finish(); return }
-        if (t !== lastT) stalls = 0
-        lastT = t
-      }, 2000)
-      this.audio.play().catch((err) => {
-        onPlayFailed?.(err)  // every rejection speaks, not just autoplay blocks
-        finish()
-      })
-    })
-  }
 }
 
 // ~60ms of silence - played within a user gesture to unlock <audio> autoplay
@@ -198,8 +79,17 @@ export default class VoiceController {
     this.sink.setAttribute('playsinline', '')
     this.playbackRate = 1  // session speech speed (dock slider); pitch preserved
     this.active = false
+    // slug -> that seat's current player and speech socket
     this.players = new Map()
     this.sockets = new Map()
+    // Every reply not yet done playing, whichever seat and round it came
+    // from. A cut reaches all of them: the slug map above keeps only a
+    // seat's newest reply, and one that's queued, playing or still held
+    // for its whole stream (the iPhone's player) must stop too.
+    this._replies = new Set()
+    // Whether talking over a reply may cut it off (replyCut.js): once per
+    // barge-in, armed again by a new reply or round.
+    this._bargeIn = newBargeIn()
     this.playChain = Promise.resolve()
     this.playing = 0
     this.roundActive = false
@@ -715,6 +605,7 @@ export default class VoiceController {
     this.roundActive = false
     this.dropQueue = false
     this._lastRoundEventAt = 0
+    this._bargeIn = newBargeIn()
     resetHandoffWatch(this._handoff)
     // Unlock audio while we still hold the start-button gesture, and on any
     // later click - so a session that auto-resumes on reload (no gesture) isn't
@@ -846,10 +737,9 @@ export default class VoiceController {
     this.audioCtx = null
     this.micSource = null
     this.analyser = null
-    for (const s of this.sockets.values()) try { s.ws.close() } catch { /* */ }
-    this.sockets.clear()
-    for (const p of this.players.values()) p.stopNow?.()
-    this.players.clear()
+    // Nothing plays after the session ends. Closing a speech socket ends
+    // its stream, and a held reply used to take that as its cue to play.
+    this._cutReplies()
     this._state('off')
   }
 
@@ -857,15 +747,26 @@ export default class VoiceController {
   // Triggered by sustained user speech during playback, or the ◼ button.
   interrupt() {
     this.dropQueue = true
-    for (const p of this.players.values()) p.stopNow?.()
-    // #460: a reply its pass gate still holds has sent TTS nothing, and a
-    // reply waiting to start (it could still be a pass) has no speech yet.
-    // Neither is left behind to speak later.
+    this._bargeIn = afterCut()
+    // #460: a reply waiting to start (it could still be a pass) has no
+    // speech yet, and one its pass gate still holds has sent TTS nothing.
+    // Neither is left behind to speak later: the second is cut with the
+    // rest below.
     this._pendingSpeaker = null
-    for (const [slug, gate] of this._passGates) {
-      if (!gate.released) this._abandonSpeaker(slug)
-    }
+    this._cutReplies()
     this.onInterruptRound?.()
+  }
+
+  // Every reply still to be heard stops now: the one playing, one held
+  // for its whole stream on a browser without MediaSource, and any queued
+  // behind them. Each closes its speech socket, so no more of its audio
+  // is made, and drops whatever still arrives. The play chain then drains
+  // at once, `playing` returns to 0 and the mic opens.
+  _cutReplies() {
+    for (const p of this._replies) p.stop()
+    for (const s of this.sockets.values()) try { s.ws.close() } catch { /* */ }
+    this.sockets.clear()
+    this.players.clear()
   }
 
   // ---- microphone / VAD ----
@@ -1021,16 +922,27 @@ export default class VoiceController {
             idle_ms: now - (this._lastRoundEventAt || now),
           })
         }
-        // models are talking/generating - listen only for a barge-in
-        if (this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)) {
+        // models are talking/generating - listen only for a barge-in.
+        // The speech that made a barge-in carries on after the cut, and
+        // every frame of it still reads as one. It cuts once (replyCut.js):
+        // repeating it every frame while the gate stayed shut sent an
+        // abort per frame and moved the turn's start along with it.
+        const confirmed = this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)
+        const frame = bargeInFrame(this._bargeIn, { confirmed, speaking: !!this.speechStart })
+        this._bargeIn = frame.state
+        if (frame.open) {
           this.speechStart = now - INTERRUPT_CONFIRM_MS
           if (!this._turnBuffer.length) this._logicalStart = this.speechStart
-          this.lastVoice = now
           this._sttStartStreaming()
-          this._vlog('vad:bargeIn', { playing: this.playing, roundActive: this.roundActive })
-          this.interrupt() // capture continues; finalize sends the interjection
+        }
+        if (confirmed) {
+          this.lastVoice = now
         } else if (!this.speechStart && now - this.recStarted > RECORDER_ROTATE_MS) {
           this._startRecorder() // bound stale audio while they monologue
+        }
+        if (frame.cut) {
+          this._vlog('vad:bargeIn', { playing: this.playing, roundActive: this.roundActive })
+          this.interrupt() // capture continues; finalize sends the interjection
         }
         return
       }
@@ -1381,6 +1293,8 @@ export default class VoiceController {
     const gate = gateEvent(before, ev.type)
     this.roundActive = gate.roundActive
     this.dropQueue = gate.dropQueue
+    // A new round is something new to cut: talking over it may cut again.
+    if (roundBegins(before, ev.type)) this._bargeIn = rearm()
     if (gate.roundActive !== before.roundActive || gate.dropQueue !== before.dropQueue) {
       this._vlog('gate:onEvent', { evType: ev.type, before, after: gate })
     }
@@ -1551,9 +1465,12 @@ export default class VoiceController {
 
   _beginSpeaker(slug) {
     if (this.dropQueue) return // user already cut this round off
+    // A reply starting to play is something new to cut (replyCut.js).
+    this._bargeIn = rearm()
     const participant = this.getParticipants().find((p) => p.slug === slug)
     const player = new StreamPlayer(this.sink)
     this.players.set(slug, player)
+    this._replies.add(player)
     const ws = new WebSocket(`${wsBase()}/api/voice/tts`)
     // Deltas start arriving before the websocket handshake completes - buffer
     // everything until open, or the start of every reply gets silently dropped.
@@ -1591,7 +1508,7 @@ export default class VoiceController {
       const msg = JSON.parse(e.data)
       // #480: the relay names the model before any audio arrives
       if (msg.tts_model) this._voiceModels[slug] = msg.tts_model
-      if (msg.audio) {
+      if (msg.audio && keepsAudio(player)) {
         this._trace.speakerMark(slug, 'first_audio', this._traceMeta(slug))
         player.push(msg.audio)
       }
@@ -1603,12 +1520,17 @@ export default class VoiceController {
     }
     ws.onclose = () => { clearInterval(keepalive); player.end() }
     ws.onerror = () => { clearInterval(keepalive); player.end() }
+    // A cut reply closes its socket, so the relay stops making its speech.
+    player.onStop = () => {
+      clearInterval(keepalive)
+      try { ws.close() } catch { /* already closed */ }
+    }
 
     this.playing += 1
     this._state('speaking')
     this.playChain = this.playChain
       .then(() => {
-        if (this.dropQueue || player.abandoned) return undefined
+        if (!takesTurn(player, { dropQueue: this.dropQueue })) return undefined
         // The shared sink is now handed to this speaker - its queued audio can
         // begin. This is play INVOKED, not yet audible: the gap between its
         // first_audio (ready) and here is time it spent queued behind the prior
@@ -1638,6 +1560,7 @@ export default class VoiceController {
       })
       .then(() => {
         this.playing -= 1
+        this._replies.delete(player)
         // Only this speaker's own entries: after an abandoned pass (#460)
         // the slug may already belong to its retry.
         if (this.players.get(slug) === player) this.players.delete(slug)
