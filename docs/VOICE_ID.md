@@ -37,8 +37,8 @@ happens, in order.
    comes back after a long quiet keeps its number.
 4. Every stretch of 0.8 seconds or more where one voice speaks alone is
    fingerprinted and added to that session voice, after the
-   [span check](#the-span-check). Speech where two people overlap never
-   is.
+   [bank check](#the-bank-check) and the [span check](#the-span-check).
+   Speech where two people overlap never is.
 5. After each turn, every session voice is named from all its
    fingerprints so far, one person per voice. A short reply is named
    from everything that voice has said, not from one second of audio.
@@ -98,6 +98,40 @@ bar is strict, and a normal session moves nothing. A moved stretch
 counts for the voice it moved to, and the turn is labelled by that
 voice. The session rows at `GET /api/voice/sessions?rows=true` list
 every move with its scores.
+
+### The bank check
+
+The span check needs a voice with 6 seconds behind it. Say the
+diariser files one person's turn under someone else's voice, and that
+person's own voice has said less. The span check can't move it, and
+the turn takes the wrong name. The bank check catches that. It runs
+once the [calibrated scorer](#how-a-voice-is-named) is ready.
+
+Before a turn's speech is added, the app pools each session voice's
+clean speech in the turn. It scores that speech on its own against
+everyone's kept clips, and compares it with the person the voice's
+earlier speech names. The turn's speech from that voice moves only
+when all of these hold:
+
+- there's 1.5 seconds or more of it, as much as naming a voice needs
+- on its own it names a known person at 0.99 or more
+- the voice's earlier speech names someone else at 0.9 or more
+- the turn's speech gives that someone else 0.01 or less
+- nobody named the voice by hand or said it's a TV
+
+Then every stretch the diariser gave that voice in the turn moves
+together, apart from speech over someone else. It goes to the session
+voice you named as that person, or else to the voice whose own speech
+names them, never to a TV's. When there's no such voice, it starts a new voice, named
+from its own speech like any other. The voice it came from keeps one
+person's speech, and the turn is labelled by the voice it moved to. If
+that voice isn't sure yet, the turn shows "still listening".
+
+The bar is strict, and a normal session moves nothing. The check reads
+fingerprints the turn already has, so it adds under a millisecond. A
+turn too short to fingerprint can't be checked, and takes its voice's
+name. The session rows list each move, marked `bank`, with both
+chances.
 
 ### When a session ends
 

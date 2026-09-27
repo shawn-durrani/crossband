@@ -21,8 +21,9 @@ answer for every spoken turn:
      once the calibrated scorer has loaded it, ERes2Net, and added to that
      session voice's evidence. A span the tracker calls final while the
      person is still talking is fingerprinted then. Before it's added,
-     THE SPAN CHECK may move it to the session voice it plainly sounds
-     like.
+     THE BANK CHECK may move a voice's speech in the turn to the person
+     the banks plainly say it is, and THE SPAN CHECK may move a span to
+     the session voice it plainly sounds like.
   3. After each turn every session voice is named from its pooled
      fingerprints, one person per voice: by the calibrated two-model
      scorer when its snapshot is ready (backend/voice_calibration.py),
@@ -70,6 +71,35 @@ spans, so the turn is labelled by it. The turn's row lists each move
 (`moved`: times, from, to, both scores and the lead) and, for the spans
 that stayed, the most any scored higher against another voice than its
 own (`span_lead`, below zero in a normal session). Numbers only.
+
+THE BANK CHECK. The span check can't catch one person's speech filed
+under another's voice when the first person's own voice has too little
+behind it: road noise on 27 September put two of one man's turns under
+another man's voice, and the calibrated scorer named them after him. So
+before the span check, and only with the calibrated scorer ready, each
+session voice's clean speech in the turn is pooled and scored against
+the banks on its own, and compared with what that voice's evidence so
+far says. It moves only when all of these hold, so a normal session
+moves nothing:
+
+  * the voice's clean speech in this turn is BANK_CHECK_MIN_S or more,
+    as much as naming a voice needs;
+  * on its own it names a known person at BANK_CHECK_SURE or more;
+  * the voice's evidence so far names someone else at NAME_BAR or more,
+    and the turn's speech gives that person BANK_CHECK_NOT or less;
+  * nobody named the voice by hand or said it's a TV (media_voice).
+
+Then every span the tracker gave that voice in the turn, overlap aside,
+moves together: to the other session voice a person named as the one it
+is, else the one whose evidence names them first at NAME_BAR or more,
+else a new split-off voice (numbered from SPLIT_SLOT_BASE) that is named
+from its own evidence like any other. The voice it came from never takes
+that speech in, and the turn is labelled by the voice it moved to, or
+left listening. The span check leaves a moved span where
+it is. Each move is on the row's `moved`, with `by: "bank"`, the turn's
+probability for the person it is (`p`) and for the voice's own
+(`p_own`). A turn too short to fingerprint can't be checked, and takes
+its voice's name as before.
 
 THE END-OF-SESSION PASS. A tracking session ends after SESSION_IDLE_S of
 quiet (the feed thread exits, or the next turn finds it stale) or when
@@ -160,6 +190,14 @@ MAX_PIECES = 8                  # pieces of one long turn joined, newest kept
 SPAN_MOVE_MIN_S = 6.0           # clean speech behind a voice a span joins
 SPAN_MOVE_SIM = 0.7             # the span's score against that voice
 SPAN_MOVE_MARGIN = 0.25         # its lead over every other voice
+# THE BANK CHECK's bar, in calibrated probability. As strict: a voice's
+# speech in one turn moves only when, on its own, it has as much clean
+# speech as naming a voice needs and names someone outright, and plainly
+# not the person that voice has sounded like so far.
+BANK_CHECK_MIN_S = LISTEN_MIN_S  # the voice's clean speech in the turn
+BANK_CHECK_SURE = 0.99          # its probability for the person it is
+BANK_CHECK_NOT = 0.01           # and for the person its voice says
+SPLIT_SLOT_BASE = 100           # split-off voices are numbered from here
 # The multi scorer (#477): a person's score is the mean of their best
 # MULTI_TOP_K clip scores, so one lucky clip can't carry a name alone. A
 # bank with fewer clips uses what it has.
@@ -931,6 +969,92 @@ def span_home(voices, slot, emb, emb_e=None):
     return best, scores
 
 
+def _bank_probs(small, eres, seconds, allowed, snapshot):
+    """{person_id: probability} from the calibrated scorer for pooled
+    fingerprints of both models, the allowed people only. {} without
+    both."""
+    from . import voice_calibration as vc
+    if small is None or eres is None:
+        return {}
+    got = vc.probability({vc.SMALL: small, vc.ERES: eres}, seconds,
+                         snapshot) or {}
+    return {pid: p for pid, p in got.items() if pid in allowed}
+
+
+def voice_probs(voice, allowed, snapshot):
+    """What a session voice's evidence so far says: {person_id:
+    probability}, {} with no evidence from both models."""
+    return _bank_probs(pool_of(voice), pool_of(voice, "prints_eres"),
+                       voice.get("clean_s") or 0.0, allowed, snapshot)
+
+
+def bank_check(voices, slot, prints, allowed, snapshot):
+    """THE BANK CHECK for the clean speech the tracker gave `slot` in one
+    turn, before it's added: (the person it plainly is, or None, the
+    scores). `prints` is that speech's [(emb, emb_e, seconds)]. The scores
+    are {"p": its probability for that person, "p_own": for the person
+    the voice's evidence says}, or {} when the check didn't get that far.
+    Pure: nothing is moved here."""
+    from . import voice_calibration as vc
+    voice = voices.get(slot) or {}
+    if voice.get("human") or voice.get(MEDIA) or not snapshot \
+            or not allowed or not prints:
+        return None, {}
+    secs = sum(s for _, _, s in prints)
+    if secs < BANK_CHECK_MIN_S or any(e is None for _, e, _ in prints):
+        return None, {}
+    heard = _bank_probs(pooled([(a, s) for a, _, s in prints]),
+                        pooled([(e, s) for _, e, s in prints]),
+                        secs, allowed, snapshot)
+    if not heard:
+        return None, {}
+    pid, p = max(heard.items(), key=lambda kv: (kv[1], kv[0]))
+    if p < BANK_CHECK_SURE:
+        return None, {}
+    says = voice_probs(voice, allowed, snapshot)
+    if not says:
+        return None, {}
+    own, own_p = max(says.items(), key=lambda kv: (kv[1], kv[0]))
+    if own == pid or own_p < vc.NAME_BAR:
+        return None, {}
+    scores = {"p": round(p, 4), "p_own": round(heard.get(own, 0.0), 4)}
+    if heard.get(own, 0.0) > BANK_CHECK_NOT:
+        return None, scores
+    return pid, scores
+
+
+def bank_home(voices, slot, pid, allowed, snapshot):
+    """Where speech that plainly is `pid` goes (THE BANK CHECK): the other
+    session voice a person named as them, else the other voice whose own
+    evidence names them first at NAME_BAR or more (the likeliest), never
+    a TV's, else None, for a new split-off voice. Pure."""
+    from . import voice_calibration as vc
+    best, best_p = None, None
+    for other, v in voices.items():
+        if other == slot:
+            continue
+        human = (v.get("human") or {}).get("pid")
+        if human:
+            if human == pid:
+                return other
+            continue
+        if v.get(MEDIA):
+            continue
+        says = voice_probs(v, allowed, snapshot)
+        p = says.get(pid)
+        if p is None or p < vc.NAME_BAR or max(says.values()) > p:
+            continue
+        if best_p is None or p > best_p:
+            best, best_p = other, p
+    return best
+
+
+def split_slot(voices):
+    """The number for a new split-off voice: SPLIT_SLOT_BASE or more, never
+    one the tracker's voices use."""
+    return max([SPLIT_SLOT_BASE - 1] + list(voices)) + 1
+
+
 def topk_mean(query, clips, k=None):
     """A person's multi score: the mean of the query's best `k` cosines
     against that person's clip embeddings, or of all of them when there
@@ -1436,8 +1560,8 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             got = (precomputed or {}).get(_span_key(s))
             if got is not None:
                 ready[(s["slot"], round(a, 3), round(b, 3))] = got
-    embedded, moved, leads = 0, [], []
-    for s in spans:
+    prints = {}                         # span index -> (emb, emb_e, secs)
+    for i, s in enumerate(spans):
         # Every voice heard is on the table, even one heard only over
         # someone else: it listens with no evidence.
         sess["voices"].setdefault(s["slot"], {"prints": [], "clean_s": 0.0})
@@ -1455,9 +1579,18 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             secs = len(seg) / 2 / sample_rate
             emb_e = eres_fn(seg) if (eres_fn is not None
                                      and emb is not None) else None
-        if emb is None:
+        if emb is not None:
+            prints[i] = (emb, emb_e, secs)
+    moved, placed = _bank_moves(sess["voices"], spans, prints, candidates,
+                                eres_fn is not None)
+    embedded, leads = 0, []
+    for i, s in enumerate(spans):
+        if i not in prints:
             continue
-        home, scores = span_home(sess["voices"], s["slot"], emb, emb_e)
+        emb, emb_e, secs = prints[i]
+        # A span THE BANK CHECK moved stays where it put it.
+        home, scores = (None, {}) if i in placed else \
+            span_home(sess["voices"], s["slot"], emb, emb_e)
         if home is None and scores.get("own") is not None:
             leads.append(round(scores["sim"] - scores["own"], 3))
         if home is not None:
@@ -1531,6 +1664,47 @@ def _name_turn(chat_id, sess, turn_id, pcm, sample_rate, raw_spans, offset,
             # What this piece alone heard, for joining it with pieces the
             # feed didn't answer (join_pieces).
             "piece_voices": turn_voices(spans, named)}
+
+
+def _bank_moves(voices, spans, prints, candidates, calibrated):
+    """THE BANK CHECK for one turn, before any of its speech is added: each
+    voice's clean speech in the turn against the banks. When it plainly is
+    someone else, every span the tracker gave that voice in the turn,
+    overlap aside, moves to that person's voice (bank_home), or to a new
+    split-off voice when they have none. Returns (the moves, for the row,
+    and the indices of the spans moved). Only with the calibrated scorer
+    ready, and `calibrated` False (no ERes2Net for this turn) skips it:
+    nothing moves while the fallback scorer names."""
+    from . import voice_calibration as vc
+    snap = vc.current() if calibrated and prints else None
+    allowed = {c["person_id"]: c["name"] for c in candidates or ()
+               if c.get("person_id")}
+    if not snap or not snap.get("calibrated") or not allowed:
+        return [], set()
+    groups = collections.defaultdict(list)     # the tracker's own voices
+    for i, s in enumerate(spans):
+        groups[s["slot"]].append(i)
+    moved, placed, splits = [], set(), {}
+    for slot, members in sorted(groups.items()):
+        heard = [prints[i] for i in members if i in prints]
+        pid, scores = bank_check(voices, slot, heard, allowed, snap)
+        if pid is None:
+            continue
+        home = bank_home(voices, slot, pid, allowed, snap)
+        if home is None:
+            home = splits.get(pid)
+        if home is None:
+            home = splits[pid] = split_slot(voices)
+            voices[home] = {"prints": [], "clean_s": 0.0}
+        for i in members:
+            s = spans[i]
+            if s["overlap"]:
+                continue
+            moved.append({"start": s["start"], "end": s["end"],
+                          "from": slot, "to": home, "by": "bank", **scores})
+            s["slot"] = home
+            placed.add(i)
+    return moved, placed
 
 
 def turn_voices(spans, named):
