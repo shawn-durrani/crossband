@@ -154,3 +154,23 @@ def test_conversation_performance_never_returns_message_content(tmp_path, monkey
     out = asyncio.run(diagnostics.dispatch_diagnostic(
         "conversation_performance", {"chat_id": chat_id, "tool_log_chars": 1200}))
     assert "SECRET-PASSPHRASE-XYZ" not in json.dumps(out)
+
+
+def test_research_counts_what_a_later_turn_actually_rereads():
+    """#585: the estimate reads the projection's own replay rule, so a past
+    search counts at its replay size and a YouTube transcript in full."""
+    from backend.tools import replay_output
+    search = {"tool": "search_history", "input_json": "",
+              "output_text": "\n".join(f"[2026-05-01] user: " + "z" * 330
+                                       for _ in range(20))}
+    video = {"tool": "fetch_youtube_transcript", "input_json": "",
+             "output_text": "v" * 20_000}
+    page = {"tool": "fetch_page", "input_json": "", "output_text": "p" * 5000}
+    msg = dict(_msg(1, ""), tool_events=[search, video, page])
+    cfg = {"tool_log_chars": 1200}
+    est = context_weight.estimate(
+        {"summary_upto": 0, "summary": "", "memory_enabled": 0}, [msg], cfg)
+    replayed = sum(len(replay_output(e, cfg)) for e in (search, video, page))
+    assert replayed == len(replay_output(search, cfg)) + 20_000 + 1200
+    assert 1200 < len(replay_output(search, cfg)) < len(search["output_text"])
+    assert est["research"] == context_weight.toks(replayed)

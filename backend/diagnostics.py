@@ -397,7 +397,7 @@ async def _diag_conversation_performance(cfg: dict) -> dict:
             if a["message_id"] in by_id:
                 by_id[a["message_id"]]["attachments"].append(dict(a))
         for e in con.execute(
-                "SELECT message_id, input_json, output_text FROM tool_events WHERE "
+                "SELECT message_id, tool, input_json, output_text FROM tool_events WHERE "
                 "message_id IN (SELECT id FROM messages WHERE chat_id=?)", (chat_id,)):
             if e["message_id"] in by_id:
                 by_id[e["message_id"]]["tool_events"].append(dict(e))
