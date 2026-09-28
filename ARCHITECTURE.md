@@ -78,6 +78,12 @@ the whole prefix is written again every turn, which costs more than it
 saves and never shows in a dollar total. The ratio of cache reads to
 cache writes is the signal.
 
+The tool list comes first in every request, so a change to it throws
+away everything cached behind it. The list is set by the chat's
+switches and what's installed, never by what's up this second. A tool
+that's down, or a summons that's already claimed, stays on the list and
+refuses the call with a reason the model can act on.
+
 ## App context is an unforgeable channel
 
 Context the app assembles is delivered as a `system` entry in the middle

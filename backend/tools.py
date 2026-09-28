@@ -1533,6 +1533,13 @@ _GITHUB_TOOLS = {
 }
 
 
+# What a memory tool answers while the memory service is down (#564).
+MEMORY_DOWN = ("Error: memory service unavailable - the memory service isn't "
+               "reachable right now, so nothing was recalled, searched or "
+               "saved. Say plainly that you can't check memory at the moment "
+               "rather than guessing, and don't say anything was saved.")
+
+
 async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
     """Async dispatch. Stamps authorship (origin_agent) onto memory writes so
     the ledger can prove who saved a fact."""
@@ -1563,7 +1570,10 @@ async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
                                            origin_agent)
         if name in _MEMORY_TOOLS:
             if memory is None:
-                return "Error: memory service unavailable"
+                # #564: the memory tools stay on offer while the service is
+                # down, so the refusal has to say what happened and what to
+                # do: nothing was read or saved, and a guess is no answer.
+                return MEMORY_DOWN
             return await _MEMORY_TOOLS[name](args, cfg, memory, origin_agent=origin_agent)
         fn = _RESEARCH_TOOLS.get(name)
         if not fn:

@@ -831,10 +831,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                                  f"{m['speaker'][4:]} (external feed)")
 
         # Is summon_claude_code already claimed (queued this round, or a
-        # detached job still running from an earlier one)? If so it is not
-        # offered as a tool this turn - the strongest form of "don't duplicate
-        # it" - and every participant's system prompt gets a note explaining
-        # why, so nobody narrates or re-proposes it either (voice included).
+        # detached job still running from an earlier one)? If so every
+        # participant's system prompt gets a note saying so, so nobody
+        # narrates or re-proposes it (voice included), and a second summons
+        # is refused where it has always been enforced, in guest.request.
+        # The tool itself stays on offer (#564): the tool list leads the
+        # cached prompt, and taking it away for the length of a job and
+        # putting it back made every seat write its whole cached prompt
+        # twice per summons.
         claim = guest.claimed(chat_id)
         round_cfg["delegation_note"] = guest.delegation_note(claim)
 
@@ -851,13 +855,21 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             tool_defs += tools_mod.tool_definitions(round_cfg)
         if guest_ok is None:  # one PATH scan per round, not per speaker
             guest_ok = guest.available(round_cfg)
-        if code_on and guest_ok and not claim:
+        # #564: the tool list is decided by the chat's switches and the
+        # install, never by what happens to be up this second. What's
+        # unavailable right now is refused when it's called, with a result
+        # that says why: a claimed summons (guest.request), memory that
+        # failed this round's probe (run_tool), an outside server that
+        # dropped (McpManager.call). Every change here rewrote every
+        # seat's whole cached prompt, because tools come first in it.
+        if code_on and guest_ok:
             tool_defs += tools_mod.code_tool_definitions(round_cfg)
         if code_on and tools_mod.github_available(round_cfg):
             tool_defs += tools_mod.github_tool_definitions(round_cfg)
         if mcp is not None and mcp.tool_definitions():
-            # external MCP tools: offered whenever a configured server is
-            # connected; the manager rides in round_cfg for run_tool dispatch
+            # external MCP tools: offered once a configured server has
+            # connected, and kept while it's down (#564); the manager rides
+            # in round_cfg for run_tool dispatch
             tool_defs += mcp.tool_definitions()
             round_cfg["_mcp"] = mcp
         tool_memory = None
@@ -913,8 +925,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 ambient_cache = tools_mod._format_facts(facts, 2500) if facts else ""
             round_cfg["memory_summary"] = memory_summary_cache
             round_cfg["memory_ambient"] = ambient_cache
-            tool_defs += tools_mod.memory_tool_definitions(round_cfg["user_name"])
             tool_memory = memory
+        if memory_on and memory is not None:
+            # #564: offered whenever memory is on for the chat. When this
+            # round's probe failed, tool_memory stays None and run_tool
+            # answers each call with a refusal that says memory is down.
+            tool_defs += tools_mod.memory_tool_definitions(round_cfg["user_name"])
         tool_defs = tool_defs or None
 
         # #98: one attempt normally; a REFUSED pass (first responder on a

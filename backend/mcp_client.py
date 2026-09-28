@@ -18,9 +18,15 @@ Design notes:
   so FastAPI's startup/shutdown (different tasks) signal via events instead
   of touching the sessions directly.
 - Graceful degrade everywhere: a server that fails to connect is reported in
-  /api/state and retried every RETRY_S; a call that fails drops that
-  server's tools until the retry loop restores them; the models just see an
+  /api/state and retried every RETRY_S; a call that fails marks that server
+  disconnected until the retry loop reconnects it; the models just see an
   honest error string.
+- A server's tools stay on offer while it's down (#564). The tool list
+  leads every seat's cached prompt, so dropping a server's tools on a
+  failed call and adding them back on reconnect made every seat write its
+  whole cached prompt twice. A call while it's down is refused instead.
+  A server that has never connected has no known tools, so its tools join
+  the list when it first connects.
 """
 
 import asyncio
@@ -83,15 +89,23 @@ class McpManager:
             await asyncio.wait_for(session.initialize(), timeout=20)
             listed = await asyncio.wait_for(session.list_tools(), timeout=20)
             self.sessions[name] = session
+            fresh = {}
             for t in listed.tools:
                 q = f"mcp__{name}__{t.name}"[:64]
-                self.tools[q] = (name, t.name, {
+                fresh[q] = (name, t.name, {
                     "name": q,
                     "description": ((t.description or t.name).strip()[:900]
                                     + f" (external tool from \"{name}\")"),
                     "input_schema": t.input_schema
                     or {"type": "object", "properties": {}},
                 })
+            # A reconnect that lists what it listed before leaves the list
+            # byte for byte as it was: existing keys keep their place. Only
+            # a tool the server no longer offers goes, and a new one joins.
+            for q in [q for q, (s, _, _) in self.tools.items()
+                      if s == name and q not in fresh]:
+                self.tools.pop(q)
+            self.tools.update(fresh)
             self.errors.pop(name, None)
             log.info("mcp server %s connected (%d tools)", name, len(listed.tools))
         except Exception as e:
@@ -104,9 +118,13 @@ class McpManager:
         return [d for (_, _, d) in self.tools.values()]
 
     def status(self) -> dict:
+        # `tools` is what can be called right now, so a server that's down
+        # lists none, though its tools stay on offer to the seats (#564).
         return {name: {
             "connected": name in self.sessions,
-            "tools": sorted(q for q, (s, _, _) in self.tools.items() if s == name),
+            "tools": (sorted(q for q, (s, _, _) in self.tools.items()
+                             if s == name)
+                      if name in self.sessions else []),
             "error": self.errors.get(name),
         } for name in self.servers}
 
@@ -129,16 +147,18 @@ class McpManager:
         server, tool, _ = entry
         session = self.sessions.get(server)
         if session is None:
-            return f"Error: external server {server} is disconnected"
+            return (f"Error: external server {server} is disconnected right "
+                    f"now, so {qualified} did nothing. The app retries it "
+                    f"every {RETRY_S} seconds; say it's unavailable rather "
+                    "than guessing what it would have returned.")
         try:
             res = await asyncio.wait_for(session.call_tool(tool, args or {}),
                                          timeout=CALL_TIMEOUT_S)
         except Exception as e:
-            # drop the server's tools until the retry loop restores them
+            # Mark the server down until the retry loop reconnects it. Its
+            # tools stay listed (#564): the next call is refused above.
             self.sessions.pop(server, None)
             self.errors[server] = str(e)[:200]
-            for q in [q for q, (s, _, _) in self.tools.items() if s == server]:
-                self.tools.pop(q)
             return f"Error: external server {server} failed mid-call: {e}"
         parts = [c.text for c in (res.content or [])
                  if getattr(c, "text", None)]

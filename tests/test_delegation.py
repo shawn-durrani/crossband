@@ -7,8 +7,10 @@ see test_guest.py / test_guestjobs.py); this file covers the NEW half -
 `guest.claimed()`/`guest.delegation_note()` giving the round loop and the
 system prompt ONE shared answer to "is this already spoken for?" so:
 
-  - a claimed action is not even OFFERED to another participant as a tool
-    this turn (mechanically exactly-once, not just "refused if attempted"),
+  - a claimed action stays on offer as a tool, so the tool list (which leads
+    every seat's cached prompt) never changes with a claim (#564), and a
+    second summons is refused at call time by guest.request, which is where
+    exactly-once has always been enforced,
   - every other participant's system prompt (voice mode included, since it's
     just another system-prompt section) carries an explicit note so nobody
     narrates, offers, or duplicates it,
@@ -74,7 +76,7 @@ def test_claimed_reports_a_summons_queued_this_round():
     note = guest.delegation_note(claim)
     assert "ALREADY been summoned this round" in note
     assert "claude" in note and "look at the round loop" in note
-    assert "not offered to you as a tool" in note
+    assert "will be refused" in note
 
 
 def test_delegation_note_names_the_recognised_pass_token():
@@ -123,7 +125,7 @@ def test_claimed_reports_a_running_background_job(tmp_path, monkeypatch):
                          "repo": "demo", "mode": "investigate"}
         note = guest.delegation_note(claim)
         assert "ALREADY working in the background" in note
-        assert "not offered to you as a tool" in note
+        assert "will be refused" in note
         gate.set()
         await job.task
 
@@ -158,13 +160,14 @@ def test_dropped_summons_says_so_in_the_chat(tmp_path):
     assert "switched off" in msgs[-1]["content"]
 
 
-# ---------- exactly-once: not even offered once claimed ----------
+# ---------- exactly-once: refused once claimed, never taken off the list ----------
 
-def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(app, monkeypatch):
+def test_second_participant_this_round_is_refused_and_sees_the_claim(app, monkeypatch):
     """The scenario that motivated this: within ONE round, one
     participant decides to summon Claude Code (queues it) - the very next
-    participant to speak must not be offered summon_claude_code at all, and
-    must see an explicit claim note instead of guessing from the transcript."""
+    participant to speak must see an explicit claim note instead of guessing
+    from the transcript, and a summons it tries anyway is refused. The tool
+    list itself is the same for both (#564): it leads the cached prompt."""
     seen = []
 
     async def stream_reply(participant, roster, transcript, names, cfg, project,
@@ -172,8 +175,13 @@ def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(ap
         seen.append({
             "speaker": participant["slug"],
             "tools": [t["name"] for t in (tools or [])],
+            "tool_bytes": json.dumps(tools, sort_keys=True),
             "delegation_note": cfg.get("delegation_note", ""),
         })
+        if participant["slug"] == "gpt":
+            seen[-1]["second_summons"] = guest.request(
+                cfg["chat_id"], {"task": "check it again"}, cfg,
+                requested_by="gpt")
         if participant["slug"] == "claude":
             # claude claims it - exactly what request() does when a model
             # actually invokes the tool mid-turn.
@@ -217,15 +225,18 @@ def test_second_participant_this_round_never_sees_the_tool_or_the_job_offered(ap
     # claude (first) still had the tool available and no claim yet
     assert "summon_claude_code" in seen[0]["tools"]
     assert seen[0]["delegation_note"] == ""
-    # gpt (second) does NOT see the tool, and sees exactly why
-    assert "summon_claude_code" not in seen[1]["tools"]
+    # gpt (second) is offered the same tool list, byte for byte (#564)...
+    assert seen[1]["tool_bytes"] == seen[0]["tool_bytes"]
+    # ...is refused if it summons anyway, with a reason it can act on...
+    assert "already summoned for this round" in seen[1]["second_summons"]
+    # ...and sees exactly why before it tries
     note = seen[1]["delegation_note"]
     assert "ALREADY been summoned this round" in note
     assert "check the live latency endpoint" in note
     assert "claude" in note
 
 
-def test_new_round_while_job_running_neither_offers_nor_narrates(app, monkeypatch, tmp_path):
+def test_new_round_while_job_running_refuses_and_does_not_narrate(app, monkeypatch, tmp_path):
     """A guest job started in an EARLIER round is still running when a fresh
     round begins (e.g. the next voice turn) - every participant in the new
     round must see the claim too, not just participants in the summoning
@@ -266,9 +277,15 @@ def test_new_round_while_job_running_neither_offers_nor_narrates(app, monkeypatc
 
     assert [s["speaker"] for s in seen] == ["claude", "gpt"]
     for s in seen:
-        assert "summon_claude_code" not in s["tools"]
+        # still listed (#564); request() is what refuses a second job
+        assert "summon_claude_code" in s["tools"]
         assert "ALREADY working in the background" in s["delegation_note"]
         assert "dig into the latency numbers" in s["delegation_note"]
+    refused = guest.request(cid, {"task": "look again"},
+                            {"code_repos": {"demo": str(tmp_path)},
+                             "code_default_repo": "demo"},
+                            requested_by="gpt")
+    assert "already working on an earlier task" in refused
 
 
 # ---------- voice mode specifically ----------

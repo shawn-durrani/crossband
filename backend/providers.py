@@ -1989,9 +1989,10 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     ]
     # The tools array leads Anthropic's cache prefix - AHEAD of system and
     # messages - so changing it invalidates everything while every hash the
-    # earlier instrumentation logged stays identical. engine.py adds/removes
-    # summon_claude_code depending on whether a summons is claimed, which is
-    # exactly that shape and could not be confirmed or ruled out before this.
+    # earlier instrumentation logged stays identical. engine.py used to
+    # add and remove tools as a summons was claimed, memory's probe failed
+    # or an outside server dropped, which is exactly that shape; the list is
+    # now fixed per chat and an unavailable tool refuses at call time (#564).
     # `changed` names the component that actually differs from this seat's
     # previous call IN THIS CHAT, so a miss explains itself instead of being
     # inferred from timestamps - which is how the prompt-cache regression got
