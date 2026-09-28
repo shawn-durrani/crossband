@@ -26,9 +26,11 @@ user turns. It's pinned per provider, including what happens when a
 seat has never spoken and when a message carries attachments.
 
 Context the app assembles arrives as a system entry where the provider
-supports one, and otherwise carries a marker that changes each time the
-process starts. Tests forge the marker from inside a transcript and
-check the forgery is rejected.
+supports one, and otherwise carries a secret marker for the chat. Tests
+forge the marker from inside a transcript and check the forgery is
+rejected. Others build a seat's cached system block either side of a
+restart and check the two are the same byte for byte, and check a
+marker a model repeats never reaches the chat or a tool.
 
 There is one insert path for messages. A guard test reads the source,
 and any raw insert into the messages table outside `db.insert_message`

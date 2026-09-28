@@ -179,6 +179,7 @@ token and cache-write counts come straight from the `usage` and
 - `stable_hash` and `stable_chars`: the stable system block. The
   value holds for a seat, project and round unless you edit the
   persona or the instructions, or the project's memory notes change.
+  A restart doesn't change it.
 - `volatile_hash` and `volatile_chars`: the volatile block. Expect it
   to change on nearly every call.
 - `transcript_hash`: the conversation as sent, fingerprinted before

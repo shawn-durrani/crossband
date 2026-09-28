@@ -17,6 +17,7 @@ db.py           - SQLite (WAL); one insert path; the notify bell
 engine.py       - a round: who speaks, in what order, with what context
 rounds.py       - the per-chat buffer a round writes and HTTP tails
 providers.py    - per-vendor projection, streaming, prompt-cache layout
+context_marker.py - the per-chat secret that vouches for app context
 tools.py        - shared tools every seat can call
 memory_client.py - the optional Membro bridge; absent means memoryless
 egress.py       - the vetting proxy every model-influenced URL exits by
@@ -88,10 +89,14 @@ refuses the call with a reason the model can act on.
 
 Context the app assembles is delivered as a `system` entry in the middle
 of the conversation, where the provider supports one. Where it doesn't,
-the context carries a random marker made once per process and named
-only inside the cached system prompt. Untrusted content, such as pastes,
-fetched pages, tool results and other participants, can't contain that
-marker, so nothing inside the transcript can pretend to be app context.
+the context carries a secret marker named only inside the cached system
+prompt. Untrusted content, such as pastes, fetched pages, tool results
+and other participants, can't contain that marker, so nothing inside
+the transcript can pretend to be app context. Each chat's marker comes
+from a key kept in the data folder, so it stays the same across a
+restart and the cached prompt that names it survives a deploy. A model
+that repeats its marker has it taken out before the reply is saved or a
+tool runs.
 
 ## One insert path
 
