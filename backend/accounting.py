@@ -162,6 +162,11 @@ class CostEvent:
     # turn's cost is the SDK's own opaque total_cost_usd and cannot honestly be
     # decomposed - its tokens are reported, its dollars are not split.
     cache_write_cost: float = 0.0
+    # A seat call that left no message (#560): a pass, a refused first try,
+    # a dropped restatement, an empty reply. Its cost is real and counts
+    # like any reply's; this only lets the Spend page say how much of the
+    # total went on calls the chat never shows.
+    unposted: bool = False
 
     @property
     def producer(self) -> str:
@@ -208,8 +213,36 @@ def _recorded_provenance(u: dict):
     return None
 
 
+def _seat_event(chat_id, ts, speaker, u, parts, pricing, unposted=False):
+    """One resident seat call's CostEvent, from its usage block. Shared by a
+    reply's message row and a call that left no message (#560)."""
+    cost = u.get("cost")
+    p = parts.get(speaker, {})
+    model = u.get("model") or p.get("model") or speaker
+    provider = p.get("provider") or "unknown"
+    # Cash axis is unchanged (resident API turns = metered). Provenance
+    # is the honest refinement: a figure computed from the local price
+    # table is a rate_card_estimate, never a billed amount - unless the
+    # row recorded a different provenance (e.g. a self_hosted seat), in
+    # which case that recorded value wins and stays immutable.
+    provenance = (_recorded_provenance(u)
+                  or provenance_for(model, pricing,
+                                    base_url=p.get("base_url"),
+                                    api_key_env=p.get("api_key_env"))["source"])
+    return CostEvent(
+        chat_id=chat_id, ts=ts, source=SOURCE_NORMAL,
+        category=CAT_METERED, provenance=provenance, provider=provider,
+        model=model, speaker=speaker, cost=cost or 0.0,
+        tokens=_tokens(u), has_cost=cost is not None,
+        cache_read=int(u.get("cache_read", 0) or 0),
+        cache_creation=int(u.get("cache_creation", 0) or 0),
+        cache_write_cost=_cache_write_cost(u, model, pricing, provenance),
+        unposted=unposted)
+
+
 def iter_cost_events(con, *, code_slug=CODE_SLUG, chat_id=None, pricing=None):
-    """Yield one CostEvent per priced action across messages + voice_usage.
+    """Yield one CostEvent per priced action across messages, seat_usage,
+    voice_usage and utility_usage.
 
     Single scan used by both the per-chat and cumulative surfaces. Pass
     ``chat_id`` to scope to one chat; omit it for all chats.
@@ -260,26 +293,24 @@ def iter_cost_events(con, *, code_slug=CODE_SLUG, chat_id=None, pricing=None):
                 cache_creation=int(u.get("cache_creation", 0) or 0),
                 cache_write_cost=_cache_write_cost(u, model, pricing, provenance))
         else:
-            p = parts.get(r["speaker"], {})
-            model = u.get("model") or p.get("model") or r["speaker"]
-            provider = p.get("provider") or "unknown"
-            # Cash axis is unchanged (resident API turns = metered). Provenance
-            # is the honest refinement: a figure computed from the local price
-            # table is a rate_card_estimate, never a billed amount - unless the
-            # row recorded a different provenance (e.g. a self_hosted seat), in
-            # which case that recorded value wins and stays immutable.
-            provenance = (_recorded_provenance(u)
-                          or provenance_for(model, pricing,
-                                            base_url=p.get("base_url"),
-                                            api_key_env=p.get("api_key_env"))["source"])
-            yield CostEvent(
-                chat_id=r["chat_id"], ts=r["created_at"], source=SOURCE_NORMAL,
-                category=CAT_METERED, provenance=provenance, provider=provider,
-                model=model, speaker=r["speaker"], cost=cost or 0.0,
-                tokens=tokens, has_cost=has_cost,
-                cache_read=int(u.get("cache_read", 0) or 0),
-                cache_creation=int(u.get("cache_creation", 0) or 0),
-                cache_write_cost=_cache_write_cost(u, model, pricing, provenance))
+            yield _seat_event(r["chat_id"], r["created_at"], r["speaker"], u,
+                              parts, pricing)
+
+    # #560: seat calls that left no message - a pass, a refused first try,
+    # an empty reply - priced and stamped exactly as a reply is, and counted
+    # as the model turns they were.
+    sq = "SELECT chat_id, speaker, usage_json, created_at FROM seat_usage"
+    sargs: tuple = ()
+    if chat_id is not None:
+        sq += " WHERE chat_id=?"
+        sargs = (chat_id,)
+    for r in con.execute(sq, sargs):
+        try:
+            u = json.loads(r["usage_json"])
+        except (ValueError, TypeError):
+            continue
+        yield _seat_event(r["chat_id"], r["created_at"], r["speaker"], u,
+                          parts, pricing, unposted=True)
 
     vq = "SELECT chat_id, kind, cost, created_at FROM voice_usage"
     vargs: tuple = ()
@@ -413,12 +444,18 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
     by_producer = {}
     by_producer_model = {}
     not_tracked = set()
+    unposted = {"events": 0, "cost": 0.0, "tokens": 0}
 
     for e in events:
         if e.has_cost:
             totals[e.category] += e.cost
         else:
             not_tracked.add(e.source)
+        if e.unposted:
+            unposted["events"] += 1
+            unposted["tokens"] += e.tokens
+            if e.has_cost:
+                unposted["cost"] += e.cost
         tokens += e.tokens
         cache_read += e.cache_read
         cache_written += e.cache_creation
@@ -473,6 +510,11 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         "by_producer_model": _grouped_list(by_producer_model),
         "by_chat": _grouped_list(by_chat),
         "not_tracked": sorted(not_tracked),
+        # #560: how much of the window went on seat calls that left no
+        # message (a pass, a refused first try, an empty reply). Already
+        # inside every total above, never on top of it: this only says how
+        # much of Model turns the chat itself never shows.
+        "unposted": unposted,
     }
 
 

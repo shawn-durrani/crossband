@@ -2,7 +2,8 @@
 // Run: node --test frontend/src/spendView.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { headline, accuracy, direction, roughBreakdown, cumulative, trendLines, linePath } from './spendView.js'
+import { headline, accuracy, direction, roughBreakdown, cumulative, trendLines, linePath, unpostedNote } from './spendView.js'
+import { money } from './format.js'
 
 test('the three kinds of dollar are never summed', () => {
   // Adding billed + subscription-covered + unknown invents a number nobody is
@@ -134,4 +135,16 @@ test('linePath maps 0..1 points into the box with y flipped', () => {
   const d = linePath([{ x: 0, y: 0 }, { x: 1, y: 1 }], 100, 50)
   assert.equal(d, 'M0.00,50.00 L100.00,0.00')
   assert.equal(linePath([], 10, 10), '')
+})
+
+test('calls that left no message are named as part of the total (#560)', () => {
+  // they are already inside the billed figure, so the note says "includes"
+  const note = unpostedNote({ events: 37, cost: 0.42, tokens: 400000 }, money)
+  assert.match(note, /^Includes \$0\.42 on 37 model calls that left no message/)
+  assert.match(unpostedNote({ events: 1, cost: 0.004 }, money), /on 1 model call that/)
+})
+
+test('no such calls means no note at all', () => {
+  assert.equal(unpostedNote({ events: 0, cost: 0 }, money), null)
+  assert.equal(unpostedNote(undefined, money), null)
 })

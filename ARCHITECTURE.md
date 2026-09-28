@@ -119,7 +119,10 @@ mounted for the guest is available whole.
 
 Costs sort into metered, subscription equivalent and unknown, and the
 three are never added together. Provenance is stamped when the turn is
-written, so editing a rate card later can't rewrite history. Pricing
+written, so editing a rate card later can't rewrite history. A model
+call that leaves no message, such as a pass, is priced the same way and
+kept in its own table, so the chat stays clean and the bill stays
+whole. Pricing
 fails closed. An unknown model id stays unpriced and never inherits a
 family rate, and its seat stays in trial until someone prices it by
 hand. The usage endpoint returns no combined total, because a
