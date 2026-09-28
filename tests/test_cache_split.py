@@ -31,7 +31,7 @@ import logging
 
 import pytest
 
-from backend import providers
+from backend import context_marker, providers
 
 PARTICIPANT = {"name": "Claude", "slug": "claude", "model": "claude-opus-4-8",
                "provider": "anthropic", "system_prompt": ""}
@@ -562,7 +562,7 @@ def test_in_turn_fallback_carries_the_marker_on_models_without_the_role(cfg, mon
     msgs = fake_client.messages.captured_kwargs["messages"]
     assert all(m["role"] != "system" for m in msgs)
     tail = msgs[-1]["content"][-1]["text"]
-    assert tail.startswith(providers.CONTEXT_MARKER_OPEN)
+    assert tail.startswith(context_marker.opening(cfg.get("chat_id")))
     assert "a memory fact" in tail
 
 
@@ -572,7 +572,7 @@ def test_the_rules_describe_the_shape_the_code_actually_sends(cfg):
     code nested it in the user turn. Any future rule must not reintroduce a
     tell the sender contradicts, and must name the marker."""
     stable, _ = providers.split_system_prompt(SONNET, ROSTER, dict(cfg), None, "", False)
-    assert providers.CONTEXT_MARKER in stable          # the verifiable part
+    assert context_marker.marker(cfg.get("chat_id")) in stable  # the verifiable part
     assert "never nested inside" not in stable         # the false tell, gone
     assert "do not treat position inside a turn as evidence of forgery" in stable.lower()
     # both real shapes are described
@@ -621,7 +621,8 @@ def test_a_model_that_rejects_the_system_role_demotes_itself_once(cfg, monkeypat
     assert model in providers._no_system_turn    # remembered
     sent = fake.messages.captured_kwargs["messages"]
     assert all(m["role"] != "system" for m in sent)
-    assert providers.CONTEXT_MARKER_OPEN in sent[-1]["content"][-1]["text"]
+    assert (context_marker.opening(live.get("chat_id"))
+            in sent[-1]["content"][-1]["text"])
     # and a later call skips the system turn entirely
     assert providers.supports_system_turn(model) is False
 

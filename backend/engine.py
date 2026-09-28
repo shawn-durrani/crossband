@@ -17,7 +17,8 @@ import re
 import time
 
 from . import attachments as att_mod
-from . import chat_memory, citations, db, echo, guest, passes, person_sync
+from . import chat_memory, citations, context_marker, db, echo, guest
+from . import passes, person_sync
 from . import depth as depth_mod
 from . import model_step
 from . import rounds as rounds_mod
@@ -507,7 +508,9 @@ async def run_round(chat_id, responders, next_first, settings, memory,
             live["participant"] = None
             live["content"] = ""
             return None
-        content = live["content"]
+        # #562: a seat that repeats its chat's context marker never gets it
+        # saved, so it can't reach the chat, memory or a guest from here.
+        content = context_marker.redact(live["content"], chat_id)
         if interrupted:
             # #460: a real reply cut off while it was writing a trailing
             # [pass] keeps its words, never the half-written token.
@@ -520,7 +523,9 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         # connected client via the global events bus, same as an out-of-band
         # deploy notice does.
         msg = db.insert_message(con, chat_id, p["slug"], content,
-                                usage_json=usage_json, tool_events=live["tools"],
+                                usage_json=usage_json,
+                                tool_events=context_marker.redact(live["tools"],
+                                                                  chat_id),
                                 attachment_ids=live.get("attachments"),
                                 web_sources=live.get("web_domains"),
                                 audit_flags=live.get("audit"))

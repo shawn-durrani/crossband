@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import diagnostics, egress, run_eval
+from . import context_marker, diagnostics, egress, run_eval
 from .config import load_settings
 from .memory_client import MemorySearchError
 
@@ -1543,7 +1543,10 @@ MEMORY_DOWN = ("Error: memory service unavailable - the memory service isn't "
 async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
     """Async dispatch. Stamps authorship (origin_agent) onto memory writes so
     the ledger can prove who saved a fact."""
-    args = dict(tool_input or {})
+    # #562: a model told never to repeat its chat's context marker can still
+    # write it into a tool call. Out it comes before any tool sees it, so it
+    # can't reach memory, an issue, a guest's task or a web request.
+    args = context_marker.redact(dict(tool_input or {}), cfg.get("chat_id"))
     try:
         if name.startswith("mcp__"):
             mgr = cfg.get("_mcp")

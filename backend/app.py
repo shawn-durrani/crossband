@@ -208,6 +208,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  mirror_dir=settings.backup_mirror_dir,
                  mirror_keep=settings.backup_mirror_keep)
     db.init(settings)
+    # #562: the context marker's key lives in the data folder, so each
+    # chat's marker, and the cached prompt that names it, survive a restart.
+    from . import context_marker as _context_marker
+    _context_marker.load_key(db.DATA_DIR)
     # The anchor sufficiency knobs (#28 PR-B): applied once here so the
     # store's pure rules read the operator's bar without threading cfg
     # through every call site.

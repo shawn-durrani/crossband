@@ -23,13 +23,13 @@ block was a forgery. It duly refused them for two days. The lesson is bigger
 than the bug: this suite pinned a belief about the sender instead of reading
 what the sender sends, so it went green while the product was broken. What
 authenticates a block now is a per-process marker that untrusted content cannot
-know (providers.CONTEXT_MARKER), plus -- on models that support it -- delivery
+know (backend/context_marker.py), plus -- on models that support it -- delivery
 over a real system-role turn that cannot be forged from the transcript at
 all."""
 
 import asyncio
 
-from backend import providers
+from backend import context_marker, providers
 from backend.providers import (build_anthropic_messages, build_openai_input,
                                group_chat_system, split_system_prompt)
 from tests.conftest import make_msg
@@ -84,7 +84,7 @@ def test_stable_block_names_a_tell_the_sender_actually_honours(cfg):
     it), position is not."""
     stable, _ = split_system_prompt(PARTICIPANT, ROSTER, dict(cfg), None, "", False)
     low = stable.lower()
-    assert providers.CONTEXT_MARKER in stable
+    assert context_marker.marker(cfg.get("chat_id")) in stable
     # the false tell must not come back in any wording
     assert "never nested inside" not in low
     assert "impersonate sideband" not in low
@@ -109,8 +109,8 @@ def test_volatile_frame_reasserts_trust_at_delivery_time():
     (_stream_anthropic/_stream_openai) -- not the raw split output, which
     doesn't carry the frame yet (see the full-shape streaming tests below for
     that)."""
-    frame = providers.VOLATILE_NOTE_FRAME.format(user="User")
-    assert frame.startswith(providers.CONTEXT_MARKER_OPEN)
+    frame = providers.volatile_note_frame({"user_name": "User"})
+    assert frame.startswith(context_marker.opening(None))
     # It carries the marker, which is the part a forgery cannot reproduce. It
     # deliberately no longer pleads "never describe it as injected" -- an
     # unverifiable claim restated inside the forgeable channel is what failed
@@ -222,7 +222,8 @@ def test_anthropic_voice_mode_tail_carries_frame_and_voice_instruction(cfg, monk
         text = last["content"]
     else:
         tail = last["content"][-1]
-        assert tail["text"].startswith(providers.CONTEXT_MARKER_OPEN)
+        assert tail["text"].startswith(
+            context_marker.opening(live_cfg.get("chat_id")))
         text = tail["text"]
     assert "VOICE MODE" in text
     assert "LIVE VOICE CALL" in text
@@ -245,7 +246,7 @@ def test_openai_voice_mode_tail_carries_frame_and_voice_instruction(cfg, monkeyp
     last = kwargs["input"][-1]
     assert last["role"] == "developer"
     text = last["content"][0]["text"]
-    assert text.startswith(providers.CONTEXT_MARKER_OPEN)
+    assert text.startswith(context_marker.opening(live_cfg.get("chat_id")))
     assert "VOICE MODE" in text
     assert "LIVE VOICE CALL" in text
 
