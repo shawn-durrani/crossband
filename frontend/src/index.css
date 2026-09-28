@@ -222,6 +222,23 @@ html, body {
   max-width: 100%;
 }
 
+/* Every field you type into is 16px on a touch screen. iOS Safari zooms the
+   page in when you tap a field whose text is under 16px, and it doesn't zoom
+   back out afterwards, so the zoom sticks as you move around the app. Most
+   fields here are 12 to 14px on the desktop, which is kept. The rule sits
+   outside any layer so it beats Tailwind's text-xs and text-sm utilities.
+   Never fix the zoom with maximum-scale or user-scalable=no in the viewport
+   tag: that blocks pinch zoom for anyone who needs it.
+   frontend/src/touchFields.test.js pins this block. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="hidden"]),
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable="false"]) {
+    font-size: 16px;
+  }
+}
+
 body {
   @apply bg-app text-ink antialiased;
   font-family: var(--font-sans);
