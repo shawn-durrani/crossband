@@ -179,7 +179,7 @@ def test_v26_to_v27_migration_leaves_old_rows_without_an_anchor(tmp_path):
         " once_effort TEXT NOT NULL DEFAULT '', set_by TEXT NOT NULL DEFAULT '',"
         " once_by TEXT NOT NULL DEFAULT '',"
         " updated_at REAL NOT NULL, PRIMARY KEY (chat_id, slug));"
-        "INSERT INTO chat_seat_state VALUES(1, 'claude', 'high', '', 'Dai', '', 7);")
+        "INSERT INTO chat_seat_state VALUES(1, 'claude', 'high', '', 'Sam', '', 7);")
     con0.execute("PRAGMA user_version = 26")
     con0.commit()
     con0.close()
@@ -190,7 +190,7 @@ def test_v26_to_v27_migration_leaves_old_rows_without_an_anchor(tmp_path):
         assert con.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
         assert con.execute("SELECT spend_note_upto FROM chats").fetchone()[0] == 0
         raised = db.get_chat_seat_escalations(con, 1)
-        assert raised == [{"slug": "claude", "effort": "high", "set_by": "Dai",
+        assert raised == [{"slug": "claude", "effort": "high", "set_by": "Sam",
                            "set_at": 0}]
         assert "since it was set" in spend_note.seat_line("Claude", "high", 0, None)
     finally:
