@@ -2076,11 +2076,24 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     changed = ([k for k, v in prefix_now.items() if _prev.get(k) != v]
                if _prev else ["first-call"])
     _last_prefix[seat_key] = prefix_now
+    # #565: the memory summary rides the uncached volatile tail, about 3,000
+    # tokens on every call. Its fingerprint and length go on the record, never
+    # its text, so a week of real use shows how often a cached block of its
+    # own would have been read back (scripts/summary_reuse_report.py). Kept
+    # out of prefix_now: it sits after both cache marks, so a new summary is
+    # no miss, and `changed` stays a list of what can cause one. `requests`
+    # counts the requests this seat call made, one per tool round, since
+    # each one sends the summary again.
+    summary = (cfg.get("memory_summary") or "").strip()
     usage = {"input": 0, "cache_read": 0, "cache_creation": 0, "output": 0,
              # Rides usage_json so a miss is SQL-queryable: the INFO log line is
              # dark unless log_level is set, and this repo's guidance is to query
              # usage_json rather than hunt logs.
-             "cache_prefix": {**prefix_now, "changed": changed}}
+             "cache_prefix": {**prefix_now, "changed": changed,
+                              "summary": (_content_hash(summary) if summary
+                                          else "none"),
+                              "summary_chars": len(summary),
+                              "requests": 0}}
     meter = cfg.get("_call_meter")  # #576: read if the call is cut off
     if meter is not None:
         meter.done = usage
@@ -2101,6 +2114,9 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             kwargs["tools"] = anth_tools
         try:
             async with client.messages.stream(**kwargs) as stream:
+                # Counted once the provider has taken the request, so a
+                # refused system turn (retried below) isn't one.
+                usage["cache_prefix"]["requests"] += 1
                 if meter is not None:
                     meter.stream = stream
                 async for text in stream.text_stream:
@@ -2143,6 +2159,7 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             "claude_chat_cache speaker=%s model=%s chat=%s tool_round=%d "
             "tools_hash=%s tools_n=%d changed=%s "
             "stable_hash=%s stable_chars=%d volatile_hash=%s volatile_chars=%d "
+            "summary_hash=%s summary_chars=%d "
             "transcript_hash=%s ttl=%s thinking=%s effort=%s "
             "input_tok=%d cache_read_tok=%d cache_write_5m_tok=%d cache_write_1h_tok=%d "
             "output_tok=%d",
@@ -2150,6 +2167,7 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             cfg.get("chat_id"), round_i,
             tools_hash, len(anth_tools), ",".join(changed) or "none",
             stable_hash, len(stable), volatile_hash, len(volatile),
+            usage["cache_prefix"]["summary"], len(summary),
             transcript_hash, CACHE_TTL_LABEL,
             # content-free confirmation of what was ACTUALLY sent this call
             # (never forced "adaptive" anymore unless the participant chose it).

@@ -641,8 +641,10 @@ TOOL_A = [{"name": "summon_claude_code", "description": "d", "input_schema": {}}
 TOOL_B = [{"name": "get_diagnostic", "description": "d", "input_schema": {}}]
 
 
-def _usage_of(monkeypatch, cfg_dict, *, tools, chat_id, participant=SONNET):
-    live = _cfg(cfg_dict, memory_ambient="", round_predecessors=[], chat_id=chat_id)
+def _usage_of(monkeypatch, cfg_dict, *, tools, chat_id, participant=SONNET,
+              summary=""):
+    live = _cfg(cfg_dict, memory_ambient="", round_predecessors=[],
+                chat_id=chat_id, memory_summary=summary)
     usage = _FakeUsage(cache_creation=_FakeCacheCreation(0, 0))
     fake = _FakeAnthropicClient(_FakeFinalMessage(usage))
     monkeypatch.setattr(providers, "_anthropic_client", lambda p: fake)
@@ -664,8 +666,42 @@ def test_cache_prefix_rides_usage_json(cfg, monkeypatch):
     u = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
     pref = u["cache_prefix"]
     assert set(pref) == {"model", "tools", "stable", "volatile", "transcript",
-                         "thinking", "effort", "changed"}
+                         "thinking", "effort", "changed", "summary",
+                         "summary_chars", "requests"}
     assert pref["changed"] == ["first-call"]
+
+
+def test_the_memory_summary_is_recorded_by_fingerprint_and_length(cfg,
+                                                                   monkeypatch):
+    """#565: the summary rides the uncached tail on every call. The record
+    says which summary a call carried and how long it was, never its text,
+    so a week of calls can show how often a cached block would be read."""
+    providers._last_prefix.clear()
+    text = "Alex takes the train to work and prefers oat milk."
+    u = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, summary=text)
+    pref = u["cache_prefix"]
+    assert pref["summary"] == providers._content_hash(text)
+    assert pref["summary_chars"] == len(text)
+    assert pref["requests"] == 1
+    assert "oat milk" not in str(u)
+
+
+def test_no_summary_is_recorded_as_none(cfg, monkeypatch):
+    providers._last_prefix.clear()
+    u = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, summary="  ")
+    assert (u["cache_prefix"]["summary"],
+            u["cache_prefix"]["summary_chars"]) == ("none", 0)
+
+
+def test_a_new_summary_is_not_reported_as_a_prefix_change(cfg, monkeypatch):
+    """The summary sits after both cache marks, so a new one can't cause a
+    miss. It changes the volatile block, which `changed` already names, and
+    names nothing more."""
+    providers._last_prefix.clear()
+    _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, summary="one")
+    u2 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, summary="two")
+    assert u2["cache_prefix"]["changed"] == ["volatile"]
+    assert u2["cache_prefix"]["summary"] == providers._content_hash("two")
 
 
 def test_changing_the_tool_list_is_reported_as_a_tools_change(cfg, monkeypatch):
