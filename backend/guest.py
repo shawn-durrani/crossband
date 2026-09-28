@@ -489,9 +489,10 @@ def claimed(chat_id) -> dict | None:
     """The current delegation claim on summon_claude_code for this chat, or
     None when nothing is claimed. 'queued' = summoned earlier THIS round
     (not yet consumed by the engine); 'running' = a detached guest job from
-    an earlier round still working. Checked BEFORE the tool is offered for
-    a turn, so a claimed action mechanically can't be duplicated - no
-    participant ever sees it as an option to begin with."""
+    an earlier round still working. Read at the start of each seat's turn
+    for the delegation note. The tool stays on offer while claimed (#564),
+    because the tool list leads every seat's cached prompt; request()'s
+    guards are what make a second summons impossible."""
     pending = _pending.get(chat_id)
     if pending:
         return {"state": "queued", "task": pending["task"], "repo": pending["repo"],
@@ -519,9 +520,10 @@ def delegation_note(claim: dict | None) -> str:
         return (
             f"Claude Code has ALREADY been summoned this round (by "
             f"{claim['requested_by']}) to {doing}: {claim['task']} "
-            f"(repo: {claim['repo']}). It is not offered to you as a tool this "
-            "turn - don't ask for it again, and don't spend your reply "
-            "narrating that it was summoned; the user already sees that. "
+            f"(repo: {claim['repo']}). Calling summon_claude_code again this "
+            "turn will be refused - don't ask for it again, and don't spend "
+            "your reply narrating that it was summoned; the user already sees "
+            "that. "
             # The token names the ONLY string passes.is_pass recognises. The
             # note used to say a bare "…", which no code recognises: obedient
             # seats' ellipsis replies persisted as real messages and voice
@@ -532,7 +534,7 @@ def delegation_note(claim: dict | None) -> str:
     return (
         f"Claude Code is ALREADY working in the background on: {claim['task']} "
         f"(repo: {claim['repo']}, {doing} mode) - summoned earlier and still "
-        "running. It is not offered to you as a tool this turn. Don't summon "
+        "running. Calling summon_claude_code now will be refused. Don't summon "
         "it again, and don't spend your reply discussing whether to or "
         "announcing that it's working - the user already sees its status. "
         f"Answer anything else normally, or reply with a bare "

@@ -152,7 +152,11 @@ def test_memory_tools_without_service(cfg):
     for name in ("save_memory", "recall_memory", "search_history"):
         out = run(run_tool(name, {"query": "x", "content": "long enough fact"}, cfg,
                            origin_agent="claude", memory=None))
-        assert out == "Error: memory service unavailable"
+        # #564: the tools stay on offer while memory is down, so the refusal
+        # says nothing was read or saved and not to guess
+        assert out.startswith("Error: memory service unavailable")
+        assert "nothing was recalled, searched or saved" in out
+        assert "rather than guessing" in out
 
 
 def test_recall_and_search_formatting(cfg):

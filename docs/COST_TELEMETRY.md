@@ -162,8 +162,11 @@ token and cache-write counts come straight from the `usage` and
 - `tools_hash` and `tools_n`: a fingerprint of the tool definitions,
   and how many were sent. A change to the tools stores everything
   behind them again while every other fingerprint stays the same. The
-  app adds and removes `summon_claude_code` as a summons is claimed
-  and released, so that's one ordinary way the tools change.
+  list is set by the chat's switches and what's installed, so it
+  changes when you switch web, code or memory on or off for a chat, or
+  when an outside tool server connects for the first time since the app
+  started. A tool that's down, or a summons that's already claimed,
+  stays in the list and refuses the call with a reason.
 - `changed`: which parts differ from this seat's previous call in
   this chat, as a comma-separated list drawn from `model`, `tools`,
   `stable`, `volatile`, `transcript`, `thinking` and `effort`. It reads
