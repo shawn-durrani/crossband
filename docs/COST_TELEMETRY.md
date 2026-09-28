@@ -164,13 +164,15 @@ token and cache-write counts come straight from the `usage` and
   behind them again while every other fingerprint stays the same. The
   app adds and removes `summon_claude_code` as a summons is claimed
   and released, so that's one ordinary way the tools change.
-- `changed`: which blocks differ from this seat's previous call in
+- `changed`: which parts differ from this seat's previous call in
   this chat, as a comma-separated list drawn from `model`, `tools`,
-  `stable`, `volatile` and `transcript`. It reads `none` when nothing
-  changed, and `first-call` on a seat's first call in a chat since the
-  app started. It names `model` when the seat runs a different model
-  from its last call in this chat. A new model holds none of the old
-  one's cache, so that call writes the whole prefix again.
+  `stable`, `volatile`, `transcript`, `thinking` and `effort`. It reads
+  `none` when nothing changed, and `first-call` on a seat's first call
+  in a chat since the app started. It names `model` when the seat runs
+  a different model from its last call in this chat. A new model holds
+  none of the old one's cache, so that call writes the whole prefix
+  again. It names `effort` or `thinking` when either changed, which is
+  what saying "think harder" to a seat does.
 - `stable_hash` and `stable_chars`: the stable system block. The
   value holds for a seat, project and round unless you edit the
   persona or the instructions, or the project's memory notes change.
@@ -182,10 +184,11 @@ token and cache-write counts come straight from the `usage` and
   one reply. Compare it across calls to tell whether the
   conversation's cache mark saw the same prefix or a new one.
 - `thinking` and `effort`: what was sent on this call. `thinking` is
-  the thinking block's type, or `none`, and `effort` is the seat's
-  reasoning effort, or `default`. Both change the request without
-  changing any fingerprint, so a miss they cause would otherwise have
-  no visible reason.
+  the thinking block's type, or `none`, and `effort` is the effort
+  level sent, or `default` when none was. A level the model doesn't
+  take is never sent, so it reads `default`. Either one changes the
+  request without changing any fingerprint, and a change to either
+  throws the cache away, which is why `changed` names them.
 - `ttl`: how long a stored block lives before Anthropic drops it. It
   always reads `5m-ephemeral-default`, which is the constant
   `providers.CACHE_TTL_LABEL`, a label for what the code does and
@@ -204,9 +207,9 @@ token and cache-write counts come straight from the `usage` and
   line. If it doesn't, that's worth reporting, because it would mean
   the API did something Crossband didn't ask for.
 
-The four fingerprints, the model and `changed` are also saved on the
-message as `usage_json.cache_prefix`, so you can query them from the
-database as well as the log.
+The four fingerprints, the model, `thinking`, `effort` and `changed`
+are also saved on the message as `usage_json.cache_prefix`, so you can
+query them from the database as well as the log.
 
 ### Where the line goes
 
