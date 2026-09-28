@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 import httpx
 
 from . import context_marker, diagnostics, egress, run_eval
-from .config import load_settings
+from .config import Settings, load_settings
 from .memory_client import MemorySearchError
 
 log = logging.getLogger("crossband.tools")
@@ -1453,22 +1453,83 @@ async def search_history(args, cfg, memory, origin_agent=None):
     return _fit_whole_hits(blocks, cfg["max_tool_output"])
 
 
-def _fit_whole_hits(blocks, cap):
+def _more_note(n):
+    return (f"({n} more matching message{'s' if n > 1 else ''} "
+            "not shown. Narrower search words will bring them up.)")
+
+
+def _fit_whole_hits(blocks, cap, hidden=0):
     """Join search hits in rank order, each whole or not at all, under the
     tool output cap (#583). A hit cut partway can lose the very detail it
-    was found for, so the hits that don't fit are counted instead."""
+    was found for, so the hits that don't fit are counted instead.
+    `hidden` counts hits left out before these blocks, which a replay
+    refitting a stored result carries over from its note (#585)."""
     out, used = [], 0
     for i, block in enumerate(blocks):
-        left = len(blocks) - i
-        note = (f"({left} more matching message{'s' if left > 1 else ''} "
-                "not shown. Narrower search words will bring them up.)")
+        left = len(blocks) - i + hidden
+        note = _more_note(left)
         room = cap - used - len(note) - 2 if left > 1 else cap - used - 1
         if out and len(block) > room:
             out.append(note)
             break
         out.append(block)
         used += len(block) + 1
+    else:
+        if hidden:
+            out.append(_more_note(hidden))
     return "\n".join(out)[:cap]
+
+
+# A stored search_history result read back into its hits (#585). A hit
+# starts at its "[YYYY-MM-DD] speaker: " line, or at the untrusted-web
+# marker line that heads it. Any other line continues the hit above it,
+# since membro's excerpt keeps the message's line breaks.
+_HIT_LINE_RE = re.compile(r"\[\d{4}-\d{2}-\d{2}\] ")
+_MARKER_LINE = "[Untrusted web-derived content from "
+_MORE_NOTE_RE = re.compile(r"\n\((\d+) more matching messages? not shown\. "
+                           r"Narrower search words will bring them up\.\)$")
+
+
+def replay_search_result(text, cap):
+    """A stored search_history result cut to `cap` for a later turn's
+    research log (#585): whole hits in rank order, then a line counting
+    the rest, including any the live result had already left out. Text
+    that isn't a list of hits, such as an error, is cut plainly."""
+    if len(text) <= cap:
+        return text
+    body, hidden = text, 0
+    m = _MORE_NOTE_RE.search(body)
+    if m:
+        body, hidden = body[:m.start()], int(m.group(1))
+    blocks, after_marker = [], False
+    for line in body.split("\n"):
+        marker = line.startswith(_MARKER_LINE)
+        if marker or (_HIT_LINE_RE.match(line) and not after_marker):
+            blocks.append([line])
+        elif blocks:
+            blocks[-1].append(line)
+        else:
+            return text[:cap]
+        after_marker = marker
+    return _fit_whole_hits(["\n".join(b) for b in blocks], cap, hidden)
+
+
+def _replay_cap(cfg, key):
+    return cfg.get(key) or Settings.model_fields[key].default
+
+
+def replay_output(ev, cfg):
+    """What a later turn's research log keeps of one tool event's output.
+    A YouTube transcript stays whole up to its own cap, and a history
+    search keeps whole hits up to `search_log_chars` (#585). Any other
+    tool's output is cut at `tool_log_chars` to keep the context lean."""
+    out = ev.get("output_text") or ""
+    tool = ev.get("tool")
+    if tool == "fetch_youtube_transcript":
+        return out[:_replay_cap(cfg, "max_transcript_chars")]
+    if tool == "search_history":
+        return replay_search_result(out, _replay_cap(cfg, "search_log_chars"))
+    return out[:_replay_cap(cfg, "tool_log_chars")]
 
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")

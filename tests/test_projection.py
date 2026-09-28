@@ -78,6 +78,24 @@ def test_anthropic_youtube_transcript_exempt_from_replay_trim(names, cfg):
     assert "Y" * 5000 in msgs[0]["content"][0]["text"]
 
 
+def test_a_past_search_replays_whole_hits_for_every_seat(names, cfg):
+    """#585: a search_history result replays past tool_log_chars, whole
+    hits only, the same way into both providers' projections."""
+    hits = "\n".join(f"[2026-05-01] user: hit{i:02d} " + "z" * 330
+                     for i in range(20))
+    ev = {"tool": "search_history", "input_json": '{"query": "z"}',
+          "output_text": hits}
+    transcript = [make_msg(1, "gpt", "found it", tool_events=[ev])]
+    text = build_anthropic_messages("claude", transcript, names, cfg)[0][
+        "content"][0]["text"]
+    assert len(text) > cfg["tool_log_chars"] * 2
+    assert "hit07 " + "z" * 330 + "\n" in text
+    assert "more matching messages not shown" in text
+    openai = build_openai_input("claude", transcript, names, cfg)[0][
+        "content"][0]["text"]
+    assert openai == text
+
+
 # ---------- OpenAI (Responses API) ----------
 
 def test_openai_roles(transcript, names, cfg):

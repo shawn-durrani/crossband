@@ -26,7 +26,7 @@ from datetime import datetime
 from . import attachments as att_mod
 from . import context_marker
 from . import work_status
-from .tools import run_tool
+from .tools import replay_output, run_tool
 
 log = logging.getLogger("crossband.providers")
 
@@ -935,11 +935,7 @@ def _tool_log_text(msg, names, cfg):
              "(evidence shared with all chat members):"]
     for ev in msg.get("tool_events", []):
         lines.append(f"• {ev['tool']}({ev['input_json']}) →")
-        # full YouTube transcripts persist in full; other tool outputs stay trimmed
-        # to keep context lean
-        cap = (cfg["max_transcript_chars"] if ev["tool"] == "fetch_youtube_transcript"
-               else cfg["tool_log_chars"])
-        lines.append(ev["output_text"][:cap])
+        lines.append(replay_output(ev, cfg))
     return "\n".join(lines)
 
 

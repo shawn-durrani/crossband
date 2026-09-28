@@ -95,9 +95,9 @@ def estimate(chat: dict, messages, cfg: dict, memory_summary_len: int = 0) -> di
     """
     recent = [m for m in messages if m["id"] > (chat.get("summary_upto") or 0)]
     w = message_weight(recent)
+    from .tools import replay_output  # lazy: tools imports half the backend
     research = toks(sum(
-        min(len(t.get("output_text") or ""), cfg.get("tool_log_chars") or 1200)
-        + len(t.get("input_json") or "")
+        len(replay_output(t, cfg)) + len(t.get("input_json") or "")
         for m in recent for t in m.get("tool_events") or []))
     chat_summary = toks(len(chat.get("summary") or ""))
     memory = toks(memory_summary_len) if chat.get("memory_enabled") else 0

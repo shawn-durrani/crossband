@@ -476,6 +476,10 @@ class Settings(BaseModel):
     # characters on average and under 500 for 99% of hits (#583).
     max_search_hit_chars: int = 600
     tool_log_chars: int = 1200  # per tool event when replayed into later transcripts
+    # One search_history result replayed into later transcripts: whole hits
+    # in rank order, about the top ten at membro's 64-word excerpt, then a
+    # line counting the rest (#585).
+    search_log_chars: int = 4000
     max_tool_rounds: int = 6
     # #253/#417: the tool-call loop cap per reply while spoken research mode
     # is on for the chat (backend/research.py) - engine.py substitutes this

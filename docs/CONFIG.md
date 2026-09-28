@@ -386,7 +386,8 @@ lists only together with that page.
 | `fetch_timeout` | `15` | Seconds a page fetch may take. |
 | `max_tool_output` | `8000` | Characters of tool output returned to the calling model. |
 | `max_search_hit_chars` | `600` | Characters of each `search_history` hit the model sees. Membro's excerpt runs up to 64 words, so it fits whole. Hits are kept whole under `max_tool_output`, and the result says how many didn't fit. |
-| `tool_log_chars` | `1200` | Characters per tool event when it's replayed into later transcripts. |
+| `tool_log_chars` | `1200` | Characters per tool event when it's replayed into later transcripts. A history search and a YouTube transcript have their own caps. |
+| `search_log_chars` | `4000` | Characters of a `search_history` result when it's replayed into later transcripts. That's about the top ten hits, each kept whole, and a line says how many were left out. |
 | `max_tool_rounds` | `6` | The tool-call loop cap per reply. |
 | `research_tool_rounds` | `18` | The tool-call loop cap per reply while [research mode](WEB_RESEARCH.md#research-mode) is on for the chat. |
 | `max_transcript_chars` | `100000` | The cap on a YouTube transcript in the chat. |

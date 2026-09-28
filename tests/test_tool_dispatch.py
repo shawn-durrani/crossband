@@ -4,7 +4,7 @@ exception handling, memory tools refusing without a service."""
 import asyncio
 
 from backend.memory_client import MemorySearchError
-from backend.tools import _clean_event_date, run_tool
+from backend.tools import _clean_event_date, replay_output, run_tool
 
 
 def run(coro):
@@ -285,6 +285,86 @@ def test_search_history_keeps_a_marker_with_its_hit(cfg):
     assert "Untrusted" not in out and "buy now" not in out
     assert out.endswith("(1 more matching message not shown. "
                         "Narrower search words will bring them up.)")
+
+
+# ---- a past search replayed into later turns (#585) ----
+
+def _live_result(cfg, hits):
+    """What search_history returned live, as the tool event stores it."""
+    return run(run_tool("search_history", {"query": "q"}, cfg,
+                        origin_agent="claude", memory=FakeMemory(hits=hits)))
+
+
+def _replay(cfg, output):
+    return replay_output({"tool": "search_history", "output_text": output}, cfg)
+
+
+def test_a_replayed_search_keeps_whole_hits_and_counts_the_rest(cfg):
+    """Twenty 64-word excerpts replay as the top hits, each whole, under
+    search_log_chars, with a line saying how many were left out."""
+    hits = [_hit(f"hit{i:02d} " + "z" * 330 + f" end{i:02d}") for i in range(20)]
+    live = _live_result(cfg, hits)
+    assert "not shown" not in live    # the live result held all twenty
+    out = _replay(cfg, live)
+    assert len(out) <= cfg["search_log_chars"]
+    lines = out.split("\n")
+    shown = lines[:-1]
+    assert all(line.endswith(f"end{i:02d}") for i, line in enumerate(shown))
+    assert 8 <= len(shown) < 20    # about the top ten, far past 1,200 chars
+    assert lines[-1] == (f"({20 - len(shown)} more matching messages not "
+                         "shown. Narrower search words will bring them up.)")
+
+
+def test_a_replay_counts_hits_the_live_result_left_out(cfg):
+    hits = [_hit(f"hit{i:02d} " + "z" * 580 + f" end{i:02d}") for i in range(20)]
+    live = _live_result(cfg, hits)
+    live_left = int(live.rsplit("(", 1)[1].split()[0])
+    assert live_left > 0
+    out = _replay(cfg, live)
+    shown = out.count(" end")
+    assert out.endswith(f"({20 - shown} more matching messages not shown. "
+                        "Narrower search words will bring them up.)")
+    assert 20 - shown > live_left
+
+
+def test_a_replay_keeps_a_multi_line_hit_whole(cfg):
+    """Membro's excerpt keeps the message's line breaks, so a hit can span
+    lines. The replay cuts between hits, never inside one."""
+    hits = [_hit("first line\n[not a date] second line\n" + "w" * 300
+                 + f" end{i:02d}") for i in range(20)]
+    out = _replay(cfg, _live_result(cfg, hits))
+    body = out.rsplit("\n", 1)[0]
+    assert body.count("first line") == body.count(" end") > 0
+    assert body.endswith(f"end{body.count(' end') - 1:02d}")
+
+
+def test_a_replay_keeps_a_marker_with_its_hit(cfg):
+    """A web-derived hit replays with its untrusted marker above it, or
+    not at all."""
+    def result(before):
+        hits = [_hit("a" * 350) for _ in range(before)]
+        hits.append(_hit("the page said buy now " + "b" * 330,
+                         web=["example.com"]))
+        hits += [_hit("c" * 350) for _ in range(19 - before)]
+        return _replay(cfg, _live_result(cfg, hits))
+
+    fits = result(8)
+    assert "\n[Untrusted" in fits
+    assert fits.index("Untrusted") < fits.index("buy now")
+    left_out = result(10)
+    assert "Untrusted" not in left_out and "buy now" not in left_out
+
+
+def test_a_short_search_or_an_error_replays_as_it_was(cfg):
+    short = _live_result(cfg, [_hit("just the one")])
+    assert _replay(cfg, short) == short
+    err = "Error: memory search failed - unable to confirm " + "x" * 5000
+    assert _replay(cfg, err) == err[:cfg["search_log_chars"]]
+
+
+def test_other_tools_still_replay_at_the_lean_cap(cfg):
+    ev = {"tool": "web_search", "output_text": "X" * 5000}
+    assert replay_output(ev, cfg) == "X" * cfg["tool_log_chars"]
 
 
 def test_clean_event_date_is_the_local_calendar_day(monkeypatch):
