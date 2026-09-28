@@ -28,7 +28,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -81,6 +81,8 @@ SCHEMA_VERSION = 32
 #   v31  participants.tts_v3_accent_tag (a seat's own Eleven v3 accent tag,
 #        #493)
 #   v32  auth_sessions (browser sign-ins kept across restarts, hashed, #471)
+#   v33  seat_usage (the cost of a seat's call that left no message: a pass,
+#        a refused try, an empty reply, #560)
 
 # v29's columns (#254), shared by the migration step and nothing else: the
 # CREATE TABLE in SCHEMA spells the same list out for a fresh database.
@@ -369,6 +371,22 @@ CREATE TABLE IF NOT EXISTS utility_usage(
   provenance TEXT,
   created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS seat_usage(
+  -- The cost of a seat's model call that left no message behind (#560): a
+  -- [pass], the first try of a pass or a restatement the app refused and
+  -- asked for again, a restatement it dropped, and an empty reply. A pass
+  -- stays out of the chat on purpose, so its cost can't ride a message's
+  -- usage_json the way a reply's does. Content-free: the seat, what became
+  -- of the call, and the usage block its message would have carried (token
+  -- counts, cost, provenance, cache fingerprints). Never any text.
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
+  speaker TEXT NOT NULL,
+  -- 'pass' | 'pass_retried' | 'echo_dropped' | 'echo_retried' | 'empty'
+  outcome TEXT NOT NULL,
+  usage_json TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS inbound_events(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,                -- producer name (badge label; stored as ext:<source> on the message)
@@ -543,6 +561,7 @@ CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_tool_events_msg ON tool_events(message_id);
 CREATE INDEX IF NOT EXISTS idx_voice_usage_chat ON voice_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_utility_usage_chat ON utility_usage(chat_id);
+CREATE INDEX IF NOT EXISTS idx_seat_usage_chat ON seat_usage(chat_id);
 """
 
 
@@ -923,6 +942,8 @@ def init(settings=None):
     # executescript below; no ALTER, nothing to backfill.
     # v32: auth_sessions - likewise a NEW table. It starts empty, so the
     # first start on it signs every browser out once, as any restart did.
+    # v33: seat_usage - likewise a NEW table. Nothing to backfill: a pass
+    # made before it existed left no usage anywhere to copy.
     if 1 <= version <= 10:  # v11: utility_usage.provenance -
         # persist cost provenance AT WRITE TIME instead of recomputing it from
         # the live rate card at read time, matching every other cost source
@@ -1141,6 +1162,18 @@ def log_utility_usage(con, chat_id, kind, model, input_tokens, output_tokens, co
         "INSERT INTO utility_usage(chat_id, kind, model, input_tokens, output_tokens, "
         "cost, provenance, created_at) VALUES(?,?,?,?,?,?,?,?)",
         (chat_id, kind, model, input_tokens, output_tokens, cost, provenance, now()),
+    )
+
+
+def log_seat_usage(con, chat_id, speaker, outcome, usage_json):
+    """Persist the cost of one seat call that left no message (#560).
+    `usage_json` is the already-priced block engine.persist_live would have
+    put on the message, so accounting reads both the same way. The caller
+    commits."""
+    con.execute(
+        "INSERT INTO seat_usage(chat_id, speaker, outcome, usage_json, "
+        "created_at) VALUES(?,?,?,?,?)",
+        (chat_id, speaker, outcome, usage_json, now()),
     )
 
 

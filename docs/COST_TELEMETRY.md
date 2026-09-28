@@ -2,8 +2,8 @@
 
 This is for anyone who wants to know what their chats cost and where
 the money goes. The Spend page splits your spend by where it came
-from, and the cheap model that writes titles and summaries has its own
-spend record. Every model in a chat has a seat, and each Claude seat
+from. The cheap model that writes titles and summaries has its own
+spend record, and so does a model call that leaves no message. Every model in a chat has a seat, and each Claude seat
 writes one line to the log on every call saying what its prompt cache
 did, with none of your words in it. None of that changes what gets
 cached, which model answers, or what you're billed.
@@ -27,7 +27,7 @@ The Spend page's By source table splits your spend into these rows.
 
 | Source | What it is | How it's billed |
 |---|---|---|
-| **Model turns** | Every reply from a seated model, Claude and GPT alike. | Metered on your API key, always. |
+| **Model turns** | Every call a seated model makes, Claude and GPT alike, including the ones that leave no message. | Metered on your API key, always. |
 | **Coding agent** | A turn by a Claude Code guest you summoned into the chat. | Your API key or your [Claude Code subscription](https://code.claude.com/docs/en/costs), whichever the turn recorded. |
 | **Utility (background model work)** | Rolling summaries, auto-titles and project distillation, plus the scans that read what you say. | Metered on your API key, when a utility model is set. |
 
@@ -234,6 +234,8 @@ You can check cache behaviour after the fact, even when the log line
 was off at the time. Every reply stores its cache counters on the
 message in `messages.usage_json`, as `input`, `cache_read`,
 `cache_creation` and `output`, summed across the reply's tool rounds.
+A call that left no message keeps the same block in
+`seat_usage.usage_json`.
 The database is a SQLite file, `data/chat.db`, and the
 [`sqlite3` shell](https://sqlite.org/cli.html) reads it directly.
 
@@ -277,6 +279,32 @@ mark.
 Check `volatile_hash` the same way to see whether the split is doing
 its job. A `volatile_hash` that changes every call while `stable_hash`
 holds across a short burst of messages is the shape you want.
+
+## Calls that leave no message
+
+Some model calls never show up in the chat. A model that has nothing to
+add replies `[pass]`, and the app hides that reply completely. When the
+app turns a reply down and asks the model again, the first try is
+thrown away. That happens when a model passes where it owes an answer,
+or when its reply only restates one already given. A reply that comes
+back empty leaves nothing either. Each of these is still a call you pay
+for.
+
+The app records each one in the `seat_usage` table instead of the
+chat. A row holds the chat, the seat, what became of the call and the
+usage block its message would have carried. That block has the token
+counts, the cost, its provenance and the cache fingerprints, and never
+any text. The `outcome` column reads `pass`, `pass_retried`,
+`echo_dropped`, `echo_retried` or `empty`.
+
+The Spend page counts these calls under Model turns, and the chat's
+running cost includes them. Under the detail, a line says how much of
+the window went on them. That money is already in every total, so the
+line never adds to it.
+
+A call cut off partway, by you talking over it, a stall or a provider
+error, has no usage block at all. The adapters only get one when a
+call finishes, so those calls stay uncounted.
 
 ## How utility calls are counted
 

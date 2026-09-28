@@ -94,6 +94,19 @@ export function roughBreakdown(rows, limit = 4) {
   return [...head, { label: `${sorted.length - limit} others`, value: tail }]
 }
 
+// How much of the window went on model calls the chat never shows (#560): a
+// [pass], a first try the app turned down and asked for again, an empty
+// reply. They're already inside every total on the page, so this says what
+// part of the bill they are and never adds them on top. Null when there were
+// none, so the page says nothing rather than "$0.00 on 0 calls".
+export function unpostedNote(unposted, money) {
+  const n = unposted?.events || 0
+  if (!n) return null
+  const calls = n === 1 ? '1 model call' : `${n} model calls`
+  return `Includes ${money(unposted.cost || 0)} on ${calls} that left no `
+    + 'message, such as a model passing or a reply the app asked it to redo.'
+}
+
 export const SPANS = [
   ['today', 'Today'],
   ['7d', '7 days'],

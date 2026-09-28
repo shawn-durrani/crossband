@@ -513,30 +513,8 @@ async def run_round(chat_id, responders, next_first, settings, memory,
             # [pass] keeps its words, never the half-written token.
             content = passes.strip_pass(content, partial=True)
             content += f"\n\n[cut off by {cfg['user_name']}]"
-        usage_json = None
-        if live["usage"]:
-            u = dict(live["usage"])
-            u["model"] = p["model"]
-            if p.get("stepped_from"):
-                # #254: the turn ran on a per-chat step-up. The configured
-                # model rides along, so the Models page can tell a stepped-up
-                # reply from a settings change still waiting for its turn.
-                u["stepped_from"] = p["stepped_from"]
-            # a guest turn reports its real cost itself; API speakers price
-            # from the local table
-            # The seat's endpoint is part of pricing it: a keyless loopback seat
-            # is self-hosted, so it costs a declared $0 rather than "unknown"
-            # even when no rate card names its model.
-            seat_cost = {"base_url": p["base_url"], "api_key_env": p["api_key_env"]}
-            u["cost"] = u.get("cost") or compute_cost(p["model"], u,
-                                                      cfg["pricing"], **seat_cost)
-            # Record the cost provenance AT TURN TIME so a later
-            # rate-card edit can never rewrite this row's history. A resident
-            # API turn is priced from the local table → a rate_card_estimate,
-            # never a billed figure (that is only a provider-reported cost).
-            u.setdefault("cost_provenance",
-                         provenance_for(p["model"], cfg["pricing"], **seat_cost))
-            usage_json = json.dumps(u)
+        usage_json = (_priced_usage_json(p, live["usage"], cfg)
+                      if live["usage"] else None)
         con = db.connect()
         # The single centralized insert path - also wakes any
         # connected client via the global events bus, same as an out-of-band
@@ -568,6 +546,61 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         # a user-initiated abort is the right trade.
         persist_live(interrupted=True)
         raise
+
+
+def _priced_usage_json(p, usage, cfg):
+    """A seat call's usage block, priced and stamped, as the JSON a message's
+    usage_json holds. Shared by the message insert and the record of a call
+    that left no message (#560), so the two can never price a call
+    differently."""
+    u = dict(usage)
+    u["model"] = p["model"]
+    if p.get("stepped_from"):
+        # #254: the turn ran on a per-chat step-up. The configured
+        # model rides along, so the Models page can tell a stepped-up
+        # reply from a settings change still waiting for its turn.
+        u["stepped_from"] = p["stepped_from"]
+    # a guest turn reports its real cost itself; API speakers price
+    # from the local table
+    # The seat's endpoint is part of pricing it: a keyless loopback seat
+    # is self-hosted, so it costs a declared $0 rather than "unknown"
+    # even when no rate card names its model.
+    seat_cost = {"base_url": p.get("base_url"),
+                 "api_key_env": p.get("api_key_env")}
+    u["cost"] = u.get("cost") or compute_cost(p["model"], u,
+                                              cfg["pricing"], **seat_cost)
+    # Record the cost provenance AT TURN TIME so a later
+    # rate-card edit can never rewrite this row's history. A resident
+    # API turn is priced from the local table → a rate_card_estimate,
+    # never a billed figure (that is only a provider-reported cost).
+    u.setdefault("cost_provenance",
+                 provenance_for(p["model"], cfg["pricing"], **seat_cost))
+    return json.dumps(u)
+
+
+def _record_unposted(chat_id, p, usage, outcome, cfg):
+    """Record the cost of a seat call that leaves no message (#560): a pass,
+    the first try of a refused pass or restatement, a dropped restatement,
+    an empty reply. Each was a paid call, and a pass is kept out of the
+    chat on purpose, so its cost goes to seat_usage instead of riding a
+    message. Content-free, like the usage block it stores.
+
+    Runs on a worker thread. A failure here is logged and swallowed: a
+    spend record must never break the round it describes, the same rule
+    llm_util.utility_complete_logged keeps."""
+    if not usage:
+        return
+    try:
+        con = db.connect()
+        try:
+            db.log_seat_usage(con, chat_id, p["slug"], outcome,
+                              _priced_usage_json(p, usage, cfg))
+            con.commit()
+        finally:
+            con.close()
+    except Exception as e:
+        log.warning("seat_usage: could not record a %s call for %s: %s",
+                    outcome, p.get("slug"), type(e).__name__)
 
 
 # The echo guard's actions as the seat ledger words them (#162): what the
@@ -1049,6 +1082,13 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 live["participant"] = None
                 skip_speaker = True
             if skip_speaker:
+                # #560: a call that finished and left nothing still cost
+                # money. A failed call usually has no usage block at all,
+                # since the adapters report usage when the call ends.
+                await asyncio.to_thread(_record_unposted, chat_id,
+                                        participant, live["usage"], "empty",
+                                        cfg)
+                live["usage"] = None
                 break
             # The pass and echo guards (#98, #210), judged as one pure
             # decision in _judge_reply; the yields, the live mutations and
@@ -1067,10 +1107,16 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 # while the text could still be a bare pass, so nothing was
                 # spoken either.
                 yield sse({"type": "passed", "speaker": participant["slug"]})
+                # #560: the pass leaves no message, but the call cost
+                # money, so its usage goes to the ledger on its own.
+                await asyncio.to_thread(
+                    _record_unposted, chat_id, participant, live["usage"],
+                    "pass" if action == "suppress_pass" else "pass_retried",
+                    cfg)
+                live["usage"] = None
                 if action == "suppress_pass":
                     live["participant"] = None
                     live["content"] = ""
-                    live["usage"] = None
                     skip_speaker = True
                     break
                 # refused: re-run this seat ONCE with the guard stated
@@ -1094,6 +1140,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             # spoken, so it posts as it is.
             if action == "suppress_echo":
                 yield sse({"type": "passed", "speaker": participant["slug"]})
+                await asyncio.to_thread(_record_unposted, chat_id,
+                                        participant, live["usage"],
+                                        "echo_dropped", cfg)
                 live["participant"] = None
                 live["content"] = ""
                 live["usage"] = None
@@ -1103,6 +1152,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 # Same client shape as a refused pass: the streamed
                 # bubble drops on "passed", the retry opens fresh.
                 yield sse({"type": "passed", "speaker": participant["slug"]})
+                await asyncio.to_thread(_record_unposted, chat_id,
+                                        participant, live["usage"],
+                                        "echo_retried", cfg)
+                live["usage"] = None
                 echo_note = note
                 continue
             break
@@ -1133,6 +1186,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         if msg:
             yield sse({"type": "speaker_end", "speaker": participant["slug"], "message": msg})
             spoken.append(participant["name"])
+        elif live["usage"]:
+            # #560: nothing left to save once the trailing [pass] went
+            # (tool calls, then a bare pass), and the call still cost money.
+            await asyncio.to_thread(_record_unposted, chat_id, participant,
+                                    live["usage"], "empty", cfg)
+            live["usage"] = None
 
     async for chunk in _finish_round(chat_id, cfg, next_first, handback,
                                      is_handback):

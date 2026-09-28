@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, BarChart3, Info, Menu } from 'lucide-react'
 import { api } from '../api'
-import { headline, accuracy, direction, roughBreakdown, trendLines, linePath, SPANS } from '../spendView'
+import { headline, accuracy, direction, roughBreakdown, trendLines, linePath, SPANS, unpostedNote } from '../spendView'
 // `headline` is already taken by spendView's own, so alias the cache one.
 import {
   headline as headlineCache, cacheRows, verdictOf, formatRatio,
@@ -179,6 +179,7 @@ export default function SpendPage({ onClose, onOpenMenu }) {
 
   const b = data?.breakdown
   const notTracked = useMemo(() => b?.not_tracked || [], [b])
+  const unposted = b ? unpostedNote(b.unposted, money) : null
 
   const h = b ? headline(b.totals) : null
   const acc = b ? accuracy(b.totals) : null
@@ -305,6 +306,9 @@ export default function SpendPage({ onClose, onOpenMenu }) {
                   <div className="text-[11px] text-ink-faint">
                     Not tracked (events exist, no cost captured): {notTracked.join(', ')}.
                   </div>
+                )}
+                {unposted && (
+                  <div className="text-[11px] text-ink-faint">{unposted}</div>
                 )}
                 <div className="text-[11px] text-ink-faint border-t border-edge pt-2 flex gap-3 flex-wrap">
                   {ORDER.map((c) => (
