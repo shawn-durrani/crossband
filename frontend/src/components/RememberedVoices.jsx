@@ -307,7 +307,7 @@ export default function RememberedVoices() {
                    className="flex items-start gap-2 border border-edge2 rounded-lg px-3 py-2">
                 <div className="flex-1 min-w-0">
                   {editing === p.person_id ? (
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <input
                         className="bg-transparent border border-edge rounded px-2 py-1 text-sm text-ink w-40"
                         value={draft}
