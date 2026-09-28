@@ -1998,12 +1998,24 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     # diagnosed twice, and wrongly the second time (a chat switch and a TTL
     # expiry both look identical to a real prefix break without it).
     tools_hash = _content_hash(json.dumps(anth_tools, sort_keys=True))
+    # `thinking` is no longer forced - see _anthropic_thinking.
+    # Sending it and output_config.effort together is deliberately never
+    # done: "adaptive" and a fixed effort level are alternative policies,
+    # not stacked ones (the SDK documents `thinking` as fully optional).
+    thinking = _anthropic_thinking(p)
+    effort = None if thinking else _anthropic_effort(p)
     # The model is a prefix component too (#254): a per-chat step-up moves a
     # seat onto a model that holds none of the old one's cache, and without
-    # it here that whole-prefix re-write read as "nothing changed".
+    # it here that whole-prefix re-write read as "nothing changed". So are
+    # thinking and effort (#563): a change to either throws the cache away
+    # while every fingerprint stays the same, and a spoken "think harder"
+    # changes effort mid-chat. Both are recorded as SENT, not as configured,
+    # since a level the model doesn't take is never sent and busts nothing.
     prefix_now = {"model": p.get("model") or "", "tools": tools_hash,
                   "stable": stable_hash, "volatile": volatile_hash,
-                  "transcript": transcript_hash}
+                  "transcript": transcript_hash,
+                  "thinking": (thinking or {}).get("type", "none"),
+                  "effort": effort or "default"}
     seat_key = (cfg.get("chat_id"), p.get("slug") or p.get("name"))
     _prev = _last_prefix.get(seat_key)
     changed = ([k for k, v in prefix_now.items() if _prev.get(k) != v]
@@ -2023,17 +2035,10 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             system=system,
             messages=messages,
         )
-        # `thinking` is no longer forced - see _anthropic_thinking.
-        # Sending it and output_config.effort together is deliberately never
-        # done: "adaptive" and a fixed effort level are alternative policies,
-        # not stacked ones (the SDK documents `thinking` as fully optional).
-        thinking = _anthropic_thinking(p)
         if thinking:
             kwargs["thinking"] = thinking
-        else:
-            effort = _anthropic_effort(p)
-            if effort:
-                kwargs["output_config"] = {"effort": effort}
+        elif effort:
+            kwargs["output_config"] = {"effort": effort}
         if anth_tools:
             kwargs["tools"] = anth_tools
         try:
@@ -2086,7 +2091,7 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             transcript_hash, CACHE_TTL_LABEL,
             # content-free confirmation of what was ACTUALLY sent this call
             # (never forced "adaptive" anymore unless the participant chose it).
-            (thinking or {}).get("type", "none"), (p.get("reasoning_effort") or "default"),
+            prefix_now["thinking"], prefix_now["effort"],
             u.input_tokens or 0, getattr(u, "cache_read_input_tokens", 0) or 0,
             getattr(cache_creation, "ephemeral_5m_input_tokens", 0) or 0,
             getattr(cache_creation, "ephemeral_1h_input_tokens", 0) or 0,

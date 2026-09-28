@@ -663,7 +663,7 @@ def test_cache_prefix_rides_usage_json(cfg, monkeypatch):
     u = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
     pref = u["cache_prefix"]
     assert set(pref) == {"model", "tools", "stable", "volatile", "transcript",
-                         "changed"}
+                         "thinking", "effort", "changed"}
     assert pref["changed"] == ["first-call"]
 
 
@@ -692,6 +692,47 @@ def test_a_model_step_up_is_reported_as_a_model_change(cfg, monkeypatch):
     # and back again, on "back to normal": the same report the other way
     u3 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1)
     assert u3["cache_prefix"]["changed"] == ["model"]
+
+
+def test_a_change_of_effort_is_reported_as_an_effort_change(cfg, monkeypatch):
+    """#563: effort renders ahead of the cached prefix, so a spoken "think
+    harder" throws the cache away with every fingerprint unchanged. Recorded
+    as sent, so the miss names its cause."""
+    providers._last_prefix.clear()
+    low = {**SONNET, "reasoning_effort": "low"}
+    high = {**SONNET, "reasoning_effort": "high"}
+    u1 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, participant=low)
+    assert (u1["cache_prefix"]["effort"], u1["cache_prefix"]["thinking"]) \
+        == ("low", "none")
+    u2 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, participant=high)
+    assert u2["cache_prefix"]["changed"] == ["effort"]
+    assert u2["cache_prefix"]["effort"] == "high"
+
+
+def test_a_change_to_adaptive_thinking_is_reported(cfg, monkeypatch):
+    """Adaptive thinking replaces the effort level rather than adding to
+    it, so both parts move and both are named."""
+    providers._last_prefix.clear()
+    _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1,
+              participant={**SONNET, "reasoning_effort": "high"})
+    u2 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1,
+                   participant={**SONNET, "reasoning_effort": "adaptive"})
+    assert u2["cache_prefix"]["changed"] == ["thinking", "effort"]
+    assert (u2["cache_prefix"]["thinking"], u2["cache_prefix"]["effort"]) \
+        == ("adaptive", "default")
+
+
+def test_effort_is_recorded_as_sent_not_as_configured(cfg, monkeypatch):
+    """A model that takes no effort is sent none, so switching its
+    configured level changes nothing in the request and is no miss."""
+    providers._last_prefix.clear()
+    haiku = {**SONNET, "model": "claude-haiku-4-5"}
+    _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1,
+              participant={**haiku, "reasoning_effort": "low"})
+    u2 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1,
+                   participant={**haiku, "reasoning_effort": "high"})
+    assert u2["cache_prefix"]["effort"] == "default"
+    assert u2["cache_prefix"]["changed"] == []
 
 
 def test_an_identical_call_reports_nothing_changed(cfg, monkeypatch):
