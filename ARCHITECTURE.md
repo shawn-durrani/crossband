@@ -76,8 +76,8 @@ changes only when the transcript changes, and after it if it can change
 on its own. The question to ask of a field is whether it moves on its
 own, apart from the transcript. Put such a field in the cached block and
 the whole prefix is written again every turn, which costs more than it
-saves and never shows in a dollar total. The ratio of cache reads to
-cache writes is the signal.
+saves and never shows in a dollar total. The share of all input read
+back from the cache is the signal.
 
 The tool list comes first in every request, so a change to it throws
 away everything cached behind it. The list is set by the chat's

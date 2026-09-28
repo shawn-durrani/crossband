@@ -481,44 +481,72 @@ def test_selected_span_drives_window_previous_and_series(tmp_path):
 # ---------- cache health ----------
 #
 # A cache regression can sit in plain sight for days: the tokens are already in
-# usage_json, but nothing aggregates them. A cache WRITE bills at 1.25x input and a
-# READ at 0.1x, so a write is 12.5x a read - and neither the dollar total nor
-# the token total moves much when a prefix starts being re-written instead of
-# re-read. The ratio is the signal.
+# usage_json, but nothing aggregates them. A READ bills at a tenth of the input
+# price or less, input sent fresh at the full price, and a WRITE at 1.25x, so
+# the share of ALL input read back is the signal (#561). The read:write ratio
+# this used to judge on ignored the input sent at full price.
 
 
-def test_cache_health_verdicts():
+def test_cache_health_judges_the_share_of_all_input_read():
     ch = accounting.cache_health
-    assert ch(30, 10)["verdict"] == "good"          # 3:1
-    assert ch(20, 10)["verdict"] == "watch"         # 2:1
+    assert ch(80, 10, 10)["verdict"] == "good"         # 80%
+    assert ch(79, 10, 11)["verdict"] == "watch"        # 79%
+    assert ch(50, 25, 25)["verdict"] == "watch"        # 50%
+    assert ch(49, 25, 26)["verdict"] == "poor"         # 49%
     # the failure signature: re-writing more than it ever reads back
-    poor = ch(840_000, 1_000_000)
+    poor = ch(840_000, 1_000_000, 100_000)
     assert poor["verdict"] == "poor"
     assert poor["ratio"] == pytest.approx(0.84, abs=0.01)
+    assert poor["read_share"] == pytest.approx(0.43, abs=0.01)
 
 
-def test_no_cache_activity_is_never_a_misleading_zero_ratio():
-    """`0:0` must not render as a problem, and reads-with-no-writes is a
-    distinct, fine state (the OpenAI seat, whose writes we don't capture)."""
-    assert accounting.cache_health(0, 0) == {"ratio": None, "verdict": "none"}
-    assert accounting.cache_health(500, 0) == {"ratio": None, "verdict": "no_writes"}
+def test_a_62_percent_hit_rate_is_no_longer_healthy():
+    """The #561 shape, from the Claude seats' 30 days: read:write near 3.7:1,
+    which the old rule rated good, with 62% of input read from cache."""
+    h = accounting.cache_health(6_030_000, 1_630_000, 2_090_000)
+    assert h["ratio"] == pytest.approx(3.7, abs=0.01)
+    assert h["read_share"] == pytest.approx(0.62, abs=0.01)
+    assert h["verdict"] == "watch"
+
+
+def test_the_bars_are_the_stated_ones():
+    assert accounting.GOOD_READ_SHARE == 0.80
+    assert accounting.POOR_READ_SHARE == 0.50
+
+
+def test_no_cache_activity_is_never_a_misleading_zero():
+    """No reads and no writes is no caching at all, never a failing cache,
+    however much was sent at full price. Reads with no reported writes (the
+    OpenAI seat) get a real verdict from their share."""
+    assert accounting.cache_health(0, 0) == {
+        "ratio": None, "read_share": None, "verdict": "none"}
+    assert accounting.cache_health(0, 0, 5000)["verdict"] == "none"
+    openai_seat = accounting.cache_health(670, 0, 330)
+    assert openai_seat["ratio"] is None
+    assert openai_seat["read_share"] == pytest.approx(0.67)
+    assert openai_seat["verdict"] == "watch"
 
 
 def test_cache_tokens_ride_every_axis_and_reconcile(con):
     _msg(con, "claude", _base_usage(0.5, model="claude-sonnet-5",
                                     cache_read=1000, cache_creation=4000), NOW)
     s = accounting.summarize(list(accounting.iter_cost_events(con)))
+    uncached = s["cache"]["uncached"]
     assert s["cache"]["read"] == 1000
     assert s["cache"]["written"] == 4000
     assert s["cache"]["verdict"] == "poor"
+    assert s["cache"]["read_share"] == pytest.approx(
+        1000 / (1000 + 4000 + uncached))
     for axis in ("by_model", "by_producer_model", "by_source", "by_chat", "by_party"):
         rows = [g for g in s[axis] if g["cache_creation"]]
         assert rows, axis
         assert sum(g["cache_read"] for g in rows) == 1000, axis
         assert sum(g["cache_creation"] for g in rows) == 4000, axis
+        assert sum(g["uncached_input"] for g in rows) == uncached, axis
     # cache tokens are a SUBSET of the row's token total, never additional to it
     row = next(g for g in s["by_model"] if g["key"] == "claude-sonnet-5")
-    assert row["cache_read"] + row["cache_creation"] <= row["tokens"]
+    assert (row["cache_read"] + row["cache_creation"] + row["uncached_input"]
+            <= row["tokens"])
 
 
 def test_cache_write_cost_is_derived_only_from_a_rate_card(con):
@@ -541,7 +569,7 @@ def test_a_subscription_equivalent_turn_never_gets_a_derived_dollar_split(con):
     assert s["cache"]["written"] == 100_000          # tokens: reported
     assert s["cache"]["write_cost"] == 0.0           # dollars: never fabricated
     row = next(g for g in s["by_producer_model"] if "claude-opus-4-8" in g["label"])
-    assert row["cache"]["verdict"] == "good"         # 9:1, and honestly so
+    assert row["cache"]["verdict"] == "good"         # 90% read, and honestly so
     assert row["cache_write_cost"] == 0.0
 
 

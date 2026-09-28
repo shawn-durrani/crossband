@@ -4,7 +4,7 @@ import { api } from '../api'
 import { headline, accuracy, direction, roughBreakdown, trendLines, linePath, SPANS, unpostedNote } from '../spendView'
 // `headline` is already taken by spendView's own, so alias the cache one.
 import {
-  headline as headlineCache, cacheRows, verdictOf, formatRatio,
+  headline as headlineCache, cacheRows, verdictOf, formatRatio, formatShare,
 } from '../cacheHealth'
 import { fmtTokens, money } from '../format'
 
@@ -38,13 +38,13 @@ const BAR = { metered: 'bg-link', subscription_equiv: 'bg-amber-500', unknown: '
 // blended into a total.
 const catTotal = (o) => (o.metered || 0) + (o.subscription_equiv || 0) + (o.unknown || 0)
 
-// Prompt caches bill a WRITE at 1.25x input and a READ at 0.1x, so a write
-// costs 12.5x a read. When a prefix starts being re-written instead of
-// re-read, neither the dollar total nor the token count on this page moves
-// enough to notice, which is how a real cache regression once stayed hidden
-// here. Leads with the worst row rather than the window average: the average
-// across seats can look healthy while one seat re-writes its prefix every turn
-// and spends most of its bill on cache writes.
+// Input read back from a prompt cache bills at a tenth of the input price or
+// less; input sent fresh bills in full, and a cache write at 1.25x. When a
+// seat stops reading its prompt back, neither the dollar total nor the token
+// count on this page moves enough to notice, which is how a real cache
+// regression once stayed hidden here. Judged on the share of all input read
+// from cache (#561), and led by the worst row rather than the window average:
+// the average across seats can look healthy while one seat's hit rate drops.
 const CACHE_TONE = {
   poor: 'text-red-400 border-red-400/40',
   watch: 'text-amber-400 border-amber-400/40',
@@ -65,9 +65,9 @@ function CacheHealth({ summary }) {
       </p>
       {h.shareText && <p className="text-xs text-ink-faint mt-0.5">{h.shareText}</p>}
       <p className="text-[11px] text-ink-faint mt-1.5">
-        Storing a conversation in a model&apos;s cache costs about 12&times; more than
-        re-reading it. A healthy chat reads far more than it writes; when that flips,
-        the prefix is changing between turns and you pay to re-send it every time.
+        Input a model reads back from its cache costs a tenth of the price or less.
+        A healthy chat reads 80% or more of its input that way. Below that, part of
+        the prompt is sent at full price or stored again on each call.
       </p>
       <div className="mt-2 space-y-1">
         {rows.map((g) => {
@@ -77,10 +77,11 @@ function CacheHealth({ summary }) {
               <span className="text-ink-mid flex-1 min-w-0 break-words">{g.label}</span>
               <span className="text-ink-faint tabular-nums">
                 {fmtTokens(g.cache_read)} read / {fmtTokens(g.cache_creation)} written
+                / {fmtTokens(g.uncached_input)} full price
               </span>
               <span className={`tabular-nums px-1.5 py-0.5 rounded border ${CACHE_TONE[v.tone]}`}
-                    title={v.title}>
-                {formatRatio(g.cache)}
+                    title={`${v.title} Read to write: ${formatRatio(g.cache)}.`}>
+                {formatShare(g.cache)} cached
               </span>
               {g.cache_write_cost > 0 && (
                 <span className="text-ink-faint tabular-nums">
