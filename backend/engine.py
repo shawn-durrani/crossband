@@ -496,18 +496,20 @@ async def run_round(chat_id, responders, next_first, settings, memory,
 
     def persist_live(interrupted=False):
         p = live["participant"]
-        if not p or not live["content"]:
+        # #575: a reply of tool calls and no words is saved for its tools.
+        if not p or not (live["content"] or live["tools"]):
             return None
-        if interrupted and not live["tools"] \
-                and passes.is_cut_pass(live["content"]):
+        if interrupted and passes.is_cut_pass(live["content"]):
             # #456: cut off mid-[pass]. The seat was passing, and a pass
-            # is invisible (#98), so nothing is saved - otherwise "[pass"
-            # plus the cut-off marker lands as a real turn that models
-            # read back and memory keeps. #460: the same when a quiet
-            # remark came first ("Nothing to add. [pa").
-            live["participant"] = None
-            live["content"] = ""
-            return None
+            # is invisible (#98), so its text is never saved - otherwise
+            # "[pass" plus the cut-off marker lands as a real turn that
+            # models read back and memory keeps. #460: the same when a
+            # quiet remark came first ("Nothing to add. [pa").
+            if not live["tools"]:
+                live["participant"] = None
+                live["content"] = ""
+                return None
+            live["content"] = ""  # #575: its tool calls still ran
         # #562: a seat that repeats its chat's context marker never gets it
         # saved, so it can't reach the chat, memory or a guest from here.
         content = context_marker.redact(live["content"], chat_id)
@@ -515,7 +517,8 @@ async def run_round(chat_id, responders, next_first, settings, memory,
             # #460: a real reply cut off while it was writing a trailing
             # [pass] keeps its words, never the half-written token.
             content = passes.strip_pass(content, partial=True)
-            content += f"\n\n[cut off by {cfg['user_name']}]"
+            cut = f"[cut off by {cfg['user_name']}]"
+            content = f"{content}\n\n{cut}" if content else cut
         usage_json = (_priced_usage_json(p, live["usage"], cfg)
                       if live["usage"] else None)
         con = db.connect()
@@ -1093,11 +1096,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                     await asyncio.to_thread(
                         model_step.revert_after_refusal, chat_id,
                         participant["slug"], participant["name"], step)
-                # #456: a reply that failed mid-[pass] was passing, so it
-                # goes the way an empty one does - nothing saved.
-                if not live["content"] or (
-                        not live["tools"]
-                        and passes.is_cut_pass(live["content"])):
+                # #456: a reply that failed mid-[pass] was passing, so its
+                # text goes the way an empty reply's does. #575: a reply
+                # whose tools ran is still saved, for them.
+                if passes.is_cut_pass(live["content"]):
+                    live["content"] = ""
+                if not live["content"] and not live["tools"]:
                     live["participant"] = None
                     skip_speaker = True
                 else:
@@ -1200,8 +1204,12 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # #460: a seat that wrote a real reply and then [pass] spoke, so
         # the reply is kept and the token goes: the chat, the voice
         # caption and memory all read the reply without it. A reply that
-        # was only a quiet remark and the token never gets here, because
-        # _judge_reply read it as the pass it announced.
+        # was only a quiet remark and the token is a pass, which
+        # _judge_reply already dropped unless the seat used tools first.
+        # #575: then the pass stays as invisible as any other, and the
+        # record of the tools stays.
+        if live["tools"] and passes.is_pass(live["content"]):
+            live["content"] = ""
         live["content"] = passes.strip_pass(live["content"])
         # #213: a citation-shaped claim in a reply that fetched nothing gets
         # the same quiet chip as a misquote - the #172 dispatch-claims class
@@ -1221,13 +1229,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         msg = await asyncio.to_thread(persist_live)
         if msg:
             yield sse({"type": "speaker_end", "speaker": participant["slug"], "message": msg})
-            spoken.append(participant["name"])
-        elif live["usage"]:
-            # #560: nothing left to save once the trailing [pass] went
-            # (tool calls, then a bare pass), and the call still cost money.
-            await asyncio.to_thread(_record_unposted, chat_id, participant,
-                                    live["usage"], "empty", cfg)
-            live["usage"] = None
+            if msg["content"].strip():
+                # #575: a turn of tool calls alone said nothing, so later
+                # seats aren't told to weigh its reply.
+                spoken.append(participant["name"])
 
     async for chunk in _finish_round(chat_id, cfg, next_first, handback,
                                      is_handback):

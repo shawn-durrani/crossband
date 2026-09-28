@@ -319,7 +319,9 @@ app turns a reply down and asks the model again, the first try is
 thrown away. That happens when a model passes where it owes an answer,
 or when its reply only restates one already given. A reply that comes
 back empty leaves nothing either. Each of these is still a call you pay
-for.
+for. A reply that used tools and wrote nothing is kept as a message
+with no words, so the chat holds the record of its tools, and its cost
+rides on that message like any other reply's.
 
 The app records each one in the `seat_usage` table instead of the
 chat. A row holds the chat, the seat, what became of the call and the
