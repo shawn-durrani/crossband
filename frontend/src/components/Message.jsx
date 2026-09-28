@@ -58,6 +58,17 @@ function Pre({ children, ...props }) {
   )
 }
 
+// A markdown table sits in its own box that scrolls sideways (.md-table in
+// index.css), so on a phone a wide one keeps its words whole and the page
+// stays the width of the screen.
+function Table({ node, ...props }) {
+  return (
+    <div className="md-table">
+      <table {...props} />
+    </div>
+  )
+}
+
 function AttachmentChip({ att }) {
   const isImage = att.mime?.startsWith('image/')
   const url = `/api/attachments/${att.id}/file`
@@ -280,7 +291,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
   const fenceOpen = msg.streaming && ((text.match(/```/g) || []).length % 2 === 1)
   const displayContent = renderWritten(fenceOpen ? `${text}\n\`\`\`` : text)
 
-  const mdComponents = { pre: Pre }
+  const mdComponents = { pre: Pre, table: Table }
   if (msg.streaming) {
     const cursor = { n: 0 } // shared across p/li so offsets run through the whole message
     const seen = seenChars.current
@@ -437,7 +448,7 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
           )}
           {msg.content && (
             <div className="user-bubble md-body break-words min-w-0">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: Pre }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: Pre, table: Table }}>
                 {msg.content}
               </ReactMarkdown>
             </div>
