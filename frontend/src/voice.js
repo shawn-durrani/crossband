@@ -5,6 +5,7 @@ import { sidToKill } from './micRegistry.js'
 import { playbackFailureMessage } from './voiceErrors.js'
 import { PassSpeechGate, couldBePass, isPassShaped } from './passView.js'
 import { WrittenFilter } from './writtenChannel.js'
+import { speaksNow } from './spokenLine.js'
 import { effectiveVolume } from './voiceGain.js'
 import { gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
 import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
@@ -1460,7 +1461,8 @@ export default class VoiceController {
       // orchestration wait resolves here.
       this._trace.mark('first_token')
       this._trace.speakerMark(ev.speaker, 'first_delta', this._traceMeta(ev.speaker))
-      this._feedSpeaker(ev.speaker, ev.text)
+      if (speaksNow(ev)) this._speakNow(ev.speaker, ev.text)
+      else this._feedSpeaker(ev.speaker, ev.text)
     } else if (ev.type === 'passed') {
       // #98: the seat passed - nothing is spoken. TTS never opened for a
       // bare pass or a remark of quiet words (couldBePass held it); just
@@ -1490,11 +1492,11 @@ export default class VoiceController {
       this._passGates.delete(ev.speaker)
     }
     // 'work_status' deliberately has NO playback branch here: it's a
-    // structured liveness signal for the text/UI chip only. Speaking it
-    // (a deterministic phrase, or an optional model-supplied voice_handoff
-    // racing it) is a separate product decision, not yet made - see
-    // docs/DECISIONS.md. gateEvent() above still advances the pure state
-    // machine for it (a harmless no-op, same as tool_activity/guest_job).
+    // structured liveness signal for the text/UI chip only. What a voice
+    // chat hears while a reply waits on a search of the saved chats comes
+    // as a flagged delta instead (spokenLine.js). gateEvent() above still
+    // advances the pure state machine for it (a harmless no-op, same as
+    // tool_activity/guest_job).
   }
 
   _feedSpeaker(slug, text) {
@@ -1513,6 +1515,23 @@ export default class VoiceController {
       return
     }
     this._sendSpeech(slug, text)
+  }
+
+  // membro#136: the app's short line in front of a reply that waits on a
+  // search of the saved chats (spokenLine.js). Speech opens now if it
+  // hasn't, and the line goes to TTS with a flush, past the pass gate and
+  // the written filter: it's the app's words, and the model's reply
+  // follows it through both as usual.
+  _speakNow(slug, text) {
+    const p = this._pendingSpeaker
+    if (p && p.slug === slug && !p.started) {
+      p.started = true
+      this._pendingSpeaker = null
+      this._beginSpeaker(slug)
+    }
+    const socket = this.sockets.get(slug)
+    socket?.send({ text })
+    socket?.send({ flush: true })
   }
 
   // #80: everything bound for TTS passes through the speaker's written-channel

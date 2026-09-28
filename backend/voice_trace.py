@@ -75,6 +75,10 @@ SERVER_STAGES = {
     # time specifically spent awaiting the memory service's POST /recall
     # (ambient auto-recall for the latest user message), when it ran.
     "server_memory_recall_wait",
+    # time the first seat's call waited on the round's own search of the
+    # saved chats (backend/history_prefetch.py, membro#136). Only on a turn
+    # whose recall came back thin; a normal turn records no row.
+    "server_memory_history_wait",
 }
 
 # The full recognized set for aggregation (voice_trace.aggregate, below) -
@@ -139,6 +143,11 @@ STAGE_NOTES = {
         "speech-end prewarm was adopted",
     "server_memory_summary_wait":
         "fetch of the precomputed memory summary - expected near zero",
+    "server_memory_history_wait":
+        "the first reply's wait on the app's own search of past chats, on "
+        "turns whose recall came back thin - near zero when the search "
+        "finished alongside the recall; a longer wait is covered by a "
+        "short spoken line",
     "first_token_to_first_audio":
         "TTS synthesis from first text to first audio bytes",
     "playback_queue_wait":

@@ -12,7 +12,9 @@ import { lifecycleBadge, isLocalEndpoint } from './lifecycle.js'
 import { reasoningOptions, effortSupport,
          normalizeReasoningEffort } from './reasoningEffort.js'
 import { PASS_TOKEN, QUIET_PHRASE_PATTERN, CLAUSE_BREAK_PATTERN, QUIET_MAX_CHARS,
-         QUIET_CONTRAST, AFTER_TOKEN, isPassShaped, stripPassTail } from './passView.js'
+         QUIET_CONTRAST, AFTER_TOKEN, isPassShaped, shownText,
+         stripPassTail } from './passView.js'
+import { SPEAK_NOW_FLAG, speaksNow } from './spokenLine.js'
 
 const fixture = JSON.parse(readFileSync(
   new URL('../../tests/fixtures/backend_contract.json', import.meta.url),
@@ -95,5 +97,21 @@ test('the screen reads every example reply the way the engine does', () => {
       `isPassShaped(${JSON.stringify(ex.text)}) disagrees with is_cut_pass`)
     assert.equal(stripPassTail(ex.text), ex.kept,
       `stripPassTail(${JSON.stringify(ex.text)}) disagrees with strip_pass`)
+  }
+})
+
+test('the voice speaks the line the round flags, and the screen shows it', () => {
+  // membro#136: backend/history_prefetch.py sends a voice seat's opening
+  // line, while a search of the saved chats finishes, as a delta carrying
+  // this flag. The voice speaks it at once. The screen draws a streaming
+  // reply only once it can't be a pass, so each line must read as words.
+  assert.equal(SPEAK_NOW_FLAG, fixture.history_line.speak_now_flag)
+  assert.ok(fixture.history_line.lines.length > 0)
+  for (const line of fixture.history_line.lines) {
+    const ev = { type: 'delta', speaker: 'claude', text: `${line} `,
+                 [fixture.history_line.speak_now_flag]: true }
+    assert.equal(speaksNow(ev), true, `${line} is not spoken at once`)
+    const msg = { speaker: 'claude', streaming: true, content: ev.text }
+    assert.equal(shownText(msg), ev.text, `${line} is hidden as a possible pass`)
   }
 })

@@ -276,6 +276,7 @@ always runs.
 |---|---|---|
 | `memory_url` | `http://127.0.0.1:8901` | Where to probe for [Membro](https://github.com/shawn-durrani/membro). When it answers, the memory features light up, and when it doesn't the app runs without memory. It's probed again every 30 seconds, so start order doesn't matter. |
 | `MEMORY_AUTH_TOKEN`, in `.env` and not a config key | unset | Membro's owner token, sent as a bearer on its `/search` and on the job-status polls behind imports. One token, put once in Crossband's `.env`. Without it `search_history` reports a failure and never reads as "no history". |
+| `history_prefetch` | `true` | When you ask about yourself or your past, the app searches your saved chats while it gathers the facts, and hands the seats what it finds when the facts have little on your question. `false` leaves that search to the seats. |
 
 ### The memory token
 
@@ -295,6 +296,26 @@ If `search_history` or the person sync goes quiet after you rotate the
 token, look in `data/service.log` for a line containing
 `membro refused`. It names the call membro refused and says the token
 in Crossband's `.env` doesn't match membro's copy.
+
+### Searching past chats before a reply
+
+When you ask about yourself or something from before, the app runs the
+first search of your saved chats itself. A question with words like
+"my", "did I", "for me", "remember" or "last week" in it starts a
+search straight away, beside the recall. In a voice chat that's the
+moment you stop talking. When the facts recall found have little on
+your question, every seat also gets the matching messages, marked as
+coming from past chats. When the facts cover it, the search is dropped.
+
+The first reply doesn't wait for it in silence. If the search is still
+running when that reply is due, a voice seat opens with a short line,
+such as "Let me go deeper into our memories", and a typed chat shows
+"Searching past chats". After four more seconds the reply goes on
+without it, and the seat can still search for itself.
+
+The search sends the same token and reaches the same messages as
+`search_history`, whoever is in the room. A turn that doesn't ask about you never waits on a search. The `server_memory_history_wait` stage in the voice trace says how
+long a reply waited, as [LATENCY.md](LATENCY.md) describes.
 
 ### The memory contract
 

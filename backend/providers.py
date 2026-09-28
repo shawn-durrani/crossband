@@ -773,6 +773,14 @@ def _volatile_system_parts(cfg):
             "re-asking recall_memory for the same thing; still use the tools for "
             "anything deeper."
         )
+    history = (cfg.get("memory_history") or "").strip()
+    if history:
+        # membro#136: the round's own search of the saved chats, handed
+        # over beside the recall when recall came back thin. Volatile for
+        # the same reason: it belongs to this message alone.
+        parts.append(
+            f"\n## From past chats (searched for {user}'s latest message)\n"
+            + history)
     delegation = (cfg.get("delegation_note") or "").strip()
     if delegation:
         # An explicit shared claim on a specialist action (see the evergreen

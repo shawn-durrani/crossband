@@ -12,6 +12,14 @@
       "interrupted"
     ]
   },
+  "history_line": {
+    "lines": [
+      "Let me go deeper into our memories.",
+      "Let me look back through our past chats.",
+      "Hang on, let me dig through our old chats."
+    ],
+    "speak_now_flag": "speak_now"
+  },
   "pass": {
     "after_token": ".!*_~`\"')\u2026",
     "clause_break_pattern": "[.,;:!\\u2026\\n]+|\\s[-\\u2013\\u2014]\\s|[\\u2013\\u2014]",
