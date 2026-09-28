@@ -154,6 +154,7 @@ claude_chat_cache speaker=<slug> model=<model-id> chat=<int> tool_round=<int>
   tools_hash=<16-hex> tools_n=<int> changed=<csv|none>
   stable_hash=<16-hex> stable_chars=<int>
   volatile_hash=<16-hex> volatile_chars=<int>
+  summary_hash=<16-hex|none> summary_chars=<int>
   transcript_hash=<16-hex> ttl=<label>
   thinking=<type|none> effort=<label|default>
   input_tok=<int> cache_read_tok=<int>
@@ -206,6 +207,8 @@ token and cache-write counts come straight from the `usage` and
   A restart doesn't change it.
 - `volatile_hash` and `volatile_chars`: the volatile block. Expect it
   to change on nearly every call.
+- `summary_hash` and `summary_chars`: the memory summary, as a
+  fingerprint and a character count, or `none` and `0` for no summary.
 - `transcript_hash`: the conversation as sent, fingerprinted before
   the volatile block joins it, because hashing the tail in would show
   churn on every call. It has the same value on every tool round of
@@ -310,6 +313,59 @@ mark.
 Check `volatile_hash` the same way to see whether the split is doing
 its job. A `volatile_hash` that changes every call while `stable_hash`
 holds across a short burst of messages is the shape you want.
+
+## How often the memory summary repeats
+
+The memory summary is about 3,000 tokens, and every Claude seat call
+sends it at full price in the volatile block. It changes only when the
+memory service rebuilds it, and a new one never causes a miss, because
+it sits after both cache marks. A cached block of its own, after the
+stable block, would let a call read it back at the cache price. The cache
+would serve that block when an earlier call on the same model sent the
+same tools, the same stable block and the same summary less than five
+minutes before.
+
+Each call records the summary it carried in `usage_json.cache_prefix`,
+so you can measure how often that happens before anything moves.
+`summary` is the first 16 characters of the summary's SHA-256
+fingerprint, or `none` when the call sent no summary. `summary_chars`
+is its length in characters. `requests` is how many requests the call
+made, one per tool round, and each one sends the summary again.
+
+`scripts/summary_reuse_report.py` reads those records from
+`data/chat.db`. It opens the database read-only and writes nothing. Run
+it from the app's folder. It covers the last
+seven days unless you give it dates.
+
+```sh
+.venv/bin/python scripts/summary_reuse_report.py
+.venv/bin/python scripts/summary_reuse_report.py --since 2026-09-29 --until 2026-10-06
+```
+
+It gives these numbers for each model.
+
+- The Claude seat calls in the period and the requests they made. A
+  call that left no message counts like a reply.
+- How many distinct summaries they carried, and how often a seat's
+  summary was new since its last call in that chat.
+- The repeats. A repeat is a call whose summary an earlier call sent
+  within five minutes, on the same model with the same tools and
+  stable block. A cached summary would have served those calls. A tool
+  round after the first always counts, as it follows seconds later.
+- What caching would have saved. Each served send costs the model's
+  cache read price in place of its full input price.
+- The write premium. Each first send is written to the cache, which
+  costs a quarter more than sending it at full price.
+- The rewrite. A new summary while a seat's cache in that chat is
+  still warm throws away the conversation stored behind it, and the
+  call writes it again. The report counts what that call read from the
+  cache, which makes it an upper bound.
+- The net saving, and its share of what those calls cost.
+
+Tokens are estimated at four characters each. The gap between two
+calls is measured between the times each one finished, so a gap reads
+a little long and the repeats are a floor. Calls recorded before the
+fingerprint existed are counted and left out.
 
 ## Calls that leave no message
 

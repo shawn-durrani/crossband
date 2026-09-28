@@ -157,6 +157,8 @@ def test_a_cut_after_a_tool_round_counts_the_round_and_the_start(cfg,
     u = meter.partial()
     assert (u["input"], u["cache_read"], u["cache_creation"], u["output"]) \
         == (2300, 19000, 50, 41)
+    # both requests reached the provider, so both sent the summary (#565)
+    assert u["cache_prefix"]["requests"] == 2
 
 
 def test_a_reply_that_never_started_counts_only_what_finished(cfg,
@@ -183,6 +185,7 @@ def test_a_finished_round_leaves_the_meter_by_its_total(cfg, monkeypatch):
         _Round(_Usage(1300), "", _Final(_Usage(1300, output_tokens=9)))], 99)
     assert meter.stream is None
     assert meter.done["input"] == 2300 and meter.done["output"] == 49
+    assert meter.done["cache_prefix"]["requests"] == 2  # one per tool round
 
 
 def test_accounting_counts_a_partial_call_and_says_so():
