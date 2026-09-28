@@ -11,9 +11,10 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import db, depth, engine, spend_note
+from backend import chat_memory, db, depth, engine, spend_note
 from backend.app import create_app
 from backend.config import Settings
+from backend.llm_util import UtilityCompletion
 
 CFG = {"user_name": "Shawn", "spend_note_every": 4}
 
@@ -136,7 +137,16 @@ def test_anchor_is_the_raise_and_survives_a_one_reply_override(app):
             con.close()
 
 
-def test_reflect_job_posts_the_line_and_ingest_skips_it(app):
+def test_reflect_job_posts_the_line_and_ingest_skips_it(app, monkeypatch):
+    # The reflect job also titles the chat. With a key set that was a real,
+    # billed call to the utility model (#573), so it answers as it does
+    # keyless: no utility model, no title.
+    async def no_utility_model(prompt, cfg, max_tokens=2000, model=None,
+                               timeout=None):
+        return UtilityCompletion(text=None)
+
+    monkeypatch.setattr(chat_memory, "utility_complete_with_usage",
+                        no_utility_model)
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat_id = c.post("/api/chats", json={}).json()["id"]
         depth.apply_depth(chat_id, [{"seat": "gpt", "depth": "max"}], CFG)
