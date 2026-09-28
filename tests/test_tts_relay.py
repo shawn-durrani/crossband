@@ -123,6 +123,10 @@ def upstreams(monkeypatch):
     # the relay never fetches the list itself; keep any GET keyless too
     monkeypatch.setattr(voice, "list_models", lambda: (_ for _ in ()).throw(
         RuntimeError("no network in tests")))
+    # nor the quota the status route shows: with the made-up key above it
+    # asked ElevenLabs for real (#573)
+    monkeypatch.setattr(voice, "subscription", lambda: (_ for _ in ()).throw(
+        RuntimeError("no network in tests")))
     return fake
 
 

@@ -1,5 +1,6 @@
 import math
 import os
+import socket
 import struct
 import sys
 import tempfile
@@ -279,3 +280,69 @@ def _tts_models_offline(monkeypatch):
     yield
     tts_models._cache.clear()
     tts_models._refused.clear()
+
+
+# The paid model providers' domains. No test may reach one (#573).
+MODEL_PROVIDER_DOMAINS = ("anthropic.com", "openai.com", "elevenlabs.io")
+PROXY_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+             "http_proxy", "https_proxy", "all_proxy")
+# The hosts the running test tried to reach. The guard's own test empties it.
+PROVIDER_ATTEMPTS: list = []
+
+
+def _model_provider_host(host) -> bool:
+    if isinstance(host, bytes):
+        host = host.decode("ascii", "ignore")
+    h = (host or "").lower().rstrip(".")
+    return any(h == d or h.endswith("." + d) for d in MODEL_PROVIDER_DOMAINS)
+
+
+@pytest.fixture(autouse=True)
+def _keyless(monkeypatch):
+    """Every test runs keyless wherever the suite runs, as CI does (#573).
+    create_app loads the repo's .env, so on the deploy box, which runs this
+    suite before every restart, and in any run with the keys exported, a
+    test that didn't stub a model call made a real, billed one. A round's
+    reflect job titles the chat, so over a hundred tests asked Anthropic
+    for a title. A test that needs a key sets a made-up one."""
+    from backend import app as app_mod
+    from backend.config import KEY_ROLES
+
+    monkeypatch.setattr(app_mod, "load_dotenv", lambda *a, **k: False)
+    for name in (*KEY_ROLES, "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_model_provider_calls(monkeypatch):
+    """Refuse every connection to a model provider, and fail the test that
+    tried (#573). The backstop for a test that sets a key of its own and
+    forgets to stub the call.
+
+    The refusal sits at the name lookup, which every client goes through:
+    both SDKs (they run on httpx2, not httpx), httpx itself and the voice
+    websockets. The proxy variables are cleared so no client hands the
+    name to a proxy instead of looking it up. The SDKs retry a refused
+    connection and the app logs the failure and carries on, so a refusal
+    alone could pass unnoticed. The teardown check is what fails the
+    test."""
+    PROVIDER_ATTEMPTS.clear()
+    real_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo(host, *a, **k):
+        if _model_provider_host(host):
+            if isinstance(host, bytes):
+                host = host.decode("ascii", "ignore")
+            PROVIDER_ATTEMPTS.append(host)
+            raise socket.gaierror(socket.EAI_NONAME,
+                                  f"tests never reach a model provider ({host})")
+        return real_getaddrinfo(host, *a, **k)
+
+    for name in PROXY_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    yield
+    if PROVIDER_ATTEMPTS:
+        pytest.fail("this test tried to reach a model provider ("
+                    + ", ".join(sorted(set(PROVIDER_ATTEMPTS)))
+                    + "). Stub the call: the suite never makes one.")

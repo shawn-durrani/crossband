@@ -9,9 +9,16 @@ npm --prefix frontend test
 
 The frontend command runs three gates in turn: `eslint`, the
 `node --test` rule suites, and the render smoke. CI runs the three as
-separate steps, so a green pytest run isn't the whole gate. Nothing in
-either suite calls a provider. Every network path is mocked, and a test
-that needed a key would be a bug in the test.
+separate steps, so a green pytest run isn't the whole gate.
+
+Nothing in either suite calls a provider. Every network path is mocked,
+and a test that needed a key would be a bug in the test. Each test
+starts with the keys taken out of its environment, and the app it starts
+doesn't read `.env`, so a run on a machine that holds the real keys
+tests what CI tests. A test that needs a key sets a made-up one and
+mocks the call. When a test tries to reach Anthropic, OpenAI or
+ElevenLabs anyway, the connection is refused and the test fails, even
+if the app would have carried on without an answer.
 
 Every suite file opens with a docstring saying what it covers and,
 where there was one, which failure it was written against. Those
