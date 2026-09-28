@@ -115,17 +115,23 @@ fingerprinted, every span in it is one session voice's, that voice is
 named and the calibrated scorer is ready, the whole turn is fingerprinted
 with both models and scored against the banks on its own, as a turn with
 no diariser is (name_single_turn). When it gives the voice's person
-SHORT_CHECK_NOT or less, the turn is left listening:
+SHORT_CHECK_NOT or less and someone else known SHORT_CHECK_OTHER or
+more, so it plainly isn't the voice's person and sounds like another,
+the turn is left listening:
 
   * it isn't counted as that voice's turn, so no name fills it later and
     tapping it names no session voice;
   * the voice keeps its name and its evidence, and nothing moves.
 
-A turn of several pieces, or one where anything was fingerprinted, isn't
+A turn nobody known scores SHORT_CHECK_OTHER for keeps its voice's name:
+in noise a right short reply often scores near zero for everyone, and a
+stranger's reply filed under a known voice was named that way before
+too. A turn of several pieces, or one where anything was fingerprinted, isn't
 checked. The check costs two fingerprints of the whole turn, about 40 to
 50 ms for a turn of a second or so, on those short turns only. The row
 carries `short_check`: the turn's probability for the voice's person
-(`p_own`), whether the turn was left unnamed, and the time it took.
+(`p_own`) and the best for anyone else known (`p_other`), whether the
+turn was left unnamed, and the time it took.
 
 JOINING TWO VOICES. The span check only catches a split while the new
 voice has no speech of its own. Once both voices have some, two session
@@ -266,9 +272,13 @@ SPLIT_SLOT_BASE = 100           # split-off voices are numbered from here
 TRACKER_VOICES = 8              # the tracker numbers its voices 1 to 8
 # THE SHORT-TURN CHECK's bar, in calibrated probability: a turn too short
 # to fingerprint, scored whole, that gives its voice's person this much or
-# less is left unnamed. On the voice rig the misfiled road reply scored
-# its voice's person 0.001, and a right short reply scored 0.9995.
+# less, and someone else known SHORT_CHECK_OTHER or more, is left unnamed.
+# On the voice rig the misfiled road reply scored its voice's person 0.001
+# and the man who said it 0.46 to 0.60. Right short replies cut from the
+# rig's turns that scored their own person 0.01 or less, 23 of 445, all
+# scored everyone known 0.008 or less.
 SHORT_CHECK_NOT = 0.01
+SHORT_CHECK_OTHER = 0.1
 # JOINING TWO VOICES' bar, in cosine units like THE SPAN CHECK's on two
 # voices' pooled fingerprints, and in calibrated probability. As strict:
 # on the voice rig one person's pooled speech scored 0.6 to 0.91 against
@@ -2005,10 +2015,11 @@ def _bank_moves(voices, spans, prints, candidates, calibrated,
 
 def short_check(voice, pcm, sample_rate, candidates, embed_fn, eres_fn):
     """THE SHORT-TURN CHECK for a turn with nothing fingerprinted, whose
-    main voice is `voice` as the session names it: {"p_own", "unnamed",
-    "ms"}, or None when it can't be checked (the voice isn't named as
-    someone the banks hold, no calibrated snapshot, or the turn fails the
-    audio gates). Fingerprints the whole turn with both models."""
+    main voice is `voice` as the session names it: {"p_own", "p_other",
+    "unnamed", "ms"}, or None when it can't be checked (the voice isn't
+    named as someone the banks hold, no calibrated snapshot, or the turn
+    fails the audio gates). Fingerprints the whole turn with both
+    models."""
     from . import voice_calibration as vc
     voice = voice or {}
     pid = voice.get("pid")
@@ -2027,8 +2038,10 @@ def short_check(voice, pcm, sample_rate, candidates, embed_fn, eres_fn):
                       snap)
     if pid not in got:
         return None
-    return {"p_own": round(got[pid], 4),
-            "unnamed": got[pid] <= SHORT_CHECK_NOT,
+    other = max((p for who, p in got.items() if who != pid), default=0.0)
+    return {"p_own": round(got[pid], 4), "p_other": round(other, 4),
+            "unnamed": got[pid] <= SHORT_CHECK_NOT
+            and other >= SHORT_CHECK_OTHER,
             "ms": round((time.perf_counter() - t0) * 1000, 1)}
 
 
