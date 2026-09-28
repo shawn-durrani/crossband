@@ -240,3 +240,19 @@ test('the module no longer rolls a chat up in the browser', () => {
   // header and the export picker printed different dollars for one chat.
   assert.equal(typeof mod.chatCostTotals, 'undefined')
 })
+
+test('a call cut off partway says its figure is a floor (#576)', () => {
+  const cut = JSON.stringify({
+    input: 4000, output: 1, cost: 0.012, partial: true, model: 'claude-opus-5',
+    cost_provenance: { source: 'rate_card_estimate', estimated: true },
+  })
+  const e = classifyUsage(cut, 'claude')
+  assert.equal(e.partial, true)
+  assert.equal(e.category, 'metered')
+  const label = costLabel(e)
+  assert.equal(label.text, 'at least ~$0.012')
+  assert.match(label.title, /cut off/)
+  // a whole call reads as before
+  assert.equal(classifyUsage(residentTurn(0.02), 'claude').partial, false)
+  assert.equal(costLabel(classifyUsage(residentTurn(0.02), 'claude')).text, '~$0.020')
+})

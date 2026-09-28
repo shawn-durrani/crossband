@@ -104,6 +104,9 @@ export function classifyUsage(usageJson, speaker) {
     // row reads as `unknown` HERE while still being metered cash. Only the cash
     // axis decides what money is claimed, so the surfaces still agree on that.
     provenance: recorded || (guest ? (AUTH_PROVENANCE[auth] || 'unknown') : 'unknown'),
+    // A call cut off before it reported in full (#576) counts only what the
+    // provider had reported by then, so its figure is a floor.
+    partial: u.partial === true,
   }
 }
 
@@ -144,14 +147,18 @@ export function costLabel(entry) {
     }
   }
   const exact = entry.provenance === 'provider_reported'
+  const title = exact
+    ? 'Billed to your metered API key - the cost the provider itself reported '
+      + 'for this turn.'
+    : 'Billed to your metered API key. Estimated from the local price table '
+      + '(prices editable in config.json).'
   return {
     tone: 'billed',
-    text: `${exact ? '' : '~'}${amount}`,
-    title: exact
-      ? 'Billed to your metered API key - the cost the provider itself reported '
-        + 'for this turn.'
-      : 'Billed to your metered API key. Estimated from the local price table '
-        + '(prices editable in config.json).',
+    text: `${entry.partial ? 'at least ' : ''}${exact ? '' : '~'}${amount}`,
+    title: entry.partial
+      ? `${title} The call was cut off, so this counts only what the provider `
+        + 'had reported by then.'
+      : title,
   }
 }
 

@@ -52,7 +52,7 @@ FRESH = (
 # check for content before it lands here.
 CONTENT_FREE_KEYS = {"input", "cache_read", "cache_creation", "output",
                      "cache_prefix", "model", "stepped_from", "cost",
-                     "cost_provenance"}
+                     "cost_provenance", "partial"}
 
 
 @pytest.fixture

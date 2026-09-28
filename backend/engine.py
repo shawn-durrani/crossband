@@ -492,12 +492,21 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     # once the round has read the web, every later assistant message in it
     # carries the stamp (#138 slice 4).
     live = {"participant": None, "content": "", "tools": [], "usage": None,
-            "web_domains": set(), "attachments": [], "audit": []}
+            "meter": None, "web_domains": set(), "attachments": [],
+            "audit": []}
 
     def persist_live(interrupted=False):
         p = live["participant"]
+        # #576: a call cut off before it reported its usage keeps what the
+        # provider had reported by then, marked partial. A call that did
+        # report is recorded by whichever path was handling it.
+        cut_usage = None
+        if interrupted and p and live["usage"] is None:
+            cut_usage = live["usage"] = _usage_so_far(live)
         # #575: a reply of tool calls and no words is saved for its tools.
         if not p or not (live["content"] or live["tools"]):
+            if cut_usage:
+                _record_unposted(chat_id, p, cut_usage, "cut_off", cfg)
             return None
         if interrupted and passes.is_cut_pass(live["content"]):
             # #456: cut off mid-[pass]. The seat was passing, and a pass
@@ -506,8 +515,11 @@ async def run_round(chat_id, responders, next_first, settings, memory,
             # models read back and memory keeps. #460: the same when a
             # quiet remark came first ("Nothing to add. [pa").
             if not live["tools"]:
+                if cut_usage:
+                    _record_unposted(chat_id, p, cut_usage, "cut_off", cfg)
                 live["participant"] = None
                 live["content"] = ""
+                live["usage"] = None
                 return None
             live["content"] = ""  # #575: its tool calls still ran
         # #562: a seat that repeats its chat's context marker never gets it
@@ -537,6 +549,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         live["content"] = ""
         live["tools"] = []
         live["usage"] = None
+        live["meter"] = None
         live["attachments"] = []
         live["audit"] = []
         return msg
@@ -586,12 +599,21 @@ def _priced_usage_json(p, usage, cfg):
     return json.dumps(u)
 
 
+def _usage_so_far(live):
+    """What a call that never reported its usage is known to have used
+    (#576): providers.CallMeter's partial block, or None when nothing is
+    known. Taking it clears the meter, so no call is counted twice."""
+    meter, live["meter"] = live.get("meter"), None
+    return meter.partial() if meter is not None else None
+
+
 def _record_unposted(chat_id, p, usage, outcome, cfg):
     """Record the cost of a seat call that leaves no message (#560): a pass,
     the first try of a refused pass or restatement, a dropped restatement,
-    an empty reply. Each was a paid call, and a pass is kept out of the
-    chat on purpose, so its cost goes to seat_usage instead of riding a
-    message. Content-free, like the usage block it stores.
+    an empty reply, a call cut off before it wrote anything (#576). Each
+    was a paid call, and a pass is kept out of the chat on purpose, so its
+    cost goes to seat_usage instead of riding a message. Content-free,
+    like the usage block it stores.
 
     Runs on a worker thread. A failure here is logged and swallowed: a
     spend record must never break the round it describes, the same rule
@@ -962,6 +984,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             live["usage"] = None
             live["attachments"] = []
             live["audit"] = []
+            # #576: what this call is known to have used, read only if it
+            # ends before it reports its usage.
+            live["meter"] = round_cfg["_call_meter"] = providers.CallMeter()
+            failed = False
             # #254: the model this turn runs on, so the client's latency
             # traces carry it rather than the seat's configured model.
             yield sse({"type": "speaker_start", "speaker": participant["slug"],
@@ -1015,6 +1041,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                             yield sse({"type": "delta", "speaker": participant["slug"], "text": shown})
                     elif kind == "usage":
                         live["usage"] = payload
+                        live["meter"] = None  # #576: reported in full
                     elif kind == "audit":
                         # #211: attribution-audit findings for this completed
                         # reply - persisted on the row, rendered as a quiet
@@ -1082,6 +1109,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                     await asyncio.wait_for(stream.aclose(), timeout=5.0)
                 except Exception:
                     pass
+                # #576: a call that failed or stalled never reported its
+                # usage, so it counts what the provider had reported.
+                failed = True
+                if live["usage"] is None:
+                    live["usage"] = _usage_so_far(live)
                 # What the redactor held could only have been the start of
                 # a marker the reply never finished, so it goes out as it is.
                 rest = redactor.flush()
@@ -1123,10 +1155,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 skip_speaker = True
             if skip_speaker:
                 # #560: a call that finished and left nothing still cost
-                # money. A failed call usually has no usage block at all,
-                # since the adapters report usage when the call ends.
+                # money. #576: so did one that failed before it wrote
+                # anything, and it counts what the provider had reported.
                 await asyncio.to_thread(_record_unposted, chat_id,
-                                        participant, live["usage"], "empty",
+                                        participant, live["usage"],
+                                        "cut_off" if failed else "empty",
                                         cfg)
                 live["usage"] = None
                 break
