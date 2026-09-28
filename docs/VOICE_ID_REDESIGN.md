@@ -220,8 +220,8 @@ microphones from this household's.
    span. The main speaker is the one with the most time alone. Another
    voice is listed when it spoke for 1 second or more.
 2. A turn too short to fingerprint takes its voice's name, unless the
-   whole turn, scored on its own, plainly isn't that voice's person.
-   Then it's left unnamed.
+   whole turn, scored on its own, plainly isn't that voice's person and
+   sounds like someone else known. Then it's left unnamed.
 3. A long turn is labelled from all of it, not from its last piece.
 4. When two voices overlap, each word of the transcript goes to the
    voice speaking at that word's time. ElevenLabs Scribe Realtime sends
@@ -458,7 +458,7 @@ Every stage is its own pull request and can be reverted on its own.
 Nothing migrates by hand. Fingerprints are never stored, so every bank
 is rebuilt from its clips by the new scorer at the first start.
 
-### Where it stands, 27 September
+### Where it stands, 28 September
 
 Stages 2, 3 and 4 are done. The owner chose to skip the two weeks with
 today's path one setting away, after the morning chat named all 10
@@ -493,9 +493,9 @@ degrade on its own.
   one someone said is a TV, is never checked.
 - The short-turn check: a turn with nothing long enough to fingerprint,
   spoken by one named voice, is scored whole against the banks. When it
-  gives that voice's person 0.01 or less, the turn is left unnamed, and
-  the voice keeps its name. It costs two fingerprints, about 40 to 50
-  ms, on those turns only.
+  gives that voice's person 0.01 or less and someone else known 0.1 or
+  more, the turn is left unnamed, and the voice keeps its name. It costs
+  two fingerprints, about 40 to 50 ms, on those turns only.
 - Joining two session voices that are one person. They join when they
   never spoke at once and their pooled fingerprints lead every other
   voice by 0.25 or more. Then either each names the same known person

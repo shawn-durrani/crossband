@@ -139,9 +139,17 @@ A reply like "okay" is often too short to fingerprint. It takes the name
 its session voice already has, which trusts the diariser's call on which
 voice spoke it. In noise that call is sometimes wrong. When nothing in a
 turn was long enough to fingerprint, the app scores the whole turn on its
-own against everyone's kept clips, the way it does with no diariser. If
-that gives the voice's person a chance of 0.01 or less, the turn is left
-unnamed and shows "still listening".
+own against everyone's kept clips, the way it does with no diariser. The
+turn is left unnamed, and shows "still listening", when both of these
+hold:
+
+- it gives the voice's person a chance of 0.01 or less
+- it gives someone else the app knows a chance of 0.1 or more
+
+A reply that sounds like nobody the app knows keeps its voice's name. In
+loud noise a right reply often scores near zero for everyone, so it
+isn't doubted for that. A one-word reply from someone the app hasn't met
+yet also keeps the name of the voice it was filed under.
 
 The check runs only when all of these hold:
 
@@ -155,9 +163,8 @@ count as that voice's, so no name fills it later. Tapping it names that
 turn alone. A voice you named by hand gets the check too, since the doubt
 is about which voice spoke the turn. The check takes two fingerprints of
 the turn, about 40 to 50 milliseconds, and only these short turns pay
-it. In loud noise a right short reply can go unnamed now and then. The
-session rows record each check, with the chance and whether the turn was
-left unnamed.
+it. The session rows record each check, with both chances and whether
+the turn was left unnamed.
 
 ### Joining two voices
 

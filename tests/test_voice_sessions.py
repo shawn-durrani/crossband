@@ -64,9 +64,11 @@ What these tests pin, in order:
    and the check fingerprints nothing more.
 15. THE SHORT-TURN CHECK (#541). A one-voice turn with nothing long
    enough to fingerprint is scored whole, and listens when it plainly
-   isn't its voice's person: the voice keeps its name, and the turn is
-   never filled or named by hand as the voice's. A right short reply
-   keeps its name. It runs on no other turn, and the bar is stated.
+   isn't its voice's person and sounds like someone else known: the
+   voice keeps its name, and the turn is never filled or named by hand
+   as the voice's. A right short reply keeps its name, and so does one
+   that sounds like nobody known. It runs on no other turn, and the bar
+   is stated.
 16. JOINING TWO VOICES (#540). Two session voices whose pooled speech
    plainly is one person are joined once each has speech of its own: the
    kept voice takes the other's evidence, turns and later spans, and the
@@ -1829,6 +1831,7 @@ def test_a_short_reply_filed_under_another_voice_is_left_unnamed(
     row = _row("t2")
     assert row["short_check"]["unnamed"] is True
     assert row["short_check"]["p_own"] <= vss.SHORT_CHECK_NOT
+    assert row["short_check"]["p_other"] >= vss.SHORT_CHECK_OTHER
     assert (row["main_state"], row["main_name"]) == ("listening", "")
     assert row["voices"]["1"]["name"] == "Dave"     # the voice is still his
     assert vss.voice_of_turn(chat, "t2") is None
@@ -1855,10 +1858,29 @@ def test_a_right_short_reply_keeps_its_name(fakes, calibrated):
     assert vss.voice_of_turn(3, "t2") == 1
 
 
+def test_a_short_reply_like_nobody_known_keeps_its_name(fakes, calibrated):
+    """A reply that plainly isn't Dave but sounds like nobody the app
+    knows, as right replies in loud noise often do, keeps the name of the
+    voice the tracker filed it under, as it did before the check."""
+    stranger = [0.0, 0.0, 0.0, 1.0]
+    calibrated += [DAVE, stranger]
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 8.0}],
+                    [{"slot": 1, "start": 8.3, "end": 8.6}]]
+    _live(3, "t1", 8.0)
+    got = _live(3, "t2", 1.1)
+    assert (got["voice"], got["name"]) == (1, "Dave")
+    check = _row("t2")["short_check"]
+    assert check["unnamed"] is False
+    assert check["p_own"] <= vss.SHORT_CHECK_NOT
+    assert check["p_other"] < vss.SHORT_CHECK_OTHER
+    assert vss.voice_of_turn(3, "t2") == 1
+
+
 def test_the_short_check_bar(monkeypatch):
-    """0.01 or less for the voice's person leaves the turn unnamed. It
-    can't check a voice that isn't named as someone the banks hold, with
-    no calibrated snapshot or ERes2Net, or a turn the audio gates refuse."""
+    """0.01 or less for the voice's person, and 0.1 or more for someone
+    else known, leaves the turn unnamed. It can't check a voice that isn't
+    named as someone the banks hold, with no calibrated snapshot or
+    ERes2Net, or a turn the audio gates refuse."""
     from backend import voice_calibration as vc
     near = voiceid.l2_normalize
     monkeypatch.setattr(vc, "current", lambda: _snap())
@@ -1875,6 +1897,13 @@ def test_the_short_check_bar(monkeypatch):
     kept = check(near([0.9, 0.0, 0.36, 0.0]))
     assert kept["unnamed"] is False and kept["p_own"] > 0.01
     assert check(DAVE)["unnamed"] is False
+    # plainly not Dave: Alex at 0.46 is 0.12, and at 0.43 is 0.08
+    like_alex = check(near([0.4553, 0.0, 0.3, 0.8398]))
+    assert like_alex["unnamed"] is True
+    assert like_alex["p_own"] <= 0.01 and like_alex["p_other"] >= 0.1
+    like_nobody = check(near([0.4328, 0.0, 0.3, 0.8501]))
+    assert like_nobody["unnamed"] is False
+    assert like_nobody["p_own"] <= 0.01 and like_nobody["p_other"] < 0.1
     # nothing to check
     assert check(ALEX, voice={"state": "listening", "pid": ""}) is None
     assert check(ALEX, voice={"state": vss.MEDIA, "pid": ""}) is None
@@ -1889,7 +1918,7 @@ def test_the_short_check_bar(monkeypatch):
     # spoke the turn, not who the voice is
     monkeypatch.setattr(vc, "current", lambda: _snap())
     assert check(ALEX, voice=dict(dave, human=True))["unnamed"] is True
-    assert vss.SHORT_CHECK_NOT == 0.01
+    assert (vss.SHORT_CHECK_NOT, vss.SHORT_CHECK_OTHER) == (0.01, 0.1)
 
 
 def test_the_short_check_runs_on_no_other_turn(fakes, calibrated,
