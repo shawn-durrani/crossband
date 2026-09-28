@@ -3,8 +3,8 @@
 frontend/src/lifecycle.js mirrors two backend facts as literals: the seat
 lifecycle states (backend/provenance.py LIFECYCLE_STATES) and the loopback
 host set (backend/config.py _LOOPBACK_HOSTS). The later sections cover the
-effort choices, the pass token, and the Analysis page's run states and
-report link. Nothing guarded that
+effort choices, the pass token, the spoken line before a search of past
+chats, and the Analysis page's run states and report link. Nothing guarded that
 boundary, so a backend change would leave the UI collapsing every seat to
 Trial with every test green.
 
@@ -19,7 +19,8 @@ clone without a pytest run first.
 import json
 from pathlib import Path
 
-from backend import analysis, passes, provenance, providers, run_eval, voice
+from backend import (analysis, history_prefetch, passes, provenance,
+                     providers, run_eval, voice)
 from backend.config import _LOOPBACK_HOSTS
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "backend_contract.json"
@@ -98,6 +99,15 @@ def current_contract():
                           "is_cut_pass": bool(passes.is_cut_pass(t)),
                           "kept": passes.strip_pass(t, partial=True)}
                          for t in PASS_EXAMPLES],
+        },
+        # membro#136: the line a voice seat opens with while the round's
+        # search of the saved chats finishes rides a delta with this flag,
+        # and the voice speaks it at once (frontend/src/spokenLine.js). The
+        # screen must show each line as it streams, never hold it back as
+        # a possible pass.
+        "history_line": {
+            "speak_now_flag": history_prefetch.SPEAK_NOW_FLAG,
+            "lines": list(history_prefetch.SPOKEN_LINES),
         },
         # The Analysis page's badges (frontend/src/analysisView.js) name
         # every state a run record can be in (#407), and the page opens the

@@ -48,6 +48,13 @@ wrong.
   24 hours, and any seat can read the `voice_latency` diagnostic. Each
   voice stage is also split by the ElevenLabs model that spoke, under
   `by_tts_model`, which is how to compare voice models.
+- For the wait on a search of your saved chats, read
+  `server_memory_history_wait`. It's recorded only on a turn that asked
+  about you and whose recall came back thin, so a normal turn adds no
+  row. When the search is still running as the reply is due, a voice
+  seat says a short line first, and that line is the first audio you
+  hear. [CONFIG.md](CONFIG.md#searching-past-chats-before-a-reply) says
+  when the search runs.
 - For how long a reply's audio waits before you hear it, read
   `first_audio_to_playback`. On a browser that streams, a reply starts
   playing as soon as its first audio decodes, unless it's waiting for

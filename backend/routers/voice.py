@@ -952,8 +952,10 @@ async def stt_stream_relay(ws: WebSocket):
                             log.info("stt commit: chat=%s partial_chars=%d",
                                      chat_id, len(last_partial))
                             try:
-                                engine.prewarm_recall(chat_id, last_partial,
-                                                      ws.app.state.memory)
+                                engine.prewarm_recall(
+                                    chat_id, last_partial, ws.app.state.memory,
+                                    history=bool(cfg.get("history_prefetch",
+                                                         True)))
                             except Exception:
                                 log.warning("recall prewarm failed; transcription "
                                             "continues without it", exc_info=True)

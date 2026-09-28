@@ -284,6 +284,13 @@ class Settings(BaseModel):
     # false (CROSSBAND_CITATION_CHECK=false) to turn it off.
     citation_check: bool = True
 
+    # membro#136: when a turn asks about the person or their past, search
+    # the saved chats alongside the ambient recall and hand the hits to the
+    # seats when recall comes back thin (backend/history_prefetch.py). A
+    # voice seat says a short line while a slow search finishes. Set false
+    # (CROSSBAND_HISTORY_PREFETCH=false) to leave searching to the seats.
+    history_prefetch: bool = True
+
     # voice
     # Provider seam: which engine serves STT/TTS. "auto" (default) =
     # current behaviour exactly: ElevenLabs when ELEVENLABS_API_KEY is

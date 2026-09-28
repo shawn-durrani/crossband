@@ -1436,6 +1436,14 @@ async def search_history(args, cfg, memory, origin_agent=None):
         return "Error: memory search failed - unable to confirm whether any matching messages exist."
     if not hits:
         return "No matching messages in any past chat."
+    return format_search_hits(hits, cfg, cfg["max_tool_output"])
+
+
+def format_search_hits(hits, cfg, cap):
+    """Membro /search hits as the seats read them, whole hits in rank order
+    under `cap`. The search_history tool and the round's own search of past
+    chats (history_prefetch.py) both use it, so a hit reads the same, web
+    marker and all, whichever of the two found it."""
     blocks = []
     for h in hits:
         day = _day(h.get("created_at"))
@@ -1450,7 +1458,7 @@ async def search_history(args, cfg, memory, origin_agent=None):
         text = h.get("content", "")[:cfg["max_search_hit_chars"]]
         lines.append(f"[{day}] {who}: {text}")
         blocks.append("\n".join(lines))
-    return _fit_whole_hits(blocks, cfg["max_tool_output"])
+    return _fit_whole_hits(blocks, cap)
 
 
 def _more_note(n):

@@ -83,6 +83,11 @@ TOOL_LABELS = {
 # it" beats fabricating a specific-sounding label for an unknown tool.
 GENERIC_TOOL_LABEL = "Working on it"
 
+# The round's own search of the saved chats (backend/history_prefetch.py,
+# membro#136): a typed chat shows this while the first reply waits on it.
+# A voice chat hears a short spoken line instead.
+PAST_CHATS_LABEL = "Searching past chats"
+
 # The delegated Claude Code guest job (backend/guestjobs.py) has no per-call
 # tool batch to derive a label from - it's one long-running visit - so its
 # ping uses a fixed label keyed on mode instead of the tool table above.

@@ -20,6 +20,7 @@ from . import attachments as att_mod
 from . import chat_memory, citations, context_marker, db, echo, guest
 from . import passes, person_sync
 from . import depth as depth_mod
+from . import history_prefetch
 from . import model_step
 from . import rounds as rounds_mod
 from . import seat_trace
@@ -31,6 +32,7 @@ from . import research
 from . import run_eval
 from . import tools as tools_mod
 from . import voice_trace
+from . import work_status
 from .config import compute_cost, provenance_for
 
 log = logging.getLogger("crossband.engine")
@@ -112,12 +114,13 @@ def _chat_memory_enabled(chat_id):
         con.close()
 
 
-def prewarm_recall(chat_id, text, memory):
+def prewarm_recall(chat_id, text, memory, history=True):
     """Start the ambient recall for a voice utterance at speech-end (called
     from the STT relay when the commit frame passes through). Replaces any
     prior prewarm for the chat, cancelling its task so a superseded
     utterance can't leak a stray request. Fire-and-forget: the round adopts
-    the task if it matches, and memory.recall itself fails soft to []."""
+    the task if it matches, and memory.recall itself fails soft to [].
+    `history` is the history_prefetch setting (membro#136)."""
     norm = _norm_query(text)
     if memory is None or not norm:
         return
@@ -138,6 +141,32 @@ def prewarm_recall(chat_id, text, memory):
                                 "task": asyncio.create_task(_job()),
                                 "at": time.monotonic()}
     log.info("recall prewarm started: chat=%s norm_chars=%d", chat_id, len(norm))
+    # membro#136: a turn that asks about the person or their past starts
+    # its search of the saved chats here too, beside the recall.
+    if history:
+        history_prefetch.prewarm(chat_id, text, memory, norm,
+                                 gate=lambda: asyncio.to_thread(
+                                     _history_gate, chat_id))
+
+
+def _seat_words(roster):
+    """The chat's seat slugs and names as words, which history_prefetch
+    leaves out of a search: they say who is asked, not what about."""
+    return history_prefetch.name_words(
+        [n for p in roster for n in (p.get("slug"), p.get("name")) if n])
+
+
+def _history_gate(chat_id):
+    """(memory on for the chat, its seats' words) for a search started at
+    the voice commit, read in one connection on a worker thread."""
+    con = db.connect()
+    try:
+        row = con.execute("SELECT memory_enabled FROM chats WHERE id=?",
+                          (chat_id,)).fetchone()
+        roster = db.get_chat_participants(con, chat_id) if row else []
+    finally:
+        con.close()
+    return bool(row and row["memory_enabled"]), _seat_words(roster)
 
 
 async def _adopted_result(task):
@@ -264,7 +293,8 @@ def _load_round_state(chat_id, messages, last_seen_id, labels_cursor=0.0,
 
 
 def _record_first_token_split(turn_id, chat_id, participant, t_iter_start,
-                              t_provider_call, memory_summary_ms, memory_recall_ms):
+                              t_provider_call, memory_summary_ms, memory_recall_ms,
+                              memory_history_ms=None):
     """Split the client's bundled final_to_first_token stopwatch server-side,
     the instant the round's first responder produces its first visible token.
     `t_iter_start` -> `t_provider_call` is context assembly (DB reads,
@@ -300,6 +330,10 @@ def _record_first_token_split(turn_id, chat_id, participant, t_iter_start,
                 voice_trace.record_server_stage(
                     con, turn_id, chat_id, "server_memory_recall_wait",
                     memory_recall_ms, speaker=speaker)
+            if memory_history_ms is not None:
+                voice_trace.record_server_stage(
+                    con, turn_id, chat_id, "server_memory_history_wait",
+                    memory_history_ms, speaker=speaker)
             con.commit()
         finally:
             con.close()
@@ -491,9 +525,11 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     # web_domains lives for the WHOLE round (never reset per participant):
     # once the round has read the web, every later assistant message in it
     # carries the stamp (#138 slice 4).
+    # "preface" (membro#136) is the app's own spoken line in front of the
+    # seat's words, saved with the reply but never judged as part of it.
     live = {"participant": None, "content": "", "tools": [], "usage": None,
             "meter": None, "web_domains": set(), "attachments": [],
-            "audit": []}
+            "audit": [], "preface": ""}
 
     def persist_live(interrupted=False):
         p = live["participant"]
@@ -531,6 +567,10 @@ async def run_round(chat_id, responders, next_first, settings, memory,
             content = passes.strip_pass(content, partial=True)
             cut = f"[cut off by {cfg['user_name']}]"
             content = f"{content}\n\n{cut}" if content else cut
+        if live.get("preface"):
+            # membro#136: the line the seat opened with was spoken, so the
+            # saved reply shows it too.
+            content = f"{live['preface']} {content.lstrip()}".rstrip()
         usage_json = (_priced_usage_json(p, live["usage"], cfg)
                       if live["usage"] else None)
         con = db.connect()
@@ -552,6 +592,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
         live["meter"] = None
         live["attachments"] = []
         live["audit"] = []
+        live["preface"] = ""
         return msg
 
     try:
@@ -684,11 +725,36 @@ def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
     return "accept", "", ""
 
 
+def _round_history_search(chat_id, q, memory, roster, is_handback, cfg):
+    """The round's search of the saved chats (membro#136), or None. The
+    search started at the voice commit is adopted on the recall prewarm's
+    terms, fresh and matching the final transcript, and cancelled
+    otherwise. Without one, a search starts now when the turn wants
+    history. A hand-back round answers no one, so it never searches."""
+    pre = history_prefetch.take_prewarmed(chat_id)
+    wanted = bool(q and not is_handback and cfg.get("history_prefetch", True))
+    if pre is not None:
+        if (wanted and time.monotonic() - pre.at <= PREWARM_TTL_S
+                and _prewarm_matches(pre.norm, _norm_query(q))):
+            log.info("history prefetch: adopted-prewarm (chat=%s)", chat_id)
+            return pre
+        pre.cancel()
+    if not wanted or not history_prefetch.wants_history(q):
+        return None
+    return history_prefetch.start(q, memory, norm=_norm_query(q),
+                                  drop=_seat_words(roster))
+
+
 async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                            persist_live, memory, mcp=None,
                            handback=None, is_handback=False, turn_id=None):
     memory_summary_cache = None  # fetched at most once per round
     ambient_cache = None  # ambient recall for the latest user message, once per round
+    # membro#136: the round's search of the saved chats. `history` is the
+    # search waiting for the first seat's call, `history_cache` what every
+    # seat reads once it has landed.
+    history = None
+    history_cache = ""
     spoken = []  # who already replied THIS round - later speakers are told
     # The transcript is read IN FULL once per round; every later speaker
     # only fetches the delta (id > last seen) - normally just the previous
@@ -708,7 +774,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # client is actually timing; the round is sequential, so a later
         # speaker's provider call starts well after that measurement ends).
         t_iter_start = time.monotonic() if (turn_id and idx == 0) else None
-        memory_summary_ms = memory_recall_ms = None
+        memory_summary_ms = memory_recall_ms = memory_history_ms = None
         # The speaker's DB reads run in a worker thread - sqlite's
         # blocking I/O (and its up-to-5s busy_timeout under lock contention)
         # must not pin the event loop that is simultaneously relaying live
@@ -941,6 +1007,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                          "adopted-prewarm" if adopted is not None
                          else ("prewarm-mismatch" if pre else "no-prewarm"),
                          chat_id)
+                # membro#136: a turn that asks about the person or their past
+                # searches the saved chats alongside the recall, adopting the
+                # search started at the voice commit on the same terms.
+                search = _round_history_search(chat_id, q, memory, roster,
+                                               is_handback, cfg)
                 summary_task = asyncio.create_task(_timed_ms(memory.get_summary()))
                 if adopted is not None:
                     recall_task = asyncio.create_task(_timed_ms(_adopted_result(adopted)))
@@ -953,8 +1024,20 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                 if recall_task:
                     facts, memory_recall_ms = await recall_task
                 ambient_cache = tools_mod._format_facts(facts, 2500) if facts else ""
+                if search is not None:
+                    # The hits are handed over only when recall came back
+                    # thin on the question; otherwise the search is dropped.
+                    if history_prefetch.recall_is_thin(
+                            facts, history_prefetch.keywords(
+                                q, _seat_words(roster))):
+                        history = search
+                    else:
+                        search.cancel()
+                        log.info("history prefetch: not needed (chat=%s)",
+                                 chat_id)
             round_cfg["memory_summary"] = memory_summary_cache
             round_cfg["memory_ambient"] = ambient_cache
+            round_cfg["memory_history"] = history_cache
             tool_memory = memory
         if memory_on and memory is not None:
             # #564: offered whenever memory is on for the chat. When this
@@ -984,6 +1067,7 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             live["usage"] = None
             live["attachments"] = []
             live["audit"] = []
+            live["preface"] = ""
             # #576: what this call is known to have used, read only if it
             # ends before it reports its usage.
             live["meter"] = round_cfg["_call_meter"] = providers.CallMeter()
@@ -992,6 +1076,42 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             # traces carry it rather than the seat's configured model.
             yield sse({"type": "speaker_start", "speaker": participant["slug"],
                        "model": participant.get("model", "")})
+            if history is not None:
+                # membro#136: the first seat's call is where the search of
+                # the saved chats is handed over. A search still running
+                # doesn't hold the round in silence: a voice seat opens
+                # with a short line, spoken at once, and a typed chat shows
+                # a status line, until the hits land or WAIT_S passes.
+                search, history = history, None
+                t_wait = time.monotonic()
+                got = await search.result(history_prefetch.GRACE_S)
+                line = ""
+                if got is None:
+                    if voice_mode:
+                        line = history_prefetch.spoken_line(asker_id)
+                        live["preface"] = line
+                        yield sse({"type": "delta",
+                                   "speaker": participant["slug"],
+                                   "text": line + " ",
+                                   history_prefetch.SPEAK_NOW_FLAG: True})
+                    else:
+                        yield sse({"type": "work_status",
+                                   "speaker": participant["slug"],
+                                   "phase": "start",
+                                   "label": work_status.PAST_CHATS_LABEL})
+                    got = await search.result(history_prefetch.WAIT_S,
+                                              give_up=True)
+                memory_history_ms = (time.monotonic() - t_wait) * 1000
+                state, hits = got
+                history_cache = history_prefetch.handover(
+                    state, hits, round_cfg, search.query)
+                round_cfg["memory_history"] = history_cache + (
+                    history_prefetch.said_note(line, cfg.get("user_name", "User"))
+                    if line else "")
+                # content-free: the outcome, the hit count and the wait
+                log.info("history prefetch: %s hits=%d waited_ms=%d spoke=%s "
+                         "(chat=%s)", state, len(hits), memory_history_ms,
+                         bool(line), chat_id)
             t_provider_call = time.monotonic() if t_iter_start is not None else None
             # #574: a marker the seat repeats comes out of what streams to
             # the browser and the voice too, not only out of what's saved.
@@ -1033,7 +1153,8 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                             await asyncio.to_thread(
                                 _record_first_token_split,
                                 turn_id, chat_id, participant, t_iter_start,
-                                t_provider_call, memory_summary_ms, memory_recall_ms)
+                                t_provider_call, memory_summary_ms, memory_recall_ms,
+                                memory_history_ms)
                             t_provider_call = None
                         live["content"] += payload
                         shown = redactor.feed(payload)
