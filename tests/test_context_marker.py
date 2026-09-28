@@ -12,7 +12,9 @@ The contract under test:
   for byte the same;
 - the key is owner-only, made once, and never overwritten;
 - each chat has its own marker, and another install's key gives another;
-- a marker a model repeats never reaches the chat, a tool event or a tool.
+- a marker a model repeats never reaches the chat, a tool event or a tool;
+- nor the live stream to the browser, even split across pieces, and the
+  stream holds back nothing that couldn't be the start of one (#574).
 """
 
 import asyncio
@@ -239,3 +241,87 @@ def test_a_reply_that_repeats_the_marker_is_saved_without_it(tmp_path,
         assert m not in json.dumps(payload)
         assert context_marker.REDACTED in replies[0]["content"]
         assert context_marker.REDACTED in json.dumps(replies[0]["tool_events"])
+
+
+def _redacted_stream(chat_id, pieces):
+    r = context_marker.StreamRedactor(chat_id)
+    out = [r.feed(p) for p in pieces]
+    return out, r.flush()
+
+
+def test_a_marker_split_anywhere_never_streams():
+    m = context_marker.marker(8)
+    reply = f"It opened with [Context refresh · {m}] and then the facts."
+    for cut in range(1, len(reply)):
+        for cut2 in range(cut, len(reply), 7):
+            pieces = [reply[:cut], reply[cut:cut2], reply[cut2:]]
+            out, rest = _redacted_stream(8, pieces)
+            shown = "".join(out) + rest
+            assert m not in shown
+            assert shown == context_marker.redact(reply, 8)
+
+
+def test_text_that_cannot_start_a_marker_goes_out_at_once():
+    m = context_marker.marker(8)
+    last = next(c for c in "ghijklmnopqrstuvwxyz ." if c != m[0])
+    out, rest = _redacted_stream(8, ["Hello the", "re, all well" + last])
+    assert out == ["Hello the", "re, all well" + last]
+    assert rest == ""
+
+
+def test_only_a_possible_start_is_held_and_never_more():
+    m = context_marker.marker(8)
+    r = context_marker.StreamRedactor(8)
+    assert r.feed("see " + m[:5]) == "see "
+    assert r.feed(m[5:11]) == ""                  # 11 held, still a start
+    assert r.feed("!") == m[:11] + "!"            # not the marker after all
+    assert r.feed("x" + m[:1]) == "x"
+    assert r.flush() == m[:1]                     # the reply ended there
+    assert r.flush() == ""
+
+
+def test_the_live_stream_never_carries_the_marker(tmp_path, monkeypatch):
+    """The saved reply was already clean. What streamed to the browser and
+    the voice while it was written was not, and a marker split across two
+    pieces is the shape a stream really delivers."""
+    app = create_app(Settings(data_dir=str(tmp_path / "data"),
+                              memory_url="http://127.0.0.1:1"))
+
+    async def stream_reply(participant, roster, transcript, names, cfg,
+                           project, chat_summary, voice_mode, tools=None,
+                           memory=None):
+        m = context_marker.marker(cfg["chat_id"])
+        yield ("tool", {"tool": "web_search", "input": {"query": m},
+                        "output": f"no results for {m}"})
+        yield ("text", f"The block opened with [Context refresh · {m[:4]}")
+        yield ("text", f"{m[4:]}]. That's all")
+        yield ("text", f" I know, {m[:3]}")
+
+    monkeypatch.setattr(engine.providers, "stream_reply", stream_reply)
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = c.post("/api/chats", json={}).json()["id"]
+        m = context_marker.marker(chat_id)
+        events = []
+        with c.stream("POST", f"/api/chats/{chat_id}/send",
+                      json={"text": "what did the context say?"}) as r:
+            for line in r.iter_lines():
+                if line.startswith("data: "):
+                    events.append(json.loads(line[len("data: "):]))
+        assert events
+        assert m not in json.dumps(events)
+        first = next(e["speaker"] for e in events
+                     if e.get("type") == "speaker_start")
+        deltas = "".join(e["text"] for e in events
+                         if e.get("type") == "delta" and e["speaker"] == first)
+        assert deltas == (f"The block opened with [Context refresh · "
+                          f"{context_marker.REDACTED}]. That's all I know, "
+                          f"{m[:3]}")
+        tool = next(e for e in events if e.get("type") == "tool_activity")
+        assert context_marker.REDACTED in tool["input_json"]
+        assert context_marker.REDACTED in tool["output_text"]
+        deadline = time.time() + 5
+        while rounds.active(chat_id) is not None and time.time() < deadline:
+            time.sleep(0.05)
+        saved = [msg for msg in c.get(f"/api/chats/{chat_id}").json()["messages"]
+                 if msg["speaker"] == first]
+        assert saved[0]["content"] == deltas

@@ -19,7 +19,8 @@ chat's context channel and no other.
 A model is told never to repeat it. When one does anyway, `redact` takes it
 out of the reply before the reply is saved and out of a tool's input before
 the tool runs, so it can't reach the chat, memory, an issue, a guest or a
-web request.
+web request. `StreamRedactor` takes it out of the reply as it streams to the
+browser and the voice.
 """
 
 import hashlib
@@ -100,3 +101,36 @@ def _redact(value, m):
     if isinstance(value, (list, tuple)):
         return [_redact(v, m) for v in value]
     return value
+
+
+class StreamRedactor:
+    """`redact` for a reply that arrives in pieces (#574). The reply
+    streams to the browser and into the voice as it's written, and a marker
+    can be split across two pieces, so each piece is checked with the end
+    of the one before.
+
+    Only the end of what's arrived is held back, and only while it could
+    still be the start of the marker: at most 11 characters, usually none.
+    Everything else goes out as soon as it comes in. `flush` hands back
+    what's held once the reply ends."""
+
+    def __init__(self, chat_id):
+        self._marker = marker(chat_id)
+        self._held = ""
+
+    def feed(self, piece: str) -> str:
+        m = self._marker
+        text = self._held + (piece or "")
+        if m in text:
+            text = text.replace(m, REDACTED)
+        keep = 0
+        for n in range(min(len(text), len(m) - 1), 0, -1):
+            if m.startswith(text[-n:]):
+                keep = n
+                break
+        self._held = text[len(text) - keep:]
+        return text[:len(text) - keep]
+
+    def flush(self) -> str:
+        out, self._held = self._held, ""
+        return out
