@@ -84,11 +84,35 @@ assembled.
 Storing a block costs more than reading it back. Anthropic charges
 1.25 times the
 [normal input price](https://platform.claude.com/docs/en/about-claude/pricing)
-to write a block into the cache and a tenth of it to read the block
-back, so one write costs as much as twelve and a half reads. A cache
-pays off when a prefix is written once and read many times. The Spend
-page shows this as a read to write ratio, per model, under Prompt
-cache health.
+to write a block into the cache and a tenth of it or less to read the
+block back. Input that's neither read nor written is sent at the full
+price. A cache pays off when most of each call's input is read back.
+
+## How the Spend page judges the cache
+
+Under Prompt cache health, the Spend page gives each model the share
+of all its input that was read back from the cache. All its input
+means what was read, what was written and what was sent at full price.
+It rates that share against two bars.
+
+| Share read from the cache | Verdict | What it means |
+|---|---|---|
+| 80% or more | Healthy | The prompt is reused from call to call, and only the newest turn and the per-call memory block are paid in full. |
+| 50% to 80% | Watch | Part of the prompt is sent at full price or stored again each call. |
+| Under 50% | Poor | Most input costs full price or more, so input costs over half what it would with no cache at all. |
+
+The top bar comes from how the Claude seat did in steady use. On busy
+days it read 83 to 91% of its input from the cache. On quiet days it
+read 65 to 72%, because the cache runs out after five minutes between
+messages. The bottom bar is where caching stops doing most of its job.
+The page leads with the worst model, because one busy model reading
+nearly everything from the cache can hide a struggling seat in the
+average. A model that did no caching at all is left out.
+
+On a computer, the read to write ratio shows when you hold the pointer
+over a verdict. A ratio near one to one means a prompt is being stored again about as
+often as it's read, which is the sign of a prefix that keeps
+changing.
 
 The chat summary stays in the stable block. When the app folds older
 messages into the summary, the same database statement moves
@@ -441,13 +465,14 @@ with a fifty-message chat tells you nothing.
    - Did the number of distinct `stable_hash` values fall for the same
      conversation shape? Fewer for the same content means the stable
      block survived more calls.
-   - Did the total `cache_write_5m_tok` fall against the total
-     `cache_read_tok`, or against `input_tok`?
+   - Did the share of input read from the cache rise? That's the total
+     `cache_read_tok` over the three totals `cache_read_tok`,
+     `cache_write_5m_tok` and `input_tok` added together.
    - Check the Spend page's Model turns row for the same window as a
      sanity check. It reports cost, never a cache-hit ratio, and cost
      depends on far more than caching, such as which model, how long
      the replies were and how many tool rounds ran.
-   - Report the comparison as hash churn and read to write ratio. Give
+   - Report the comparison as hash churn and share read from the cache. Give
      a percentage or a dollar figure only if you've confirmed the
      billed numbers on the Spend page over a window long enough to
      mean something. A two-sample log comparison checks a hypothesis

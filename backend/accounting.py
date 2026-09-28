@@ -154,9 +154,14 @@ class CostEvent:
     # A cache WRITE is billed at 1.25x input and a READ at 0.1x, so a write
     # costs 12.5x a read, and neither the dollar total nor the token total
     # moves much when a prefix starts being re-written instead of re-read.
-    # The RATIO is the signal; defaults keep non-token sources (voice) at zero.
+    # Defaults keep non-token sources (voice) at zero.
     cache_read: int = 0
     cache_creation: int = 0
+    # Input sent at full price, neither read from nor written to the cache
+    # (usage_json.input). A read:write ratio ignores it, and it grew to about
+    # half of what the Claude seats pay, so the signal is the share of ALL
+    # input that was read back (#561, see cache_health).
+    uncached_input: int = 0
     # Metered dollars attributable to those writes. Populated ONLY for
     # rate_card_estimate events, where the formula is ours. A Claude Code guest
     # turn's cost is the SDK's own opaque total_cost_usd and cannot honestly be
@@ -236,6 +241,7 @@ def _seat_event(chat_id, ts, speaker, u, parts, pricing, unposted=False):
         tokens=_tokens(u), has_cost=cost is not None,
         cache_read=int(u.get("cache_read", 0) or 0),
         cache_creation=int(u.get("cache_creation", 0) or 0),
+        uncached_input=int(u.get("input", 0) or 0),
         cache_write_cost=_cache_write_cost(u, model, pricing, provenance),
         unposted=unposted)
 
@@ -291,6 +297,7 @@ def iter_cost_events(con, *, code_slug=CODE_SLUG, chat_id=None, pricing=None):
                 has_cost=has_cost,
                 cache_read=int(u.get("cache_read", 0) or 0),
                 cache_creation=int(u.get("cache_creation", 0) or 0),
+                uncached_input=int(u.get("input", 0) or 0),
                 cache_write_cost=_cache_write_cost(u, model, pricing, provenance))
         else:
             yield _seat_event(r["chat_id"], r["created_at"], r["speaker"], u,
@@ -368,7 +375,8 @@ def _group_add(bucket: dict, key, label, e: CostEvent):
         # that mattered in the prompt-cache regression (one seat's read:write
         # ratio against a neighbouring seat's on the same API) is a
         # by_producer_model row against its neighbour.
-        "cache_read": 0, "cache_creation": 0, "cache_write_cost": 0.0})
+        "cache_read": 0, "cache_creation": 0, "uncached_input": 0,
+        "cache_write_cost": 0.0})
     if e.has_cost:
         g[e.category] += e.cost
     else:
@@ -376,38 +384,61 @@ def _group_add(bucket: dict, key, label, e: CostEvent):
     g["tokens"] += e.tokens
     g["cache_read"] += e.cache_read
     g["cache_creation"] += e.cache_creation
+    g["uncached_input"] += e.uncached_input
     g["cache_write_cost"] += e.cache_write_cost
 
 
-def cache_health(read: int, written: int) -> dict:
-    """Read:write ratio and a plain word for it.
+# The bars cache_health judges on (#561): the share of ALL a model's input
+# that was read back from the cache, counting what was read, what was
+# written and what was sent at full price.
+#
+# 80%: in steady use the Claude seat read 83 to 91% of its input from the
+# cache on busy days (the August check on #23). The part that can be cached
+# (tools, system block, earlier turns) is several times the part that can't
+# (the newest turn and the per-call memory block), so a seat whose prompt
+# survives from call to call clears it. Below it, part of the prompt is being
+# written again or expiring between calls, as on quiet days (65 to 72%).
+# 50%: below half, most input costs full price or more, so input costs over
+# half of what it would with no cache at all; the cache has stopped doing
+# most of its job.
+GOOD_READ_SHARE = 0.80
+POOR_READ_SHARE = 0.50
 
-    A prompt cache only pays off when a prefix is written ONCE and read MANY
-    times: a write costs 1.25x input, a read 0.1x, so a write is 12.5x a read.
-    Writing about as often as you read means the prefix is being invalidated
-    and re-sent. That is what the live regression looked like: one seat sat
-    below 1:1 while a neighbouring seat on the same API read many times per
-    write, and nothing surfaced the difference.
 
-    ``ratio`` is None when nothing was written - no activity is not a 0:0
-    problem, and must not render as one.
+def cache_health(read: int, written: int, uncached: int = 0) -> dict:
+    """The share of all input read back from the cache, and a plain word
+    for it.
+
+    A read costs a tenth of the input price or less, input sent fresh costs
+    the full price, and a write costs 1.25 times it, so the share read back
+    is what decides whether caching is paying. This judged read:write alone
+    until #561, which ignored the input sent at full price and rated a seat
+    reading 62% of its input as good. ``ratio`` stays alongside as
+    information: a ratio near 1:1 still says a prefix is being rewritten.
+
+    No reads and no writes is no cache activity at all, whatever was sent
+    at full price: a model that doesn't cache is not failing to. ``ratio``
+    is None when nothing was written (an OpenAI seat reports no writes),
+    and never renders as 0:0.
     """
-    if not written:
-        return {"ratio": None, "verdict": "none" if not read else "no_writes"}
-    ratio = read / written
-    if ratio >= 3.0:
+    ratio = read / written if written else None
+    if not read and not written:
+        return {"ratio": None, "read_share": None, "verdict": "none"}
+    share = read / (read + written + uncached)
+    if share >= GOOD_READ_SHARE:
         verdict = "good"
-    elif ratio >= 1.0:
+    elif share >= POOR_READ_SHARE:
         verdict = "watch"
     else:
-        verdict = "poor"     # re-writing more than it reads back
-    return {"ratio": ratio, "verdict": verdict}
+        verdict = "poor"
+    return {"ratio": ratio, "read_share": share, "verdict": verdict}
 
 
 def _grouped_list(bucket: dict):
     out = list(bucket.values())
     for g in out:
-        g["cache"] = cache_health(g["cache_read"], g["cache_creation"])
+        g["cache"] = cache_health(g["cache_read"], g["cache_creation"],
+                                  g["uncached_input"])
     out.sort(key=lambda g: (g[CAT_METERED] + g[CAT_SUBSCRIPTION] + g[CAT_UNKNOWN]),
              reverse=True)
     return out
@@ -426,7 +457,7 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
 
     totals = _blank_totals()
     tokens = 0
-    cache_read = cache_written = 0
+    cache_read = cache_written = cache_uncached = 0
     cache_write_cost = 0.0
     by_source, by_provider, by_model, by_chat = {}, {}, {}, {}
     # by_party groups on the SPEAKER - the conversation party or usage producer
@@ -459,6 +490,7 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         tokens += e.tokens
         cache_read += e.cache_read
         cache_written += e.cache_creation
+        cache_uncached += e.uncached_input
         cache_write_cost += e.cache_write_cost
         _group_add(by_source, e.source, SOURCE_LABELS.get(e.source, e.source), e)
         _group_add(by_party, e.speaker, e.speaker, e)
@@ -489,7 +521,8 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         "cache": {
             "read": cache_read,
             "written": cache_written,
-            **cache_health(cache_read, cache_written),
+            "uncached": cache_uncached,
+            **cache_health(cache_read, cache_written, cache_uncached),
             "write_cost": cache_write_cost,
             "write_cost_share": (cache_write_cost / totals[CAT_METERED]
                                  if totals[CAT_METERED] else 0.0),

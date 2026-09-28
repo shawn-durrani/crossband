@@ -71,8 +71,9 @@ it appears.
 3. [docs/TESTING.md](TESTING.md): what every suite guards, backend and
    frontend, and why both run without keys.
 4. [docs/COST_TELEMETRY.md](COST_TELEMETRY.md): what your chats cost and
-   where the money goes, how to read the cache log line, and how to
-   check your own numbers before and after a change.
+   where the money goes, how the Spend page judges the prompt cache, how
+   to read the cache log line, and how to check your own numbers before
+   and after a change.
 5. [docs/LATENCY.md](LATENCY.md): where the wait before a reply goes,
    how to measure it on your own install, and the two ways the numbers
    mislead.
