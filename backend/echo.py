@@ -111,7 +111,9 @@ def references_for(transcript, self_slug, roster_slugs, names):
     was restated (#162). Metadata rows (system notices, external feeds) are
     never references."""
     refs = []
-    own = [m for m in transcript if m.get("speaker") == self_slug]
+    # a turn of tool calls with no words (#575) has nothing to restate
+    own = [m for m in transcript if m.get("speaker") == self_slug
+           and (m.get("content") or "").strip()]
     if own:
         refs.append((OWN_LABEL, own[-1].get("content") or "", self_slug))
     user_ids = [m["id"] for m in transcript if m.get("speaker") == "user"]

@@ -1308,6 +1308,16 @@ CONTINUE_NUDGE = (
 )
 
 
+def _wordless_seat_turn(msg, self_slug):
+    """A seat's turn that said nothing: tool calls and no words (#575).
+    Its research log carries everything it did. The seat's own such turn
+    is never sent as an empty assistant turn, which the providers refuse,
+    and another seat's is left out unless it carries a file."""
+    if msg["speaker"] == "user" or (msg.get("content") or "").strip():
+        return False
+    return msg["speaker"] == self_slug or not msg.get("attachments")
+
+
 def build_anthropic_messages(self_slug, transcript, names, cfg):
     """This participant's own messages -> assistant; everyone else -> labelled user
     turns. Past research activity (anyone's, including own) replays as user-side
@@ -1317,6 +1327,8 @@ def build_anthropic_messages(self_slug, transcript, names, cfg):
         if m.get("tool_events"):
             msgs.append({"role": "user", "content": [
                 {"type": "text", "text": _tool_log_text(m, names, cfg)}]})
+        if _wordless_seat_turn(m, self_slug):
+            continue
         if m["speaker"] == self_slug:
             msgs.append({"role": "assistant", "content": m["content"]})
         else:
@@ -1344,6 +1356,8 @@ def build_openai_input(self_slug, transcript, names, cfg):
         if m.get("tool_events"):
             items.append({"role": "user", "content": [
                 {"type": "input_text", "text": _tool_log_text(m, names, cfg)}]})
+        if _wordless_seat_turn(m, self_slug):
+            continue
         if m["speaker"] == self_slug:
             items.append({"role": "assistant", "content": m["content"]})
         else:
