@@ -1436,18 +1436,39 @@ async def search_history(args, cfg, memory, origin_agent=None):
         return "Error: memory search failed - unable to confirm whether any matching messages exist."
     if not hits:
         return "No matching messages in any past chat."
-    lines = []
+    blocks = []
     for h in hits:
         day = _day(h.get("created_at"))
         who = h.get("speaker") or "?"
         ws = h.get("web_sources")
+        lines = []
         if isinstance(ws, list) and ws:
             # Contract 1.4: the authoring round read these domains, so the
             # hit gets the marker a live fetch gets. A hit without the
             # field (older service) or with an empty list renders as ever.
             lines.append(_untrusted_archive_marker(ws))
-        lines.append(f"[{day}] {who}: {h.get('content', '')[:300]}")
-    return "\n".join(lines)[:cfg["max_tool_output"]]
+        text = h.get("content", "")[:cfg["max_search_hit_chars"]]
+        lines.append(f"[{day}] {who}: {text}")
+        blocks.append("\n".join(lines))
+    return _fit_whole_hits(blocks, cfg["max_tool_output"])
+
+
+def _fit_whole_hits(blocks, cap):
+    """Join search hits in rank order, each whole or not at all, under the
+    tool output cap (#583). A hit cut partway can lose the very detail it
+    was found for, so the hits that don't fit are counted instead."""
+    out, used = [], 0
+    for i, block in enumerate(blocks):
+        left = len(blocks) - i
+        note = (f"({left} more matching message{'s' if left > 1 else ''} "
+                "not shown. Narrower search words will bring them up.)")
+        room = cap - used - len(note) - 2 if left > 1 else cap - used - 1
+        if out and len(block) > room:
+            out.append(note)
+            break
+        out.append(block)
+        used += len(block) + 1
+    return "\n".join(out)[:cap]
 
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
