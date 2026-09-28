@@ -2,7 +2,7 @@
 // Run: node --test frontend/src/spendView.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { headline, accuracy, direction, roughBreakdown, cumulative, trendLines, linePath, unpostedNote } from './spendView.js'
+import { headline, accuracy, direction, roughBreakdown, cumulative, trendLines, linePath, unpostedNote, partialNote } from './spendView.js'
 import { money } from './format.js'
 
 test('the three kinds of dollar are never summed', () => {
@@ -147,4 +147,13 @@ test('calls that left no message are named as part of the total (#560)', () => {
 test('no such calls means no note at all', () => {
   assert.equal(unpostedNote({ events: 0, cost: 0 }, money), null)
   assert.equal(unpostedNote(undefined, money), null)
+})
+
+test('calls cut off partway are named as a floor inside the total (#576)', () => {
+  const note = partialNote({ events: 3, cost: 0.021, tokens: 52000 }, money)
+  assert.match(note, /^Includes \$0\.021 on 3 model calls cut off partway\./)
+  assert.match(note, /cost a little more than that/)
+  assert.match(partialNote({ events: 1, cost: 0.004 }, money), /on 1 model call cut off/)
+  assert.equal(partialNote({ events: 0, cost: 0 }, money), null)
+  assert.equal(partialNote(undefined, money), null)
 })

@@ -107,6 +107,20 @@ export function unpostedNote(unposted, money) {
     + 'message, such as a model passing or a reply the app asked it to redo.'
 }
 
+// How much of the window went on model calls cut off partway (#576): a
+// reply you talked over, one that stalled, one the provider dropped. Each
+// counts what the provider had reported when it stopped, so it cost more
+// than it counts. Inside every total, like the calls above, and null when
+// there were none.
+export function partialNote(partial, money) {
+  const n = partial?.events || 0
+  if (!n) return null
+  const calls = n === 1 ? '1 model call' : `${n} model calls`
+  return `Includes ${money(partial.cost || 0)} on ${calls} cut off partway. `
+    + 'Each counts what the provider had reported when it stopped, so it '
+    + 'cost a little more than that.'
+}
+
 export const SPANS = [
   ['today', 'Today'],
   ['7d', '7 days'],

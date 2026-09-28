@@ -172,6 +172,11 @@ class CostEvent:
     # like any reply's; this only lets the Spend page say how much of the
     # total went on calls the chat never shows.
     unposted: bool = False
+    # A seat call cut off before it reported in full (#576): a barge-in, a
+    # stall, a provider error. It counts what the provider had reported by
+    # then, so its real cost was higher. Counted like any call; this only
+    # lets the Spend page say how much of the total is such a floor.
+    partial: bool = False
 
     @property
     def producer(self) -> str:
@@ -243,7 +248,7 @@ def _seat_event(chat_id, ts, speaker, u, parts, pricing, unposted=False):
         cache_creation=int(u.get("cache_creation", 0) or 0),
         uncached_input=int(u.get("input", 0) or 0),
         cache_write_cost=_cache_write_cost(u, model, pricing, provenance),
-        unposted=unposted)
+        unposted=unposted, partial=bool(u.get("partial")))
 
 
 def iter_cost_events(con, *, code_slug=CODE_SLUG, chat_id=None, pricing=None):
@@ -476,17 +481,19 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
     by_producer_model = {}
     not_tracked = set()
     unposted = {"events": 0, "cost": 0.0, "tokens": 0}
+    partial = {"events": 0, "cost": 0.0, "tokens": 0}
 
     for e in events:
         if e.has_cost:
             totals[e.category] += e.cost
         else:
             not_tracked.add(e.source)
-        if e.unposted:
-            unposted["events"] += 1
-            unposted["tokens"] += e.tokens
-            if e.has_cost:
-                unposted["cost"] += e.cost
+        for flag, tally in ((e.unposted, unposted), (e.partial, partial)):
+            if flag:
+                tally["events"] += 1
+                tally["tokens"] += e.tokens
+                if e.has_cost:
+                    tally["cost"] += e.cost
         tokens += e.tokens
         cache_read += e.cache_read
         cache_written += e.cache_creation
@@ -548,6 +555,10 @@ def summarize(events, *, since=None, until=None, chat_titles=None):
         # inside every total above, never on top of it: this only says how
         # much of Model turns the chat itself never shows.
         "unposted": unposted,
+        # #576: calls cut off before they reported in full, counted from
+        # what the provider had reported. Inside every total too, and each
+        # one cost more than it counts.
+        "partial": partial,
     }
 
 

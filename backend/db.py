@@ -374,7 +374,8 @@ CREATE TABLE IF NOT EXISTS utility_usage(
 CREATE TABLE IF NOT EXISTS seat_usage(
   -- The cost of a seat's model call that left no message behind (#560): a
   -- [pass], the first try of a pass or a restatement the app refused and
-  -- asked for again, a restatement it dropped, and an empty reply. A pass
+  -- asked for again, a restatement it dropped, an empty reply, and a call
+  -- cut off before it wrote anything (#576, its usage marked partial). A pass
   -- stays out of the chat on purpose, so its cost can't ride a message's
   -- usage_json the way a reply's does. Content-free: the seat, what became
   -- of the call, and the usage block its message would have carried (token
@@ -383,6 +384,7 @@ CREATE TABLE IF NOT EXISTS seat_usage(
   chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
   speaker TEXT NOT NULL,
   -- 'pass' | 'pass_retried' | 'echo_dropped' | 'echo_retried' | 'empty'
+  -- | 'cut_off'
   outcome TEXT NOT NULL,
   usage_json TEXT NOT NULL,
   created_at REAL NOT NULL

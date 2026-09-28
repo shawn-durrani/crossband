@@ -328,16 +328,31 @@ chat. A row holds the chat, the seat, what became of the call and the
 usage block its message would have carried. That block has the token
 counts, the cost, its provenance and the cache fingerprints, and never
 any text. The `outcome` column reads `pass`, `pass_retried`,
-`echo_dropped`, `echo_retried` or `empty`.
+`echo_dropped`, `echo_retried`, `empty` or `cut_off`.
 
 The Spend page counts these calls under Model turns, and the chat's
 running cost includes them. Under the detail, a line says how much of
 the window went on them. That money is already in every total, so the
 line never adds to it.
 
-A call cut off partway, by you talking over it, a stall or a provider
-error, has no usage block at all. The adapters only get one when a
-call finishes, so those calls stay uncounted.
+## Calls cut off partway
+
+A call can stop before it finishes. You talk over the reply, it stalls,
+or the provider drops it. The provider sends its full token counts only
+when a call ends, so the app records what it knew when the call
+stopped. That's every tool step that had finished, plus, for Claude,
+the input the reply in flight had already read. Anthropic reports that
+input as each reply starts, with its cache reads and writes. OpenAI
+reports nothing until a call ends, so a GPT call cut off in its first
+step counts nothing.
+
+The usage block carries `"partial": true`. It sits on the cut-off
+message when one is saved, and on a `seat_usage` row with the outcome
+`cut_off` when none is. The Spend page counts these calls like any
+other, and a line under the detail says how much of the window went on
+them. Each cost more than it counts, because the output written before
+the cut isn't known. In the chat, a cut-off reply's cost reads "at
+least".
 
 ## How utility calls are counted
 

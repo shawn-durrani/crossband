@@ -1469,6 +1469,48 @@ def volatile_note_frame(cfg):
             + f"{cfg['user_name']}:\n")
 
 
+class CallMeter:
+    """What a seat call is known to have used so far (#576), for a call that
+    ends before its usage event: one you talk over, one that stalls, one the
+    provider drops.
+
+    The adapter hands its running total to `done`, which holds every tool
+    round that finished. An Anthropic round in flight sits in `stream`: the
+    SDK keeps the usage the provider reported when the reply started (the
+    input, and the cache read and written) on its message snapshot. OpenAI
+    reports nothing about a round until it ends, so its round in flight
+    adds nothing. The engine sets one on `cfg["_call_meter"]` per call and
+    reads `partial` only when the call never reported in full."""
+
+    def __init__(self):
+        self.done = None
+        self.stream = None
+
+    def partial(self):
+        """The usage block known so far, marked partial, or None when
+        nothing is known."""
+        if self.done is None:
+            return None
+        counts = {k: self.done.get(k, 0) or 0
+                  for k in ("input", "cache_read", "cache_creation", "output")}
+        snap = None
+        if self.stream is not None:
+            try:
+                snap = self.stream.current_message_snapshot.usage
+            except Exception:
+                snap = None  # the reply hadn't started
+        if snap is not None:
+            counts["input"] += getattr(snap, "input_tokens", 0) or 0
+            counts["cache_read"] += getattr(snap, "cache_read_input_tokens",
+                                            0) or 0
+            counts["cache_creation"] += getattr(
+                snap, "cache_creation_input_tokens", 0) or 0
+            counts["output"] += getattr(snap, "output_tokens", 0) or 0
+        if not any(counts.values()):
+            return None
+        return {**self.done, **counts, "partial": True}
+
+
 async def stream_reply(participant, roster, transcript, names, cfg, project,
                        chat_summary, voice_mode, tools=None, memory=None):
     """Async generator yielding ('text', delta), ('tool', {...}) and
@@ -2039,6 +2081,9 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
              # dark unless log_level is set, and this repo's guidance is to query
              # usage_json rather than hunt logs.
              "cache_prefix": {**prefix_now, "changed": changed}}
+    meter = cfg.get("_call_meter")  # #576: read if the call is cut off
+    if meter is not None:
+        meter.done = usage
     reply_text_parts = []  # accumulated across the whole turn (all tool rounds)
     # for the attribution audit at natural completion - see _check_attribution.
     for round_i in range(cfg["max_tool_rounds"]):
@@ -2056,6 +2101,8 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
             kwargs["tools"] = anth_tools
         try:
             async with client.messages.stream(**kwargs) as stream:
+                if meter is not None:
+                    meter.stream = stream
                 async for text in stream.text_stream:
                     reply_text_parts.append(text)
                     yield ("text", text)
@@ -2084,6 +2131,8 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
         usage["cache_read"] += getattr(u, "cache_read_input_tokens", 0) or 0
         usage["cache_creation"] += getattr(u, "cache_creation_input_tokens", 0) or 0
         usage["output"] += u.output_tokens or 0
+        if meter is not None:
+            meter.stream = None  # this round is in `usage` now
         # Cache instrumentation: content-free (hashes + counts only, never the
         # prompt/transcript text itself) so this proves - before/after any
         # future change - whether the volatile system block is busting the
@@ -2204,6 +2253,8 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
             yield ev
         return
     usage = {"input": 0, "cache_read": 0, "cache_creation": 0, "output": 0}
+    if cfg.get("_call_meter") is not None:
+        cfg["_call_meter"].done = usage  # #576: the rounds that finished
     reply_text_parts = []  # accumulated across the whole turn (all tool rounds)
     # for the attribution audit at natural completion - see _check_attribution.
     for _ in range(cfg["max_tool_rounds"]):
@@ -2388,6 +2439,8 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
     if hint:
         stable = f"{stable}\n\n{hint}" if stable else hint
     usage = {"input": 0, "cache_read": 0, "cache_creation": 0, "output": 0}
+    if cfg.get("_call_meter") is not None:
+        cfg["_call_meter"].done = usage  # #576: the rounds that finished
     reply_text_parts = []
     for _ in range(cfg["max_tool_rounds"]):
         kwargs = dict(
