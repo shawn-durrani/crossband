@@ -964,6 +964,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
             yield sse({"type": "speaker_start", "speaker": participant["slug"],
                        "model": participant.get("model", "")})
             t_provider_call = time.monotonic() if t_iter_start is not None else None
+            # #574: a marker the seat repeats comes out of what streams to
+            # the browser and the voice too, not only out of what's saved.
+            redactor = context_marker.StreamRedactor(chat_id)
             stream = providers.stream_reply(
                 participant, roster, transcript, names, round_cfg, project, summary,
                 voice_mode, tools=tool_defs, memory=tool_memory,
@@ -1004,7 +1007,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                                 t_provider_call, memory_summary_ms, memory_recall_ms)
                             t_provider_call = None
                         live["content"] += payload
-                        yield sse({"type": "delta", "speaker": participant["slug"], "text": payload})
+                        shown = redactor.feed(payload)
+                        if shown:
+                            yield sse({"type": "delta", "speaker": participant["slug"], "text": shown})
                     elif kind == "usage":
                         live["usage"] = payload
                     elif kind == "audit":
@@ -1032,8 +1037,10 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                             "type": "tool_activity",
                             "speaker": participant["slug"],
                             "tool": payload["tool"],
-                            "input_json": json.dumps(payload["input"]),
-                            "output_text": payload["output"],
+                            "input_json": json.dumps(context_marker.redact(
+                                payload["input"], chat_id)),
+                            "output_text": context_marker.redact(
+                                payload["output"], chat_id),
                             "attachment_id": payload.get("attachment_id"),
                         })
                     elif kind == "meta":
@@ -1072,6 +1079,11 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                     await asyncio.wait_for(stream.aclose(), timeout=5.0)
                 except Exception:
                     pass
+                # What the redactor held could only have been the start of
+                # a marker the reply never finished, so it goes out as it is.
+                rest = redactor.flush()
+                if rest:
+                    yield sse({"type": "delta", "speaker": participant["slug"], "text": rest})
                 yield sse({"type": "error", "speaker": participant["slug"], "message": str(e)})
                 if step and model_step.refused(e):
                     # #254: the provider refused the stepped-up model (a chat
@@ -1095,6 +1107,9 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                                                         partial=True)
             else:
                 seat_trace.finish(trace, live["content"], "ok")
+                rest = redactor.flush()
+                if rest:
+                    yield sse({"type": "delta", "speaker": participant["slug"], "text": rest})
             if not skip_speaker and not live["content"] and not live["tools"]:
                 # model finished without text or tool calls (some local reasoning
                 # models occasionally emit only reasoning) - say so, never vanish
