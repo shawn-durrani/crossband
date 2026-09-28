@@ -27,6 +27,7 @@ const PARTICIPANTS = [
 // dots and never the brackets. Then the #460 shapes: a quiet remark
 // before [pass], which is a pass and draws nothing, and a real reply with
 // [pass] stuck on the end, which draws its words without the token.
+// Last, #567: a markdown table in a reply and in a user turn.
 const MESSAGES = [
   { id: 1, speaker: 'user', content: 'hello both of you', created_at: 1, attachments: [] },
   { id: 2, speaker: 'claude', content: 'A reply with **markdown**.', created_at: 2,
@@ -46,6 +47,10 @@ const MESSAGES = [
     attachments: [] },
   { id: 11, speaker: 'gpt', content: 'Oil it after sanding.  [pass]', created_at: 11,
     attachments: [] },
+  { id: 12, speaker: 'claude', created_at: 12, attachments: [],
+    content: '| Person | Saturday |\n| --- | --- |\n| Alex | Woodworking workshop |' },
+  { id: 13, speaker: 'user', created_at: 13, attachments: [],
+    content: '| Item | Who |\n| --- | --- |\n| Sausages | Sam |' },
 ]
 
 export function renderSmoke() {
@@ -86,6 +91,13 @@ export function renderSmoke() {
     if (html.includes(needle)) {
       throw new Error(`render smoke: ${JSON.stringify(needle)} must not be in the markup`)
     }
+  }
+  // #567: every table sits in its own box that scrolls sideways, in a
+  // reply and in a user turn alike.
+  const tables = html.split('<table').length - 1
+  const boxed = html.split('<div class="md-table"><table').length - 1
+  if (tables !== 2 || boxed !== 2) {
+    throw new Error(`render smoke: expected 2 tables, each in .md-table (${tables} tables, ${boxed} boxed)`)
   }
   // #482 stage 2: the Voices page's readiness line, for a ready voice, one
   // short of pieces, and the test switched off (which draws nothing).

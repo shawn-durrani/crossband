@@ -277,8 +277,15 @@ body {
 .md-body h3 { font-size: 1.0rem; }
 .md-body a { @apply text-link underline; overflow-wrap: anywhere; }
 .md-body blockquote { @apply border-l-2 border-edge3 pl-3 text-ink-mid; margin: 0.4rem 0; }
-.md-body table { border-collapse: collapse; margin: 0.5rem 0; }
+/* A table keeps whole words, instead of breaking "strategy" into three
+   lines of letters on a phone. A wide one scrolls sideways inside its own
+   box: .md-table, which Message.jsx puts round every table in a chat, and
+   the report's box on the Analysis page. So the page itself never gets
+   wider than the screen. frontend/src/mdTable.test.js pins this. */
+.md-body table { border-collapse: collapse; margin: 0.5rem 0; overflow-wrap: normal; }
 .md-body th, .md-body td { @apply border border-edge2 px-2 py-1 text-sm; }
+.md-table { overflow-x: auto; margin: 0.5rem 0; }
+.md-table > table { margin: 0; }
 .md-body code:not(pre code) {
   @apply bg-panel2 rounded px-1 py-0.5 text-[0.85em];
   color: var(--t-code-ink);
@@ -286,16 +293,15 @@ body {
 .md-body pre {
   @apply bg-panel border border-edge rounded-lg p-3 my-2 overflow-x-auto text-sm;
 }
-/* An Analysis report (#407): its tables keep whole words and scroll sideways
-   in the report's own box on a phone, instead of breaking "strategy" into
-   three lines of letters. */
-.md-body.report-md table { overflow-wrap: normal; }
 
 /* User turn: compact right-aligned bubble; AI turns are full-width prose */
 .user-bubble {
   background: var(--t-panel2);
   border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg);
   padding: var(--space-8) 14px;
+  /* Never wider than its column, so a wide table scrolls in its own box
+     instead of pushing the bubble off the left edge of a phone. */
+  max-width: min(68ch, 100%);
 }
 
 /* ---- Streaming affordances ---------------------------------------------- */

@@ -107,7 +107,7 @@ function ReportView({ detail, onDelete }) {
       {run.error && <p className="text-xs text-red-400 whitespace-pre-wrap break-words">{run.error}</p>}
       {report ? (
         <div className="overflow-x-auto border border-edge rounded-lg px-3 py-2">
-          <div className="md-body report-md text-sm">
+          <div className="md-body text-sm">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
           </div>
         </div>
