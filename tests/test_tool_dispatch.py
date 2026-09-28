@@ -224,6 +224,69 @@ def test_search_history_marker_caps_the_domains_shown(cfg):
     assert "d5.example" not in out
 
 
+def _hit(text, day="2026-05-01", web=None):
+    h = {"speaker": "user", "content": text, "created_at": day}
+    if web is not None:
+        h["web_sources"] = web
+    return h
+
+
+def test_search_history_keeps_membros_longer_excerpt(cfg):
+    """#583: membro's excerpt runs to 64 words, and the detail it was found
+    for can sit past character 300, where each hit used to be cut."""
+    text = ("x " * 154) + "and the gift card was $100."
+    assert text.index("$100") > 300
+    mem = FakeMemory(hits=[_hit(text)])
+    out = run(run_tool("search_history", {"query": "gift"}, cfg,
+                       origin_agent="claude", memory=mem))
+    assert "$100" in out
+
+
+def test_search_history_still_caps_each_hit(cfg):
+    mem = FakeMemory(hits=[_hit("y" * 2000)])
+    out = run(run_tool("search_history", {"query": "y"}, cfg,
+                       origin_agent="claude", memory=mem))
+    assert out == "[2026-05-01] user: " + "y" * cfg["max_search_hit_chars"]
+
+
+def test_search_history_shows_whole_hits_under_the_cap(cfg):
+    """Twenty long hits pass the tool output cap. The result keeps to it
+    with every hit whole, and says how many it left out."""
+    hits = [_hit(f"hit{i:02d} " + "z" * 440 + f" end{i:02d}") for i in range(20)]
+    mem = FakeMemory(hits=hits)
+    out = run(run_tool("search_history", {"query": "z"}, cfg,
+                       origin_agent="claude", memory=mem))
+    assert len(out) <= cfg["max_tool_output"]
+    lines = out.split("\n")
+    shown = lines[:-1]
+    assert all(line.endswith(f"end{i:02d}") for i, line in enumerate(shown))
+    left = 20 - len(shown)
+    assert 0 < left < 20
+    assert lines[-1] == (f"({left} more matching messages not shown. "
+                         "Narrower search words will bring them up.)")
+
+
+def test_search_history_fits_all_hits_without_a_note(cfg):
+    mem = FakeMemory(hits=[_hit(f"hit {i}") for i in range(20)])
+    out = run(run_tool("search_history", {"query": "hit"}, cfg,
+                       origin_agent="claude", memory=mem))
+    assert out.count("\n") == 19 and "not shown" not in out
+
+
+def test_search_history_keeps_a_marker_with_its_hit(cfg):
+    """A web-derived hit's untrusted marker is never shown without the hit,
+    or the hit without its marker."""
+    hits = [_hit("a" * 590) for _ in range(12)]
+    hits.append(_hit("the page said buy now " + "b" * 560,
+                     web=["example.com"]))
+    mem = FakeMemory(hits=hits)
+    out = run(run_tool("search_history", {"query": "a"}, cfg,
+                       origin_agent="claude", memory=mem))
+    assert "Untrusted" not in out and "buy now" not in out
+    assert out.endswith("(1 more matching message not shown. "
+                        "Narrower search words will bring them up.)")
+
+
 def test_clean_event_date_is_the_local_calendar_day(monkeypatch):
     """Contract 1.4: event_date is a calendar day at the owner's local
     midnight. An offset-carrying value is converted to local time first,

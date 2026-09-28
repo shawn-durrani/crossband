@@ -472,6 +472,9 @@ class Settings(BaseModel):
     search_timeout: float = 20.0
     fetch_timeout: float = 15.0
     max_tool_output: int = 8000
+    # One search_history hit: membro's excerpt is up to 64 words, about 350
+    # characters on average and under 500 for 99% of hits (#583).
+    max_search_hit_chars: int = 600
     tool_log_chars: int = 1200  # per tool event when replayed into later transcripts
     max_tool_rounds: int = 6
     # #253/#417: the tool-call loop cap per reply while spoken research mode
