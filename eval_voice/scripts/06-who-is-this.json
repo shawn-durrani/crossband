@@ -1,0 +1,16 @@
+{
+  "id": "who-is-this",
+  "about": "A voice nobody knows talks long enough for the app to ask who it is. The owner answers out loud, the new voice talks again, and the owner spells the name.",
+  "cast": ["Alex", "Sam", "Mateo"],
+  "noise": null,
+  "turns": [
+    {"speaker": "Alex", "text": "Okay, what are we doing about dinner tonight? I haven't even looked in the fridge yet."},
+    {"speaker": "Sam", "text": "There's leftover curry from yesterday, and I think there's still some rice in the pantry."},
+    {"speaker": "Mateo", "text": "Sorry to jump in, but I picked up fresh bread and a bag of tomatoes on the way over, if that's any help."},
+    {"speaker": "Mateo", "text": "I can make a quick salad while the curry heats up. It only takes about ten minutes."},
+    {"speaker": "Alex", "text": "Oh, sorry, that's Mateo. He's staying with us this week.", "events": [{"answer": "Mateo"}]},
+    {"speaker": "Mateo", "text": "Hi everyone. Thanks for having me, the spare room is lovely."},
+    {"speaker": "Alex", "text": "And his name's spelt M, A, T, E, O.", "events": [{"correct": "Mateo"}]},
+    {"speaker": "Sam", "text": "Nice to meet you. Grab a plate whenever you're ready."}
+  ]
+}

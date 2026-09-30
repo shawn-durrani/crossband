@@ -172,11 +172,12 @@ MEASUREMENTS = (
     Measurement(
         id="voice", module="eval_voice", title="Voice rig",
         measures=("Does the app put the right name on each spoken turn, over "
-                  "noise and when two people talk at once? It plays made-up "
+                  "noise and when two people talk at once, and does it take "
+                  "an answer to \"who's this?\" It plays made-up "
                   "conversations into a second copy of the app and scores "
                   "every turn."),
-        costs=("About 35 cents the first time, for ElevenLabs to speak the "
-               "lines, which are then kept. After that about 2 cents a run "
+        costs=("About 47 cents the first time, for ElevenLabs to speak the "
+               "lines, which are then kept. After that about 12 cents a run "
                "to transcribe and read the turns."),
         takes=("About ten minutes, longer the first time while the voice "
                "models download."),

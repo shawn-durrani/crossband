@@ -30,6 +30,11 @@ REPO = RIG.parent
 DEFAULT_CACHE = RIG / "cache"
 TTS_PER_CHAR = 110.0 / 1_000_000     # the app's own voice rate card
 STT_PER_HOUR = 0.40
+# The second app's voice sessions end after this much quiet, where yours
+# wait ten minutes, so each conversation's end-of-session pass is scored.
+# Long enough that no pause inside a conversation ends a session.
+SESSION_IDLE_S = 45.0
+END_PASS_MARGIN_S = 60.0
 
 
 def say(msg: str) -> None:
@@ -56,6 +61,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="leave the calibrated scorer off")
     p.add_argument("--speed", type=float, default=1.0,
                    help="how fast to play the audio; 1 is real time")
+    p.add_argument("--session-idle", type=float, default=SESSION_IDLE_S,
+                   help="seconds of quiet that end the second app's voice "
+                   "session and run its end-of-session pass; 0 keeps the "
+                   "app's ten minutes and leaves the pass unscored")
     p.add_argument("--tts-model", default="eleven_multilingual_v2")
     p.add_argument("--cache", default=str(DEFAULT_CACHE))
     p.add_argument("--keep", action="store_true",
@@ -114,22 +123,40 @@ def write_mix(cache: Path, script_id: str, turns: list) -> Path:
 
 
 def score_run(results: dict, mixed: dict) -> tuple:
-    rows, events, diag = [], [], {"methods": {}, "errors": {}, "sessions": 0,
-                                  "sessions_closed": 0, "relay_errors": 0}
+    rows, events = [], []
+    diag = {"methods": {}, "errors": {}, "sessions": 0, "sessions_closed": 0,
+            "sessions_ended": 0, "relay_errors": 0, "people_met": 0,
+            "forgotten": 0,
+            "end_pass": {"sessions": 0, "ended": 0, "relabelled": 0,
+                         "voices_renamed": 0, "errors": 0, "why": {}}}
     for sid, result in results.items():
-        for mt, heard in zip(mixed[sid], result.heard):
+        after = result.after_end or [None] * len(result.heard)
+        for mt, heard, later in zip(mixed[sid], result.heard, after):
             row = scoring.judge(mt.truth, heard)
             row["method"] = (result.diagnostics.get("per_turn_method") or {}) \
                 .get(mt.truth.index, "")
             row["transcript"] = heard.transcript
+            if later is not None:
+                again = scoring.judge(mt.truth, later)
+                row["after_end"] = {k: again[k] for k in
+                                    ("verdict", "named", "reason")}
             rows.append(row)
+        for e in result.events:
+            e.script = e.script or sid
         events += result.events
         d = result.diagnostics
         for key in ("methods", "errors"):
             for k, v in (d.get(key) or {}).items():
                 diag[key][k] = diag[key].get(k, 0) + v
-        for key in ("sessions", "sessions_closed", "relay_errors"):
+        for key in ("sessions", "sessions_closed", "sessions_ended",
+                    "relay_errors", "people_met", "forgotten"):
             diag[key] += d.get(key) or 0
+        ep = d.get("end_pass") or {}
+        for key in ("sessions", "ended", "relabelled", "voices_renamed",
+                    "errors"):
+            diag["end_pass"][key] += ep.get(key) or 0
+        for k, v in (ep.get("why") or {}).items():
+            diag["end_pass"]["why"][k] = diag["end_pass"]["why"].get(k, 0) + v
     return rows, events, diag
 
 
@@ -216,21 +243,27 @@ def main(argv=None) -> int:
             raise SystemExit("the app needs ELEVENLABS_API_KEY to transcribe; "
                              "pass --env")
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        idle = max(0.0, args.session_idle or 0.0)
         instance = Instance(cache / "runs" / stamp, port=args.port, keys=keys,
                             owner=cast_mod.OWNER, diariser=diariser,
                             calibrated=not args.no_calibrated,
+                            session_idle_s=idle,
                             models_dir=cache / "voice_models")
         say(f"starting an isolated crossband on port {args.port}")
         instance.start()
-        adapter = CrossbandAdapter(instance.base, diariser=diariser,
-                                   calibrated=not args.no_calibrated,
-                                   speed=args.speed, say=say)
+        adapter = CrossbandAdapter(
+            instance.base, diariser=diariser,
+            calibrated=not args.no_calibrated, speed=args.speed,
+            end_pass_wait_s=idle + END_PASS_MARGIN_S if idle else 0.0,
+            say=say)
         pace = ("in real time" if args.speed == 1
                 else f"at {args.speed:g} times real time")
+        ending = (f"voice sessions ending after {idle:g} quiet seconds"
+                  if idle and diariser else "no end-of-session pass scored")
         described = (f"Calibrated scorer {'off' if args.no_calibrated else 'on'}, "
                      f"diariser {'on' if diariser else 'off'}, played {pace}, "
-                     f"{cast_mod.OWNER} as the owner, {', '.join(enrolled)} "
-                     "recorded before the run.")
+                     f"{ending}, {cast_mod.OWNER} as the owner, "
+                     f"{', '.join(enrolled)} recorded before the run.")
     results, closing, finished = {}, {}, False
     try:
         say("recording each person's voice")

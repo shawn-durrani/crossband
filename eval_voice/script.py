@@ -7,7 +7,13 @@ the way through the first one, which is how the rig makes crosstalk. A
 line can be quieter than the rest (`gain_db`), and the whole
 conversation can sit on a noise bed. A turn can also carry the
 introductions and spoken instructions it holds, so the run can say
-whether the app heard them.
+whether the app heard them:
+
+  introduce  the line introduces someone on the roster by name
+  room       the line switches the room on or off
+  answer     the line answers the app's "who's this?" about a new voice,
+             with a name on the roster or "TV" for "that's the TV"
+  correct    the line spells or corrects a name on the roster
 
 JSON shape, one object per file:
 
@@ -20,10 +26,13 @@ JSON shape, one object per file:
        {"speaker": "Sam", "text": "...",
         "over": {"speaker": "Dave", "text": "...", "at": 0.5}},
        {"speaker": "Alex", "text": "...", "events": [{"introduce": "Mateo"}]},
-       {"speaker": "Alex", "text": "...", "events": [{"room": "on"}]}]}
+       {"speaker": "Alex", "text": "...", "events": [{"room": "on"}]},
+       {"speaker": "Alex", "text": "...", "events": [{"answer": "TV"}]},
+       {"speaker": "Alex", "text": "...", "events": [{"correct": "Mateo"}]}]}
 
 Every name has to be on the synthetic roster (cast.py), so a script can
-never carry a real person's name.
+never carry a real person's name. The cast can also hold the TV, a voice
+that isn't a person.
 """
 
 import json
@@ -141,12 +150,17 @@ def _events(raw, where) -> tuple:
     for e in raw:
         if not isinstance(e, dict) or len(e) != 1:
             raise ScriptError(f"{where}: an event is one key, "
-                              "introduce or room")
+                              "introduce, room, answer or correct")
         (kind, value), = e.items()
-        if kind == "introduce":
+        if kind in ("introduce", "correct"):
             if value not in cast_mod.CAST:
-                raise ScriptError(f"{where}: introduce {value!r} isn't on "
+                raise ScriptError(f"{where}: {kind} {value!r} isn't on "
                                   "the synthetic roster")
+        elif kind == "answer":
+            if value not in cast_mod.CAST and value not in cast_mod.MEDIA:
+                raise ScriptError(f"{where}: answer {value!r} is neither on "
+                                  f"the synthetic roster nor one of "
+                                  f"{list(cast_mod.MEDIA)}")
         elif kind == "room":
             if value not in ("on", "off"):
                 raise ScriptError(f"{where}: room is on or off")
@@ -166,10 +180,11 @@ def from_dict(d: dict, source: str = "<unknown>", origin: str = "fixed") -> Scri
     cast = d.get("cast")
     if not isinstance(cast, list) or not cast:
         raise ScriptError(f"{where}: cast must be a list of names")
-    unknown = [n for n in cast if n not in cast_mod.CAST]
+    unknown = [n for n in cast if n not in cast_mod.voices()]
     if unknown:
         raise ScriptError(f"{where}: {unknown} aren't on the synthetic roster "
-                          f"{list(cast_mod.CAST)}")
+                          f"{list(cast_mod.CAST)} or one of "
+                          f"{list(cast_mod.MEDIA)}")
     if len(set(cast)) != len(cast):
         raise ScriptError(f"{where}: a name is in the cast twice")
     noise = d.get("noise")

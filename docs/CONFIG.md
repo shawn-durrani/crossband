@@ -135,6 +135,7 @@ a default install records it.
 | `voice_id_model_url` | `""` | Overrides the local speaker model's download URL. Empty uses the built-in pinned URL. Pin the hash too, because a URL override checked against the default hash fails verification and the matcher stays unavailable. |
 | `voice_id_model_sha256` | `""` | Overrides the local speaker model's pinned SHA-256. Empty uses the built-in pin. The model is fetched once to `<data_dir>/voice_models/`, verified against this hash before use, and never committed. |
 | `diarize_shadow_url` | `""` | The address of the diariser on this computer that follows each voice through a voice session, such as `http://127.0.0.1:8910`. An address on any other computer is refused. Empty names each turn on its own. [The diariser](#the-diariser). |
+| `voice_session_idle_s` | `600` | How many quiet seconds end a voice session, 5 at least. The app then names every voice once more, over everything it heard. The voice rig sets it short on its own copy of the app to score that pass. [The diariser](#the-diariser). |
 | `voice_calibrated_scorer` | `false` | Turns on the calibrated scorer. Once its first build finishes it names voices, checks stored clips and scores their trust, and the Voices page shows readiness. It downloads the ERes2Net speaker model once, about 26MB, checked against a pinned hash. [How a voice is named](VOICE_ID.md#how-a-voice-is-named). |
 
 ### Choosing the voice model

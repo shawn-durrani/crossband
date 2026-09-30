@@ -1,0 +1,16 @@
+{
+  "id": "tv-in-the-room",
+  "about": "A TV nobody knows talks long enough for the app to ask who it is. The owner says out loud that it's the TV, and the TV keeps talking.",
+  "cast": ["Alex", "Sam", "TV"],
+  "noise": null,
+  "turns": [
+    {"speaker": "Alex", "text": "Do you still want to watch the match later, or are you too tired after today?"},
+    {"speaker": "Sam", "text": "Maybe the first half. I'll probably fall asleep on the couch after that."},
+    {"speaker": "TV", "text": "And in other news tonight, the council has approved plans for a new footbridge across the river, with work expected to begin early next year."},
+    {"speaker": "TV", "text": "Residents say the crossing is long overdue, although some have raised concerns about parking near the site."},
+    {"speaker": "Alex", "text": "Oh, that's just the TV, ignore it.", "events": [{"answer": "TV"}]},
+    {"speaker": "TV", "text": "Now to the weather, and it's shaping up to be a cold and windy weekend right across the region."},
+    {"speaker": "Sam", "text": "Can you turn that down a bit? I can barely hear myself think."},
+    {"speaker": "Alex", "text": "Sure, I'll mute it for now."}
+  ]
+}

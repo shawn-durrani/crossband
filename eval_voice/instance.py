@@ -16,6 +16,8 @@ config.local.json and no .env, and starts it from that copy:
   * a process environment built from nothing: the path and home
     variables, the settings below, and the two keys it needs (ElevenLabs
     to transcribe, Anthropic for the one model call that reads each turn)
+  * a voice session that ends after a short quiet, where yours waits ten
+    minutes, so a run sees the naming pass that ends each session
 
 The voice models are shared across runs through a folder in the rig's
 cache, so they download once.
@@ -75,7 +77,7 @@ def snapshot_code(dest: Path, repo: Path = REPO) -> Path:
 
 def instance_env(port: int, data_dir: Path, keys: dict, *, owner: str,
                  diariser: str = "", calibrated: bool = True,
-                 environ=None) -> dict:
+                 session_idle_s: float = 0.0, environ=None) -> dict:
     """The instance's whole environment. Pure, so the tests can pin what
     goes in and what's left out."""
     environ = os.environ if environ is None else environ
@@ -93,6 +95,8 @@ def instance_env(port: int, data_dir: Path, keys: dict, *, owner: str,
     })
     if diariser:
         env["CROSSBAND_DIARIZE_SHADOW_URL"] = diariser
+    if session_idle_s:
+        env["CROSSBAND_VOICE_SESSION_IDLE_S"] = f"{float(session_idle_s):g}"
     for k in KEYS:
         if keys.get(k):
             env[k] = keys[k]
@@ -103,14 +107,15 @@ class Instance:
     """One isolated crossband, started in `run_dir` and stopped by stop()."""
 
     def __init__(self, run_dir, *, port=DEFAULT_PORT, keys=None, owner="Alex",
-                 diariser="", calibrated=True, models_dir=None,
-                 python=None, repo=REPO):
+                 diariser="", calibrated=True, session_idle_s=0.0,
+                 models_dir=None, python=None, repo=REPO):
         self.run_dir = Path(run_dir)
         self.port = port
         self.keys = dict(keys or {})
         self.owner = owner
         self.diariser = diariser
         self.calibrated = calibrated
+        self.session_idle_s = session_idle_s
         self.models_dir = Path(models_dir) if models_dir else None
         self.python = python or sys.executable
         self.repo = Path(repo)
@@ -141,7 +146,8 @@ class Instance:
         code = snapshot_code(self.run_dir, self.repo)
         env = instance_env(self.port, self.data_dir, self.keys,
                            owner=self.owner, diariser=self.diariser,
-                           calibrated=self.calibrated)
+                           calibrated=self.calibrated,
+                           session_idle_s=self.session_idle_s)
         log = open(self.log_path, "ab")
         self.proc = subprocess.Popen(
             [self.python, "-m", "backend"], cwd=str(code), env=env,

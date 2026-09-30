@@ -4,9 +4,12 @@ MockRenderer speaks each line as a buzz at a pitch of its own per person,
 shaped like syllables, about a third of a second a word, so the mixer and
 the truth run on audio of the right length. MockAdapter answers from the
 truth it's handed, wrong on a fixed few turns, so the report has every
-kind of verdict to show.
+kind of verdict to show. Its end-of-session pass names the short turns
+it left listening, so that section of the report has something to show
+too.
 """
 
+import dataclasses
 import hashlib
 
 import numpy as np
@@ -15,7 +18,8 @@ from eval_voice import cast as cast_mod
 from eval_voice.adapter import Adapter, ConversationResult, EventCheck, Heard
 from eval_voice.mix import SAMPLE_RATE, to_pcm
 
-PITCH = {"Alex": 110.0, "Sam": 210.0, "Dave": 125.0, "Mateo": 140.0}
+PITCH = {"Alex": 110.0, "Sam": 210.0, "Dave": 125.0, "Mateo": 140.0,
+         "TV": 100.0}
 WORD_S = 0.33
 
 
@@ -56,7 +60,7 @@ class MockAdapter(Adapter):
         return {"people": {n: {"clips": 3, "seconds": 28.0} for n in voices}}
 
     def converse(self, script_id: str, turns: list) -> ConversationResult:
-        heard, events = [], []
+        heard, events, answered = [], [], set()
         roster = list(cast_mod.CAST)
         for mt in turns:
             t = mt.truth
@@ -64,6 +68,9 @@ class MockAdapter(Adapter):
                       transcript=" ".join(v.words for v in t.voices))
             if _slip(script_id, t.index):
                 h.names = [next(n for n in roster if n not in t.names)]
+            elif t.media:
+                h.placeholders = 1
+                h.reason = "media" if t.main in answered else "new_voice"
             elif t.crosstalk:
                 h.crosstalk = True
                 h.names = list(t.names)
@@ -71,15 +78,42 @@ class MockAdapter(Adapter):
                               for v in t.voices]
             elif t.alone_s(t.main) < 1.5:
                 h.placeholders, h.reason = 1, "listening"
-            elif not t.enrolled and not t.introduced:
+            elif not t.enrolled and not t.introduced \
+                    and t.main not in answered:
                 h.placeholders, h.reason = 1, "new_voice"
             else:
                 h.names = [t.main]
-                h.learning = not t.enrolled
+                h.learning = not t.enrolled and t.main not in answered
             heard.append(h)
             for e in t.events:
                 kind, value = next(iter(e.items()))
-                events.append(EventCheck(index=t.index, kind=kind, value=value,
-                                         result="heard", seen=value))
+                check = EventCheck(index=t.index, kind=kind, value=value,
+                                   result="heard", seen=value)
+                if kind == "answer":
+                    # the ask points at the voice's first turn, and a name
+                    # gets one saved clip
+                    media = value in cast_mod.MEDIA
+                    check.detail = {
+                        "ask_turn": next(x.truth.index for x in turns
+                                         if x.truth.main == value),
+                        "clips": None if media else 1,
+                        "people_new": [] if media else [value],
+                        "open_asks": 0}
+                    answered.add(value)
+                events.append(check)
+        # The pass names the short turns it left listening, and the turns
+        # an answered voice spoke before the answer.
+        after = []
+        for mt, h in zip(turns, heard):
+            t = mt.truth
+            if h.names or h.crosstalk:
+                after.append(h)
+            elif t.media and t.main in answered:
+                after.append(dataclasses.replace(h, reason="media"))
+            elif h.reason == "listening" or t.main in answered:
+                after.append(dataclasses.replace(
+                    h, names=[t.main], placeholders=0, reason=""))
+            else:
+                after.append(h)
         return ConversationResult(script=script_id, heard=heard, events=events,
-                                  diagnostics={"mock": True})
+                                  diagnostics={"mock": True}, after_end=after)

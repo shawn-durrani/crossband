@@ -10,7 +10,8 @@ answer for every spoken turn:
      arrives, and end_turn() at the commit. A per-chat feed thread opens a
      streaming tracking session on the loopback diariser (workbench's
      diarserve, its /sessions routes) the first time a turn arrives, and
-     reopens one after SESSION_IDLE_S of quiet. It pushes the chunks in
+     reopens one after SESSION_IDLE_S of quiet (idle_s, which the voice
+     rig shortens on its own second app). It pushes the chunks in
      quarter-second pieces, and at the end of a turn pushes a short
      silence so the tracker labels the turn's last second. The answer is
      spans in session time: which voice slot, start, end, and whether
@@ -170,9 +171,9 @@ kept voice's name onto the joined voice's turns by its usual rules. The
 turn's row lists each join (`joined`: from, to, the score, the lead and
 which way).
 
-THE END-OF-SESSION PASS. A tracking session ends after SESSION_IDLE_S of
-quiet (the feed thread exits, or the next turn finds it stale) or when
-the diariser URL changes. Before it's closed, on the feed thread and
+THE END-OF-SESSION PASS. A tracking session ends after idle_s of quiet
+(the feed thread exits, or the next turn finds it stale) or when the
+diariser URL changes. Before it's closed, on the feed thread and
 after any turn in hand has its answer, every session voice is named once
 more over every fingerprint the session collected, and fill_labels
 writes the names onto the session's turns, the last turn included.
@@ -234,6 +235,7 @@ from . import db, voiceid
 log = logging.getLogger("crossband.voice_sessions")
 
 SESSION_IDLE_S = 600.0          # a quieter chat gets a fresh session
+IDLE_FLOOR_S = 5.0              # the shortest idle the setting can ask for
 MIN_SPAN_S = 0.8                # shorter spans aren't fingerprinted
 LISTEN_MIN_S = 1.5              # a voice under this much clean speech listens
 NEW_VOICE_MIN_S = 4.0           # clean speech before a voice can be "new"
@@ -857,7 +859,7 @@ class _Feed:
         try:
             while True:
                 try:
-                    kind, value = self.q.get(timeout=SESSION_IDLE_S)
+                    kind, value = self.q.get(timeout=idle_s(self.cfg))
                 except queue.Empty:
                     break
                 if kind == "audio":
@@ -894,7 +896,7 @@ class _Feed:
         if not base:
             raise _SessionError("no_diariser")
         return _session_for(self.chat_id, base, time.time(),
-                            ended=self.ended)
+                            ended=self.ended, idle=idle_s(self.cfg))
 
     def _push(self):
         if not self.pending or self.broken:
@@ -1698,15 +1700,30 @@ def _close(sess):
         pass            # the diariser expires idle sessions itself
 
 
-def _session_for(chat_id, base, now, ended=None):
+def idle_s(cfg) -> float:
+    """Seconds of quiet that end a tracking session: the
+    voice_session_idle_s setting, never under IDLE_FLOOR_S, else
+    SESSION_IDLE_S. The voice rig shortens it on its own second app, so a
+    run sees THE END-OF-SESSION PASS without waiting ten minutes."""
+    try:
+        got = float((cfg or {}).get("voice_session_idle_s") or 0)
+    except (TypeError, ValueError):
+        got = 0.0
+    if not math.isfinite(got) or got <= 0:
+        return SESSION_IDLE_S
+    return max(IDLE_FLOOR_S, got)
+
+
+def _session_for(chat_id, base, now, ended=None, idle=None):
     """This chat's open tracking session, opening one when there is none,
-    it went quiet for SESSION_IDLE_S, or the diariser URL changed. A
-    session that ended is added to `ended` as (session, why) for the
-    feed to finish (THE END-OF-SESSION PASS), or closed at once with no
-    list."""
+    it went quiet for `idle` seconds (SESSION_IDLE_S unless given), or the
+    diariser URL changed. A session that ended is added to `ended` as
+    (session, why) for the feed to finish (THE END-OF-SESSION PASS), or
+    closed at once with no list."""
+    idle = SESSION_IDLE_S if idle is None else idle
     with _lock:
         sess = _sessions.get(chat_id)
-    if sess and (now - sess["last_at"] > SESSION_IDLE_S
+    if sess and (now - sess["last_at"] > idle
                  or sess["base"] != base):
         if ended is None:
             _close(sess)

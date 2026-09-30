@@ -409,9 +409,11 @@ Three kinds of truth:
   `eval_voice/` writes short conversations for made-up people, speaks
   them in stock ElevenLabs voices, and mixes in crosstalk, quiet voices
   and noise. It plays them into a second copy of the app and scores
-  every turn against the targets here. It's repeatable and needs nobody
-  in the room, and a synthetic voice is cleaner than a person, so it
-  catches regressions and mix-ups and can't set the thresholds.
+  every turn against the targets here, before and after the last naming
+  pass. It also scores the answers to "who's this?", a name or "that's
+  the TV", said out loud. It's repeatable and needs nobody in the room,
+  and a synthetic voice is cleaner than a person, so it catches
+  regressions and mix-ups and can't set the thresholds.
   [eval_voice/README.md](../eval_voice/README.md) has the details.
 - **Made-up sessions from real voices.** 20 to 60 minute sessions
   assembled from the household's kept clips, with crosstalk, short

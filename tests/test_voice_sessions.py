@@ -1492,6 +1492,39 @@ def test_a_quiet_feed_ends_its_session_with_the_pass(app, fakes,
     assert _wait_for(lambda: chat not in vss._feeds)
 
 
+def test_the_idle_time_is_a_setting_with_a_floor():
+    """#416: the voice rig's second app shortens the idle so a run sees the
+    end-of-session pass. Unset, empty or nonsense keeps ten minutes."""
+    assert vss.idle_s({}) == vss.SESSION_IDLE_S == 600.0
+    assert vss.idle_s({"voice_session_idle_s": 45}) == 45.0
+    assert vss.idle_s({"voice_session_idle_s": 1}) == vss.IDLE_FLOOR_S
+    for bad in (0, -3, "soon", None, float("nan")):
+        assert vss.idle_s({"voice_session_idle_s": bad}) == 600.0
+    from backend.config import Settings, _env_overrides
+    assert Settings().voice_session_idle_s == 600.0
+    assert _env_overrides({"CROSSBAND_VOICE_SESSION_IDLE_S": "45"}) == {
+        "voice_session_idle_s": 45.0}
+
+
+def test_the_setting_ends_a_quiet_feed_and_a_stale_session(app, fakes,
+                                                           monkeypatch):
+    monkeypatch.setattr(vss, "IDLE_FLOOR_S", 0.1)
+    chat = _chat(app)
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}]]
+    _live(chat, "t1", 3.0, cfg={**CFG, "voice_session_idle_s": 0.4})
+    row = _wait_for(lambda: _end_row("s1"), timeout=5)
+    assert row["end"] == "idle"
+    fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}]]
+    _live(3, "t2", 3.0)
+    sess, ended = vss._sessions[3], []
+    later = sess["last_at"] + 31
+    assert vss._session_for(3, sess["base"], later, ended=ended,
+                            idle=60) is sess and not ended
+    assert vss._session_for(3, sess["base"], later, ended=ended,
+                            idle=30) is not sess
+    assert ended == [(sess, "idle")]
+
+
 def test_a_new_diariser_url_ends_the_session_for_the_pass(app, fakes):
     fakes.script = [[{"slot": 1, "start": 0.0, "end": 3.0}]]
     _live(3, "t1", 3.0)
