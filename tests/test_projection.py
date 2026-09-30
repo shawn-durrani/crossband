@@ -675,6 +675,43 @@ def test_system_only_fields_are_real_and_reach_the_system_channel(cfg):
         assert sentinel in combined, f"{sentinel} never reached the system prompt at all"
 
 
+# ---------- how the recall block introduces its facts (#594) ----------
+#
+# The recalled facts ride the uncached volatile tail after the memory
+# summary, the order tests/test_cache_split.py pins. What the block says
+# about them decides whether a seat uses them. "Silently ignore what
+# doesn't, and don't treat their presence as a request to bring them up"
+# read as "these are optional": in the memory benchmark a seat asked for
+# battery tips gave advice anyone could get, with the person's power bank
+# in the block, and another asked for the person's city instead of naming
+# the kind of event their facts pointed to. This pins the words that
+# replaced it, deliberately, and that nothing about the block moved.
+
+
+def test_recall_block_asks_for_advice_built_on_memory(cfg):
+    live_cfg = dict(cfg, memory_summary="SUMMARY_TOKEN",
+                    memory_ambient="[2026-05-01] Alex owns a power bank.")
+    stable, volatile = split_system_prompt(
+        PARTICIPANT, ROSTER, live_cfg, None, "", False)
+    head = "## Possibly relevant memory entries"
+    block = volatile[volatile.index(head):]
+    assert "Alex owns a power bank." in block
+    user = cfg["user_name"]
+    assert (f"When {user} asks for advice, a recommendation or ideas, build "
+            "your answer on what memory here says about them") in block
+    assert "rather than advice anyone could get" in block
+    assert ("Lead with that answer even when a detail is missing (where "
+            "they are, say), and ask for the detail after it, never in "
+            "place of it.") in block
+    # the guard against reciting stays; the optional framing is gone
+    assert "never recite an entry just because it's here" in block
+    assert "silently ignore" not in block
+    assert "request to bring them up" not in block
+    # same place as before: the volatile tail, after the summary
+    assert head not in stable
+    assert volatile.index("SUMMARY_TOKEN") < volatile.index(head)
+
+
 # ---------- attachment projection (#242) ----------
 #
 # The placeholder test above stubs anthropic_blocks to []; nothing pinned
