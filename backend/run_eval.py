@@ -199,29 +199,34 @@ class _Ask:
     enrolled: bool
 
 
+def read_asker(con, chat_id, message_id, owner_name) -> Asker:
+    """Who sent the asking turn, from the turn, the chat's room mode and
+    its open doubts, read fresh: a voice label can land after the round
+    loaded the transcript. The round's own search of the saved chats asks
+    this too (engine._round_history_search, membro#136)."""
+    if not message_id:
+        return NOBODY
+    row = con.execute(
+        "SELECT id, chat_id, speaker, content, voice_turn_id, voice_labels "
+        "FROM messages WHERE id=?", (message_id,)).fetchone()
+    chat = con.execute("SELECT room_mode FROM chats WHERE id=?",
+                       (chat_id,)).fetchone()
+    if row is None or chat is None or row["chat_id"] != chat_id:
+        return NOBODY
+    flags = db.get_room_flags(con, chat_id, open_only=True)
+    flagged = frozenset(f["message_id"] for f in flags if f.get("message_id"))
+    return classify(dict(row), owner_name=owner_name,
+                    room_mode=bool(chat["room_mode"]), open_flag_ids=flagged)
+
+
 def _read_ask(chat_id, message_id, owner_name) -> _Ask:
-    """The asking turn, the chat's room mode and open doubts, and whether a
-    password is set, read fresh: a voice label can land after the round
-    loaded the transcript."""
+    """The asker (read_asker) and whether a password is set."""
     con = db.connect()
     try:
-        enrolled = auth.is_enrolled(con)
-        if not message_id:
-            return _Ask(NOBODY, enrolled)
-        row = con.execute(
-            "SELECT id, chat_id, speaker, content, voice_turn_id, voice_labels "
-            "FROM messages WHERE id=?", (message_id,)).fetchone()
-        chat = con.execute("SELECT room_mode FROM chats WHERE id=?",
-                           (chat_id,)).fetchone()
-        flags = db.get_room_flags(con, chat_id, open_only=True)
+        return _Ask(read_asker(con, chat_id, message_id, owner_name),
+                    auth.is_enrolled(con))
     finally:
         con.close()
-    if row is None or chat is None or row["chat_id"] != chat_id:
-        return _Ask(NOBODY, enrolled)
-    flagged = frozenset(f["message_id"] for f in flags if f.get("message_id"))
-    return _Ask(classify(dict(row), owner_name=owner_name,
-                         room_mode=bool(chat["room_mode"]),
-                         open_flag_ids=flagged), enrolled)
 
 
 # ---------- counting ----------

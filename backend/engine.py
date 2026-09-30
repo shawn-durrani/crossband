@@ -114,13 +114,14 @@ def _chat_memory_enabled(chat_id):
         con.close()
 
 
-def prewarm_recall(chat_id, text, memory, history=True):
+def prewarm_recall(chat_id, text, memory, history=True, owner_name="User"):
     """Start the ambient recall for a voice utterance at speech-end (called
     from the STT relay when the commit frame passes through). Replaces any
     prior prewarm for the chat, cancelling its task so a superseded
     utterance can't leak a stray request. Fire-and-forget: the round adopts
     the task if it matches, and memory.recall itself fails soft to [].
-    `history` is the history_prefetch setting (membro#136)."""
+    `history` is the history_prefetch setting (membro#136), and
+    `owner_name` the user_name setting its owner rule reads."""
     norm = _norm_query(text)
     if memory is None or not norm:
         return
@@ -142,11 +143,12 @@ def prewarm_recall(chat_id, text, memory, history=True):
                                 "at": time.monotonic()}
     log.info("recall prewarm started: chat=%s norm_chars=%d", chat_id, len(norm))
     # membro#136: a turn that asks about the person or their past starts
-    # its search of the saved chats here too, beside the recall.
+    # its search of the saved chats here too, beside the recall, when it
+    # can be the owner's (_history_gate).
     if history:
         history_prefetch.prewarm(chat_id, text, memory, norm,
                                  gate=lambda: asyncio.to_thread(
-                                     _history_gate, chat_id))
+                                     _history_gate, chat_id, owner_name))
 
 
 def _seat_words(roster):
@@ -156,17 +158,37 @@ def _seat_words(roster):
         [n for p in roster for n in (p.get("slug"), p.get("name")) if n])
 
 
-def _history_gate(chat_id):
-    """(memory on for the chat, its seats' words) for a search started at
-    the voice commit, read in one connection on a worker thread."""
+def _history_gate(chat_id, owner_name):
+    """(search now, the chat's seat words) for a search started at the voice
+    commit, read in one connection on a worker thread. It searches only
+    with memory on for the chat and when the turn is the owner's by
+    run_eval's rule. The voice check hasn't named the speaker yet at the
+    commit, so the turn is judged as spoken with no label, which is the
+    owner's only with room mode off. The round judges it again once the
+    label is on the row (_round_history_search)."""
     con = db.connect()
     try:
-        row = con.execute("SELECT memory_enabled FROM chats WHERE id=?",
-                          (chat_id,)).fetchone()
+        row = con.execute("SELECT memory_enabled, room_mode FROM chats "
+                          "WHERE id=?", (chat_id,)).fetchone()
         roster = db.get_chat_participants(con, chat_id) if row else []
     finally:
         con.close()
-    return bool(row and row["memory_enabled"]), _seat_words(roster)
+    if not row or not row["memory_enabled"]:
+        return False, _seat_words(roster)
+    unlabelled = {"speaker": "user", "voice_turn_id": "commit"}
+    owner = run_eval.classify(unlabelled, owner_name=owner_name,
+                              room_mode=bool(row["room_mode"])).owner
+    return owner, _seat_words(roster)
+
+
+def _owner_asked(chat_id, message_id, owner_name):
+    """Did the owner send the round's asking turn? run_eval's rule, on the
+    row as it is now, read on a worker thread."""
+    con = db.connect()
+    try:
+        return run_eval.read_asker(con, chat_id, message_id, owner_name).owner
+    finally:
+        con.close()
 
 
 async def _adopted_result(task):
@@ -725,16 +747,30 @@ def _judge_reply(content, tools, *, pass_note, echo_note, echo_refs, idx,
     return "accept", "", ""
 
 
-def _round_history_search(chat_id, q, memory, roster, is_handback, cfg):
-    """The round's search of the saved chats (membro#136), or None. The
-    search started at the voice commit is adopted on the recall prewarm's
-    terms, fresh and matching the final transcript, and cancelled
-    otherwise. Without one, a search starts now when the turn wants
-    history. A hand-back round answers no one, so it never searches."""
+async def _round_history_search(chat_id, q, memory, roster, is_handback, cfg,
+                                asker_id, room_mode):
+    """The round's search of the saved chats (membro#136), or None. It runs
+    only on the owner's own turns, by run_eval's rule: typed, spoken with
+    the owner's voice label, or spoken unlabelled with room mode off. A
+    guest, a voice nobody could name or the TV never starts it, and the
+    seats keep search_history for those. The search started at the voice
+    commit is adopted on the recall prewarm's terms, fresh and matching
+    the final transcript, and only with room mode off, the one case the
+    commit searched in (_history_gate). Otherwise it's cancelled, and a
+    search starts now when the turn wants history. A hand-back round
+    answers no one, so it never searches."""
     pre = history_prefetch.take_prewarmed(chat_id)
-    wanted = bool(q and not is_handback and cfg.get("history_prefetch", True))
+    wanted = bool(q and not is_handback and cfg.get("history_prefetch", True)
+                  and (pre is not None or history_prefetch.wants_history(q)))
+    if wanted:
+        wanted = await asyncio.to_thread(_owner_asked, chat_id, asker_id,
+                                         cfg.get("user_name", "User"))
+        if not wanted:
+            log.info("history prefetch: not the owner's turn (chat=%s)",
+                     chat_id)
     if pre is not None:
-        if (wanted and time.monotonic() - pre.at <= PREWARM_TTL_S
+        if (wanted and not room_mode
+                and time.monotonic() - pre.at <= PREWARM_TTL_S
                 and _prewarm_matches(pre.norm, _norm_query(q))):
             log.info("history prefetch: adopted-prewarm (chat=%s)", chat_id)
             return pre
@@ -1007,11 +1043,6 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                          "adopted-prewarm" if adopted is not None
                          else ("prewarm-mismatch" if pre else "no-prewarm"),
                          chat_id)
-                # membro#136: a turn that asks about the person or their past
-                # searches the saved chats alongside the recall, adopting the
-                # search started at the voice commit on the same terms.
-                search = _round_history_search(chat_id, q, memory, roster,
-                                               is_handback, cfg)
                 summary_task = asyncio.create_task(_timed_ms(memory.get_summary()))
                 if adopted is not None:
                     recall_task = asyncio.create_task(_timed_ms(_adopted_result(adopted)))
@@ -1019,6 +1050,14 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                     recall_task = asyncio.create_task(_timed_ms(
                         memory.recall(q, limit=6, origin="auto",
                                       chat_id=chat_id))) if q else None
+                # membro#136: the owner's turn that asks about them or their
+                # past searches the saved chats alongside the recall,
+                # adopting the search started at the voice commit on the
+                # same terms. The summary and recall are already out, so
+                # the owner check doesn't hold them up.
+                search = await _round_history_search(
+                    chat_id, q, memory, roster, is_handback, cfg, asker_id,
+                    bool(chat["room_mode"]))
                 memory_summary_cache, memory_summary_ms = await summary_task
                 facts = []
                 if recall_task:
