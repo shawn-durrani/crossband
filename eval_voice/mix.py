@@ -5,9 +5,11 @@ For each turn the mixer trims the silence the renderer leaves around a
 line, so a voice's span is when it's heard. It lays the line down after a
 short lead-in, drops it by the turn's gain, starts a crosstalk line part
 of the way through the first, and puts the script's noise bed under the
-whole turn at the script's signal-to-noise ratio. The noise is made here
-from random numbers, seeded by the script and turn, so the same script
-always mixes to the same audio.
+whole turn at the script's signal-to-noise ratio. Cafe and road noise
+is made here from random numbers. The other kinds are beds, recordings
+of a room made once and cached (beds.py), and each turn takes its own
+stretch of one. Both are seeded by the script and turn, so the same
+script always mixes to the same audio.
 
 Nothing here calls anything. It needs numpy, which the app already uses.
 """
@@ -19,6 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from eval_voice import beds as beds_mod
 from eval_voice import cast as cast_mod
 from eval_voice import truth as truth_mod
 
@@ -108,12 +111,26 @@ def _shaped(n: int, rng, power: float, low_hz: float) -> np.ndarray:
     return out / level if level else out
 
 
-def noise_bed(kind: str, n: int, rng) -> np.ndarray:
+def bed_stretch(bed_pcm: bytes, n: int, rng) -> np.ndarray:
+    """`n` samples of a looping bed from a seeded point, at unit level."""
+    x = to_float(bed_pcm).astype(np.float64)
+    start = int(rng.integers(0, len(x)))
+    reps = -(-(start + n) // len(x))
+    out = np.tile(x, reps)[start:start + n]
+    level = rms(out)
+    return out / level if level else out
+
+
+def noise_bed(kind: str, n: int, rng, bed: bytes | None = None) -> np.ndarray:
     """Unit-level noise, `n` samples long. Cafe is pink noise with the odd
     clink of a cup, and road is a low rumble that swells as traffic
-    passes."""
+    passes. Any other kind is a recorded bed, handed in as `bed`."""
     if n <= 0:
         return np.zeros(0, dtype=np.float64)
+    if kind in beds_mod.BEDS:
+        if bed is None:
+            raise ValueError(f"the {kind} noise needs its bed")
+        return bed_stretch(bed, n, rng)
     t = np.arange(n) / SAMPLE_RATE
     if kind == "cafe":
         bed = _shaped(n, rng, 1.0, 60.0)
@@ -143,10 +160,11 @@ def seed_for(script_id: str, index: int) -> int:
 
 def mix_turn(script_id, index, main_line, main_pcm, over=None, over_pcm=None,
              noise=None, events=(), enrolled=(), introduced=(), gap_s=0.6,
-             media=()):
+             media=(), bed=None):
     """One turn's audio and truth. `main_line` and `over.line` are
     script.Line values, `*_pcm` their rendered audio, `noise` the script's
-    {"kind", "snr_db"} or None. `enrolled` and `introduced` are the names
+    {"kind", "snr_db"} or None, and `bed` the recorded bed's audio when the
+    noise is one. `enrolled` and `introduced` are the names
     with a bank before the run and those introduced earlier in the
     script, and `media` the voices that aren't people, which the truth
     records for the main voice."""
@@ -168,7 +186,7 @@ def mix_turn(script_id, index, main_line, main_pcm, over=None, over_pcm=None,
         # Against the speech at its own level before any gain, so a quiet
         # voice is quiet against the room, not the room with it.
         ref = speech_rms(a_raw)
-        out += noise_bed(noise["kind"], total, rng) * ref / gain(snr)
+        out += noise_bed(noise["kind"], total, rng, bed) * ref / gain(snr)
     peak = float(np.max(np.abs(out))) if total else 0.0
     if peak > PEAK:
         out *= PEAK / peak
@@ -187,9 +205,16 @@ def mix_turn(script_id, index, main_line, main_pcm, over=None, over_pcm=None,
     return MixedTurn(pcm=to_pcm(out), truth=t, gap_s=gap_s)
 
 
-def mix_script(script, renderer, enrolled=()) -> list:
-    """Every turn of a script, rendered and mixed, in order."""
+def mix_script(script, renderer, enrolled=(), beds=None) -> list:
+    """Every turn of a script, rendered and mixed, in order. `beds` makes
+    or reads the recorded bed (beds.Beds) when the script's noise is one."""
     turns, introduced = [], set()
+    bed = None
+    if script.noise and script.noise["kind"] in beds_mod.BEDS:
+        if beds is None:
+            raise ValueError(f"{script.id} needs the "
+                             f"{script.noise['kind']} bed")
+        bed = beds.bed(script.noise["kind"])
     for i, turn in enumerate(script.turns):
         main_pcm = renderer.line(turn.line.speaker, turn.line.text)
         over_pcm = (renderer.line(turn.over.line.speaker, turn.over.line.text)
@@ -197,7 +222,7 @@ def mix_script(script, renderer, enrolled=()) -> list:
         turns.append(mix_turn(script.id, i, turn.line, main_pcm, turn.over,
                               over_pcm, script.noise, turn.events, enrolled,
                               introduced, gap_s=turn.gap_s,
-                              media=cast_mod.MEDIA))
+                              media=cast_mod.MEDIA, bed=bed))
         for e in turn.events:
             if "introduce" in e:
                 introduced.add(e["introduce"])

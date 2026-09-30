@@ -49,7 +49,9 @@ def test_builtin_scripts_load_and_cover_every_case():
     turns = [t for s in scripts for t in s.turns]
     assert any(t.over for t in turns)                       # crosstalk
     assert any(t.line.gain_db <= -6 for t in turns)         # a quiet voice
-    assert {s.noise["kind"] for s in scripts if s.noise} == {"cafe", "road"}
+    # every kind of noise, made up and recorded
+    assert {s.noise["kind"] for s in scripts if s.noise} == \
+        set(script_mod.NOISE_KINDS) == {"cafe", "road", "chatter", "kitchen"}
     events = [e for t in turns for e in t.events]
     assert {"introduce": "Mateo"} in events
     assert {"room": "on"} in events and {"room": "off"} in events
@@ -132,6 +134,71 @@ def test_the_cache_key_covers_voice_model_and_text():
     assert base != cache_key("v2", "m1", "hi")
     assert base != cache_key("v1", "m2", "hi")
     assert base != cache_key("v1", "m1", "hi.")
+
+
+def test_a_bed_is_made_once_then_read_from_the_cache(tmp_path):
+    from eval_voice import beds as beds_mod
+    calls = []
+
+    def fetch(prompt, seconds):
+        calls.append((prompt, seconds))
+        return _tone(3.0, level=0.05, pad=0)
+
+    b = beds_mod.Beds(tmp_path, fetch=fetch)
+    first = b.bed("kitchen")
+    assert b.bed("kitchen") == first and len(calls) == 1
+    assert calls[0] == (beds_mod.BEDS["kitchen"], beds_mod.SECONDS)
+    assert b.stats()["new_seconds"] == 3.0 and b.stats()["cached"] == 1
+    assert beds_mod.Beds(tmp_path).bed("kitchen") == first
+    with pytest.raises(beds_mod.BedError, match="no ElevenLabs key"):
+        beds_mod.Beds(tmp_path).bed("chatter")
+    with pytest.raises(beds_mod.BedError, match="wrong shape"):
+        beds_mod.Beds(tmp_path / "x", fetch=lambda *a: b"\x01").bed("chatter")
+    # the key covers the description, so a reworded bed is made again
+    assert beds_mod.cache_key("a room") != beds_mod.cache_key("a room.")
+
+
+def test_a_bed_lies_under_a_turn_at_the_scripts_level():
+    from eval_voice.mock import MockBeds
+    bed = MockBeds().bed("chatter")
+    line = script_mod.Line("Sam", "hi")
+    noise = {"kind": "chatter", "snr_db": 12}
+    clean = mix.to_float(mix.mix_turn("s", 0, line, _tone(2.0)).pcm)
+    noisy = mix.mix_turn("s", 0, line, _tone(2.0), noise=noise, bed=bed,
+                         enrolled=("Sam",))
+    under = mix.to_float(noisy.pcm) - clean
+    speech = mix.speech_rms(mix.trim(mix.to_float(_tone(2.0))))
+    assert 20 * np.log10(speech / mix.rms(under)) == pytest.approx(12, abs=0.3)
+    assert noisy.truth.tags() == ["chatter noise"]
+    again = mix.mix_turn("s", 0, line, _tone(2.0), noise=noise, bed=bed)
+    other = mix.mix_turn("s", 1, line, _tone(2.0), noise=noise, bed=bed)
+    assert again.pcm == noisy.pcm and other.pcm != noisy.pcm
+    with pytest.raises(ValueError, match="needs its bed"):
+        mix.mix_turn("s", 0, line, _tone(2.0), noise=noise)
+    # a bed shorter than the turn loops
+    long = mix.bed_stretch(bed, 25 * SR, np.random.default_rng(1))
+    assert len(long) == 25 * SR and mix.rms(long) == pytest.approx(1.0)
+
+
+def test_a_script_whose_bed_cant_be_made_is_left_out(tmp_path,
+                                                     monkeypatch):
+    from eval_voice import beds as beds_mod
+    from eval_voice.mock import MockBeds
+
+    def refuse(self, kind):
+        raise beds_mod.BedError("the ElevenLabs key can't make sound "
+                                "effects.")
+
+    monkeypatch.setattr(MockBeds, "bed", refuse)
+    data = tmp_path / "report.json"
+    out = tmp_path / "report.md"
+    assert runner.main(["--mock", "--cache", str(tmp_path / "cache"),
+                        "--out", str(out), "--json-out", str(data)]) == 0
+    got = json.loads(data.read_text())
+    assert set(got["skipped"]) == {"cafe-chatter", "kitchen"}
+    assert "cafe-chatter" not in got["scripts"] and got["scripts"]
+    assert "Left out `kitchen`, because the ElevenLabs key" in \
+        out.read_text()
 
 
 def test_bad_audio_from_the_renderer_is_refused(tmp_path):

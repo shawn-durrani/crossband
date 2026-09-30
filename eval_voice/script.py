@@ -19,7 +19,7 @@ JSON shape, one object per file:
 
     {"id": "crosstalk", "about": "what this script tests",
      "cast": ["Alex", "Sam", "Dave"],
-     "noise": {"kind": "cafe", "snr_db": 20},
+     "noise": {"kind": "cafe", "snr_db": 20},  # or road, chatter, kitchen
      "turns": [
        {"speaker": "Alex", "text": "..."},
        {"speaker": "Sam", "text": "...", "gain_db": -10},
@@ -39,10 +39,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from eval_voice import beds as beds_mod
 from eval_voice import cast as cast_mod
 
 BUILTIN_DIR = Path(__file__).resolve().parent / "scripts"
-NOISE_KINDS = ("cafe", "road")
+# Cafe and road are made from random numbers, the rest are recorded beds.
+NOISE_KINDS = ("cafe", "road") + tuple(beds_mod.BEDS)
 MAX_TEXT = 300
 GAIN_RANGE = (-30.0, 6.0)
 SNR_RANGE = (0.0, 40.0)
