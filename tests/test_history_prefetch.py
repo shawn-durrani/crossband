@@ -137,6 +137,7 @@ class Memory:
         self.search_error = search_error
         self.search_gate = None
         self.search_calls = []
+        self.search_origins = []
         self.search_cancelled = 0
         self.recall_calls = []
         # "recall", "recall done" and "search", in the order they happened
@@ -159,9 +160,10 @@ class Memory:
         self.events.append("recall done")
         return self.facts
 
-    async def search(self, query, limit=20):
+    async def search(self, query, limit=20, origin="http"):
         self.events.append("search")
         self.search_calls.append({"query": query, "limit": limit})
+        self.search_origins.append(origin)
         try:
             if self.search_gate is not None:
                 await self.search_gate.wait()
@@ -618,8 +620,10 @@ def test_the_search_goes_out_with_the_owner_token(monkeypatch):
     state, hits = asyncio.run(go())
     assert (state, hits) == ("found", [HIT])
     assert sent["url"].endswith("/v1/search")
+    # labelled for membro's access log as the app's own read (membro#164)
     assert sent["body"] == {"query": "buy sister birthday",
-                            "limit": history_prefetch.SEARCH_LIMIT}
+                            "limit": history_prefetch.SEARCH_LIMIT,
+                            "origin": "auto"}
     assert sent["headers"]["Authorization"] == "Bearer s3cr3t-owner-token"
 
 
@@ -639,6 +643,8 @@ def test_the_owners_search_reads_as_the_tools_does(app, monkeypatch):
     tool = asyncio.run(tools.search_history({"query": "buy sister birthday"},
                                             cfg, mem))
     assert tool in seen[0]["history"]
+    # the round's search says the app ran it, the seat's tool call doesn't
+    assert mem.search_origins == ["auto", "http"]
 
 
 # ---------- only the owner's own turns (crossband#588) ----------

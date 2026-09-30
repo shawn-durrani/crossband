@@ -433,7 +433,8 @@ class MemoryClient:
             log.warning("memory /recall failed: %s", e)
             return []
 
-    async def search(self, query: str, limit: int = 20) -> list[dict]:
+    async def search(self, query: str, limit: int = 20,
+                     origin: str = "http") -> list[dict]:
         """POST /search - verbatim transcript search, gated behind the same
         owner MEMORY_AUTH_TOKEN as membro's other exact-row reads (unlike
         /recall and /summary, which stay open). An absent service still
@@ -441,12 +442,19 @@ class MemoryClient:
         else that goes wrong once the service IS reachable - a bad/missing
         token, a transport failure, or a response that doesn't carry the
         "hits" list - raises MemorySearchError instead of quietly looking
-        like zero results."""
+        like zero results.
+
+        origin="auto" marks the round's own search of past chats
+        (history_prefetch.py) apart from a model's search_history call, as
+        recall's origin does (membro#164). It's sent only when it isn't the
+        default, and an older membro ignores it."""
         if not await self.probe():
             return []
+        body = {"query": query, "limit": limit}
+        if origin != "http":
+            body["origin"] = origin
         try:
-            r = await self._client.post(self.api + "/search",
-                                        json={"query": query, "limit": limit},
+            r = await self._client.post(self.api + "/search", json=body,
                                         headers=self._auth_headers())
             r.raise_for_status()
             data = r.json()

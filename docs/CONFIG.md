@@ -328,7 +328,8 @@ search is dropped before any seat sees it. In room mode the search
 starts with the reply, once your name is on the turn.
 
 The search sends the same token and reaches the same messages as
-`search_history`. A turn that doesn't ask about you never waits on a search. The `server_memory_history_wait` stage in the voice trace says how
+`search_history`. It tells membro it's automatic, so membro's access log
+and live view show it as the app preparing a reply. A turn that doesn't ask about you never waits on a search. The `server_memory_history_wait` stage in the voice trace says how
 long a reply waited, as [LATENCY.md](LATENCY.md) describes.
 
 ### The memory contract
