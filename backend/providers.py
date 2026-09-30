@@ -763,15 +763,24 @@ def _volatile_system_parts(cfg):
         parts.append(f"\n(System note: {warn})")
     ambient = (cfg.get("memory_ambient") or "").strip()
     if ambient:
+        # #594: "silently ignore what doesn't, and don't treat their
+        # presence as a request to bring them up" read as "these are
+        # optional". In the memory benchmark a seat asked for advice gave
+        # advice anyone could get, or asked for a detail, with the facts
+        # that answered it right here. The guard against reciting stays.
         parts.append(
             f"\n## Possibly relevant memory entries (auto-retrieved for {user}'s "
             "latest message)\n" + ambient +
-            "\n\nThese were fetched mechanically by relevance, not chosen by anyone: "
-            "use what bears on the conversation, silently ignore what doesn't, and "
-            "don't treat their presence as a request to bring them up. They may "
-            "already cover what you'd otherwise reach for - prefer them over "
-            "re-asking recall_memory for the same thing; still use the tools for "
-            "anything deeper."
+            "\n\nThese were fetched mechanically by relevance, not chosen by anyone, "
+            "so some won't bear on the message: leave those out, and never recite "
+            f"an entry just because it's here. When {user} asks for advice, a "
+            "recommendation or ideas, build your answer on what memory here says "
+            "about them - what they like, own, use and are working on - rather "
+            "than advice anyone could get. Lead with that answer even when a detail "
+            "is missing (where they are, say), and ask for the detail after it, "
+            "never in place of it. They may already cover what you'd "
+            "otherwise reach for - prefer them over re-asking recall_memory for "
+            "the same thing; still use the tools for anything deeper."
         )
     history = (cfg.get("memory_history") or "").strip()
     if history:
