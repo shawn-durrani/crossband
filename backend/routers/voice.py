@@ -955,7 +955,8 @@ async def stt_stream_relay(ws: WebSocket):
                                 engine.prewarm_recall(
                                     chat_id, last_partial, ws.app.state.memory,
                                     history=bool(cfg.get("history_prefetch",
-                                                         True)))
+                                                         True)),
+                                    owner_name=cfg.get("user_name", "User"))
                             except Exception:
                                 log.warning("recall prewarm failed; transcription "
                                             "continues without it", exc_info=True)

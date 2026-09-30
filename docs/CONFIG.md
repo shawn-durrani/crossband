@@ -276,7 +276,7 @@ always runs.
 |---|---|---|
 | `memory_url` | `http://127.0.0.1:8901` | Where to probe for [Membro](https://github.com/shawn-durrani/membro). When it answers, the memory features light up, and when it doesn't the app runs without memory. It's probed again every 30 seconds, so start order doesn't matter. |
 | `MEMORY_AUTH_TOKEN`, in `.env` and not a config key | unset | Membro's owner token, sent as a bearer on its `/search` and on the job-status polls behind imports. One token, put once in Crossband's `.env`. Without it `search_history` reports a failure and never reads as "no history". |
-| `history_prefetch` | `true` | When you ask about yourself or your past, the app searches your saved chats while it gathers the facts, and hands the seats what it finds when the facts have little on your question. `false` leaves that search to the seats. |
+| `history_prefetch` | `true` | When you ask about yourself or your past, the app searches your saved chats while it gathers the facts, and hands the seats what it finds when the facts have little on your question. Only your own turns count. `false` leaves it to the seats. |
 
 ### The memory token
 
@@ -313,8 +313,22 @@ such as "Let me go deeper into our memories", and a typed chat shows
 "Searching past chats". After four more seconds the reply goes on
 without it, and the seat can still search for itself.
 
+It runs only on your own turns. That's a turn you typed, one spoken in
+your recognised voice, or one spoken with no name on it while room mode
+is off. A guest's question, a voice the app couldn't name and the TV
+never start it, and neither does a turn spoken in room mode before its
+name comes in. The rule is the one that decides who asked for a paid
+`run_eval` run. The seats can still call `search_history` on anyone's
+turn.
+
+When you're speaking, nobody knows whose voice it was at the moment you
+stop. The early start happens only with room mode off, where a turn
+with no name is yours. If the voice check then names someone else, the
+search is dropped before any seat sees it. In room mode the search
+starts with the reply, once your name is on the turn.
+
 The search sends the same token and reaches the same messages as
-`search_history`, whoever is in the room. A turn that doesn't ask about you never waits on a search. The `server_memory_history_wait` stage in the voice trace says how
+`search_history`. A turn that doesn't ask about you never waits on a search. The `server_memory_history_wait` stage in the voice trace says how
 long a reply waited, as [LATENCY.md](LATENCY.md) describes.
 
 ### The memory contract

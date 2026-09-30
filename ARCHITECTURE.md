@@ -20,8 +20,8 @@ providers.py    - per-vendor projection, streaming, prompt-cache layout
 context_marker.py - the per-chat secret that vouches for app context
 tools.py        - shared tools every seat can call
 memory_client.py - the optional Membro bridge; absent means memoryless
-history_prefetch.py - the round's own search of past chats, for a turn
-                  that asks about you when recall comes back thin
+history_prefetch.py - the round's own search of past chats, for your own
+                  turn that asks about you when recall comes back thin
 egress.py       - the vetting proxy every model-influenced URL exits by
 url_ledger.py   - fetchable means already seen from a non-model source
 browse.py       - rendered viewing; browse_worker.py is the keyless child

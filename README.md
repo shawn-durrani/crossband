@@ -171,7 +171,7 @@ so it already knows what you told it last week, and during a chat a
 model can ask for more with the memory tools. When you ask about
 yourself or your past and the facts come up short, the app searches
 your saved chats too, and a voice seat says a short line while it
-looks. The voices the app has
+looks. It does that only when you asked, never for a guest or the TV. The voices the app has
 learnt live in Membro too, so a person you introduce is remembered in
 both apps, and forgetting someone in one forgets them in the other.
 Anything a guest said, or a model read on a web page, waits in Membro's

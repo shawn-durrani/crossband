@@ -12,8 +12,12 @@ help. The app now runs that first search itself. These tests pin:
   it doesn't;
 - the short spoken line when the search is late in a voice chat, and the
   status line in a typed one;
-- the tool's rules: the same client call and owner token, only where the
-  tool works, and a guest in the room changes nothing;
+- the tool's rules: the same client call and owner token, and only where
+  the tool works;
+- only the owner's own turns search on their own (crossband#588): typed,
+  spoken with the owner's voice label, or spoken unlabelled with room mode
+  off, by run_eval's rule. A guest, a voice nobody could name and the TV
+  never start it, and the seats keep search_history for those turns;
 - a normal turn: no search, no wait, no new event.
 
 Every membro call is faked. Nothing reaches a live service."""
@@ -209,11 +213,13 @@ def new_chat(app, *, voice=False, room=False, memory=True):
     return chat_id, roster
 
 
-def say(chat_id, text, voice_labels=None):
+def say(chat_id, text, voice_labels=None, turn_id=""):
+    """A user turn: typed, or spoken when it carries a voice turn id."""
     con = db.connect()
     cur = con.execute(
-        "INSERT INTO messages(chat_id, speaker, content, created_at, voice_labels) "
-        "VALUES(?, 'user', ?, ?, ?)", (chat_id, text, db.now(), voice_labels or ""))
+        "INSERT INTO messages(chat_id, speaker, content, created_at, voice_labels,"
+        " voice_turn_id) VALUES(?, 'user', ?, ?, ?, ?)",
+        (chat_id, text, db.now(), voice_labels or "", turn_id))
     con.commit()
     con.close()
     return cur.lastrowid
@@ -515,17 +521,22 @@ def test_stopping_the_round_mid_wait_cancels_the_search(app, monkeypatch):
 
 # ---------- the voice commit ----------
 
-def prewarm_then_round(app, monkeypatch, partial, final, *, memory=True, history=True):
+def prewarm_then_round(app, monkeypatch, partial, final, *, memory=True,
+                       history=True, room=False, labels=None):
+    """The commit's prewarm, then the spoken turn saved with `labels` (none
+    by default) and its round."""
     seen = []
     monkeypatch.setattr(engine.providers, "stream_reply", capture(seen))
-    chat_id, roster = new_chat(app, voice=True, memory=memory)
+    chat_id, roster = new_chat(app, voice=True, memory=memory, room=room)
     mem = Memory(facts=[])
 
     async def go():
-        engine.prewarm_recall(chat_id, partial, mem, history=history)
+        engine.prewarm_recall(chat_id, partial, mem, history=history,
+                              owner_name=OWNER)
         await asyncio.sleep(0.05)  # transcription finishing
         mem.events.append("round")
-        say(chat_id, final)
+        say(chat_id, final, voice_labels=json.dumps(labels) if labels else None,
+            turn_id="turn-commit")
         async for _ in engine.run_round(chat_id, roster, roster[-1]["slug"],
                                         app.state.settings, memory=mem):
             pass
@@ -612,15 +623,14 @@ def test_the_search_goes_out_with_the_owner_token(monkeypatch):
     assert sent["headers"]["Authorization"] == "Bearer s3cr3t-owner-token"
 
 
-def test_a_room_with_a_guest_follows_the_tools_rules(app, monkeypatch):
-    """search_history reads every saved chat in a round with a guest
-    present, and the owner accepted that while they're in the room. The
-    round's own search does the same, no more: the same call, the same
-    hits, the same web marker, whoever asked."""
+def test_the_owners_search_reads_as_the_tools_does(app, monkeypatch):
+    """The round's own search reaches what search_history would, no more:
+    the same call, the same hits, the same web marker."""
     seen = []
     monkeypatch.setattr(engine.providers, "stream_reply", capture(seen))
     chat_id, roster = new_chat(app, voice=True, room=True)
-    say(chat_id, ASK, voice_labels=json.dumps({"labels": ["Sam"]}))
+    say(chat_id, ASK, voice_labels=json.dumps({"labels": [OWNER]}),
+        turn_id="turn-owner")
     mem = Memory(facts=[], hits=[HIT, WEB_HIT])
     run_round(app, chat_id, roster, mem)
     assert mem.search_calls == [{"query": "buy sister birthday",
@@ -629,6 +639,173 @@ def test_a_room_with_a_guest_follows_the_tools_rules(app, monkeypatch):
     tool = asyncio.run(tools.search_history({"query": "buy sister birthday"},
                                             cfg, mem))
     assert tool in seen[0]["history"]
+
+
+# ---------- only the owner's own turns (crossband#588) ----------
+
+OWNER = "User"  # the user_name setting's default, which the app fixture keeps
+
+
+def _labels(**kw):
+    return json.dumps(kw)
+
+
+# (who, room mode, voice labels, spoken): the owner's turns by run_eval's
+# rule, and the turns that aren't.
+OWNERS = [
+    ("typed", False, None, False),
+    ("typed in room mode", True, None, False),
+    ("spoken, the owner's voice label", True, _labels(labels=[OWNER]), True),
+    ("spoken, the owner's label, room off", False, _labels(labels=[OWNER]), True),
+    ("spoken, no label, room off", False, None, True),
+]
+NOT_OWNERS = [
+    ("a named guest", True, _labels(labels=["Sam"]), True),
+    ("a named guest, room off", False, _labels(labels=["Sam"]), True),
+    ("a voice nobody could name", True,
+     _labels(labels=[], unresolved="new_voice"), True),
+    ("a voice the check wasn't sure of", True,
+     _labels(labels=[OWNER], uncertain=[OWNER]), True),
+    ("the TV", True, _labels(labels=[], unresolved="media"), True),
+    ("two voices at once", True, _labels(labels=[OWNER], crosstalk=True), True),
+    ("the owner and a guest together", True, _labels(labels=[OWNER, "Sam"]),
+     True),
+    ("spoken, no label yet, room mode on", True, None, True),
+]
+
+
+def _owner_case_round(app, monkeypatch, room, labels, spoken, *, tools_seen=None):
+    seen = []
+
+    async def stream_reply(participant, roster, transcript, names, cfg, project,
+                           chat_summary, voice_mode, tools=None, memory=None):
+        seen.append({"history": cfg.get("memory_history") or ""})
+        if tools_seen is not None:
+            tools_seen.append({t["name"] for t in tools or ()})
+        yield ("text", "Forty dollars, for the scarf.")
+        yield ("usage", {"input": 1, "cache_read": 0, "cache_creation": 0,
+                         "output": 1})
+    monkeypatch.setattr(engine.providers, "stream_reply", stream_reply)
+    chat_id, roster = new_chat(app, voice=spoken, room=room)
+    say(chat_id, ASK, voice_labels=labels, turn_id="turn-1" if spoken else "")
+    mem = Memory(facts=[])
+    events = run_round(app, chat_id, roster, mem, turn_id="turn-1")
+    return mem, seen, events
+
+
+@pytest.mark.parametrize("who,room,labels,spoken", OWNERS,
+                         ids=[c[0] for c in OWNERS])
+def test_the_owners_own_turn_searches(app, monkeypatch, who, room, labels,
+                                      spoken):
+    mem, seen, _ = _owner_case_round(app, monkeypatch, room, labels, spoken)
+    assert mem.search_calls == [{"query": "buy sister birthday",
+                                 "limit": history_prefetch.SEARCH_LIMIT}]
+    assert all("scarf" in s["history"] for s in seen)
+
+
+@pytest.mark.parametrize("who,room,labels,spoken", NOT_OWNERS,
+                         ids=[c[0] for c in NOT_OWNERS])
+def test_anyone_elses_turn_never_searches_on_its_own(app, monkeypatch, who,
+                                                    room, labels, spoken):
+    tools_seen = []
+    mem, seen, events = _owner_case_round(app, monkeypatch, room, labels,
+                                          spoken, tools_seen=tools_seen)
+    assert mem.search_calls == []
+    assert [s["history"] for s in seen] == ["", ""]
+    assert not any(e.get(history_prefetch.SPEAK_NOW_FLAG) for e in events)
+    assert not any(e["type"] == "work_status" for e in events)
+    # the seats can still search for themselves, as before
+    assert all("search_history" in names for names in tools_seen)
+
+
+def test_a_seat_can_still_search_on_a_guests_turn(app, monkeypatch):
+    """The round leaves a guest's turn alone, and a seat that calls
+    search_history itself gets the hits, as it did before."""
+    chat_id, roster = new_chat(app, voice=True, room=True)
+    say(chat_id, ASK, voice_labels=_labels(labels=["Sam"]), turn_id="turn-1")
+    mem = Memory(facts=[])
+    cfg = app.state.settings.as_cfg()
+    got = asyncio.run(tools.search_history({"query": "scarf"}, cfg, mem))
+    assert "scarf" in got
+    assert [c["query"] for c in mem.search_calls] == ["scarf"]
+
+
+def test_a_turn_with_an_open_doubt_never_searches(app, monkeypatch):
+    monkeypatch.setattr(engine.providers, "stream_reply", capture([]))
+    chat_id, roster = new_chat(app, voice=True, room=True)
+    asked = say(chat_id, ASK, voice_labels=_labels(labels=[OWNER]),
+                turn_id="turn-1")
+    con = db.connect()
+    db.insert_room_flag(con, chat_id, "mismatch", message_id=asked)
+    con.commit()
+    con.close()
+    mem = Memory(facts=[])
+    run_round(app, chat_id, roster, mem)
+    assert mem.search_calls == []
+
+
+def test_a_continue_round_starts_no_search(app, monkeypatch):
+    """A round nobody's message started has no asker, like run_eval's."""
+    seen = []
+    monkeypatch.setattr(engine.providers, "stream_reply", capture(seen))
+    chat_id, roster = new_chat(app)
+    say(chat_id, ASK)
+    con = db.connect()
+    db.insert_message(con, chat_id, roster[0]["slug"], "Let me think.")
+    con.close()
+    mem = Memory(facts=[])
+    run_round(app, chat_id, roster[1:], mem)
+    assert mem.search_calls == []
+
+
+def test_the_commit_never_searches_in_room_mode(app, monkeypatch):
+    """At the commit nobody knows yet whose voice it was, and in room mode
+    an unnamed turn isn't the owner's. The round searches once the owner's
+    label is on the row."""
+    mem, seen = prewarm_then_round(
+        app, monkeypatch, "what did i buy my sister for her",
+        "What did I buy my sister for her birthday?", room=True,
+        labels={"labels": [OWNER]})
+    assert [c["query"] for c in mem.search_calls] == ["buy sister birthday"]
+    assert mem.events.index("round") < mem.events.index("search")
+    assert "scarf" in seen[0]["history"]
+
+
+def test_the_commit_in_room_mode_leaves_a_guests_turn_alone(app, monkeypatch):
+    mem, seen = prewarm_then_round(
+        app, monkeypatch, "what did i buy my sister for her",
+        "What did I buy my sister for her birthday?", room=True,
+        labels={"labels": ["Sam"]})
+    assert mem.search_calls == []
+    assert [s["history"] for s in seen] == ["", ""]
+
+
+def test_a_commit_search_on_a_turn_that_wasnt_the_owners_is_dropped(
+        app, monkeypatch):
+    """With room mode off the commit searches, since an unnamed turn is the
+    owner's there. When the check then names a guest, the round drops the
+    search before any seat sees it, and says no line."""
+    seen = []
+    monkeypatch.setattr(engine.providers, "stream_reply", capture(seen))
+    chat_id, roster = new_chat(app, voice=True)
+    mem = Memory(facts=[])
+    mem.search_gate = asyncio.Event()  # still out when the round starts
+
+    async def go():
+        engine.prewarm_recall(chat_id, ASK, mem, owner_name=OWNER)
+        await asyncio.sleep(0.05)
+        say(chat_id, ASK, voice_labels=_labels(labels=["Sam"]),
+            turn_id="turn-commit")
+        out = []
+        async for chunk in engine.run_round(chat_id, roster, roster[-1]["slug"],
+                                            app.state.settings, memory=mem):
+            out.append(chunk)
+        return sse_events("".join(out))
+    events = asyncio.run(go())
+    assert len(mem.search_calls) == 1  # the commit's, never a second
+    assert mem.search_cancelled == 1
+    assert [s["history"] for s in seen] == ["", ""]
+    assert not any(e.get(history_prefetch.SPEAK_NOW_FLAG) for e in events)
 
 
 def test_no_search_where_the_tool_cannot_reach_memory(app, monkeypatch):

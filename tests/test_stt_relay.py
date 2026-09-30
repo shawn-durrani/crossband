@@ -112,8 +112,8 @@ def _frame(commit=False):
 def test_relay_round_trip_fires_prewarm_and_returns_final(app, relay, monkeypatch):
     calls = []
     monkeypatch.setattr(voice_router.engine, "prewarm_recall",
-                        lambda chat_id, text, memory, history:
-                        calls.append((chat_id, text, history)))
+                        lambda chat_id, text, memory, history, owner_name:
+                        calls.append((chat_id, text, history, owner_name)))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
         with c.websocket_connect("/api/voice/stt-stream") as ws:
@@ -125,8 +125,10 @@ def test_relay_round_trip_fires_prewarm_and_returns_final(app, relay, monkeypatc
             assert ws.receive_json() == {"final": "hello world"}
             ws.send_json({"done": True})
     # prewarm keyed on freshest partial; membro#136: the history_prefetch
-    # setting rides along, so the search of past chats can start too
-    assert calls == [(chat["id"], "hello", True)]
+    # setting rides along, so the search of past chats can start too, with
+    # the owner's name for its owner rule (crossband#588)
+    assert calls == [(chat["id"], "hello", True,
+                      app.state.settings.as_cfg()["user_name"])]
     assert relay.sent[-1]["commit"] is True  # commit reached the STT provider
 
 

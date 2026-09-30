@@ -10,8 +10,9 @@ So the app runs the first search itself, alongside the ambient recall.
 
 1. wants_history, a cheap rule with no model call, decides whether the
    newest turn asks about the person or their past.
-2. When it does, the search starts at once: at the voice commit beside
-   the recall prewarm (engine.prewarm_recall), or at the round's start.
+2. When it does, and the turn is the owner's, the search starts at once:
+   at the voice commit beside the recall prewarm (engine.prewarm_recall),
+   or at the round's start.
 3. When recall found little on the question (recall_is_thin), the hits go
    to every seat beside the recalled facts, marked as coming from past
    chats. When recall found enough, the search is dropped.
@@ -21,11 +22,20 @@ So the app runs the first search itself, alongside the ambient recall.
    browser speaks it at once. A typed chat shows a status line instead.
    The round then waits up to WAIT_S for the hits.
 
+It runs only on the owner's own turns (crossband#588), by the rule the
+run_eval tool uses to decide who asked (run_eval.classify): typed, spoken
+with the owner's voice label, or spoken unlabelled with room mode off. A
+guest, a voice nobody could name or the TV never starts it, and the seats
+keep search_history for those turns. The engine applies the rule
+(engine._history_gate at the commit, engine._round_history_search in the
+round). At the commit nobody has named the voice yet, so it searches
+there only with room mode off, and the round drops that search when the
+turn turns out not to be the owner's.
+
 The search has exactly the access the tool has: the same client call and
 owner token (memory_client.search), only where the tool works (memory on
 for the chat and the service up), and the same formatting, untrusted web
-marker included (tools.format_search_hits). A round with guests present
-follows the tool's rules, which don't change with who is in the room.
+marker included (tools.format_search_hits).
 
 Logs are content-free: states, counts and times, never the words."""
 

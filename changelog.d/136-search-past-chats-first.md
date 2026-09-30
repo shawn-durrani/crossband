@@ -6,5 +6,8 @@
   gets the matching messages too. If the search is still running when
   the first reply is due, a voice seat opens with a short line such as
   "Let me go deeper into our memories" and a typed chat shows "Searching
-  past chats", so the wait is never silent. A turn that doesn't ask
-  about you is unchanged. `history_prefetch: false` turns it off.
+  past chats", so the wait is never silent. It runs only on your own
+  turns, typed or in your voice, never on a guest's, an unnamed voice's
+  or the TV's (crossband#588). The seats can still search for those
+  themselves. A turn that doesn't ask about you is unchanged.
+  `history_prefetch: false` turns it off.
