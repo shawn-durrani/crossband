@@ -264,8 +264,10 @@ def test_a_marker_split_anywhere_never_streams():
 def test_text_that_cannot_start_a_marker_goes_out_at_once():
     m = context_marker.marker(8)
     last = next(c for c in "ghijklmnopqrstuvwxyz ." if c != m[0])
-    out, rest = _redacted_stream(8, ["Hello the", "re, all well" + last])
-    assert out == ["Hello the", "re, all well" + last]
+    # Each piece ends on a letter a hex marker can't start with, so nothing
+    # is ever held back, whatever marker the chat drew.
+    out, rest = _redacted_stream(8, ["Hello th", "ere, all well" + last])
+    assert out == ["Hello th", "ere, all well" + last]
     assert rest == ""
 
 
