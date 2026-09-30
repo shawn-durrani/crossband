@@ -6,6 +6,10 @@ premade voices, which every account can use. Dave and Mateo are both
 men with American accents, picked so a run has one pair that's hard to
 tell apart.
 
+A TV speaks in some scripts too. It isn't a person, so it's kept apart
+from the roster: it's never recorded, introduced or named, and the right
+answer for a turn it spoke is no name at all.
+
 The owner is the person the isolated app is set up for, the one whose
 voice it treats as "you". The enrolment passage is what each person
 reads aloud once, through the app's own recording route, before any
@@ -31,6 +35,12 @@ CAST = {
                   "male, American, middle aged"),
     "Mateo": Voice("bIHbv24MWmeRgasZH58o", "Will",
                    "male, American, young"),
+}
+
+# Voices that aren't people. Daniel reads the news.
+MEDIA = {
+    "TV": Voice("onwK4e9ZLuTAKqWW03F9", "Daniel",
+                "male, British, a steady newsreader"),
 }
 
 OWNER = "Alex"
@@ -80,3 +90,8 @@ ENROL_PASSAGES = {
 
 def roster() -> tuple:
     return tuple(CAST)
+
+
+def voices() -> dict:
+    """Everyone who can speak in a script, people and the TV alike."""
+    return {**CAST, **MEDIA}

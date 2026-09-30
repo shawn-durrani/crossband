@@ -25,7 +25,8 @@ wrong name on anyone.
    says it's further away and lays cafe or road noise under the whole
    turn. The truth is written down as it goes.
 4. It starts a second crossband on port 8920, from a copy of this
-   checkout's code, with a data folder of its own.
+   checkout's code, with a data folder of its own. Its voice sessions
+   end after 45 quiet seconds, where yours wait 10 minutes.
 5. It records each person reading a short passage through the Voices
    page's recording route. Then it waits until the voice models are
    loaded and the calibration covers every recording.
@@ -33,10 +34,13 @@ wrong name on anyone.
    does, in real time, a new chat for each. Each transcript goes back to
    the app the way the browser sends it.
 7. It reads the name the app wrote on each turn and whether it heard
-   the introductions and room commands in the script. It closes the
-   diariser's tracking session when each conversation ends.
-8. It stops the second app, deletes its data folder and writes the
-   report.
+   the introductions, room commands and answers in the script.
+8. It waits for the conversation's voice session to go quiet and for
+   the app's last naming pass, then reads every name again.
+9. It forgets anyone the app met in that conversation, so the next one
+   starts knowing only the people recorded before the run.
+10. It stops the second app, deletes its data folder and writes the
+    report.
 
 The chats have no seats, so no model answers anything and nothing is
 spent on replies.
@@ -56,6 +60,9 @@ ElevenLabs voice.
 Dave and Mateo were picked to sound close, so every run holds one pair
 that's hard to tell apart. `--enrol` changes who's recorded first.
 
+Some scripts have a TV on, in Daniel's voice, a British newsreader. The
+TV isn't a person, so it's never recorded, introduced or named.
+
 ## What stays apart from your app
 
 The app reads its settings from the checkout it runs from. A copy
@@ -73,6 +80,8 @@ connected app. The rig starts its copy somewhere else.
 - Memory points at a closed port and there's no memory token, so
   nothing reaches membro.
 - It never uses one of the fleet's ports.
+- Its voice sessions end after 45 quiet seconds, through its own
+  `voice_session_idle_s`. Yours keep the 10 minutes.
 
 It reads one setting from this checkout's `config.local.json`, the
 diariser's address in `diarize_shadow_url`. The diariser is shared with
@@ -97,8 +106,9 @@ closes its own as each conversation ends.
 
 `--diariser` points at another diariser, and `--no-diariser` names
 each turn on its own. `--no-calibrated` leaves the calibrated scorer
-off. `--speed 2` plays twice as fast. `--out` and `--json-out` write
-the report to files.
+off. `--speed 2` plays twice as fast. `--session-idle 0` leaves the
+second app's voice sessions at 10 minutes, and the last naming pass
+goes unscored. `--out` and `--json-out` write the report to files.
 
 The Analysis page in the app runs the real run as a background job and
 keeps its reports on the Mac. It won't start the rig while a voice chat
@@ -114,15 +124,19 @@ The machinery is pinned by `tests/test_eval_voice.py`, with no keys:
 ## What it costs
 
 Rendering a line costs ElevenLabs characters the first time only. The
-four committed scripts and the three recordings come to about 3,100
-characters, around 35 cents on the app's rate card. After that, every
+six committed scripts and the three recordings come to about 4,300
+characters, around 47 cents on the app's rate card. After that, every
 rerun of the same lines reads them from the cache.
 
 Every run streams its audio to the app, which transcribes it on
-ElevenLabs. The committed scripts are about two minutes of audio,
-around a cent. The app's one model call per turn is about a fifth of a
-cent. The report ends with each of these, and the second app's own
-ledger.
+ElevenLabs. The committed scripts are about three minutes of audio,
+around 2 cents. The app's one model call per turn comes to about 10
+cents a run. The report ends with each of these, and the second app's
+own ledger.
+
+A run takes about ten minutes. Most of it is the conversations played
+in real time, and each one then waits 45 seconds for its voice session
+to end.
 
 ## Reading the report
 
@@ -137,6 +151,9 @@ Each turn gets one verdict.
   speak in it. These are listed one by one, because that number has to
   stay at zero.
 - No label means the app wrote nothing about the turn.
+
+A turn the TV spoke is named right when it carries no name at all,
+whatever the reason. Any name on it is wrong.
 
 A name the transcriber spelt its own way, like "Matteo", still counts
 as Mateo.
@@ -156,6 +173,34 @@ app gave a person went to the person who said them. Introductions and
 room commands are heard when the roster or the room changes within 10
 seconds of the turn.
 
+A spelling is heard when the person ends up shown under the spelt name,
+and marked as a name you set.
+
+### After the last naming pass
+
+The app names every voice once more when a voice session goes quiet.
+It adds or changes names and never takes one off. The rig waits for
+that pass after each conversation and reads every turn again. The
+section after the targets sets each verdict's count when the
+conversation ended beside its count after the pass, and lists every
+turn the pass changed.
+
+### Who's this
+
+When a voice nobody knows has talked for 4 seconds, the app asks who it
+is. Some scripts answer out loud, with a name or "that's the TV". This
+section judges each answer on the names as they finally stand.
+
+- The ask pointed at a turn the new voice spoke.
+- That turn took the answer. For a name it carries the name, and for
+  the TV it carries no name and the TV as its reason.
+- The new voice's earlier turns were relabelled the same way, and its
+  later turns kept it.
+- A named voice had a clip saved. The TV had no person made for it.
+- No ask was still open when the conversation ended.
+
+### Every turn
+
 The per-turn table names who spoke, the conditions, what the app wrote
 and how the app named the voice. It carries no words.
 `--show-words` adds what the transcriber heard.
@@ -163,11 +208,19 @@ and how the app named the voice. It carries no words.
 ## Writing scripts
 
 A script is one JSON file with an id, the people in it, an optional
-noise bed and the turns. A turn is one line from one person. It can
-carry `over` for a second person talking part of the way through, and
-`gain_db` for a quieter voice. It can also carry the introduction or
-room command the line holds. `script.py` has the whole shape, and the
-validator refuses any name off the roster.
+noise bed and the turns. A turn is one line from one person, or from
+the TV. It can carry `over` for a second person talking part of the way
+through, and `gain_db` for a quieter voice. It can also carry what the
+line says for the app to act on.
+
+- `introduce` names someone on the roster who's joining.
+- `room` switches the room on or off.
+- `answer` answers the app's ask about a new voice, with a name on the
+  roster or `TV`.
+- `correct` spells out a name on the roster.
+
+`script.py` has the whole shape, and the validator refuses any name off
+the roster.
 
 The utility model can write more, in the same shape:
 
@@ -196,13 +249,12 @@ real room. Every recording is made on the same day, so the readiness
 test on the Voices page can't pass for anyone. Naming still works,
 because the calibration fits on one day's clips.
 
-The app names every voice once more when a voice session ends, after
-10 quiet minutes. A run stops the second app before then, so that last
-naming pass never runs, and the names scored are the ones the turns
-had while the conversation was going.
+The rig ends each voice session after 45 quiet seconds. Your app waits
+10 minutes, and a real session holds far more turns, so the last naming
+pass has more to work with at home.
 
 The rig plays straight into the voice relay. Playing a conversation out
 of a speaker into the laptop's microphone isn't built yet, and that's
-the only way to test a real room and its echo. Spoken name corrections
-and thinking depth changes aren't scored yet either, because depth needs
-a seat and the chats have none.
+the only way to test a real room and its echo. Thinking depth changes
+aren't scored either, because depth needs a seat and the chats have
+none.

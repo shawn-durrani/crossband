@@ -9,9 +9,16 @@ Each turn gets one verdict:
   wrong      a name on the turn belongs to someone who didn't speak in it
   no label   the system said nothing about the turn
 
+A turn the TV spoke is right when it carries no name at all, whatever
+the reason, since a TV is nobody to name. Any name on it is wrong.
+
 A crosstalk turn is also judged on its split: whether it was marked as
 two voices, whether both were named right, and what share of the words
 the system gave a person went to the person who said them.
+
+When the system names voices once more after a conversation goes quiet,
+each turn is judged a second time on what it says after that pass, and
+the two readings are set side by side (end_pass).
 
 Names are matched to the synthetic roster by spelling, loosely, because a
 transcriber can spell a name it has never been told ("Matteo"). A name
@@ -85,18 +92,20 @@ def judge(truth, heard, roster=None) -> dict:
         verdict = "no label"
     elif wrong_names:
         verdict = "wrong"
-    elif truth.main in named:
+    elif truth.main in named or (truth.media and not named):
         verdict = "right"
     else:
         verdict = "unnamed"
     out = {"script": truth.script, "index": truth.index, "truth": truth.main,
            "voices": truth.names, "tags": truth.tags(), "named": named,
            "wrong_names": wrong_names, "verdict": verdict,
-           "reason": heard.reason if verdict == "unnamed" else "",
+           "reason": (heard.reason if verdict == "unnamed"
+                      or (truth.media and not named) else ""),
            "has_reason": bool(heard.reason or heard.placeholders),
            "learning": heard.learning, "in_time": heard.in_time,
            "note": heard.note, "seconds_alone": truth.alone_s(truth.main),
-           "enrolled": truth.enrolled, "crosstalk": None}
+           "enrolled": truth.enrolled, "media": truth.media,
+           "crosstalk": None}
     if truth.crosstalk or heard.crosstalk:
         r, w, u = split_share(truth, heard, roster)
         share = round(r / (r + w), 3) if (r + w) else None
@@ -110,6 +119,93 @@ def judge(truth, heard, roster=None) -> dict:
                                 and both and not wrong_names
                                 and share is not None
                                 and share >= SPLIT_RIGHT_SHARE)}
+    return out
+
+
+def end_pass(rows) -> dict | None:
+    """The names after the end-of-session pass beside the names when the
+    conversation ended: each verdict's turns both ways, wrong names per 100
+    turns both ways, and every turn whose name the pass changed. None when
+    no turn was read again after a pass. A row carries the second reading
+    as `after_end`, judge's verdict, names and reason."""
+    scored = [r for r in rows if r.get("after_end")]
+    if not scored:
+        return None
+    then = collections.Counter(r["verdict"] for r in scored)
+    after = collections.Counter(r["after_end"]["verdict"] for r in scored)
+    changed = [{"script": r["script"], "index": r["index"],
+                "truth": r["truth"], "voices": r["voices"],
+                "tags": r["tags"], "named": r["named"],
+                "verdict": r["verdict"],
+                "named_after": r["after_end"]["named"],
+                "verdict_after": r["after_end"]["verdict"]}
+               for r in scored
+               if r["after_end"]["named"] != r["named"]
+               or r["after_end"]["verdict"] != r["verdict"]]
+    n = len(scored)
+    return {"turns": n,
+            "then": {v: then.get(v, 0) for v in VERDICTS},
+            "after": {v: after.get(v, 0) for v in VERDICTS},
+            "wrong_per_100": {"then": round(100 * then["wrong"] / n, 1),
+                              "after": round(100 * after["wrong"] / n, 1)},
+            "changed": changed}
+
+
+MEDIA_REASON = "media"
+
+
+def _event_kind(e) -> str:
+    if e.kind == "room":
+        return f"room {e.value}"
+    if e.kind == "answer":
+        return "answer the TV" if e.value in cast_mod.MEDIA else "answer a name"
+    return e.kind
+
+
+def asks(rows, events) -> list:
+    """Each spoken answer to the system's "who's this?" about a new voice,
+    judged on the names as they finally stand (after the end-of-session
+    pass when there was one). For a name: did the turn the ask pointed at
+    take it, did the voice's turns before and after the answer carry it,
+    and was a clip of the voice saved. For the TV: were the same turns
+    marked as the TV, with no person made for it. Both: was the ask still
+    open, or open again, when the conversation ended."""
+    by_script = collections.defaultdict(dict)
+    for r in rows:
+        by_script[r["script"]][r["index"]] = r
+    out = []
+    for e in events:
+        if e.kind != "answer":
+            continue
+        turns = by_script.get(e.script) or {}
+        who = e.value
+        d = e.detail or {}
+
+        def final(r):
+            return r.get("after_end") or r
+
+        def carries(r):
+            f = final(r)
+            if r.get("media"):
+                return not f["named"] and f.get("reason") == MEDIA_REASON
+            return who in f["named"]
+
+        ask_turn = d.get("ask_turn")
+        asked = turns.get(ask_turn) if ask_turn is not None else None
+        before = [r for i, r in sorted(turns.items())
+                  if i < e.index and r["truth"] == who]
+        after = [r for i, r in sorted(turns.items())
+                 if i > e.index and r["truth"] == who]
+        media = bool(asked and asked.get("media")) or who not in cast_mod.CAST
+        out.append({
+            "script": e.script, "index": e.index, "answer": who,
+            "media": media, "result": e.result, "ask_turn": ask_turn,
+            "asked_right": bool(asked and asked["truth"] == who),
+            "named": bool(asked and carries(asked)),
+            "before": [sum(carries(r) for r in before), len(before)],
+            "after": [sum(carries(r) for r in after), len(after)],
+            "clips": d.get("clips"), "people_new": d.get("people_new") or [],
+            "open_asks": d.get("open_asks")})
     return out
 
 
@@ -177,7 +273,7 @@ def aggregate(rows, events=(), cost=None) -> dict:
     }
     ev = collections.defaultdict(collections.Counter)
     for e in events:
-        ev[f"{e.kind} {e.value}" if e.kind == "room" else e.kind][e.result] += 1
+        ev[_event_kind(e)][e.result] += 1
     return {
         "turns": total,
         "scripts": sorted({r["script"] for r in rows}),
@@ -191,6 +287,8 @@ def aggregate(rows, events=(), cost=None) -> dict:
         "crosstalk": crosstalk,
         "events": {k: dict(c) for k, c in sorted(ev.items())},
         "no_transcript": sum(r["note"] == "no transcript" for r in rows),
+        "end_pass": end_pass(rows),
+        "asks": asks(rows, events),
         "rows": rows,
         "cost": cost or {},
     }

@@ -7,6 +7,10 @@ and hands back what that system said about each turn as `Heard`. The
 crossband adapter (crossband.py) is one. Another system plugs in by
 writing its own, with the same three methods.
 
+A system that names voices again once a conversation has gone quiet
+can hand back that second reading too, as `after_end`, and the rig
+scores both.
+
 `Heard.names` holds the people the system named on the turn, sure or
 not. A voice it heard but couldn't name isn't a name: it shows up as a
 placeholder count and, when the system gives one, a reason.
@@ -45,10 +49,17 @@ class Heard:
 @dataclass
 class EventCheck:
     index: int
-    kind: str          # "introduce" or "room"
-    value: str         # the name, or "on" / "off"
-    result: str        # "heard", "missed" or "already" (true before the turn)
+    kind: str          # "introduce", "room", "answer" or "correct"
+    value: str         # the name, "on" / "off", or "TV" for an answer
+    result: str        # "heard", "missed" or "already" (true before the
+                       # turn), or "no ask" for an answer with nothing asked
     seen: str = ""     # what the system showed, e.g. the name it seated
+    script: str = ""
+    # For an answer, what the rig found once the conversation was over:
+    # ask_turn (the turn the ask pointed at), clips (the named person's
+    # saved clips), people_new (anyone the system met in the conversation)
+    # and open_asks (asks still open at the end).
+    detail: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -57,6 +68,7 @@ class ConversationResult:
     heard: list                      # [Heard], one per turn, in order
     events: list = field(default_factory=list)       # [EventCheck]
     diagnostics: dict = field(default_factory=dict)  # content-free extras
+    after_end: list | None = None    # [Heard] again, after a closing pass
 
 
 class Adapter:

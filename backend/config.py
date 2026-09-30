@@ -374,6 +374,10 @@ class Settings(BaseModel):
     # voice_id_pending_extra keys are ignored like any unknown key: what the
     # switches turned on always runs, and nothing reads the bump any more.
     diarize_shadow_url: str = ""
+    # Seconds of quiet that end a voice session and run its end-of-session
+    # naming pass (backend/voice_sessions.py, idle_s; 5 at least). The voice
+    # rig sets it short on its own second app so a run can score that pass.
+    voice_session_idle_s: float = 600.0
     # The calibrated voice scorer (#482, backend/voice_calibration.py): the
     # two-model, calibrated scorer that names voices, and the readiness test
     # the Voices page shows. Off by default. On, it fetches ERes2Net once

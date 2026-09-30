@@ -64,7 +64,7 @@ class Renderer:
         self.dir = Path(cache_dir) / "lines"
         self.fetch = fetch
         self.model = model
-        self.voices = voices or cast_mod.CAST
+        self.voices = voices or cast_mod.voices()
         self.new_chars = self.cached_chars = 0
         self.new_lines = self.cached_lines = 0
 

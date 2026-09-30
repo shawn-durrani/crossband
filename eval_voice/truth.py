@@ -45,6 +45,7 @@ class TurnTruth:
     events: list = field(default_factory=list)
     enrolled: bool = True            # the main speaker had a bank before the run
     introduced: bool = False         # ...or was introduced earlier in the script
+    media: bool = False              # the main voice is a TV, not a person
 
     @property
     def names(self) -> list:
@@ -98,7 +99,9 @@ class TurnTruth:
             out.append("crosstalk")
         if main.seconds < SHORT_S:
             out.append("short")
-        if not self.enrolled:
+        if self.media:
+            out.append("tv")
+        elif not self.enrolled:
             out.append("introduced voice" if self.introduced else "new voice")
         if not out:
             out.append("clean")
@@ -122,4 +125,5 @@ def from_dict(d: dict) -> TurnTruth:
                      seconds=d["seconds"], noise=d.get("noise", ""),
                      snr_db=d.get("snr_db"), events=list(d.get("events") or []),
                      enrolled=d.get("enrolled", True),
-                     introduced=d.get("introduced", False))
+                     introduced=d.get("introduced", False),
+                     media=d.get("media", False))

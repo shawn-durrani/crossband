@@ -208,7 +208,8 @@ like the session's last turn. A turn whose voice ends the session with
 no name keeps the label it has. This last naming adds or changes a
 name, and it never takes one off. A name you set yourself and a turn
 with two voices are never touched. The session rows record the pass,
-with why the session ended and how many turns it relabelled.
+with why the session ended and how many turns it relabelled. The 10
+minutes is the `voice_session_idle_s` setting.
 
 ### How a voice is named
 

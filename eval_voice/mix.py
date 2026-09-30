@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from eval_voice import cast as cast_mod
 from eval_voice import truth as truth_mod
 
 SAMPLE_RATE = 16000
@@ -141,12 +142,14 @@ def seed_for(script_id: str, index: int) -> int:
 
 
 def mix_turn(script_id, index, main_line, main_pcm, over=None, over_pcm=None,
-             noise=None, events=(), enrolled=(), introduced=(), gap_s=0.6):
+             noise=None, events=(), enrolled=(), introduced=(), gap_s=0.6,
+             media=()):
     """One turn's audio and truth. `main_line` and `over.line` are
     script.Line values, `*_pcm` their rendered audio, `noise` the script's
     {"kind", "snr_db"} or None. `enrolled` and `introduced` are the names
     with a bank before the run and those introduced earlier in the
-    script, which the truth records for the main voice."""
+    script, and `media` the voices that aren't people, which the truth
+    records for the main voice."""
     rng = np.random.default_rng(seed_for(script_id, index))
     lead, tail = int(LEAD_S * SAMPLE_RATE), int(TAIL_S * SAMPLE_RATE)
     a_raw = trim(to_float(main_pcm))
@@ -180,6 +183,7 @@ def mix_turn(script_id, index, main_line, main_pcm, over=None, over_pcm=None,
                             snr_db=snr, events=[dict(e) for e in events])
     t.enrolled = t.main in set(enrolled)
     t.introduced = t.main in set(introduced)
+    t.media = t.main in set(media)
     return MixedTurn(pcm=to_pcm(out), truth=t, gap_s=gap_s)
 
 
@@ -192,7 +196,8 @@ def mix_script(script, renderer, enrolled=()) -> list:
                     if turn.over else None)
         turns.append(mix_turn(script.id, i, turn.line, main_pcm, turn.over,
                               over_pcm, script.noise, turn.events, enrolled,
-                              introduced, gap_s=turn.gap_s))
+                              introduced, gap_s=turn.gap_s,
+                              media=cast_mod.MEDIA))
         for e in turn.events:
             if "introduce" in e:
                 introduced.add(e["introduce"])

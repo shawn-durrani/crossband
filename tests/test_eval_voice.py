@@ -55,13 +55,19 @@ def test_builtin_scripts_load_and_cover_every_case():
     assert {"room": "on"} in events and {"room": "off"} in events
     # a voice with no bank before the run, so a new voice is tested
     assert any(t.speaker not in cast.DEFAULT_ENROLLED for t in turns)
+    # and "who's this?" answered out loud both ways, then a name spelt
+    assert {"answer": "Mateo"} in events and {"answer": "TV"} in events
+    assert {"correct": "Mateo"} in events
 
 
 def test_only_the_synthetic_roster_speaks():
     for s in script_mod.load_scripts():
-        assert set(s.cast) <= set(cast.CAST)
+        assert set(s.cast) <= set(cast.voices())
         for line in s.lines():
-            assert line.speaker in cast.CAST
+            assert line.speaker in cast.voices()
+    # the TV is nobody: never on the roster, never recorded
+    assert not set(cast.MEDIA) & set(cast.CAST)
+    assert not set(cast.MEDIA) & set(cast.DEFAULT_ENROLLED)
 
 
 @pytest.mark.parametrize("bad, why", [
@@ -78,6 +84,14 @@ def test_only_the_synthetic_roster_speaks():
                      "over": {"speaker": "Alex", "text": "me too"}}]),
      "second person"),
     (_script(noise={"kind": "rain", "snr_db": 10}), "noise"),
+    (_script(turns=[{"speaker": "Alex", "text": "hi",
+                     "events": [{"introduce": "TV"}]}]), "roster"),
+    (_script(turns=[{"speaker": "Alex", "text": "hi",
+                     "events": [{"correct": "TV"}]}]), "roster"),
+    (_script(turns=[{"speaker": "Alex", "text": "hi",
+                     "events": [{"answer": "Stranger"}]}]), "roster"),
+    (_script(turns=[{"speaker": "Alex", "text": "hi",
+                     "events": [{"depth": "deep"}]}]), "unknown event"),
 ])
 def test_the_validator_refuses_a_bad_script(bad, why):
     with pytest.raises(script_mod.ScriptError, match=why):
@@ -278,6 +292,68 @@ def test_the_instance_environment_is_built_from_nothing(tmp_path):
     assert env["PATH"] == "/bin"
 
 
+def test_only_the_rigs_instance_ends_a_voice_session_early(tmp_path):
+    short = instance.instance_env(8920, tmp_path, {}, owner="Alex",
+                                  session_idle_s=45, environ={})
+    assert short["CROSSBAND_VOICE_SESSION_IDLE_S"] == "45"
+    plain = instance.instance_env(8920, tmp_path, {}, owner="Alex",
+                                  environ={})
+    assert "CROSSBAND_VOICE_SESSION_IDLE_S" not in plain
+    # the rig's own setting never leaks in from the parent's environment
+    leaky = instance.instance_env(
+        8920, tmp_path, {}, owner="Alex",
+        environ={"CROSSBAND_VOICE_SESSION_IDLE_S": "5"})
+    assert "CROSSBAND_VOICE_SESSION_IDLE_S" not in leaky
+
+
+class _Reply:
+    def __init__(self, data):
+        self.data = data
+
+    def json(self):
+        return self.data
+
+
+class _SessionsApp:
+    """The second app's /api/voice/sessions as the adapter polls it: the
+    turn rows first, then the feed gone, then the end row."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = 0
+
+    async def get(self, path, params=None):
+        assert path == "/api/voice/sessions" and params["rows"] == "true"
+        self.calls += 1
+        return _Reply(self.replies[min(self.calls, len(self.replies)) - 1])
+
+
+def test_the_adapter_waits_for_each_sessions_end_row(monkeypatch):
+    import asyncio
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(crossband.asyncio, "sleep", no_sleep)
+    turn = {"session": "s1", "turn_id": "rig-1", "method": "calibrated"}
+    live = {"feeds": 1, "open_sessions": 1}
+    end = {"session": "s1", "end": "idle", "filled": 2, "renamed": [1]}
+    app = _SessionsApp([{"rows": [turn], "status": live}] * 3
+                       + [{"rows": [end, turn], "status": {}}])
+    a = crossband.CrossbandAdapter("http://127.0.0.1:8920",
+                                   diariser="http://127.0.0.1:8910",
+                                   end_pass_wait_s=100)
+    got = asyncio.run(a._wait_end_pass(app, 7))
+    assert app.calls == 4
+    assert got["sessions"] == got["ended"] == 1
+    assert got["relabelled"] == 2 and got["voices_renamed"] == 1
+    assert got["why"] == {"idle": 1}
+    # a session the app never ends isn't waited on forever
+    none = _SessionsApp([{"rows": [turn], "status": live}])
+    a.end_pass_wait_s = 0
+    assert asyncio.run(a._wait_end_pass(none, 7))["ended"] == 0
+
+
 def test_the_instance_refuses_the_fleets_ports():
     for port in (8901, 8902, 8903, 8904, 8910):
         with pytest.raises(instance.InstanceError, match="fleet"):
@@ -409,6 +485,133 @@ def test_aggregate_and_the_redesign_targets():
                              "room off": {"already": 1}}
 
 
+def test_a_tv_turn_is_right_with_no_name_on_it():
+    tv = TurnTruth("s", 0, [VoiceSpan("TV", 0.3, 5.0)], 5.5, enrolled=False,
+                   media=True)
+    assert tv.tags() == ["tv"]
+    for reason in ("new_voice", "media"):
+        row = scoring.judge(tv, Heard(0, labelled=True, reason=reason,
+                                      placeholders=1))
+        assert row["verdict"] == "right" and row["reason"] == reason
+    assert scoring.judge(tv, Heard(0, labelled=True, names=["Dave"]))[
+        "verdict"] == "wrong"
+    assert scoring.judge(tv, Heard(0))["verdict"] == "no label"
+
+
+def _ask_rows(who, media, labels):
+    """Rows for a script where Alex answers "who's this?" on turn 3 and
+    `who` spoke turns 1, 2 and 4, each read as `labels[i]` at the end."""
+    rows = []
+    for i, spoke in enumerate(["Alex", who, who, "Alex", who]):
+        t = TurnTruth("s", i, [VoiceSpan(spoke, 0.3, 4.0)], 4.5,
+                      enrolled=spoke == "Alex", media=media and spoke == who)
+        rows.append(scoring.judge(t, labels[i]))
+    return rows
+
+
+def test_a_spoken_answer_is_scored_on_the_voices_turns():
+    named = [Heard(0, labelled=True, names=["Alex"]),
+             Heard(1, labelled=True, names=["Matteo"]),
+             Heard(2, labelled=True, reason="new_voice", placeholders=1),
+             Heard(3, labelled=True, names=["Alex"]),
+             Heard(4, labelled=True, names=["Mateo"])]
+    rows = _ask_rows("Mateo", False, named)
+    answer = EventCheck(3, "answer", "Mateo", "heard", script="s",
+                        detail={"ask_turn": 1, "clips": 2,
+                                "people_new": ["Mateo"], "open_asks": 0})
+    got, = scoring.asks(rows, [answer])
+    assert got["asked_right"] and got["named"] and not got["media"]
+    assert got["before"] == [1, 2] and got["after"] == [1, 1]
+    assert got["clips"] == 2 and got["open_asks"] == 0
+    # the pass relabelling the missed turn counts, read after the pass
+    rows[2]["after_end"] = {"verdict": "right", "named": ["Mateo"],
+                            "reason": ""}
+    assert scoring.asks(rows, [answer])[0]["before"] == [2, 2]
+    tv = [Heard(0, labelled=True, names=["Alex"]),
+          Heard(1, labelled=True, reason="media", placeholders=1),
+          Heard(2, labelled=True, reason="new_voice", placeholders=1),
+          Heard(3, labelled=True, names=["Alex"]),
+          Heard(4, labelled=True, names=["Dave"])]
+    rows = _ask_rows("TV", True, tv)
+    said = EventCheck(3, "answer", "TV", "heard", script="s",
+                      detail={"ask_turn": 1, "clips": None,
+                              "people_new": [], "open_asks": 1})
+    got, = scoring.asks(rows, [said])
+    assert got["media"] and got["named"]
+    assert got["before"] == [1, 2] and got["after"] == [0, 1]
+    assert rows[4]["verdict"] == "wrong"
+    nothing = EventCheck(3, "answer", "TV", "no ask", script="s")
+    assert scoring.asks(rows, [nothing])[0]["ask_turn"] is None
+    text = "\n".join(report.ask_lines(scoring.asks(rows, [said, nothing])))
+    assert "the TV" in text and "nothing asked" in text
+
+
+def test_the_adapter_hears_an_answer_on_the_asked_turn(monkeypatch):
+    import asyncio
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(crossband.asyncio, "sleep", no_sleep)
+
+    class Chat:
+        def __init__(self, labels):
+            self.labels = list(labels)
+
+        async def get(self, path, params=None):
+            assert path == "/api/chats/5"
+            label = self.labels.pop(0) if len(self.labels) > 1 \
+                else self.labels[0]
+            return _Reply({"messages": [{"id": 41, "voice_labels": label}]})
+
+    a = crossband.CrossbandAdapter("http://127.0.0.1:8920")
+    new = {"labels": [], "unresolved": "new_voice"}
+    got = asyncio.run(a._check_answer(
+        Chat([new, {"labels": ["Matteo"], "source": "introduction"}]), 5, 4,
+        "Mateo", 41))
+    assert got.result == "heard" and got.seen == "Matteo"
+    assert got.detail == {"ask_message": 41}
+    got = asyncio.run(a._check_answer(
+        Chat([{"labels": [], "unresolved": "media"}]), 5, 4, "TV", 41))
+    assert got.result == "heard" and got.seen == "media"
+    assert asyncio.run(a._check_answer(Chat([new]), 5, 4, "TV", "")).result \
+        == "no ask"
+    a.event_wait_s = 0
+    monkeypatch.setattr(crossband, "ANSWER_WAIT_S", 0)
+    missed = asyncio.run(a._check_answer(Chat([new]), 5, 4, "Mateo", 41))
+    assert missed.result == "missed" and missed.seen == "new_voice"
+
+
+def test_a_person_is_found_by_either_of_their_names():
+    people = [{"person_id": "p1", "name": "Sam", "preferred_name": "Sam"},
+              {"person_id": "p2", "name": "Matteo",
+               "preferred_name": "Mateo", "owner_set": True}]
+    assert crossband._person(people, "Mateo")["person_id"] == "p2"
+    assert crossband._person(people, "Dave") is None
+
+
+def test_the_end_pass_is_scored_beside_the_names_at_the_time():
+    rows = []
+    for i, (who, then, later) in enumerate([("Sam", [], ["Sam"]),
+                                            ("Sam", ["Sam"], ["Sam"]),
+                                            ("Dave", ["Dave"], ["Sam"])]):
+        t = TurnTruth("s", i, [VoiceSpan(who, 0.3, 3.0)], 3.5)
+        row = scoring.judge(t, Heard(i, labelled=True, names=then,
+                                     placeholders=int(not then)))
+        again = scoring.judge(t, Heard(i, labelled=True, names=later))
+        row["after_end"] = {k: again[k] for k in ("verdict", "named",
+                                                  "reason")}
+        rows.append(row)
+    got = scoring.end_pass(rows)
+    assert got["then"]["right"] == 2 and got["then"]["unnamed"] == 1
+    assert got["after"]["right"] == 2 and got["after"]["wrong"] == 1
+    assert got["wrong_per_100"] == {"then": 0.0, "after": 33.3}
+    assert [(c["index"], c["verdict_after"]) for c in got["changed"]] == [
+        (0, "right"), (2, "wrong")]
+    assert scoring.end_pass([{k: v for k, v in r.items() if k != "after_end"}
+                             for r in rows]) is None
+
+
 # ---------- the script generator ----------
 
 def test_a_generated_script_is_checked_and_named_apart():
@@ -464,6 +667,9 @@ def test_a_mock_run_end_to_end(tmp_path, capsys):
             assert line.text not in text
     assert all("transcript" not in r for r in got["rows"])
     assert not (tmp_path / "cache" / "mixes").exists()   # the mock writes nothing
+    # the mock's end-of-session pass names the turns it left listening
+    assert got["end_pass"]["changed"]
+    assert "## After the end-of-session pass" in text
 
 
 def test_the_markdown_report_renders_every_section():
