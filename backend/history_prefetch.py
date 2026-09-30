@@ -33,7 +33,7 @@ there only with room mode off, and the round drops that search when the
 turn turns out not to be the owner's.
 
 The search has exactly the access the tool has: the same client call and
-owner token (memory_client.search), only where the tool works (memory on
+owner token (memory_client.search, labelled "auto" for membro's access log), only where the tool works (memory on
 for the chat and the service up), and the same formatting, untrusted web
 marker included (tools.format_search_hits).
 
@@ -49,6 +49,9 @@ from .memory_client import MemorySearchError
 
 log = logging.getLogger("crossband.history")
 
+# The access-log label on the search, recall's own for the app's automatic
+# reads (membro#164).
+AUTO_ORIGIN = "auto"
 # Hits asked of membro. The handover keeps whole hits under HANDOVER_CHARS,
 # about the top five at membro's 64-word excerpt.
 SEARCH_LIMIT = 8
@@ -268,7 +271,9 @@ async def _search(pre, text, memory, drop, gate):
         pre.query = " ".join(keywords(text, drop))
         if not pre.query:
             return ("off", [])
-        hits = await memory.search(pre.query, limit=SEARCH_LIMIT)
+        # "auto" tells membro's access log the app searched, not a model
+        hits = await memory.search(pre.query, limit=SEARCH_LIMIT,
+                                   origin=AUTO_ORIGIN)
     except asyncio.CancelledError:
         raise
     except MemorySearchError:

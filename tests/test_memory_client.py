@@ -279,6 +279,27 @@ def test_search_sends_bearer_token_and_preserves_hits(monkeypatch):
     run(c.aclose())
 
 
+def test_search_sends_its_origin_only_when_it_isnt_the_default(monkeypatch):
+    """membro#164: the round's own search says it's automatic, as recall's
+    ambient read does. A plain search keeps the old body."""
+    monkeypatch.delenv("MEMORY_AUTH_TOKEN", raising=False)
+    c = make_client()
+    c._client.get = _fake_health({"status": "ok", "contract_version": "1.8"})
+    bodies = []
+
+    async def fake_post(url, json=None, headers=None):
+        bodies.append(json)
+        return httpx.Response(200, json={"hits": []},
+                              request=httpx.Request("POST", url))
+
+    c._client.post = fake_post
+    run(c.search("espresso", limit=5))
+    run(c.search("espresso", limit=5, origin="auto"))
+    assert bodies == [{"query": "espresso", "limit": 5},
+                      {"query": "espresso", "limit": 5, "origin": "auto"}]
+    run(c.aclose())
+
+
 def test_search_without_token_sends_no_auth_header(monkeypatch):
     monkeypatch.delenv("MEMORY_AUTH_TOKEN", raising=False)
     c = make_client()

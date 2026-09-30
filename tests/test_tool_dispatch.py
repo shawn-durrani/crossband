@@ -41,7 +41,7 @@ class FakeMemory:
         return [{"content": "Alex lives in Fairhaven", "event_date": "2026-01-01",
                  "origin_agent": "user", "confidence": "high", "score": 0.9}]
 
-    async def search(self, query, limit=20):
+    async def search(self, query, limit=20, origin="http"):
         self.searched.append(query)
         if self.search_fails:
             raise MemorySearchError("memory /search request failed: HTTPStatusError")
