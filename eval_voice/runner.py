@@ -23,6 +23,7 @@ from eval_voice import cast as cast_mod
 from eval_voice import mix as mix_mod
 from eval_voice import scoring
 from eval_voice import script as script_mod
+from eval_voice.beds import BedError
 from eval_voice.report import render_markdown
 
 RIG = Path(__file__).resolve().parent
@@ -210,16 +211,30 @@ def main(argv=None) -> int:
 
     keys = {} if args.mock else read_keys(args.env)
     if args.mock:
-        from eval_voice.mock import MockRenderer
-        renderer = MockRenderer()
+        from eval_voice.mock import MockBeds, MockRenderer
+        renderer, beds = MockRenderer(), MockBeds()
     else:
+        from eval_voice import beds as beds_mod
         from eval_voice.render import Renderer, elevenlabs_fetch
         key = keys.get("ELEVENLABS_API_KEY")
         renderer = Renderer(cache, fetch=elevenlabs_fetch(key) if key else None,
                             model=args.tts_model)
+        beds = beds_mod.Beds(cache, fetch=beds_mod.elevenlabs_fetch(key)
+                             if key else None)
 
     say(f"mixing {len(scripts)} scripts")
-    mixed = {s.id: mix_mod.mix_script(s, renderer, enrolled) for s in scripts}
+    mixed, skipped = {}, {}
+    for s in scripts:
+        try:
+            mixed[s.id] = mix_mod.mix_script(s, renderer, enrolled, beds)
+        except BedError as e:
+            # A bed nobody can make leaves its script out, and says so,
+            # so the rest of the run still counts.
+            skipped[s.id] = str(e)
+            say(f"skipping {s.id}: {e}")
+    scripts = [s for s in scripts if s.id in mixed]
+    if not scripts:
+        raise SystemExit("no script could be mixed")
     voices = {n: mix_mod.enrol_audio(renderer, n, cast_mod.ENROL_PASSAGES[n])
               for n in enrolled}
     if not args.mock:
@@ -227,7 +242,8 @@ def main(argv=None) -> int:
             write_mix(cache, sid, turns)
     if args.mix_only:
         say(f"wrote the mixes and their truth under {cache / 'mixes'}; "
-            f"{renderer.new_chars} characters rendered new")
+            f"{renderer.new_chars} characters rendered new, "
+            f"{beds.stats()['new_seconds']:g} seconds of bed made new")
         return 0
 
     instance = None
@@ -286,10 +302,11 @@ def main(argv=None) -> int:
     tts = renderer.stats()
     tts["usd"] = round(tts["new_chars"] * TTS_PER_CHAR, 4)
     stt_s = getattr(adapter, "stt_seconds", None)
-    cost = {"tts": tts, "stt_seconds": stt_s,
+    cost = {"tts": tts, "beds": beds.stats(), "stt_seconds": stt_s,
             "stt_usd": round((stt_s or 0) / 3600 * STT_PER_HOUR, 4),
             "app": closing}
     report = scoring.aggregate(rows, events, cost)
+    report["skipped"] = skipped
     report["setup"] = {"adapter": adapter.name, "enrol": enrol_notes,
                        "described": described, "diariser": bool(diariser)}
     report["diagnostics"] = diag

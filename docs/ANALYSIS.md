@@ -152,5 +152,5 @@ app's log, in the rig's cache for a look.
 It shares the diariser with your app, and the diariser serves both on
 one model. The rig won't start while a voice chat is live, and a voice
 chat started during a run may name voices a little slower until it
-ends. The first run downloads the voice models and has ElevenLabs speak
-every line, which is kept for next time.
+ends. The first run downloads the voice models, has ElevenLabs speak
+every line and record two noisy rooms, and keeps them for next time.

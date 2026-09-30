@@ -22,8 +22,8 @@ wrong name on anyone.
 3. It mixes each turn on your computer. It trims the silence around a
    line and starts a second line part of the way through the first when
    the script asks for crosstalk. It turns a voice down when the script
-   says it's further away and lays cafe or road noise under the whole
-   turn. The truth is written down as it goes.
+   says it's further away and lays noise under the whole turn. The
+   truth is written down as it goes.
 4. It starts a second crossband on port 8920, from a copy of this
    checkout's code, with a data folder of its own. Its voice sessions
    end after 45 quiet seconds, where yours wait 10 minutes.
@@ -124,17 +124,18 @@ The machinery is pinned by `tests/test_eval_voice.py`, with no keys:
 ## What it costs
 
 Rendering a line costs ElevenLabs characters the first time only. The
-six committed scripts and the three recordings come to about 4,300
+eight committed scripts and the three recordings come to about 4,300
 characters, around 47 cents on the app's rate card. After that, every
-rerun of the same lines reads them from the cache.
+rerun of the same lines reads them from the cache. The two recorded
+rooms are a minute of sound effects, about 12 cents, also once.
 
 Every run streams its audio to the app, which transcribes it on
-ElevenLabs. The committed scripts are about three minutes of audio,
-around 2 cents. The app's one model call per turn comes to about 10
+ElevenLabs. The committed scripts are about four minutes of audio,
+around 3 cents. The app's one model call per turn comes to about 13
 cents a run. The report ends with each of these, and the second app's
 own ledger.
 
-A run takes about ten minutes. Most of it is the conversations played
+A run takes about 12 minutes. Most of it is the conversations played
 in real time, and each one then waits 45 seconds for its voice session
 to end.
 
@@ -221,6 +222,29 @@ line says for the app to act on.
 
 `script.py` has the whole shape, and the validator refuses any name off
 the roster.
+
+### Noise
+
+A script's noise is one of four kinds, laid under every turn at the
+script's signal-to-noise ratio.
+
+- `cafe` is made up from random numbers, a hiss with the odd clink of a
+  cup.
+- `road` is made up the same way, a low rumble that swells as traffic
+  passes.
+- `chatter` is a recorded cafe full of people talking, with no words
+  clear. It's the hard case, because the noise is voices too.
+- `kitchen` is a recorded kitchen, with a fan, a tap and dishes going.
+
+The recorded rooms are made once by ElevenLabs' sound effects model
+from a short description in `beds.py`, and kept in the cache like the
+rendered lines. Each is 30 seconds that loops, and each turn takes its
+own stretch of it, so a script always mixes the same way. Making them
+needs the sound effects permission on the ElevenLabs key. Without it a
+script on a recorded room is left out of the run, and the report says
+why. The `cafe-chatter` and `kitchen` scripts are two of the others
+again, over a recorded room, so you can set the two kinds of noise side
+by side.
 
 The utility model can write more, in the same shape:
 

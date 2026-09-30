@@ -1,0 +1,15 @@
+{
+  "id": "kitchen",
+  "about": "The two-voices conversation again, in a recorded kitchen with a fan, a tap and dishes going.",
+  "cast": ["Alex", "Sam"],
+  "noise": {"kind": "kitchen", "snr_db": 10},
+  "turns": [
+    {"speaker": "Alex", "text": "Did you end up booking the campsite for the long weekend?"},
+    {"speaker": "Sam", "text": "I did, but only for two nights. The third night was already full."},
+    {"speaker": "Alex", "text": "Two nights is fine. Which site did we get this time?"},
+    {"speaker": "Sam", "text": "The one near the creek, with the big gum tree over the tent pad."},
+    {"speaker": "Alex", "text": "Nice. I'll dig out the old stove and check how much gas is left."},
+    {"speaker": "Sam", "text": "Sounds good."},
+    {"speaker": "Sam", "text": "Last time it ran out halfway through dinner, and we ate cold beans by torchlight."}
+  ]
+}

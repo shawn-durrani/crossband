@@ -6,7 +6,7 @@ the truth run on audio of the right length. MockAdapter answers from the
 truth it's handed, wrong on a fixed few turns, so the report has every
 kind of verdict to show. Its end-of-session pass names the short turns
 it left listening, so that section of the report has something to show
-too.
+too. MockBeds hands back pink noise for every recorded bed.
 """
 
 import dataclasses
@@ -21,6 +21,18 @@ from eval_voice.mix import SAMPLE_RATE, to_pcm
 PITCH = {"Alex": 110.0, "Sam": 210.0, "Dave": 125.0, "Mateo": 140.0,
          "TV": 100.0}
 WORD_S = 0.33
+
+
+class MockBeds:
+    """Every bed as ten seconds of the mixer's own pink noise."""
+
+    def bed(self, kind: str) -> bytes:
+        from eval_voice.mix import _shaped
+        rng = np.random.default_rng(len(kind))
+        return to_pcm(0.1 * _shaped(10 * SAMPLE_RATE, rng, 1.0, 60.0))
+
+    def stats(self) -> dict:
+        return {"new_seconds": 0.0, "cached": 0, "usd": 0.0}
 
 
 class MockRenderer:

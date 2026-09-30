@@ -26,6 +26,11 @@ def cost_lines(cost: dict) -> list:
                    f"new ({tts.get('new_lines', 0)} lines), "
                    f"{tts.get('cached_chars', 0)} from the cache, on "
                    f"`{tts.get('model')}`. About ${tts.get('usd', 0):.3f}.")
+    beds = cost.get("beds") or {}
+    if beds.get("new_seconds") or beds.get("cached"):
+        out.append(f"- Noise beds: {beds.get('new_seconds', 0):g} seconds "
+                   f"made new, {beds.get('cached', 0)} from the cache. About "
+                   f"${beds.get('usd', 0):.3f}.")
     if cost.get("stt_seconds") is not None:
         out.append(f"- Audio streamed to the app for transcription: "
                    f"{cost['stt_seconds']:.0f} seconds. About "
@@ -128,6 +133,8 @@ def render_markdown(report: dict, mock: bool = False,
                f"turns, through the {setup.get('adapter', 'unknown')} adapter.")
     if setup.get("described"):
         out.append(setup["described"])
+    for sid, why in (report.get("skipped") or {}).items():
+        out += ["", f"Left out `{sid}`, because {why}"]
     out += ["", "## Naming", "", "| Verdict | Turns | Share |", "|---|---|---|"]
     for v, label in VERDICT_LABELS.items():
         row = s[v]

@@ -176,10 +176,10 @@ MEASUREMENTS = (
                   "an answer to \"who's this?\" It plays made-up "
                   "conversations into a second copy of the app and scores "
                   "every turn."),
-        costs=("About 47 cents the first time, for ElevenLabs to speak the "
-               "lines, which are then kept. After that about 12 cents a run "
-               "to transcribe and read the turns."),
-        takes=("About ten minutes, longer the first time while the voice "
+        costs=("About 60 cents the first time, for ElevenLabs to speak the "
+               "lines and record two noisy rooms, which are then kept. After "
+               "that about 16 cents a run to transcribe and read the turns."),
+        takes=("About 12 minutes, longer the first time while the voice "
                "models download."),
         touches=("A second copy of the app on port 8920 with its own data "
                  "folder and memory switched off, so your chats, people and "
@@ -668,6 +668,7 @@ def _voice(r: dict):
              if wrong is not None else ".")
     cost = r.get("cost") or {}
     spent = float((cost.get("tts") or {}).get("usd") or 0) + \
+        float((cost.get("beds") or {}).get("usd") or 0) + \
         float(cost.get("stt_usd") or 0)
     return line, spent
 
