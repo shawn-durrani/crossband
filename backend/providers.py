@@ -1981,6 +1981,34 @@ async def _tool_batch_events(tasks, label):
         yield ("done", idx)
 
 
+# ---------- text from two tool rounds of one reply -----
+
+# Marks that can close a sentence's last word: quotes, brackets, and
+# markdown emphasis or code.
+_CLOSING_MARKS = "\"'”’)]*_~`"
+
+
+def round_break(before: str, after: str) -> str:
+    """What goes between the text a reply wrote before a tool call
+    (`before`, everything so far) and the first text after it (`after`).
+
+    Each tool round streams its own text, so "Let me check." and "Found
+    it." used to run together (#589). Nothing,
+    when either side already has whitespace at the join: the model's own
+    break stays as it wrote it. A space, when the earlier text stops mid
+    sentence on a letter, a digit or a comma. A paragraph break otherwise:
+    what follows a tool call is a new thought, and a heading, list or table
+    it opens with only renders from the start of a line. The break rides
+    the next text event, so the saved reply, the browser and the voice all
+    get it."""
+    if not before or not after or before[-1].isspace() or after[0].isspace():
+        return ""
+    tail = before.rstrip(_CLOSING_MARKS)
+    if tail and (tail[-1].isalnum() or tail[-1] in ",;"):
+        return " "
+    return "\n\n"
+
+
 async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, memory):
     client = _anthropic_client(p)
     messages = build_anthropic_messages(p["slug"], transcript, names, cfg)
@@ -2104,6 +2132,7 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     reply_text_parts = []  # accumulated across the whole turn (all tool rounds)
     # for the attribution audit at natural completion - see _check_attribution.
     for round_i in range(cfg["max_tool_rounds"]):
+        fresh = True  # this round's first text is still to come (#589)
         kwargs = dict(
             model=p["model"],
             max_tokens=cfg["max_response_tokens"],
@@ -2124,6 +2153,9 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
                 if meter is not None:
                     meter.stream = stream
                 async for text in stream.text_stream:
+                    if fresh and text:
+                        fresh = False
+                        text = round_break("".join(reply_text_parts), text) + text
                     reply_text_parts.append(text)
                     yield ("text", text)
                 final = await stream.get_final_message()
@@ -2280,6 +2312,7 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
     reply_text_parts = []  # accumulated across the whole turn (all tool rounds)
     # for the attribution audit at natural completion - see _check_attribution.
     for _ in range(cfg["max_tool_rounds"]):
+        fresh = True  # this round's first text is still to come (#589)
         kwargs = dict(
             model=p["model"],
             instructions=stable,
@@ -2337,8 +2370,12 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
         async for event in stream:
             etype = getattr(event, "type", "")
             if etype == "response.output_text.delta":
-                reply_text_parts.append(event.delta)
-                yield ("text", event.delta)
+                text = event.delta
+                if fresh and text:
+                    fresh = False
+                    text = round_break("".join(reply_text_parts), text) + text
+                reply_text_parts.append(text)
+                yield ("text", text)
             elif etype in ("response.completed", "response.incomplete"):
                 final = event.response
         if final is None:
@@ -2465,6 +2502,7 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
         cfg["_call_meter"].done = usage  # #576: the rounds that finished
     reply_text_parts = []
     for _ in range(cfg["max_tool_rounds"]):
+        fresh = True  # this round's first text is still to come (#589)
         kwargs = dict(
             model=p["model"],
             messages=build_chat_completion_messages(stable, input_items),
@@ -2510,8 +2548,12 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
             if delta is None:
                 continue
             if getattr(delta, "content", None):
-                reply_text_parts.append(delta.content)
-                yield ("text", delta.content)
+                text = delta.content
+                if fresh:
+                    fresh = False
+                    text = round_break("".join(reply_text_parts), text) + text
+                reply_text_parts.append(text)
+                yield ("text", text)
             for tc in (getattr(delta, "tool_calls", None) or []):
                 slot = calls.setdefault(
                     tc.index, {"id": "", "name": "", "arguments": ""})
