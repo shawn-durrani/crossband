@@ -601,6 +601,57 @@ def _participant_names(con) -> list:
     return out
 
 
+# ---- the app boundary (#602) ----
+#
+# The #65 boundary's sibling. The owner drives MCP apps by name while they
+# talk ("see it properly with <app>"), often by a short form of the name,
+# and the intent model read one such mention as an introduction. The app's
+# short name was seated, the only unlearnt seat in a two-person room, and
+# elimination then named the household member's turns after it. Every later
+# mention could seat it again, so it never went away.
+
+APP_AFFIX_MIN = 4   # the shortest leading or trailing piece read as a name
+
+
+def app_names(cfg) -> list:
+    """The names of the apps the assistants and the guest can use: the
+    configured MCP servers (`mcp_servers` and `code_mcp`). Software the
+    owner talks about by name, never a person in the room."""
+    out = []
+    for key in ("mcp_servers", "code_mcp"):
+        servers = (cfg or {}).get(key)
+        if isinstance(servers, dict):
+            out.extend(n for n in servers if isinstance(n, str) and n.strip())
+    return out
+
+
+def app_alias(name: str, apps) -> bool:
+    """Is `name` plausibly an app's name, or a short form of it, as the
+    transcriber spelt it? Three ways: a confident spelling of the whole
+    name or of one of its words ("watcher" in "build-watcher"), or a
+    leading or trailing piece of the name of APP_AFFIX_MIN letters or more
+    (the "fisher" in "kingfisher"). Only confident spellings count here:
+    a close one would catch real names ("Bill" beside "build"). The
+    asymmetry is #65's: a real guest caught here still gets a name from a
+    tap, and a phantom app seat funds itself by elimination."""
+    folded = fold_name(name)
+    if not folded:
+        return False
+    for app in apps or ():
+        whole = fold_name(app)
+        if not whole:
+            continue
+        words = [w for w in re.split(r"[^A-Za-z]+|(?<=[a-z])(?=[A-Z])",
+                                     app or "") if len(w) >= APP_AFFIX_MIN]
+        if any(name_variant(name, w) == VARIANT_CONFIDENT
+               for w in [app] + words):
+            return True
+        if len(folded) >= APP_AFFIX_MIN and (whole.startswith(folded)
+                                             or whole.endswith(folded)):
+            return True
+    return False
+
+
 # ---- spoken name corrections (#28: naming is law) ----
 #
 # A spoken "her name is spelt ..." correction used to do NOTHING - the
@@ -1009,7 +1060,7 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
             await asyncio.to_thread(voice_ask.open_ask, chat_id))
         prompt = intent.build_merged_prompt(
             text, cfg.get("user_name", "User"), seats, present, known,
-            asking=asking)
+            asking=asking, apps=app_names(cfg))
         reply = await llm_util.utility_complete_logged(
             chat_id, "intent_scan", prompt, cfg, max_tokens=300)
         verdict = intent.parse_merged(reply, text)
@@ -1423,6 +1474,13 @@ def apply_scan(chat_id, verdict, cfg, text="", message_id=None):
         intros = [n for n in intros if not participant_alias(n, pnames)]
         if len(intros) < before:
             log.info("participant-alias introduction dropped: chat=%s n=%d",
+                     chat_id, before - len(intros))
+        # Nor is an app the owner talks about by name (#602).
+        apps = app_names(cfg)
+        before = len(intros)
+        intros = [n for n in intros if not app_alias(n, apps)]
+        if len(intros) < before:
+            log.info("app-alias introduction dropped: chat=%s n=%d",
                      chat_id, before - len(intros))
         # A TV is never a person (#523).
         before = len(intros)

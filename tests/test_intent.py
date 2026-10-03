@@ -89,6 +89,29 @@ def test_line_for_a_tv_heard_while_the_app_wasnt_asking():
         verdict, {"media": "media_ignored"}) == ""
 
 
+def test_the_apps_note_is_added_only_when_apps_are_configured():
+    """#602: the owner talks about the apps the assistants use, often by a
+    short form of the name, and one such mention was read as an
+    introduction. With apps configured, one sentence in the introductions
+    axis names them as software. With none, the prompt is exactly as it
+    was, so the harness's fixtures measure the same text."""
+    args = ("let's see it properly with Fisher", "Alex", ["Claude"], ["Sam"],
+            ["Sam"])
+    plain = intent.build_merged_prompt(*args)
+    assert intent.build_merged_prompt(*args, apps=()) == plain
+    with_apps = intent.build_merged_prompt(*args, apps=["kingfisher",
+                                                        "build-watcher"])
+    assert "(kingfisher, build-watcher)" not in plain
+    assert "(kingfisher, build-watcher) are software" in with_apps
+    assert "short form of one's name" in with_apps
+    assert "never introduces a person" in with_apps
+    assert with_apps.endswith("let's see it properly with Fisher")
+    # the sentence sits on the introductions axis, before corrections
+    assert with_apps.index("are software") < with_apps.index("3. corrections")
+    assert with_apps.index("are software") > with_apps.index(
+        "2. introductions")
+
+
 def test_merged_prompt_handles_empty_lists():
     p = intent.build_merged_prompt("hello", "Alex", [], [], [])
     assert "(none)" in p           # no seats

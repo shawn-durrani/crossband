@@ -285,6 +285,9 @@ left and closes any open question about who's speaking. From "solo",
 only an introduction, "group mode" or "switch on now" brings the room
 back.
 
+To take one person off the roster, say they've left, like "Dave has
+left" or "Sam had to go". Everyone else stays, and the room stays on.
+
 In solo the app still checks each spoken turn. Your voice gets your
 name, a voice the app remembers gets that person's name, and a voice it
 doesn't know is marked "a new voice". Nothing in solo switches the room
@@ -537,6 +540,17 @@ The app spots your own name in its misspelt forms, and it spots a
 model's name the same way. Any such name is dropped before seating,
 and the seat writer refuses the exact names outright as a final guard.
 Your own name never creates a second you, however it's misheard.
+
+An app's name can't be seated either. The apps are the MCP servers set
+in `mcp_servers` and `code_mcp`, and you often drive one by a short form
+of its name while you talk. The small model that reads every turn is
+told their names. A name that's an app's name, a spelling of it, one of
+its words, or four or more letters from its start or end is dropped
+before seating. An app's name already on the roster comes off on the
+next spoken turn, before the turn is named, so elimination never names
+a voice after it. Two such seats stay put. One is a seat you made by
+tapping a turn, and the other is a seat whose voice is learnt. A guest
+whose name matches one of your apps gets their name from a tap.
 
 ## How a bank keeps its clips
 

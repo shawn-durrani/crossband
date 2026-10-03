@@ -39,7 +39,8 @@ reads its answer:
      re-runs the hygiene audit.
 
 The rules that hold whatever the scores say: the owner's name is never
-learnt by ear as a second person, an AI participant is never a person,
+learnt by ear as a second person, an AI participant or an app is never
+a person (an app's name leaves the roster before a turn is planned),
 solo ("just me") never arms, seats, asks or learns, a turn the pass can't
 name is never read as the owner's, a voice someone said is a TV is never
 named, seated, asked about or learnt from, and every write goes through
@@ -254,6 +255,10 @@ async def run(chat_id, pcm, sample_rate, commit_ts, session, cfg, turn_id):
         got = vss.join_pieces(turn_id, got, len(pcm) / 2 / (sample_rate
                                                               or 16000))
         pieces = (got or {}).get("pieces") or 1
+        # #602: a seat named after an app leaves before the plan reads the
+        # roster, so elimination can never name a voice after it.
+        from . import room_state
+        await diarize._in_voice_thread(room_state.unseat_apps, chat_id, cfg)
         plan = await diarize._in_voice_thread(_plan, chat_id, cfg)
         decision = decide(got, plan)
         listed = crosstalk.listed_voices(got)

@@ -213,6 +213,51 @@ def seat(chat_id, name, cfg, *, via, enforce_cap, person_id="",
             con.close()
 
 
+def unseat_apps(chat_id, cfg, *, con=None) -> int:
+    """Take a seat named after an app off the roster (#602). Returns how
+    many seats left.
+
+    The introduction scan no longer seats an app's name, but a seat made
+    before it learnt that, or before the app was configured, stays present
+    and keeps funding elimination: a voice nobody knows is named after the
+    app, turn after turn. The voice check calls this before it plans each
+    turn, so such a seat leaves on the next spoken turn.
+
+    Two seats stay whatever their name: one the owner made by hand (a tap,
+    or the owner's own seat), and one whose voice is learnt, because a
+    learnt voice is a real person by definition. The departure writer
+    rings the bell itself."""
+    from . import anchors, introductions  # lazy: introductions imports us
+    apps = introductions.app_names(cfg)
+    if not apps:
+        return 0
+    own = con is None
+    if own:
+        con = db.connect()
+    try:
+        present = db.get_room_roster(con, chat_id, present_only=True)
+        phantoms = [r for r in present
+                    if r.get("seated_via") != "owner"
+                    and introductions.app_alias(r["name"], apps)]
+        if not phantoms:
+            return 0
+        learnt = {p["person_id"] for p in anchors.store().people()
+                  if p.get("sufficient")}
+        left = 0
+        for r in phantoms:
+            if r["person_id"] and r["person_id"] in learnt:
+                continue
+            if db.mark_room_person_left(con, chat_id, r["name"]):
+                left += 1
+        if left:
+            log.info("app-named seat left the roster: chat=%s n=%d",
+                     chat_id, left)
+        return left
+    finally:
+        if own:
+            con.close()
+
+
 def _seat_owner(con, chat_id, cfg):
     """The owner's seat for arm(): under the user_name SETTING (#28
     phase 3 - a spelt-by-ear transcription never mints a roster person),
