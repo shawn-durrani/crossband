@@ -219,6 +219,104 @@ def test_without_anyone_to_eliminate_to_a_new_voice_names_nobody(
                         "unresolved": "new_voice"}]
 
 
+# ── 3b. an app's name is nobody to eliminate to (#602) ──────────────────────
+#
+# Field failure: an app's short name was seated from a mention, the only
+# unlearnt seat in a room of two, and a remembered person's turns were
+# named after it by elimination. The seat leaves before the pass plans the
+# turn, so the voice is asked about instead. "kingfisher" is invented.
+
+APPS = {"user_name": "Alex", "mcp_servers": {"kingfisher": {"command": "x"}}}
+
+
+def _run_with(chat_id, monkeypatch, cfg, written):
+    fake_naming(monkeypatch)["answers"] = [naming_answer("new")]
+
+    async def capture(chat_id, commit_ts, payload, session, turn_id=None):
+        written.append(payload)
+        return None
+    monkeypatch.setattr(diarize, "_attach_until_deadline", capture)
+    asyncio.run(voice_pass.run(chat_id, loud_pcm(3.0), 16000, time.time(),
+                               diarize.RoomSession(), cfg, None))
+
+
+def _present(chat_id):
+    con = db.connect()
+    try:
+        return [r["name"] for r in db.get_room_roster(con, chat_id,
+                                                      present_only=True)]
+    finally:
+        con.close()
+
+
+def test_an_app_named_seat_leaves_and_the_voice_is_asked_about(
+        app, monkeypatch):
+    from roomkit import _remember
+    owner = _remember("Alex")
+    sam = _remember("Sam")
+    chat = _room(app, ("Alex", owner), ("Sam", sam), ("Fisher", ""))
+    written = []
+    _run_with(chat, monkeypatch, APPS, written)
+    assert _present(chat) == ["Alex", "Sam"]
+    assert written[0]["labels"] == [] and "learning" not in written[0]
+    assert written[0]["unresolved"] == "new_voice"
+    con = db.connect()
+    try:
+        asks = [f for f in db.get_room_flags(con, chat, open_only=True)
+                if f["kind"] == "unknown_voice"]
+    finally:
+        con.close()
+    assert len(asks) == 1
+
+
+def test_a_seat_the_owner_made_by_hand_stays_whatever_its_name(
+        app, monkeypatch):
+    """A real guest who shares a name with an app gets their name from a
+    tap, and the tap's seat is never taken away. Elimination still names a
+    new voice after them, as for any unlearnt guest."""
+    from roomkit import _remember
+    owner = _remember("Alex")
+    chat = _room(app, ("Alex", owner))
+    con = db.connect()
+    try:
+        db.add_room_person(con, chat, "Fisher", seated_via="owner")
+    finally:
+        con.close()
+    written = []
+    _run_with(chat, monkeypatch, APPS, written)
+    assert _present(chat) == ["Alex", "Fisher"]
+    assert written[0]["labels"] == ["Fisher"] and written[0]["learning"]
+
+
+def test_with_no_apps_configured_the_first_meeting_is_unchanged(
+        app, monkeypatch):
+    from roomkit import _remember
+    owner = _remember("Alex")
+    chat = _room(app, ("Alex", owner), ("Fisher", ""))
+    written = []
+    _run_with(chat, monkeypatch, {"user_name": "Alex"}, written)
+    assert _present(chat) == ["Alex", "Fisher"]
+    assert written[0]["labels"] == ["Fisher"] and written[0]["learning"]
+
+
+def test_unseat_apps_keeps_a_seat_whose_voice_is_learnt(app):
+    """A learnt voice is a real person by definition, so a remembered guest
+    named like an app is never taken off. Otherwise the voice match would
+    seat them and the next turn would take them off again."""
+    from backend import room_state
+    from roomkit import _remember
+    owner = _remember("Alex")
+    fisher = _remember("Fisher", clips=6)
+    store = anchors.store()
+    store.add_clip(fisher, loud_pcm(anchors.SUFFICIENT_SECONDS + 1), 16000,
+                   source="introduction")
+    assert store.find_by_name("Fisher")["sufficient"]
+    chat = _room(app, ("Alex", owner), ("Fisher", fisher))
+    assert room_state.unseat_apps(chat, APPS) == 0
+    assert _present(chat) == ["Alex", "Fisher"]
+    assert room_state.unseat_apps(chat, {"user_name": "Alex"}) == 0
+
+
 # ── 4. the learning state reaches the seats ─────────────────────────────────
 
 def _learning_msg(name="Alex", **extra):

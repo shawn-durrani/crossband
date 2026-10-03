@@ -209,6 +209,19 @@ def test_the_name_passes_every_introductions_guards():
     assert voice_ask.the_name(mixed, "Alex", agents) == "Dave"
 
 
+def test_the_name_never_answers_with_an_apps_name():
+    """#602: "that's Fisher" while the app is asking can't name the voice
+    after an app the owner uses, here an invented "kingfisher"."""
+    apps = ["kingfisher"]
+    assert voice_ask.the_name(_verdict("Fisher"), "Alex", [], apps) == ""
+    assert voice_ask.the_name(_verdict("Kingfisher"), "Alex", [], apps) == ""
+    assert voice_ask.the_name(_verdict("Dave"), "Alex", [], apps) == "Dave"
+    mixed = {"introductions": ["Fisher", "Dave"]}
+    assert voice_ask.the_name(mixed, "Alex", [], apps) == "Dave"
+    # with no apps configured the name stands, as before
+    assert voice_ask.the_name(_verdict("Fisher"), "Alex", []) == "Fisher"
+
+
 # ---------- 2. the answer does what the tap does ----------
 
 def test_thats_dave_from_the_owner_names_the_new_voice(app):

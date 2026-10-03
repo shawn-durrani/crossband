@@ -582,6 +582,102 @@ def test_seat_writer_refuses_exact_participant_names(app):
         assert [p["name"] for p in _roster(chat["id"])] == ["Alex"]
 
 
+# ── the app boundary: an app the owner talks about is never a person (#602) ──
+#
+# Field failure: the owner drove an MCP app by a short form of its name
+# ("see it properly with <short name>"), and the intent model returned the
+# short name as an introduction. It was seated as the one unlearnt person in
+# a two-person room, elimination named the other person's turns after it,
+# and every later mention could seat it again. The app names here are
+# invented.
+
+APPS_CFG = {"user_name": "Shawn", "room_roster_max": 6,
+            "mcp_servers": {"kingfisher": {"command": "x"},
+                            "build-watcher": {"command": "x"}},
+            "code_mcp": {"LogHarbor": {"command": "x"}}}
+
+
+def test_app_names_come_from_both_kinds_of_mcp_server():
+    assert introductions.app_names(APPS_CFG) == [
+        "kingfisher", "build-watcher", "LogHarbor"]
+    assert introductions.app_names({}) == []
+    assert introductions.app_names({"mcp_servers": None,
+                                    "code_mcp": ["not", "a", "dict"]}) == []
+
+
+def test_app_alias_truth_table():
+    apps = introductions.app_names(APPS_CFG)
+    yes = ["Kingfisher", "kingfisher", "Kingfischer",   # the whole name
+           "Fisher", "fisher", "King",                  # a leading or
+           "Watcher", "Watchr", "Build",                # trailing piece,
+           "Harbor", "Log Harbor"]                      # or one of its words
+    no = ["Sam", "Dave", "Mateo", "Alex", "",
+          "Fish",      # a middle piece is no short form
+          "Her",       # under four letters
+          "Bill"]      # only close to "build", and close is not enough
+    for name in yes:
+        assert introductions.app_alias(name, apps), name
+    for name in no:
+        assert not introductions.app_alias(name, apps), name
+    assert not introductions.app_alias("Fisher", [])
+
+
+def test_an_apps_short_name_is_dropped_but_the_real_guest_still_joins(app):
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Fisher", "Sam"], "departures": []},
+            APPS_CFG)
+        assert [p["name"] for p in _roster(chat["id"])] == ["Sam"]
+
+
+def test_an_app_only_introduction_changes_nothing(app):
+    """The field case: the only name heard is the app's. No seat, and the
+    room stays off, so nothing is left for elimination to fund."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        assert introductions.apply_scan(
+            chat["id"], {"introductions": ["Fisher"], "departures": []},
+            APPS_CFG) == "no_change"
+        assert _roster(chat["id"]) == []
+        assert _chat_room_mode(chat["id"]) is False
+
+
+def test_an_app_named_seat_can_still_be_said_to_have_left(app):
+    """A departure is never filtered: a phantom seated before the boundary
+    existed leaves when the owner says so, and a later mention of the app
+    can't seat it again."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        con = db.connect()
+        try:
+            db.set_chat_room_mode(con, chat["id"], True)
+            db.add_room_person(con, chat["id"], "Fisher",
+                               seated_via="introduction")
+        finally:
+            con.close()
+        assert introductions.apply_scan(
+            chat["id"], {"introductions": [], "departures": ["Fisher"]},
+            APPS_CFG) == "roster_shrank"
+        introductions.apply_scan(
+            chat["id"], {"introductions": ["Fisher"], "departures": []},
+            APPS_CFG)
+        assert _roster(chat["id"]) == []
+
+
+def test_the_scan_tells_the_model_about_the_apps(app, utility, monkeypatch):
+    """The live scan hands the configured apps to the merged prompt, so the
+    model hears a short name as the app it is. Set after startup, so no
+    server is spawned for the invented apps."""
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        monkeypatch.setattr(app.state.settings, "mcp_servers",
+                            APPS_CFG["mcp_servers"])
+        chat = c.post("/api/chats", json={"participant_ids": []}).json()
+        _send(c, chat["id"], "let's see it properly with Fisher")
+        assert _wait_for(lambda: utility["calls"])
+    assert "(kingfisher, build-watcher)" in utility["calls"][0]
+
+
 # ── naming hygiene: a relationship noun is never a name (#28 phase 4) ───────
 #
 # Second-field-test defect 1: "this is me, Sam, [the owner]'s wife" minted a

@@ -50,16 +50,24 @@ ASKING_NOTE = (
 
 def build_merged_prompt(text: str, user_name: str, seat_names: list,
                         present_names: list, known_names: list,
-                        asking: bool = False) -> str:
+                        asking: bool = False, apps=()) -> str:
     """The one prompt every user turn goes to. `seat_names` are the chat's AI
     participants, `present_names` the roster's present people, `known_names`
     every name the app might resolve a correction against - the same three
     inputs the four prompts this replaces took, gathered into one call.
     `asking` is whether an open "who's this?" ask points at a turn, which
-    adds ASKING_NOTE and nothing else."""
+    adds ASKING_NOTE and nothing else. `apps` are the configured MCP apps
+    (introductions.app_names, #602): when there are any, one sentence says
+    they and their short names are never people, and with none the prompt
+    is exactly as it was."""
     seats = ", ".join(seat_names) or "(none)"
     present = ", ".join(present_names) if present_names else "(nobody yet)"
     known = ", ".join(known_names) if known_names else "(nobody yet)"
+    app_list = ", ".join(apps or ())
+    app_note = (f" The apps the assistants use ({app_list}) are software, "
+                "and so is a short form of one's name: talking about "
+                "using one, or doing something with one, never introduces "
+                "a person." if app_list else "")
     return (
         "You watch one message from a conversation between a person and "
         f"several AI assistants, sometimes with other people in the room. "
@@ -102,7 +110,7 @@ def build_merged_prompt(text: str, user_name: str, seat_names: list,
         "name is given; a relationship-only introduction returns the "
         "relationship word itself. A stated short form ('call me Sam') "
         f"goes in aliases keyed by the name. Never return {user_name} "
-        "or an assistant.\n"
+        "or an assistant." + app_note + "\n"
         "3. corrections: does it CORRECT what a PERSON is called (how "
         "their name is spelt, or the name to use for them), or DECLARE two "
         "forms of one person's name (a spelling plus how it is "

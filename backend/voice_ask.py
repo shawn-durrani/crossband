@@ -162,12 +162,13 @@ def points_at_a_turn(ask) -> bool:
     return bool(ask and ask.get("message_id"))
 
 
-def the_name(verdict, owner, participants) -> str:
+def the_name(verdict, owner, participants, apps=()) -> str:
     """The one name an introduction gives, after the guards every
     introduction passes, or "" when there isn't exactly one (pure)."""
     names = [n for n in verdict.get("introductions") or ()
              if not introductions.owner_alias(n, owner)
              and not introductions.participant_alias(n, participants)
+             and not introductions.app_alias(n, apps)
              and not introductions.relationship_noun(n)
              and not introductions.media_noun(n)]
     return names[0] if len(names) == 1 else ""
@@ -214,7 +215,8 @@ def answer_with_name(chat_id, ask, message_id, verdict, cfg, text="") -> str:
                            (chat_id,)).fetchone()
         if not chat or chat["ambient_off"]:
             return ""
-        name = the_name(verdict, owner, introductions._participant_names(con))
+        name = the_name(verdict, owner, introductions._participant_names(con),
+                        introductions.app_names(cfg))
         asked = _message(con, chat_id, ask["message_id"])
         turn = _message(con, chat_id, message_id)
         if not name or not asked or not turn \
