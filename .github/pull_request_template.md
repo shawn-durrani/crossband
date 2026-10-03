@@ -29,6 +29,7 @@ itself states the relationship being tested.
 | People | Alex, Sam, Dave, Mateo | User, contact R, contact P |
 | Organisations | AcmeCo, Initech, Globex | AcmeCo, BetaWorks |
 | Places | Fairhaven | Meridian Falls, Cedar Hollow |
+| Apps (MCP servers) | kingfisher, build-watcher, LogHarbor | not used |
 
 This is the fleet roster: membro and spendglass use the same cast, so a
 reviewer moving between repos can tell invented data from real at a glance.
