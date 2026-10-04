@@ -271,6 +271,14 @@ carry the `Read(.env)` family, investigate mode's options carry no
 guest test mocks the SDK boundary, so what's asserted is which rules
 are handed to Claude Code, not that the CLI refused a read.
 
+Long work on an MCP server outlives the round that started it. The suite
+starts a watch from a seat's tool call, aborts that round the way a
+barge-in does, and checks the watch keeps polling. A failed poll is
+tried again, a question is handed back once, a result is relayed and
+ends the watch, and spoken progress waits for a new stage and its two
+minutes. One test runs the path against a real stdio server, so the
+field the SDK fills is the one that's read.
+
 Cost and provenance stay apart. Metered, subscription-equivalent and
 unknown never merge. Provenance is stamped at write time and can't be
 backfilled. An unknown model id stays unpriced and inherits no family

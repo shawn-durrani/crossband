@@ -25,6 +25,7 @@ from . import engine
 from . import events
 from . import funnel
 from . import guest
+from . import mcpjobs
 from . import rounds
 from . import tools as tools_mod
 from . import voice_trace
@@ -358,6 +359,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # cleanup runs (the voice rig's second app), and its record
             # says the app restarted.
             await analysis.stop_all()
+            # #604: background watches poll through the MCP sessions, so
+            # they stop before the manager closes them.
+            await mcpjobs.stop_all()
             await app.state.mcp.stop()
             await memory.aclose()
             egress.set_proxy_url(None)

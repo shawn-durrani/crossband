@@ -410,10 +410,63 @@ lists only together with that page.
 | key | default | what it does |
 |---|---|---|
 | `mcp_servers` | `{}` | MCP servers the seats may call over stdio, each name mapping to `{command, args, label?}`. Set it in `config.local.json`. The optional `label` shows in the work-status chip while that server is in flight, and a server without one shows a plain "Working on it". |
+| `mcp_progress_every_s` | `120` | The most often a seat speaks up about a server's [background work](#long-work-from-an-mcp-server), and only when its stage has moved on. Its questions and its result always come back. `0` keeps progress to the status strip and what the seats can answer when asked. |
 | `ingest_token` | `""` | The bearer for the machine side-channel, `POST /api/ingest` and `POST /api/chats/{id}/notice`, set as `CROSSBAND_INGEST_TOKEN`. Once a password is enrolled it's the only way a producer reaches either route. [PRODUCERS.md](PRODUCERS.md). |
 | `slash_commands` | `[]` | Suggestion chips in the composer for `/` messages, each `{insert, label, hint}`. Crossband gives no command a meaning, so a `/` message goes to your tooling and no model replies. [PRODUCERS.md](PRODUCERS.md) has the contract. |
 | `spend_note_every` | `30` | While a seat runs above its default depth or on a stronger model, or [research mode](WEB_RESEARCH.md#research-mode) is on, the chat gets a system line every this many messages saying what's been spent since. A rate-card estimate, never a bill. `0` turns it off. |
 | `slash_ack_timeout_s` | `120` | The dead-man for `/` messages. If nothing acknowledges a slash command within this window, one system line says nothing picked it up, so a stopped watcher stops looking like a queued deploy. `0` turns it off. [PRODUCERS.md](PRODUCERS.md). |
+
+## Long work from an MCP server
+
+A server can answer a long job at once and say the work carries on,
+with a `background` block in the tool result's structured content.
+Some MCP work runs for minutes, such as a furniture design app building
+a design. A seat that waited for it would hold the round, and in a
+voice chat the room would sit in silence.
+
+```json
+{ "background": {
+    "job": "<id of the request, and a new id means a follow-up>",
+    "state": "running | waiting | done | idle",
+    "title": "Dovetail",
+    "progress_tool": "dovetail_progress",
+    "stage": "<one plain line, may be empty>",
+    "steps": 48,
+    "elapsed_s": 312,
+    "waiting_for": "question | preview | plan | part | null",
+    "ask": "<the question or the preview's title, when waiting>",
+    "reply": "<what the work said, when done>"
+} }
+```
+
+When a seat's call comes back `running` or `waiting`, the app watches
+the work for that chat in the background, the way it watches a Claude
+Code guest. Nothing in the chat stops the watch. A new message, someone
+talking over a seat or a stopped round all leave it running, and only
+stopping the app ends it.
+
+- The app calls `progress_tool` with no arguments every 15 seconds. It
+  has to be a tool the server lists, and it should answer within a
+  second or two. A failed call is tried again, and only half an hour of
+  failures, or six hours in all, ends the watch.
+- The status strip over the composer shows where the work has got to,
+  such as "Dovetail: adding the drawer runners · step 48 · 5 min".
+- Every seat in the chat is told the stage, the step and the time, so
+  "how's it going?" gets an answer straight away. A seat redirects the
+  work by passing the change on with the tool that started it.
+- A question the work is waiting on is posted in the chat under the
+  server's name and handed to one seat as soon as the chat is between
+  rounds, so the room hears it.
+- Now and then one seat gives a short progress line at a pause, as
+  `mcp_progress_every_s` allows. Nobody speaks about it in its first
+  minute.
+- When the work is done, its reply is posted the same way, trimmed, one
+  seat sums it up at a pause, and the watch ends.
+
+Watches live in memory, so a restart forgets them, and the next call to
+the server picks the work up again. The server's words reach the chat
+under `ext:<server>`, like any outside producer's, and the seats read
+them marked as the server's own.
 
 ## Research tool caps
 

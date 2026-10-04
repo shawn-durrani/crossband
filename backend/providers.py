@@ -800,6 +800,16 @@ def _volatile_system_parts(cfg):
         # Sits with the other round state: it flips twice per summons, so it
         # can never live in the cached prefix.
         parts.append("\n## Specialist delegation - already claimed\n" + delegation)
+    background = (cfg.get("background_note") or "").strip()
+    if background:
+        # #604: an MCP server's work running in the background, watched
+        # outside any round (backend/mcpjobs.py). Its stage and elapsed
+        # time move between calls, so it can only live here.
+        parts.append("\n## Background work\n" + background)
+    why = (cfg.get("handback_note") or "").strip()
+    if why:
+        # #604: a hand-back round's one seat, told why it's speaking.
+        parts.append("\n## Why you're speaking now\n" + why)
     refused = (cfg.get("pass_refused") or "").strip()
     if refused:
         # #98: the engine held back this seat's [pass] (first responder on

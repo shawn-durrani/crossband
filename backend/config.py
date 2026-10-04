@@ -419,6 +419,11 @@ class Settings(BaseModel):
     # server can honestly say what it does, so Crossband never guesses one:
     # omit it and the generic fallback is used.
     mcp_servers: dict = Field(default_factory=dict)
+    # #604: work an MCP server runs in the background (backend/mcpjobs.py)
+    # gets a spoken progress note at a pause at most this often, and only
+    # when its stage has moved on. Its questions and its result always come
+    # back. 0 keeps progress to the status strip and the seats' note.
+    mcp_progress_every_s: float = 120.0
 
     # External event ingestion (POST /api/ingest). Loopback is the primary
     # boundary; set a token ONLY if a producer posts from beyond loopback

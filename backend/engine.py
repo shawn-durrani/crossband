@@ -21,6 +21,7 @@ from . import chat_memory, citations, context_marker, db, echo, guest
 from . import passes, person_sync
 from . import depth as depth_mod
 from . import history_prefetch
+from . import mcpjobs
 from . import model_step
 from . import rounds as rounds_mod
 from . import seat_trace
@@ -507,8 +508,13 @@ def make_handback(settings, memory, mcp):
     normally (`pick_responders`' own next_first), so who narrates varies round
     to round rather than always being the same seat. guestjobs decides WHEN: a
     blocker the instant the chat is idle, a routine result after a natural
-    pause."""
-    async def handback(chat_id, kind):
+    pause.
+
+    `note` (#604) tells the one seat why it's speaking, for a hand-back with
+    no message of its own to relay: an MCP watcher's progress note, or the
+    question or result it just posted (backend/mcpjobs.py). It rides the
+    volatile tail of that seat's prompt."""
+    async def handback(chat_id, kind, note=""):
         from . import rounds
         if rounds.busy(chat_id):
             return  # the conversation resumed on its own - reply is already in view
@@ -523,13 +529,14 @@ def make_handback(settings, memory, mcp):
             return
         responders = responders[:1]  # one synthesized reply, not a chorus
         gen = run_round(chat_id, responders, next_first, settings, memory,
-                        mcp=mcp, is_handback=True)
+                        mcp=mcp, is_handback=True, handback_note=note)
         rounds.start(chat_id, gen)
     return handback
 
 
 async def run_round(chat_id, responders, next_first, settings, memory,
-                    mcp=None, is_handback=False, turn_id=None):
+                    mcp=None, is_handback=False, turn_id=None,
+                    handback_note=""):
     """Async generator: stream each responder's reply as SSE strings, persisting
     as we go. Client disconnect persists the in-flight partial with a cut-off
     marker (see module docstring). `is_handback` marks a round spawned by a
@@ -620,7 +627,8 @@ async def run_round(chat_id, responders, next_first, settings, memory,
     try:
         async for chunk in _run_round_inner(chat_id, responders, next_first, cfg,
                                             live, persist_live, memory, mcp,
-                                            handback, is_handback, turn_id):
+                                            handback, is_handback, turn_id,
+                                            handback_note):
             yield chunk
     except (GeneratorExit, asyncio.CancelledError):
         # Client disconnected mid-reply - keep the partial, marked. This
@@ -783,7 +791,8 @@ async def _round_history_search(chat_id, q, memory, roster, is_handback, cfg,
 
 async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                            persist_live, memory, mcp=None,
-                           handback=None, is_handback=False, turn_id=None):
+                           handback=None, is_handback=False, turn_id=None,
+                           handback_note=""):
     memory_summary_cache = None  # fetched at most once per round
     ambient_cache = None  # ambient recall for the latest user message, once per round
     # membro#136: the round's search of the saved chats. `history` is the
@@ -973,6 +982,13 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
         # twice per summons.
         claim = guest.claimed(chat_id)
         round_cfg["delegation_note"] = guest.delegation_note(claim)
+        # #604: work an MCP server runs in the background, watched outside
+        # any round. Every seat reads where it's got to, so "how's it
+        # going?" needs no tool call and nobody waits on it. A hand-back
+        # round's seat is also told why it's on. Both are read per seat and
+        # move on their own, so they ride the volatile tail.
+        round_cfg["background_note"] = mcpjobs.status_note(chat_id)
+        round_cfg["handback_note"] = handback_note if is_handback else ""
 
         # get_diagnostic: always offered, no per-chat toggle - same reasoning
         # as the guest's unconditional MCP mount: it carries no secret and

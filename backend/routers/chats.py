@@ -175,6 +175,22 @@ def get_chat_guest_jobs(chat_id: int):
     return {"guest_jobs": jobs}
 
 
+@router.get("/api/chats/{chat_id}/mcp_jobs")
+def get_chat_mcp_jobs(chat_id: int):
+    """Snapshot of this chat's MCP background watches (#604), live and
+    recently ended, for the status strip to seed from on open. Live changes
+    then arrive over GET /api/events/stream as `mcp_job` events. A watch is
+    held in memory, so a restart starts this list empty."""
+    con = db.connect()
+    exists = con.execute("SELECT 1 FROM chats WHERE id=?",
+                         (chat_id,)).fetchone()
+    con.close()
+    if not exists:
+        raise HTTPException(404)
+    from .. import mcpjobs
+    return {"mcp_jobs": mcpjobs.snapshots(chat_id)}
+
+
 @router.patch("/api/chats/{chat_id}")
 def update_chat(chat_id: int, body: ChatIn, request: Request):
     con = db.connect()

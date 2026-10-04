@@ -70,6 +70,7 @@ export const api = {
   // Snapshot of a chat's Claude Code guest jobs: seeds the status chip on
   // open; live changes then arrive over the global events stream.
   guestJobs: (id) => fetch(`/api/chats/${id}/guest_jobs`).then(json),
+  mcpJobs: (id) => fetch(`/api/chats/${id}/mcp_jobs`).then(json),
   updateChat: (id, body) => fetch(`/api/chats/${id}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   }).then(json),

@@ -27,16 +27,42 @@ Design notes:
   whole cached prompt twice. A call while it's down is refused instead.
   A server that has never connected has no known tools, so its tools join
   the list when it first connects.
+- A result can say work carries on in the background (#604). The seat still
+  gets text; `call_result` hands the dispatcher the result's structured
+  content too, and backend/mcpjobs.py reads its `background` block. `poll`
+  is the watcher's own call: short, and a slow answer never marks the
+  server down, because a progress check that took too long says nothing
+  about the work.
 """
 
 import asyncio
 import logging
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 
 log = logging.getLogger("crossband.mcp")
 
 RETRY_S = 60
 CALL_TIMEOUT_S = 45
+
+
+@dataclass(frozen=True)
+class CallOutcome:
+    """One tool call's result: the text the seat reads, and the result's
+    structured content when the server sent a dict (None otherwise)."""
+    text: str
+    structured: dict | None = None
+
+
+def structured_of(res) -> dict | None:
+    """A CallToolResult's structured content as a dict, or None. The SDK
+    this repo pins (mcp 2.x) names the field `structured_content`, and 1.x
+    named it `structuredContent`, so both are read."""
+    for attr in ("structured_content", "structuredContent"):
+        val = getattr(res, attr, None)
+        if isinstance(val, dict):
+            return val
+    return None
 
 
 class McpManager:
@@ -140,17 +166,37 @@ class McpManager:
         label = (spec.get("label") or "").strip()
         return label or None
 
+    def server_of(self, qualified: str) -> tuple[str, str] | None:
+        """(server, tool) behind a qualified name, or None."""
+        entry = self.tools.get(qualified)
+        return (entry[0], entry[1]) if entry else None
+
+    def qualified(self, server: str, tool: str) -> str | None:
+        """The name the seats know a server's tool by, or None when the
+        server never listed it."""
+        for q, (s, t, _) in self.tools.items():
+            if s == server and t == tool:
+                return q
+        return None
+
     async def call(self, qualified: str, args: dict, cap: int = 8000) -> str:
+        return (await self.call_result(qualified, args, cap=cap)).text
+
+    async def call_result(self, qualified: str, args: dict,
+                          cap: int = 8000) -> CallOutcome:
+        """`call`, plus the result's structured content (#604)."""
         entry = self.tools.get(qualified)
         if not entry:
-            return f"Error: external tool {qualified} is not available right now"
+            return CallOutcome(
+                f"Error: external tool {qualified} is not available right now")
         server, tool, _ = entry
         session = self.sessions.get(server)
         if session is None:
-            return (f"Error: external server {server} is disconnected right "
-                    f"now, so {qualified} did nothing. The app retries it "
-                    f"every {RETRY_S} seconds; say it's unavailable rather "
-                    "than guessing what it would have returned.")
+            return CallOutcome(
+                f"Error: external server {server} is disconnected right "
+                f"now, so {qualified} did nothing. The app retries it "
+                f"every {RETRY_S} seconds; say it's unavailable rather "
+                "than guessing what it would have returned.")
         try:
             res = await asyncio.wait_for(session.call_tool(tool, args or {}),
                                          timeout=CALL_TIMEOUT_S)
@@ -159,10 +205,35 @@ class McpManager:
             # tools stay listed (#564): the next call is refused above.
             self.sessions.pop(server, None)
             self.errors[server] = str(e)[:200]
-            return f"Error: external server {server} failed mid-call: {e}"
+            return CallOutcome(
+                f"Error: external server {server} failed mid-call: {e}")
         parts = [c.text for c in (res.content or [])
                  if getattr(c, "text", None)]
         out = "\n".join(parts).strip() or "(empty result)"
         if res.is_error and not out.lower().startswith("error"):
             out = "Error: " + out
-        return out[:cap]
+        return CallOutcome(out[:cap],
+                           None if res.is_error else structured_of(res))
+
+    async def poll(self, server: str, tool: str,
+                   timeout: float = 10.0) -> dict | None:
+        """Call a server's own progress tool with no arguments for the
+        background watcher (#604). Returns the result's structured content,
+        or None for any failure, which the watcher retries. A timeout leaves
+        the server up: a slow progress answer isn't a broken connection.
+        Any other failure marks it down, exactly as a seat's call does."""
+        session = self.sessions.get(server)
+        if session is None or self.qualified(server, tool) is None:
+            return None
+        try:
+            res = await asyncio.wait_for(session.call_tool(tool, {}),
+                                         timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+        except Exception as e:
+            self.sessions.pop(server, None)
+            self.errors[server] = str(e)[:200]
+            return None
+        if res.is_error:
+            return None
+        return structured_of(res)
