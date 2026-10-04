@@ -26,6 +26,8 @@ egress.py       - the vetting proxy every model-influenced URL exits by
 url_ledger.py   - fetchable means already seen from a non-model source
 browse.py       - rendered viewing; browse_worker.py is the keyless child
 guest.py        - Claude Code as a summonable participant
+mcpjobs.py      - long work an MCP server runs in the background,
+                  watched outside any round the way a guest is
 voice_pass.py   - the one voice check every spoken turn gets, in every
                   mode: the label, and whether to arm, seat or ask
 voice_sessions.py - follows each voice through a voice session on the

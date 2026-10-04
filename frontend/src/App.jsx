@@ -30,6 +30,7 @@ import { contextGauge } from './headerView'
 import { useEventStream } from './hooks/useEventStream'
 import { useRoundStream } from './hooks/useRoundStream'
 import { hasVisibleJob } from './guestJobs'
+import { visibleMcpJobs } from './mcpJobs'
 import { measuring, runFromHash } from './analysisView'
 import { adoptRoomMode, askFlag, flagCopy, mergeFlag, mismatchByMessage, rosterChipText, rosterTitle } from './roomState'
 import { healthStrip } from './voiceHealth'
@@ -38,6 +39,7 @@ import { autoDump as voiceDebugAutoDump, autoSaveNotice, dump as voiceDebugDump,
 import { mergeMessagesById } from './eventStream'
 import { chatTranscript } from './passView'
 import GuestStatusChip from './components/GuestStatusChip'
+import McpStatusChip from './components/McpStatusChip'
 import { X, PanelLeft, Plus, AlertTriangle } from 'lucide-react'
 
 // The start of the banner shown when live transcription falls back, so the
@@ -61,6 +63,7 @@ export default function App() {
   // state, seeded on open and merged live off the global events stream - the
   // same channel messages ride, so voice and text/mobile stay in sync.
   const [guestJobs, setGuestJobs] = useState([])
+  const [mcpJobs, setMcpJobs] = useState([])
   const [copiedChat, setCopiedChat] = useState(false)
   // Per-chat running-task state: which chats have a round/agent
   // generating right now - including DETACHED rounds in chats you're not looking
@@ -277,6 +280,7 @@ export default function App() {
     voiceActiveRef,
     refreshState,
     onGuestJob: setGuestJobs,
+    onMcpJob: setMcpJobs,
     onMessages: setMessages,
     onUnread: setUnreadChats,
     onVoiceAttach: voiceAttachRound,
@@ -693,6 +697,11 @@ export default function App() {
     api.guestJobs(id).then((d) => {
       if (id === activeChatIdRef.current) setGuestJobs(d.guest_jobs || [])
     }).catch(() => {})
+    // The same for an outside MCP server's background work (#604).
+    setMcpJobs([])
+    api.mcpJobs(id).then((d) => {
+      if (id === activeChatIdRef.current) setMcpJobs(d.mcp_jobs || [])
+    }).catch(() => {})
     // Seed the room-mode snapshot the same way; live room_roster/room_flag
     // events then keep it fresh.
     setRoomInfo(null)
@@ -708,6 +717,7 @@ export default function App() {
     setActiveChat(chat)
     setMessages([])
     setGuestJobs([])
+    setMcpJobs([])
     setRoomInfo(null)
     restoreBatchFor(chat.id)
   }
@@ -1075,9 +1085,11 @@ export default function App() {
                 composer. A floating version was tried first and rejected live:
                 it sat on top of the "Let them continue" controls. */}
             {(hasVisibleJob(guestJobs, Date.now() / 1000) || pendingCount(activeBatch) > 0
+              || visibleMcpJobs(mcpJobs, Date.now() / 1000).length > 0
               || openAsk) && (
               <div className="shrink-0 px-3 sm:px-4 py-2 space-y-2">
                 <GuestStatusChip jobs={guestJobs} />
+                <McpStatusChip jobs={mcpJobs} />
                 {/* The ask-fallback (#28 phase 2): a voice matched nobody in
                     the room. Answerable in chat - saying or typing the name IS
                     the answer - so this strip only explains and can dismiss. */}

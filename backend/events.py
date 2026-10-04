@@ -160,6 +160,14 @@ def guest_job_event(job: dict) -> dict:
             "status_at": job.get("status_at") or 0}
 
 
+def notify_mcp_job() -> None:
+    """Wake connected clients after an MCP background watch changed
+    (backend/mcpjobs.py, #604). Same shared bell. A watch lives in memory,
+    so its catch-up buffer is mcpjobs' own status store, read by cursor in
+    stream() and seeded from GET /api/chats/{id}/mcp_jobs on open."""
+    notify_new_message()
+
+
 def notify_message_update() -> None:
     """Wake connected clients after an EXISTING message changed - today that
     means a room-mode diarization pass retro-attached voice labels
@@ -268,6 +276,11 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
     # exactly as guest jobs seed from theirs.
     roster_cursor = db.now()
     flag_cursor = db.now()
+    # MCP background watches (#604) on their own connect-time cursor. A
+    # watch is held in memory (mcpjobs), not the database, and its status
+    # store is the catch-up buffer the same way the tables are.
+    from . import mcpjobs
+    mcp_cursor = db.now()
     # `not _shutting_down`, not `True`: when the process is stopping, this
     # generator has to END, or uvicorn's connection drain waits on it forever
     # (begin_shutdown() above has the full story). Checked at the top of
@@ -303,6 +316,11 @@ async def stream(since: int, heartbeat_secs: float = HEARTBEAT_SECS):
             # stream never carries names, matching its content-free posture.
             roster_cursor = max(roster_cursor, r["updated_at"])
             yield _sse({"type": "room_roster", "chat_id": r["chat_id"]})
+        for m in mcpjobs.updates_after(mcp_cursor):
+            # A watch's status: the server, its state, a one-line stage and
+            # the step count. The question and the reply are messages.
+            mcp_cursor = max(mcp_cursor, m["updated_at"])
+            yield _sse(m)
         for f in flag_rows:
             # An attribution doubt opened or closed. ids + kind only - the
             # copy ("someone new is speaking - who?") is the client's; the

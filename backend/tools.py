@@ -1642,7 +1642,11 @@ async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
             mgr = cfg.get("_mcp")
             if mgr is None:
                 return "Error: external tools are unavailable this round"
-            return await mgr.call(name, args, cap=cfg["max_tool_output"])
+            res = await mgr.call_result(name, args, cap=cfg["max_tool_output"])
+            # #604: a result that says work runs on in the background starts
+            # or refreshes the chat's watcher, detached from this round.
+            from . import mcpjobs
+            return res.text + mcpjobs.on_result(cfg, mgr, name, res.structured)
         if name == "summon_claude_code":
             from . import guest
             return guest.request(cfg.get("chat_id"), args, cfg,

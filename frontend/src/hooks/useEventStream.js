@@ -6,6 +6,7 @@ import {
   voiceAttachEligible, queuePendingEvent, drainPendingQueue,
 } from '../eventStream'
 import { mergeGuestJob } from '../guestJobs'
+import { mergeMcpJob } from '../mcpJobs'
 
 // The global live-events connection, lifted out of App.jsx.
 //
@@ -27,7 +28,7 @@ import { mergeGuestJob } from '../guestJobs'
 export function useEventStream({
   messages, activeChatIdRef, streamingRef, voiceActiveRef,
   refreshState, onGuestJob, onMessages, onUnread, onVoiceAttach, onError,
-  onRoomEvent,
+  onRoomEvent, onMcpJob,
 }) {
   const watermarkRef = useRef(0)      // highest message id this tab has seen, ANY chat
   const messagesRef = useRef([])      // live mirror of `messages`, for the handler's closure
@@ -37,7 +38,7 @@ export function useEventStream({
 
   const cb = useRef(null)
   cb.current = { refreshState, onGuestJob, onMessages, onUnread, onVoiceAttach,
-                 onError, onRoomEvent }
+                 onError, onRoomEvent, onMcpJob }
 
   useEffect(() => { messagesRef.current = messages }, [messages])
 
@@ -87,6 +88,15 @@ export function useEventStream({
       // durable status is re-seeded from the snapshot when that chat opens).
       if (ev.chat_id === activeChatIdRef.current) {
         cb.current.onGuestJob((j) => mergeGuestJob(j, ev))
+      }
+      return
+    }
+    if (ev.type === 'mcp_job') {
+      // An outside MCP server's background work (#604), watched by the
+      // backend. Like the guest chip, only the open chat shows it; another
+      // chat seeds its own from the snapshot when it opens.
+      if (ev.chat_id === activeChatIdRef.current) {
+        cb.current.onMcpJob?.((j) => mergeMcpJob(j, ev))
       }
       return
     }
