@@ -1,5 +1,6 @@
 // The background-work strip's rules (#604): merging live mcp_job events,
-// which watches show, and the one-line label for each.
+// which watches show, and the one-line label for each. #607 adds the
+// parts count and how finished work ended.
 // Run: node --test frontend/src/mcpJobs.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -67,4 +68,26 @@ test('elapsed time reads like a person would say it', () => {
   assert.equal(formatElapsed(312), '5 min')
   assert.equal(formatElapsed(2 * 3600 + 5 * 60), '2 h 5 min')
   assert.equal(formatElapsed(undefined), '0 s')
+})
+
+test('the label counts the parts made so far, when the app sends them', () => {
+  assert.equal(mcpChipLabel({ ...running, steps: 24, parts: 18 }, 1000),
+    'Dovetail: adding the drawer runners · step 24 · 18 parts · 5 min')
+  assert.equal(mcpChipLabel({ ...running, steps: 2, parts: 1 }, 1000),
+    'Dovetail: adding the drawer runners · step 2 · 1 part · 5 min')
+  assert.equal(mcpChipLabel({ ...running, parts: 0 }, 1000),
+    'Dovetail: adding the drawer runners · step 48 · 5 min')
+})
+
+test('finished work says how it ended', () => {
+  const done = { ...running, state: 'done', watching: false, ended: 'done' }
+  const failed = { ...done, outcome: 'failed' }
+  assert.equal(mcpChipLabel(failed, 1000), 'Dovetail stopped with an error, handing back')
+  assert.equal(mcpChipTone(failed), 'failed')
+  const stopped = { ...done, outcome: 'stopped' }
+  assert.equal(mcpChipLabel(stopped, 1000), 'Dovetail was stopped, handing back')
+  assert.equal(mcpChipTone(stopped), 'done')
+  assert.equal(mcpChipLabel({ ...done, outcome: 'finished' }, 1000), 'Dovetail finished, handing back')
+  // a failed watch still lingers until its result arrives
+  assert.deepEqual(visibleMcpJobs([failed], 1010), [failed])
 })

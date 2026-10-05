@@ -12,7 +12,15 @@ result's structured content carries a `background` block:
                     "progress_tool": "dovetail_progress", "stage": "...",
                     "steps": 48, "elapsed_s": 312,
                     "waiting_for": "question" | "preview" | "plan" | "part"
-                    | null, "ask": "...", "reply": "..."}}
+                    | null, "ask": "...", "reply": "...",
+                    "outcome": "finished" | "failed" | "stopped" | null,
+                    "error": "...", "parts": 18, "edits": 42,
+                    "answered": "..."}}
+
+The last five are optional (#607), so an older server still works: a done
+block with no outcome reads as finished. `parts` and `edits` say how far the
+work has got, and `answered` says a message sent mid-work was taken as the
+reply to the server's question or plan, so it no longer waits on that.
 
 When a seat's call comes back running or waiting, the dispatcher
 (tools.run_tool) starts a `Watcher` for that chat and server, or refreshes
@@ -83,9 +91,11 @@ KEEP_ENDED_S = 600.0
 
 STATES = ("running", "waiting", "done", "idle")
 WAITING_FOR = ("question", "preview", "plan", "part")
+OUTCOMES = ("finished", "failed", "stopped")
 TITLE_CHARS = 40
 STAGE_CHARS = 160
 ASK_CHARS = 600
+ERROR_CHARS = 600
 REPLY_CHARS = 4000
 # A finished reply is posted trimmed to this many characters.
 RESULT_POST_CHARS = 1500
@@ -147,8 +157,15 @@ def background_block(structured) -> dict | None:
         return None
     tool = raw.get("progress_tool")
     steps = _number(raw.get("steps"))
+    parts = _number(raw.get("parts"))
+    edits = _number(raw.get("edits"))
     waiting_for = raw.get("waiting_for")
     reply = raw.get("reply") if isinstance(raw.get("reply"), str) else ""
+    # Only a block that's over has an outcome, and an over block without
+    # one (an older server) finished.
+    outcome = raw.get("outcome") if state == "done" else None
+    if state == "done" and outcome not in OUTCOMES:
+        outcome = "finished"
     return {
         "job": str(job)[:200],
         "state": state,
@@ -161,6 +178,12 @@ def background_block(structured) -> dict | None:
         "waiting_for": waiting_for if waiting_for in WAITING_FOR else None,
         "ask": _line(raw.get("ask"), ASK_CHARS),
         "reply": reply.strip()[:REPLY_CHARS],
+        "outcome": outcome,
+        "error": _line(raw.get("error"), ERROR_CHARS)
+        if outcome == "failed" else "",
+        "parts": int(parts) if parts is not None else None,
+        "edits": int(edits) if edits is not None else None,
+        "answered": _line(raw.get("answered"), ASK_CHARS),
     }
 
 
@@ -181,6 +204,10 @@ def _trim(text: str, cap: int) -> str:
         return cut[:stop + 1].rstrip()
     space = cut.rfind(" ")
     return (cut[:space] if space > 0 else cut).rstrip() + "…"
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
 def duration(seconds) -> str:
@@ -220,6 +247,11 @@ class Watcher:
         self.waiting_for = None
         self.ask = ""
         self.reply = ""
+        self.outcome = None
+        self.error = ""
+        self.parts = None
+        self.edits = None
+        self.answered = ""
         self.started_at = now
         self.job_seen_at = now
         self.seen_at = now
@@ -274,6 +306,11 @@ class Watcher:
         self.ask = redact(block["ask"])
         if block["reply"]:
             self.reply = redact(block["reply"])
+        self.outcome = block["outcome"]
+        self.error = redact(block["error"])
+        self.parts = block["parts"]
+        self.edits = block["edits"]
+        self.answered = redact(block["answered"])
         self.seen_at = now
         if from_seat:
             # A new job id means a new request, so the tool that started it
@@ -337,8 +374,33 @@ class Watcher:
                 "steps": self.steps,
                 "elapsed_s": round(self.work_elapsed(now)),
                 "waiting_for": self.waiting_for,
+                "outcome": self.outcome, "parts": self.parts,
+                "edits": self.edits,
                 "watching": not self.ended, "ended": self.ended,
                 "updated_at": _stamp()}
+
+    def ended_how(self, finished="has finished") -> str:
+        """How the work that's over ended, after the app's name."""
+        return {"failed": "stopped with an error",
+                "stopped": "was stopped"}.get(self.outcome, finished)
+
+    def design_bits(self) -> list:
+        """How far the work has got, from the counts the server sends."""
+        bits = []
+        if self.parts is not None:
+            bits.append(f"{_plural(self.parts, 'part')} so far"
+                        if self.parts else "no parts yet")
+        if self.edits is not None:
+            bits.append(_plural(self.edits, "edit"))
+        return bits
+
+    def answered_line(self) -> str:
+        """The server's word that a message sent mid-work answered its
+        question or plan, so nobody tells the room it's still waiting."""
+        if not self.answered:
+            return ""
+        return (f"\"{self.answered}\" ({self.title}'s own words) So it isn't "
+                "waiting on that any more, and nobody should say it is.")
 
     def touch(self):
         """Record the latest status and wake every client."""
@@ -352,28 +414,38 @@ class Watcher:
         progress_q = self.mgr_qualified(self.progress_tool)
         if self.finished:
             if self.relay_pending() and self._relay_kind == "result":
-                return (f"{title} has finished its background work, and "
-                        f"what it said is posted in the chat under {title}'s "
-                        "name. One of you passes it on at the next pause, "
-                        "so don't call its tools to check on it.")
+                return " ".join(filter(None, [
+                    f"{title}'s background work {self.ended_how()}, and "
+                    f"what it said is posted in the chat under {title}'s "
+                    "name. One of you passes it on at the next pause, "
+                    "so don't call its tools to check on it.",
+                    self.answered_line()]))
             return ""
         lines = [f"{title} is working in the background on a request from "
                  "this chat. It carries on whatever happens here, through "
                  "new messages, someone talking over you and a stop, so "
                  "never wait on it."]
+        if self.answered_line():
+            lines.append(self.answered_line())
         if self.state == "waiting":
             what = (f": \"{self.ask}\" ({title}'s own words)" if self.ask
                     else "")
             lines.append(f"Right now it's waiting on the room for an "
                          f"answer{what}.")
+            if self.design_bits():
+                lines.append("So far: " + ", ".join(self.design_bits()) + ".")
         else:
             bits = []
             if self.stage:
                 bits.append(f"\"{self.stage}\" ({title}'s own words)")
             if self.steps:
                 bits.append(f"step {self.steps}")
+            bits.extend(self.design_bits())
             bits.append(f"{duration(self.work_elapsed(now))} in")
             lines.append("Right now: " + ", ".join(bits) + ".")
+        if self.parts:
+            lines.append(f"The parts it has made are already there to see "
+                         f"in {title}.")
         if progress_q:
             lines.append("If someone asks how it's going, answer from this "
                          f"note, or call {progress_q} once, which answers at "
@@ -419,8 +491,15 @@ class Watcher:
         namespaced speaker, so it's in view at once and on the record."""
         title = self.title
         if kind == "result":
-            head = f"**{title} finished**"
-            body = _trim(self.reply, RESULT_POST_CHARS)
+            head = f"**{title} {self.ended_how('finished')}**"
+            reply = self.reply
+            # The server's own reply may already open with these.
+            said = " ".join(reply.split())
+            if self.answered and self.answered not in said:
+                reply = f"{self.answered}\n\n{reply}".strip()
+            if self.error and self.error not in said:
+                reply = f"{self.error}\n\n{reply}".strip()
+            body = _trim(reply, RESULT_POST_CHARS)
         else:
             head = {
                 "question": f"**{title} is asking**",
@@ -451,10 +530,18 @@ class Watcher:
                     "words, and don't answer it yourself. When someone "
                     f"answers, pass the answer on with {ask_tool}.")
         if kind == "result":
-            return (f"{title}'s background work has finished, and what it "
-                    f"said is posted in the chat under {title}'s name. Tell "
-                    "the room in a sentence or two what it did. Don't start "
-                    "new work, and don't call its tools to check.")
+            tell = {
+                "failed": "that it stopped with an error, what the error "
+                          "was and how far it got",
+                "stopped": "that it was stopped before it finished, and how "
+                           "far it got",
+            }.get(self.outcome, "what it did")
+            return " ".join(filter(None, [
+                f"{title}'s background work {self.ended_how()}, and what it "
+                f"said is posted in the chat under {title}'s name. Tell the "
+                f"room in a sentence or two {tell}. Don't start new work, "
+                "and don't call its tools to check.",
+                self.answered_line()]))
         return (f"{title} is still working in the background, and nobody "
                 "needs to do anything. Give the room one short progress "
                 "line from the background-work note, then stop. Don't call "

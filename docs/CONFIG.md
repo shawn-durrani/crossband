@@ -435,9 +435,20 @@ voice chat the room would sit in silence.
     "elapsed_s": 312,
     "waiting_for": "question | preview | plan | part | null",
     "ask": "<the question or the preview's title, when waiting>",
-    "reply": "<what the work said, when done>"
+    "reply": "<what the work said, when done>",
+    "outcome": "finished | failed | stopped | null",
+    "error": "<the error, when it failed>",
+    "parts": 18,
+    "edits": 42,
+    "answered": "<a line, when a message answered its question or plan>"
 } }
 ```
+
+The last five are optional, so an older server still works. A `done`
+block with no `outcome` counts as finished. `parts` and `edits` say how
+far the work has got. `answered` says a message sent while the work ran
+was taken as the reply to its question or plan, so the seats don't
+tell the room it still waits.
 
 When a seat's call comes back `running` or `waiting`, the app watches
 the work for that chat in the background, the way it watches a Claude
@@ -450,9 +461,10 @@ stopping the app ends it.
   second or two. A failed call is tried again, and only half an hour of
   failures, or six hours in all, ends the watch.
 - The status strip over the composer shows where the work has got to,
-  such as "Dovetail: adding the drawer runners · step 48 · 5 min".
-- Every seat in the chat is told the stage, the step and the time, so
-  "how's it going?" gets an answer straight away. A seat redirects the
+  such as "Dovetail: adding the drawer runners · step 48 · 18 parts ·
+  5 min".
+- Every seat in the chat is told the stage, the step, the parts and edits
+  and the time, so "how's it going?" gets an answer straight away. A seat redirects the
   work by passing the change on with the tool that started it.
 - A question the work is waiting on is posted in the chat under the
   server's name and handed to one seat as soon as the chat is between
@@ -461,7 +473,9 @@ stopping the app ends it.
   `mcp_progress_every_s` allows. Nobody speaks about it in its first
   minute.
 - When the work is done, its reply is posted the same way, trimmed, one
-  seat sums it up at a pause, and the watch ends.
+  seat sums it up at a pause, and the watch ends. The post says whether
+  it finished, stopped with an error or was stopped, and shows the
+  error.
 
 Watches live in memory, so a restart forgets them, and the next call to
 the server picks the work up again. The server's words reach the chat
