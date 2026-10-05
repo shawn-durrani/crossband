@@ -29,12 +29,15 @@ PROGRESS = "mcp__dovetail__dovetail_progress"
 
 
 def block(state="running", job="job-1", stage="cutting the legs", steps=3,
-          elapsed_s=20, waiting_for=None, ask="", reply=""):
+          elapsed_s=20, waiting_for=None, ask="", reply="", **extra):
+    """A block as an older server sends it. `extra` adds the optional
+    fields a newer one sends (#607): outcome, error, parts, edits and
+    answered."""
     return {"background": {
         "job": job, "state": state, "title": "Dovetail",
         "progress_tool": "dovetail_progress", "stage": stage,
         "steps": steps, "elapsed_s": elapsed_s, "waiting_for": waiting_for,
-        "ask": ask, "reply": reply}}
+        "ask": ask, "reply": reply, **extra}}
 
 
 class FakeManager:
@@ -141,6 +144,29 @@ def test_the_block_is_typed_and_capped():
     b = mcpjobs.background_block(odd)
     assert b["steps"] is None and b["waiting_for"] is None
     assert b["stage"] == "two lines"
+
+
+def test_the_newer_fields_are_optional_and_checked():
+    # an older server's done block reads as finished, with no counts
+    old = mcpjobs.background_block(block(state="done"))
+    assert old["outcome"] == "finished"
+    assert old["parts"] is None and old["edits"] is None
+    assert old["error"] == "" and old["answered"] == ""
+    # running work has no outcome, whatever the server says
+    assert b(outcome="failed")["outcome"] is None
+    failed = b(state="done", outcome="failed", error="The disk\nis full",
+               parts=18, edits=42, answered="Taken as the reply.")
+    assert failed["outcome"] == "failed" and failed["error"] == \
+        "The disk is full"
+    assert failed["parts"] == 18 and failed["edits"] == 42
+    assert failed["answered"] == "Taken as the reply."
+    # an error only counts when the work failed, and junk degrades
+    assert b(state="done", outcome="stopped", error="x")["error"] == ""
+    junk = b(state="done", outcome="exploded", parts="lots", edits=-1,
+             answered=7)
+    assert junk["outcome"] == "finished"
+    assert junk["parts"] is None and junk["edits"] is None
+    assert junk["answered"] == ""
 
 
 # ---------- starting ----------
@@ -332,6 +358,56 @@ def test_the_result_is_relayed_and_then_the_watch_ends(chat):
     assert snap["watching"] is False and snap["state"] == "done"
 
 
+def _ended(chat, done_block):
+    mgr = FakeManager(script=[done_block])
+    hb = Handbacks()
+
+    async def go():
+        await tools_mod.run_tool(ASK, {}, cfg_for(chat, mgr, hb))
+        [w] = mcpjobs.active_for_chat(chat)
+        assert await until(lambda: w.task.done())
+
+    asyncio.run(go())
+    [msg] = ext_messages(chat)
+    [(_, kind, note)] = hb.calls
+    assert kind == "result"
+    return msg["content"], note, mcpjobs.snapshots(chat)[-1]
+
+
+def test_work_that_failed_says_so_with_its_error(chat):
+    post, note, snap = _ended(chat, block(
+        state="done", outcome="failed", error="The disk is full",
+        reply="Cut the legs and the top."))
+    assert post == ("**Dovetail stopped with an error**\nThe disk is full"
+                    "\n\nCut the legs and the top.")
+    assert "stopped with an error" in note and "what the error was" in note
+    assert "has finished" not in note
+    assert snap["outcome"] == "failed" and snap["ended"] == "done"
+
+
+def test_an_error_the_reply_already_gives_is_not_said_twice(chat):
+    post, _, _ = _ended(chat, block(
+        state="done", outcome="failed", error="The disk is full",
+        reply="It stopped. The error: The disk is full. Ask it to carry on."))
+    assert post == ("**Dovetail stopped with an error**\nIt stopped. The "
+                    "error: The disk is full. Ask it to carry on.")
+
+
+def test_work_that_was_stopped_says_so(chat):
+    post, note, _ = _ended(chat, block(state="done", outcome="stopped",
+                                       reply="Cut the legs."))
+    assert post == "**Dovetail was stopped**\nCut the legs."
+    assert "was stopped before it finished" in note
+
+
+def test_an_answered_plan_is_said_so_nobody_says_it_still_waits(chat):
+    line = "A message sent mid-build was taken as the reply to its plan."
+    post, note, _ = _ended(chat, block(state="done", outcome="finished",
+                                       answered=line, reply="Oak it is."))
+    assert post == f"**Dovetail finished**\n{line}\n\nOak it is."
+    assert line in note and "isn't waiting on that any more" in note
+
+
 def test_idle_ends_the_watch_quietly(chat):
     mgr = FakeManager(script=[block(state="idle")])
     hb = Handbacks()
@@ -470,6 +546,36 @@ def test_every_seat_reads_one_background_line(chat, cfg):
     text = "".join(_volatile_system_parts(seat_cfg))
     assert "## Background work\n" + note in text
     assert mcpjobs.status_note(chat + 1) == ""
+
+
+def test_the_line_says_how_far_the_work_has_got():
+    """At step 24 a seat said nothing was on screen yet, with the cabinet
+    already showing. The parts and edits counts say otherwise."""
+    w = _watcher()
+    w.apply(b(stage="fitting the doors", steps=24, parts=18, edits=42,
+              elapsed_s=300), 300, from_seat=True, tool=ASK)
+    note = w.note(300)
+    assert "step 24, 18 parts so far, 42 edits, 5 min in" in note
+    assert "already there to see in Dovetail" in note
+    w.apply(b(steps=2, parts=0, edits=1), 310, from_seat=True, tool=ASK)
+    note = w.note(310)
+    assert "no parts yet, 1 edit" in note and "already there" not in note
+    # an older server sends neither, and the line reads as before
+    w.apply(b(stage="fitting the doors", steps=24, elapsed_s=300), 320,
+            from_seat=True, tool=ASK)
+    assert "Right now: \"fitting the doors\" (Dovetail's own words), " \
+        "step 24, 5 min in." in w.note(320)
+    snap = w.snapshot(320)
+    assert snap["parts"] is None and snap["outcome"] is None
+
+
+def test_a_running_watch_says_when_its_plan_was_answered():
+    w = _watcher()
+    w.apply(b(answered="A message was taken as the reply to its plan."), 30,
+            from_seat=True, tool=ASK)
+    note = w.note(31)
+    assert "\"A message was taken as the reply to its plan.\" " \
+        "(Dovetail's own words) So it isn't waiting on that any more" in note
 
 
 def test_a_waiting_watch_puts_its_question_in_the_line():

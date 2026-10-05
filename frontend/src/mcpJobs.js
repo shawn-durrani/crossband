@@ -60,7 +60,11 @@ export function mcpChipLabel(job, nowSecs) {
   if (!job) return ''
   const title = job.title || job.server || 'Background work'
   if (!job.watching) {
-    if (job.ended === 'done') return `${title} finished, handing back`
+    if (job.ended === 'done') {
+      if (job.outcome === 'failed') return `${title} stopped with an error, handing back`
+      if (job.outcome === 'stopped') return `${title} was stopped, handing back`
+      return `${title} finished, handing back`
+    }
     if (job.ended === 'lost') return `${title}: lost touch, the work may still be going`
     return title
   }
@@ -70,14 +74,18 @@ export function mcpChipLabel(job, nowSecs) {
   const head = job.stage ? `${title}: ${job.stage}` : `${title} working…`
   const bits = [head]
   if (job.steps) bits.push(`step ${job.steps}`)
+  if (job.parts) bits.push(`${job.parts} part${job.parts === 1 ? '' : 's'}`)
   bits.push(formatElapsed(mcpElapsed(job, nowSecs)))
   return bits.join(' · ')
 }
 
 // The status token the strip styles by: running, blocker (waiting on the
-// room), done, or failed for a watch the app lost touch with.
+// room), done, or failed for work that ended in an error or a watch the app
+// lost touch with.
 export function mcpChipTone(job) {
   if (!job) return ''
-  if (!job.watching) return job.ended === 'done' ? 'done' : 'failed'
+  if (!job.watching) {
+    return job.ended === 'done' && job.outcome !== 'failed' ? 'done' : 'failed'
+  }
   return job.state === 'waiting' ? 'blocker' : 'running'
 }
