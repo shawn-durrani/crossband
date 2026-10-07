@@ -1,6 +1,6 @@
 """A real (tiny) MCP server for the client-layer tests - stdio, keyless."""
 from mcp.server import MCPServer
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, ImageContent, TextContent
 
 mcp = MCPServer("fake")
 
@@ -45,6 +45,19 @@ def build_progress() -> CallToolResult:
         content=[TextContent(type="text", text="still going")],
         structured_content=_block("running", _progress["steps"],
                                   "fitting the top"))
+
+
+# A real 1x1 PNG, for a tool that answers with a picture (#610).
+PNG_1PX_B64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBg"
+               "AAAABQABh6FO1AAAAABJRU5ErkJggg==")
+
+
+@mcp.tool()
+def picture() -> CallToolResult:
+    """A made-up picture of the bench, with a line about it."""
+    return CallToolResult(content=[
+        TextContent(type="text", text="The bench, from the front."),
+        ImageContent(type="image", data=PNG_1PX_B64, mime_type="image/png")])
 
 
 if __name__ == "__main__":
