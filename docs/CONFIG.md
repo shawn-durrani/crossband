@@ -482,6 +482,19 @@ the server picks the work up again. The server's words reach the chat
 under `ext:<server>`, like any outside producer's, and the seats read
 them marked as the server's own.
 
+## Pictures from an MCP server
+
+A tool can answer with pictures as well as words, such as a design app's
+view of a cabinet. The app passes up to four on with the words. Each one
+is scaled to 1568 px on its longer side, the way an upload is. A picture
+over 5 MB, or a file that isn't a picture, is left out.
+
+- An Anthropic seat sees the pictures in its own tool result.
+- An OpenAI seat is told a picture came back that it isn't shown, so it
+  says so and doesn't guess what it shows.
+- Each picture is stored as an attachment on the reply, so the room
+  sees it, and every seat sees it from the next round.
+
 ## Research tool caps
 
 | key | default | what it does |

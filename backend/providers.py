@@ -955,6 +955,35 @@ def split_system_prompt(participant, roster, cfg, project, chat_summary, voice_m
 
 # ---------- transcript projection ----------
 
+def _tool_result_content(output):
+    """A tool's output as an Anthropic tool_result's content (#610): the
+    plain string, byte for byte as before, or its text and pictures when
+    it brought some, so the seat that asked can look at them."""
+    pictures = getattr(output, "images", ())
+    if not pictures:
+        return output
+    return [{"type": "text", "text": str(output)}] + [
+        {"type": "image",
+         "source": {"type": "base64", "media_type": mime, "data": b64}}
+        for mime, b64 in pictures]
+
+
+def _tool_output_text(output):
+    """A tool's output for an OpenAI seat (#610). Its tool results take
+    text only here, so pictures that came back are named, not shown, and
+    the model is told to say so rather than guess. The others in the chat
+    see them attached to the reply."""
+    n = len(getattr(output, "images", ()))
+    if not n:
+        return output
+    one = n == 1
+    return (f"{output}\n\n[{n} picture{'' if one else 's'} came with this "
+            f"result. You aren't shown pictures from a tool here, so say so "
+            f"rather than guess what {'it shows' if one else 'they show'}. "
+            f"The others in the chat see {'it' if one else 'them'} attached "
+            f"to your reply.]")
+
+
 def _tool_log_text(msg, names, cfg):
     """Replay a past message's research activity as shared context for everyone."""
     name = names.get(msg["speaker"], msg["speaker"])
@@ -2268,7 +2297,8 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
                 block, task = tool_blocks[idx], tasks[idx]
                 output = await task
                 yield ("tool", {"tool": block.name, "input": dict(block.input), "output": output})
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+                results.append({"type": "tool_result", "tool_use_id": block.id,
+                                "content": _tool_result_content(output)})
         except BaseException:
             # a failed/aborted turn (incl. barge-in closing this generator)
             # must not leave sibling tool calls running detached
@@ -2459,7 +2489,7 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
                 input_items.append({
                     "type": "function_call_output",
                     "call_id": c.call_id,
-                    "output": output,
+                    "output": _tool_output_text(output),
                 })
         except BaseException:
             for t in tasks:
@@ -2630,7 +2660,7 @@ async def _stream_openai_chat(p, client, stable, input_items, transcript,
                 input_items.append({
                     "type": "function_call_output",
                     "call_id": c["id"],
-                    "output": output,
+                    "output": _tool_output_text(output),
                 })
         except BaseException:
             for t in tasks:

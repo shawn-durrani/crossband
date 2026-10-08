@@ -1128,6 +1128,85 @@ def fetch_page(args, cfg):
             )[:cfg["max_tool_output"]]
 
 
+class ToolText(str):
+    """A tool's text that carries the pictures it returned (#610).
+    Everywhere a tool's output goes it is the same string, so the event
+    stream, the database and redaction see text. A provider that can show
+    pictures in a tool result reads `images`, as (mime, base64) pairs, and
+    the engine stores each one as an attachment on the tool row."""
+
+    def __new__(cls, text, images=()):
+        out = super().__new__(cls, text)
+        out.images = tuple(images)
+        return out
+
+
+# The largest picture a tool result passes on, decoded (#610). Anthropic
+# refuses an image over 5 MB, and one this big has outgrown a glance.
+MAX_TOOL_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+def tool_images(raw) -> tuple:
+    """The pictures from a tool result, ready for a model: each one
+    downscaled the way an upload is, in a format every provider takes,
+    and dropped when it isn't a picture or is too big to send."""
+    from . import attachments, images as images_mod
+    out = []
+    for mime, b64 in raw or ():
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except Exception:
+            continue
+        smaller = images_mod.downscale(data, mime or "", "tool")
+        if smaller:
+            data, mime = smaller["data"], smaller["mime"]
+        if mime not in attachments.IMAGE_MIMES or len(data) > MAX_TOOL_IMAGE_BYTES:
+            continue
+        out.append((mime, base64.b64encode(data).decode()))
+    return tuple(out)
+
+
+def _store_attachment(data: bytes, mime: str, filename: str) -> int | None:
+    """Persist a file a tool produced into the ordinary attachment store,
+    message_id NULL until the assistant message exists (the same late-link
+    path user uploads use). Returns the attachment id, or None: a failed
+    store never costs the tool its text."""
+    import uuid
+    from . import db
+    try:
+        stored = f"{uuid.uuid4().hex}_{filename}"
+        os.makedirs(db.ATTACH_DIR, exist_ok=True)
+        with open(os.path.join(db.ATTACH_DIR, stored), "wb") as f:
+            f.write(data)
+        con = db.connect()
+        try:
+            cur = con.execute(
+                "INSERT INTO attachments(message_id, filename, stored_name, "
+                "mime, size, created_at) VALUES(NULL,?,?,?,?,?)",
+                (filename, stored, mime, len(data), db.now()))
+            con.commit()
+            return cur.lastrowid
+        finally:
+            con.close()
+    except Exception:
+        log.debug("tool attachment store failed", exc_info=True)
+        return None
+
+
+def store_tool_image(mime: str, b64: str, tool: str) -> int | None:
+    """Persist one picture a tool returned (#610), so every participant
+    sees it from the next round on, as an attachment on the reply."""
+    ext = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+           "image/webp": "webp"}.get(mime, "img")
+    # mcp__woodchuck__woodchuck_screenshot reads as woodchuck-woodchuck_screenshot.
+    name = re.sub(r"[^a-z0-9_]+", "-", tool.lower().removeprefix("mcp__").replace("__", "-")).strip("-") or "tool"
+    try:
+        data = base64.b64decode(b64)
+    except Exception:
+        return None
+    return _store_attachment(data, mime, f"{name}-{int(time.time())}.{ext}")
+
+
 def _store_view_screenshot(out, cfg) -> int | None:
     """Persist the worker's viewport PNG (#149) into the ordinary attachment
     store, message_id NULL until the assistant message exists (the same
@@ -1138,29 +1217,14 @@ def _store_view_screenshot(out, cfg) -> int | None:
     shot = out.get("shot_b64")
     if not shot:
         return None
-    import uuid
-    from . import db
     try:
         data = base64.b64decode(shot)
-        host = (urlparse(out.get("final_url") or "").hostname or "page")
-        filename = f"view-{host}-{int(time.time())}.png"
-        stored = f"{uuid.uuid4().hex}_{filename}"
-        os.makedirs(db.ATTACH_DIR, exist_ok=True)
-        with open(os.path.join(db.ATTACH_DIR, stored), "wb") as f:
-            f.write(data)
-        con = db.connect()
-        try:
-            cur = con.execute(
-                "INSERT INTO attachments(message_id, filename, stored_name, "
-                "mime, size, created_at) VALUES(NULL,?,?,?,?,?)",
-                (filename, stored, "image/png", len(data), db.now()))
-            con.commit()
-            return cur.lastrowid
-        finally:
-            con.close()
     except Exception:
-        log.debug("view_page screenshot store failed", exc_info=True)
+        log.debug("view_page screenshot decode failed", exc_info=True)
         return None
+    host = (urlparse(out.get("final_url") or "").hostname or "page")
+    return _store_attachment(data, "image/png",
+                             f"view-{host}-{int(time.time())}.png")
 
 
 def view_page(args, cfg):
@@ -1646,7 +1710,11 @@ async def run_tool(name, tool_input, cfg, origin_agent=None, memory=None):
             # #604: a result that says work runs on in the background starts
             # or refreshes the chat's watcher, detached from this round.
             from . import mcpjobs
-            return res.text + mcpjobs.on_result(cfg, mgr, name, res.structured)
+            text = res.text + mcpjobs.on_result(cfg, mgr, name, res.structured)
+            # #610: its pictures ride along with the text, for the model
+            # that asked and, stored by the engine, for everyone after.
+            pictures = tool_images(res.images)
+            return ToolText(text, pictures) if pictures else text
         if name == "summon_claude_code":
             from . import guest
             return guest.request(cfg.get("chat_id"), args, cfg,

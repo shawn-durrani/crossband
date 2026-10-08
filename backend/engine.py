@@ -1238,6 +1238,16 @@ async def _run_round_inner(chat_id, responders, next_first, cfg, live,
                                 live["attachments"].append(entry["attachment_id"])
                                 del pending[i]
                                 break
+                        # #610: pictures an outside tool returned ride on its
+                        # output. Each is stored as an attachment on the
+                        # reply, so every participant sees it from the next
+                        # round, and the first is the tool row's own file.
+                        for mime, b64 in getattr(payload["output"], "images", ()):
+                            att = tools_mod.store_tool_image(mime, b64, payload["tool"])
+                            if att:
+                                live["attachments"].append(att)
+                                payload.setdefault("attachment_id", att)
+                        payload["output"] = str(payload["output"])
                         live["tools"].append(payload)
                         yield sse({
                             "type": "tool_activity",

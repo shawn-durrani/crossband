@@ -46,12 +46,32 @@ RETRY_S = 60
 CALL_TIMEOUT_S = 45
 
 
+# The most pictures one result hands on (#610). A screenshot and a drawing
+# is the usual most; more would mostly be noise at a picture's token cost.
+MAX_RESULT_IMAGES = 4
+
+
 @dataclass(frozen=True)
 class CallOutcome:
-    """One tool call's result: the text the seat reads, and the result's
-    structured content when the server sent a dict (None otherwise)."""
+    """One tool call's result: the text the seat reads, the result's
+    structured content when the server sent a dict (None otherwise), and
+    any pictures it returned as (mime, base64) pairs (#610)."""
     text: str
     structured: dict | None = None
+    images: tuple = ()
+
+
+def images_of(res) -> tuple:
+    """A CallToolResult's image content as (mime, base64) pairs, at most
+    MAX_RESULT_IMAGES. The SDK this repo pins names the field `mime_type`,
+    and 1.x named it `mimeType`, so both are read."""
+    out = []
+    for c in res.content or []:
+        if getattr(c, "type", None) != "image" or not getattr(c, "data", None):
+            continue
+        mime = getattr(c, "mime_type", None) or getattr(c, "mimeType", None)
+        out.append((mime or "image/png", c.data))
+    return tuple(out[:MAX_RESULT_IMAGES])
 
 
 def structured_of(res) -> dict | None:
@@ -209,11 +229,14 @@ class McpManager:
                 f"Error: external server {server} failed mid-call: {e}")
         parts = [c.text for c in (res.content or [])
                  if getattr(c, "text", None)]
-        out = "\n".join(parts).strip() or "(empty result)"
+        images = () if res.is_error else images_of(res)
+        out = "\n".join(parts).strip() or (
+            "(the result is a picture)" if images else "(empty result)")
         if res.is_error and not out.lower().startswith("error"):
             out = "Error: " + out
         return CallOutcome(out[:cap],
-                           None if res.is_error else structured_of(res))
+                           None if res.is_error else structured_of(res),
+                           images)
 
     async def poll(self, server: str, tool: str,
                    timeout: float = 10.0) -> dict | None:
