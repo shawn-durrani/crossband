@@ -243,7 +243,7 @@ test('an 11-second remark then silence is sent once, after the ordinary pause', 
   const talk = speech([500, 11500])
   // Past the cut but short of the pause: the piece is committed, its words
   // are in, and nothing has been sent.
-  await s.runUntil(13300, talk)
+  await s.runUntil(lastVoiceOf(11500) + s.ctrl.silenceMs - 200, talk)
   assert.equal(relay.commits.length, 1, 'the remark was cut into one piece')
   assert.deepEqual(s.sent, [], 'nothing goes before the pause has run its length')
   // The same pause a short turn ends on: silenceMs after the last voice.
@@ -366,7 +366,7 @@ test('a too-short tail after a cut still sends the piece in flight', async () =>
 test('without realtime, a remark cut at the limit is sent once after the pause', async () => {
   const s = liveSession({ realtime: false })
   const talk = speech([500, 11500])
-  await s.runUntil(13300, talk)
+  await s.runUntil(lastVoiceOf(11500) + s.ctrl.silenceMs - 200, talk)
   assert.equal(sttPosts().length, 1, 'the cut piece went to the batch transcriber')
   assert.deepEqual(s.sent, [], 'its words wait for the end of the turn')
   await s.runUntil(lastVoiceOf(11500) + s.ctrl.silenceMs + 2 * FRAME_MS, talk)
