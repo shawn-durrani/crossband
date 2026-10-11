@@ -351,16 +351,18 @@ says what changed and what to say to undo it. When the model hears an
 instruction and the room stays as it was, one system line says so,
 naming what it heard and that nothing changed.
 
-Asking the seats to hold back leaves room mode alone. "You don't need
-to respond", "just listen" and "go to eavesdropping mode" aren't mode
+Asking the seats to hold back leaves room mode alone. "You don't need to
+respond", "just listen" and "go to eavesdropping mode" aren't mode
 commands, so the room stays as it was. Each seat answers with `[pass]`
 until someone asks it something, and the app hides a pass. When a turn
 has a question mark in it, the first seat to reply is asked once whether
 the question is for the seats. People in the room asking each other
 things get a second `[pass]`, and that one stands. A seat you name still
-has to answer. For "solo mode" to be heard, say it by name, or say you're
-on your own now, like "it's just me now". Saying you're stepping out for
-a while, like "back in a bit", leaves the room as it was.
+has to answer. For "solo mode" to be heard, say it by name, or say
+you're on your own now, like "it's just me now". Saying you're stepping
+out for a while, like "back in a bit", leaves the room as it was. Saying
+who you're with, like "it's only Sam and me", leaves it as it was too.
+Adding "solo mode" or "room mode off" still switches it off.
 
 A word you spell out letter by letter only counts as a name correction
 when the turn says it's a name. "Her name's spelt S-A-M-M" counts, and

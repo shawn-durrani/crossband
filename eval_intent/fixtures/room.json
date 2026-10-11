@@ -44,5 +44,19 @@
     "category": "room_command_negative",
     "text": "Group mode worked well yesterday.",
     "expected": {}
+  },
+  {
+    "id": "room_company_not_alone",
+    "category": "room_command",
+    "text": "It's only Sam and I in the room, by the way.",
+    "present": [
+      "Alex",
+      "Sam"
+    ],
+    "known": [
+      "Sam"
+    ],
+    "expected": {},
+    "notes": "Saying who the owner is with says they aren't alone, so it never turns room mode off (#638). Sam is already present, so nobody is introduced."
   }
 ]

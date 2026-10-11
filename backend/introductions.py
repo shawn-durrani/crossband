@@ -887,18 +887,34 @@ _BACK_SOON_RE = re.compile(
     r"\bwon'?t be (?:long|a (?:minute|sec|second|tick))\b",
     re.IGNORECASE)
 _ALONE_RE = re.compile(r"\b(?:alone|on my own|by myself)\b", re.IGNORECASE)
+# #638: "It's only Sam and I in the room" was heard as room mode off, and
+# the room was emptied with Sam in it. A turn that says the owner is with
+# someone says the opposite of alone: "only Sam and I", "just me and the
+# kids", "the two of us", "it's just us".
+# "Just me and you" or "just you and me", said to the seats, is still
+# alone, and so is "just me and the AIs".
+_ME = r"(?:me|i|myself)"
+_NOT_COMPANY = r"(?!(?:you|y'?all|the\s+(?:ais?|assistants?|bots?|models?))\b)"
+_COMPANY_RE = re.compile(
+    rf"\b(?:only|just)\s+{_ME}\s+(?:and|&|with)\s+{_NOT_COMPANY}[\w'’]"
+    rf"|\b(?:only|just)\s+{_NOT_COMPANY}(?:[\w'’.-]+\s+){{1,4}}?(?:and|&)\s+{_ME}\b"
+    r"|\b(?:the\s+)?(?:two|three|four|five|both)\s+of\s+us\b"
+    r"|\b(?:it'?s|it is)\s+(?:just|only)\s+us\b"
+    rf"|\band\s+{_ME}\s+(?:are|'re)\s+(?:here|in\b)",
+    re.IGNORECASE)
 
 
 def keep_disarm(direction, text) -> str:
     """The room-mode verdict for a turn, with "off" dropped when the turn
-    only says someone is stepping out and will be back soon (#540). A turn
-    that also says off plainly (solo mode, room mode by name, just me now,
-    or being alone) keeps it. Pure."""
+    only says someone is stepping out and will be back soon (#540), or
+    only says who the owner is with (#638). A turn that also says off
+    plainly (solo mode, room mode by name, just me now, or being alone)
+    keeps it. Pure."""
     if direction != COMMAND_DISARM:
         return direction
     head = (text or "")[:1200]
-    if _BACK_SOON_RE.search(head) and not (
-            _COMMAND_RE.search(head) or _ALONE_RE.search(head)):
+    plain_off = _COMMAND_RE.search(head) or _ALONE_RE.search(head)
+    if (_BACK_SOON_RE.search(head) or _COMPANY_RE.search(head)) and not plain_off:
         return ""
     return direction
 

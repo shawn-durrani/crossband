@@ -38,6 +38,11 @@ and "heard but changed nothing" wording, tested without a model.
    so a rule in code drops an "off" from a turn that only says someone will
    be back soon, and the prompt stays byte-identical. Measured by
    eval_intent's plain_shops.
+9. #638: "It's only Sam and I in the room, by the way" was read as room
+   mode off, and the room was emptied with Sam in it. The same rule in
+   code drops an "off" from a turn that only says who the owner is with,
+   unless it also says off plainly. "Just me and you", said to the seats,
+   still means alone. Measured by eval_intent's room_company_not_alone.
 """
 
 import json
@@ -405,3 +410,41 @@ def test_an_ordinary_turn_is_not_caught_by_either_guard(monkeypatch):
     except RuntimeError as e:
         scheduled.append(e)
     assert scheduled, "an ordinary turn must reach the scheduling step"
+
+
+def test_saying_who_you_are_with_drops_room_mode_off():
+    reply = json.dumps({"mode_command": "off"})
+    for text in ("It's only Sam and I in the room, by the way.",
+                 "It's just me and the kids tonight.",
+                 "Just Mateo and me for dinner.",
+                 "Only my partner and I, so keep it short.",
+                 "The two of us are cooking.",
+                 "It's just us.",
+                 "Sam and I are here."):
+        assert intent.parse_merged(reply, text)["mode_command"] == "none", \
+            text
+
+
+def test_a_plain_off_survives_company():
+    reply = json.dumps({"mode_command": "off"})
+    for text in ("Solo mode, it's just me and the dog.",
+                 "Room mode off, the two of us are fine.",
+                 "I'm on my own now, only me and the cat.",
+                 "It's just me now."):
+        assert intent.parse_merged(reply, text)["mode_command"] == "off", \
+            text
+
+
+def test_alone_with_the_seats_is_still_alone():
+    reply = json.dumps({"mode_command": "off"})
+    for text in ("Sam left, so it's just me and you now.",
+                 "Just you and me now.",
+                 "Only me and the AIs tonight."):
+        assert intent.parse_merged(reply, text)["mode_command"] == "off", \
+            text
+
+
+def test_company_only_touches_off():
+    on = json.dumps({"mode_command": "on"})
+    assert intent.parse_merged(on, "Group mode, it's just Sam and me")[
+        "mode_command"] == "on"
