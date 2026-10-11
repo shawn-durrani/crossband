@@ -442,3 +442,31 @@ def test_whole_reply_synthesis_resolves_the_model_before_any_call(monkeypatch):
     voice.synthesize("Hi.", VOICE, {})
     assert posts == ["eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_flash_v2_5"]
     assert dialogue == ["eleven_v3_conversational"]
+
+
+# ---------- 4. word timings (#634) ----------
+
+def test_both_sockets_ask_for_word_timings():
+    assert "sync_alignment=true" in voice.TTS_WS_URL
+    assert "sync_alignment=true" in voice.TTD_WS_URL
+
+
+def test_word_timings_reach_the_browser_in_one_shape_from_either_socket():
+    tts, ttd = tts_models.ROUTE_TTS, tts_models.ROUTE_DIALOGUE
+    camel = {"audio": "A", "alignment": {"chars": ["H", "i"], "charStartTimesMs": [0, 80],
+                                         "charDurationsMs": [80, 90]}}
+    snake = {"audio": "A", "alignment": {"chars": ["H", "i"], "char_start_times_ms": [0, 80],
+                                         "char_durations_ms": [80, 90]},
+             "normalized_alignment": None}
+    want = {"audio": "A", "align": {"chars": ["H", "i"], "start": [0, 80], "dur": [80, 90]}}
+    assert voice.tts_downstream(tts, camel) == (want, False)
+    assert voice.tts_downstream(ttd, snake) == (want, False)
+
+
+def test_broken_word_timings_are_dropped_not_half_sent():
+    ttd = tts_models.ROUTE_DIALOGUE
+    for bad in ({"chars": ["H"], "char_start_times_ms": [0, 1], "char_durations_ms": [1]},
+                {"chars": [], "char_start_times_ms": [], "char_durations_ms": []},
+                {"chars": "Hi", "char_start_times_ms": [0], "char_durations_ms": [1]},
+                None, "nope"):
+        assert voice.tts_downstream(ttd, {"audio": "A", "alignment": bad}) == ({"audio": "A"}, False)

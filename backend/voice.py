@@ -15,13 +15,15 @@ ELEVEN_BASE = "https://api.elevenlabs.io"
 # The two streaming sockets a reply can be spoken through (#480). Which one
 # a model uses is tts_models.route_for's call: the text-to-speech socket
 # refuses every eleven_v3 id, and the dialogue socket takes only those.
+# Both are asked for word timings (#634), so the browser can tell how much
+# of a reply was heard before it was cut off or paused.
 TTS_WS_URL = (
     "wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
-    "?model_id={model_id}&output_format=mp3_44100_128"
+    "?model_id={model_id}&output_format=mp3_44100_128&sync_alignment=true"
 )
 TTD_WS_URL = (
     "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input"
-    "?model_id={model_id}&output_format=mp3_44100_128"
+    "?model_id={model_id}&output_format=mp3_44100_128&sync_alignment=true"
 )
 # Scribe v2 Realtime streaming STT - opt-in, parallel to the batch transcribe()
 # POST. Auth is the xi-api-key header, set on the websocket in routers/voice.py.
@@ -560,13 +562,36 @@ def _dialogue_input(piece, voice_id, carry):
     return {"inputs": [{"text": tts_v3.with_tag(piece, tag), "voice_id": voice_id}]}
 
 
+def tts_alignment(data):
+    """A batch of word timings from either socket as one browser shape:
+    each character with its start and length in ms, timed from 0 at the
+    start of the batch (#634). The text-to-speech socket names the fields
+    in camel case and the dialogue socket in snake case. Anything that
+    isn't three lists of one length is dropped, never half-sent."""
+    a = data.get("alignment")
+    if not isinstance(a, dict):
+        return None
+    chars = a.get("chars")
+    start = a.get("charStartTimesMs", a.get("char_start_times_ms"))
+    dur = a.get("charDurationsMs", a.get("char_durations_ms"))
+    if not (isinstance(chars, list) and isinstance(start, list)
+            and isinstance(dur, list) and chars
+            and len(chars) == len(start) == len(dur)):
+        return None
+    return {"chars": chars, "start": start, "dur": dur}
+
+
 def tts_downstream(route, data):
     """One upstream message as the browser frame to send, and whether the
     reply is over. The sockets name their last message differently:
-    `isFinal` on text-to-speech, `is_final` on dialogue."""
+    `isFinal` on text-to-speech, `is_final` on dialogue. Word timings ride
+    along as `align` when the message carries them (#634)."""
     out = {}
     if data.get("audio"):
         out["audio"] = data["audio"]
+    align = tts_alignment(data)
+    if align:
+        out["align"] = align
     final = data.get("is_final") if route == tts_models.ROUTE_DIALOGUE \
         else data.get("isFinal")
     if final:

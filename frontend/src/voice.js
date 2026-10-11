@@ -13,7 +13,9 @@ import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm,
          takesTurn } from './replyCut.js'
 import { endsOnQuestion, judgeWords, peopleWords, seatWords } from './interruptWords.js'
 import { StreamPlayer } from './streamPlayer.js'
-import { playbackPath } from './streamFeed.js'
+import { playbackPath, rangesOf } from './streamFeed.js'
+import { MP3_BYTES_PER_SECOND, addTimings, base64Bytes, heardChars, newTimeline,
+         phraseStart } from './replyTimeline.js'
 import { realtimeCommitAction, realtimeRetryMs, recoveryPlan,
          shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
@@ -856,6 +858,10 @@ export default class VoiceController {
   // Cut the models off: silence audio, drop queued speech, abort generation.
   // Triggered by sustained user speech during playback, or the ◼ button.
   interrupt() {
+    // #634: how much of the reply on the air was heard, before the cut
+    // ends its pause. Counts only, never the words.
+    const heard = this._heardOnAir()
+    if (heard) this._vlog('vad:heard', heard)
     this.dropQueue = true
     this._bargeIn = afterCut()
     // #460: a reply waiting to start (it could still be a pass) has no
@@ -890,7 +896,8 @@ export default class VoiceController {
     let resolve
     const done = new Promise((r) => { resolve = r })
     const src = this.sink.src
-    this._pause = { done, resolve, src, wasPlaying: !!src && !this.sink.paused }
+    this._pause = { done, resolve, src, wasPlaying: !!src && !this.sink.paused,
+                    player: this._onAir, at: Number(this.sink.currentTime) || 0 }
     try { this.sink.pause() } catch { /* */ }
   }
 
@@ -902,9 +909,40 @@ export default class VoiceController {
     if (!pause) return
     this._pause = null
     if (play && pause.wasPlaying && this.sink.src === pause.src && this.playing > 0) {
+      this._rewind(pause)
       try { this.sink.play()?.catch?.(() => {}) } catch { /* */ }
     }
     pause.resolve()
+  }
+
+  // #634: a reply carrying on after a pause backs up to the start of the
+  // phrase that was playing when the sound began, about half a second
+  // before the pause, so the words said under the sound are heard again.
+  // Only into audio the element still holds, and only with word timings.
+  _rewind(pause) {
+    const p = pause.player
+    if (!p?.timeline?.text) return
+    const onset = Math.max(0, pause.at - INTERRUPT_CONFIRM_MS / 1000)
+    const to = phraseStart(p.timeline, onset, { audioSeconds: this._audioSeconds(p) })
+    if (to === null || !(to < pause.at)) return
+    if (!rangesOf(this.sink.buffered).some(([a, b]) => to >= a && to <= b)) return
+    try { this.sink.currentTime = to } catch { return }
+    this._vlog('tts:rewind', { seat: p.slug, backMs: Math.round((pause.at - to) * 1000) })
+  }
+
+  // A reply's audio length in seconds, once all of it is in.
+  _audioSeconds(p) {
+    return p.audioDone ? p.audioBytes / MP3_BYTES_PER_SECOND : 0
+  }
+
+  // How much of the reply on the air has been heard: characters of its
+  // spoken text against its length so far, at the pause if one is on.
+  _heardOnAir() {
+    const p = this._onAir
+    if (!p?.timeline?.text) return null
+    const at = this._pause?.player === p ? this._pause.at : Number(this.sink.currentTime) || 0
+    return { seat: p.slug, heard: heardChars(p.timeline, at, { audioSeconds: this._audioSeconds(p) }),
+             of: p.timeline.text.length }
   }
 
   // The held sound had no words. Its capture ends as a turn of its own:
@@ -1744,6 +1782,11 @@ export default class VoiceController {
     // The managed path's holds, evictions and fallbacks land in the
     // diagnostics ring (streamPlayer.js).
     player.log = (tag, data) => this._vlog(tag, { seat: slug, ...data })
+    // #634: the reply's word timings and how much of its audio is in.
+    player.slug = slug
+    player.timeline = newTimeline()
+    player.audioBytes = 0
+    player.audioDone = false
     // #620: it waits out a pause for a sound being checked for words.
     player.pausedFor = () => this._pause?.done
     this.players.set(slug, player)
@@ -1791,9 +1834,12 @@ export default class VoiceController {
       if (msg.tts_model) this._voiceModels[slug] = msg.tts_model
       if (msg.audio && keepsAudio(player)) {
         this._trace.speakerMark(slug, 'first_audio', this._traceMeta(slug))
+        player.audioBytes += base64Bytes(msg.audio)
         player.push(msg.audio)
       }
+      if (msg.align && keepsAudio(player)) player.timeline = addTimings(player.timeline, msg.align)
       if (msg.error) this.onError?.(`Voice synthesis (${participant?.name || slug}): ${msg.error}`)
+      if (msg.final) player.audioDone = true
       if (msg.final || msg.error) {
         player.end()
         try { ws.close() } catch { /* */ }

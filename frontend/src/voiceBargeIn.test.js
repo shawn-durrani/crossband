@@ -33,6 +33,9 @@
 // is never sent; a remark to someone the app knows lets it carry on and is
 // sent; one word of your own lets it carry on and is sent; "wait" cuts at
 // once; and after the AI asks something, "yeah" is an answer that cuts.
+// With ElevenLabs' word timings (#634): a reply carrying on after a pause
+// backs up to the start of the phrase the sound began in, and a cut logs
+// how much of the reply on the air was heard, as counts, never words.
 // Run: node --test frontend/src/voiceBargeIn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -193,6 +196,8 @@ globalThis.Audio = class {
   }
   setAttribute() {}
   pause() { pauses.push(this._src); this.paused = true }
+  // Everything played so far is still held, so a resume can seek back.
+  get buffered() { return { length: 1, start: () => 0, end: () => 3600 } }
   play() { plays.push(this._src); this.paused = false; return Promise.resolve() }
 }
 globalThis.location = { protocol: 'http:', host: 'localhost:8902' }
@@ -852,4 +857,55 @@ test("the words' verdict reaches the diagnostics, never the words", async () => 
   const words = tagged('vad:words')
   assert.deepEqual(words.map((e) => JSON.parse(e.data).verdict), ['aside'])
   assert.ok(!JSON.stringify(snapshot()).includes('salt'))
+})
+
+// ---------- word timings (#634) ----------
+
+// The relay's word timings for `text`, `ms` a character, from 0.
+function timings(text, ms = 100) {
+  const chars = [...text]
+  return { chars, start: chars.map((_, i) => i * ms), dur: chars.map(() => ms) }
+}
+
+test('a reply carrying on after a pause backs up to the start of the phrase you talked over', async () => {
+  withMediaSource()
+  relay.texts = ['']
+  const ws = await replyUnderway()
+  ws.onmessage({ data: JSON.stringify({ audio: 'SUQz', align: timings(REPLY) }) })
+  await flush()
+  // Five seconds in, at 100 ms a character, the reply is saying "180" in
+  // "first, then 180, and"; the sound began half a second earlier.
+  ctrl.sink.currentTime = 5.0
+  const t = elapsed()
+  await runUntil(t + 3000, talking(t + 100, t + 1100))
+  assert.equal(tagged('vad:letGo').length, 1)
+  assert.equal(ctrl.sink.currentTime, REPLY.indexOf('then') / 10, 'back to "then"')
+  assert.deepEqual(tagged('tts:rewind').map((e) => JSON.parse(e.data).backMs), [1000])
+  assert.equal(ctrl.sink.paused, false, 'and playing again')
+})
+
+test('with no word timings a reply carries on exactly where it paused', async () => {
+  withMediaSource()
+  relay.texts = ['']
+  await replyUnderway()
+  ctrl.sink.currentTime = 5.0
+  const t = elapsed()
+  await runUntil(t + 3000, talking(t + 100, t + 1100))
+  assert.equal(ctrl.sink.currentTime, 5.0)
+  assert.equal(tagged('tts:rewind').length, 0)
+})
+
+test('a cut logs how much of the reply was heard, as counts, never words', async () => {
+  withMediaSource()
+  const ws = await replyUnderway()
+  ws.onmessage({ data: JSON.stringify({ audio: 'SUQz', align: timings(REPLY) }) })
+  await flush()
+  ctrl.sink.currentTime = 2.0
+  const t = elapsed()
+  await runUntil(t + 1500, talking(t + 100, t + 1100))
+  assert.equal(tagged('vad:bargeIn').length, 1)
+  const [heard] = tagged('vad:heard').map((e) => JSON.parse(e.data))
+  assert.deepEqual(heard, { seat: 'claude', heard: 20, of: REPLY.length },
+                   'twenty characters had played by the pause')
+  assert.ok(!JSON.stringify(snapshot()).includes('bench'))
 })
