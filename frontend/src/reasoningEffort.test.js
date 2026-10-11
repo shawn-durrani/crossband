@@ -27,8 +27,12 @@ test('unsupported Claude families are gated, matching _ANTHROPIC_NO_EFFORT_MODEL
   assert.equal(effortSupport('anthropic', 'CLAUDE-HAIKU-4-5').ok, false)
 })
 
-test('OpenAI support means reasoning models only (gpt-5 and o-series prefixes)', () => {
+test('OpenAI support means reasoning models only (gpt-5 and later, o-series)', () => {
   assert.equal(effortSupport('openai', 'gpt-5.1').ok, true)
+  assert.equal(effortSupport('openai', 'gpt-6.1-sol').ok, true)
+  assert.equal(effortSupport('openai', 'gpt-12').ok, true)
+  assert.equal(effortSupport('openai', 'gpt-oss:20b').ok, false)
+  assert.equal(effortSupport('openai', 'gpt-4.1').ok, false)
   assert.equal(effortSupport('openai', 'o3-mini').ok, true)
   assert.equal(effortSupport('openai', 'gpt-4o').ok, false)
   assert.equal(effortSupport('openai', '').ok, false)

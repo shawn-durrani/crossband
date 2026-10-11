@@ -208,11 +208,20 @@ def _openai_effort(participant):
     level = _OPENAI_EFFORT.get((participant.get("reasoning_effort") or "").strip())
     if not level:
         return None
-    model = (participant.get("model") or "").lower()
-    if not (model.startswith("gpt-5") or model.startswith("o1")
-            or model.startswith("o3") or model.startswith("o4")):
+    if not _openai_reasoning_model(participant.get("model")):
         return None  # only reasoning models accept a reasoning effort
     return level
+
+
+def _openai_reasoning_model(model):
+    """The o-series, and every gpt-N from gpt-5 on (#622: gpt-6.1-sol was
+    being skipped by a gpt-5-only test). gpt-oss has no number and stays
+    out: it's served by Ollama, which this gate never covered."""
+    m = (model or "").lower()
+    if m.startswith(("o1", "o3", "o4")):
+        return True
+    major = re.match(r"gpt-(\d+)", m)
+    return bool(major) and int(major.group(1)) >= 5
 
 
 def sends_effort(provider, model, level) -> bool:

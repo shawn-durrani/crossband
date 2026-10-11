@@ -56,7 +56,13 @@ def test_anthropic_effort_gating(effort, model, expected):
     ("high", "gpt-5.5", "high"),
     # OpenAI scale caps at high - "max" translates down
     ("max", "gpt-5.5", "high"),
+    # #622: later generations are reasoning models too
+    ("low", "gpt-6.1-sol", "low"),
+    ("medium", "gpt-6-sol", "medium"),
+    ("high", "gpt-12", "high"),
     # non-reasoning models: omit entirely
+    ("low", "gpt-oss:20b", None),
+    ("low", "gpt-4.1", None),
     ("high", "gpt-4o", None),
     ("low", "llama-3-70b", None),
     # "adaptive" isn't an OpenAI concept at all - never applies here
