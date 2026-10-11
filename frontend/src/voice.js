@@ -9,8 +9,9 @@ import { speaksNow } from './spokenLine.js'
 import { effectiveVolume } from './voiceGain.js'
 import { DEFAULT_PAUSE_SECS } from './voicePause.js'
 import { gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
-import { afterCut, bargeInFrame, hasWords, keepsAudio, newBargeIn, rearm,
+import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm,
          takesTurn } from './replyCut.js'
+import { endsOnQuestion, judgeWords, peopleWords, seatWords } from './interruptWords.js'
 import { StreamPlayer } from './streamPlayer.js'
 import { playbackPath } from './streamFeed.js'
 import { realtimeCommitAction, realtimeRetryMs, recoveryPlan,
@@ -63,8 +64,11 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRuQDAABXQVZFZm10IBAAAAABAAEAQB8AAI
 let liveSession = null
 
 export default class VoiceController {
-  constructor({ getChatId, getParticipants, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onSttBack, onLevel, onSpeaker, onHeld, onStall }) {
+  constructor({ getChatId, getParticipants, getPeople, sendText, onState, onError, onInterruptRound, onPartial, onSttFallback, onSttBack, onLevel, onSpeaker, onHeld, onStall }) {
     this.getChatId = getChatId
+    // #632: the people the app knows, so a remark that starts with one of
+    // their names reads as meant for them, not the AIs.
+    this.getPeople = getPeople
     // #304: told the stall kind whenever a stall beacon fires, so the app
     // can save the diagnostics bundle automatically. Evidence only - it can
     // never change what the session does next.
@@ -97,9 +101,12 @@ export default class VoiceController {
     // barge-in, armed again by a new reply or round.
     this._bargeIn = newBargeIn()
     // #620: a reply paused while a sound is checked for words, and when
-    // the live transcript last showed a word.
+    // the live transcript last held words that cut it (#632).
     this._pause = null
-    this._wordsAt = 0
+    this._cutAt = 0
+    this._heardVerdict = null
+    // The reply that holds the shared audio element right now.
+    this._onAir = null
     // The turn a wordless sound became when it was let go. Words in its
     // final transcript still cut, as they would have while it was held.
     this._letGoTurn = null
@@ -381,8 +388,16 @@ export default class VoiceController {
         return
       }
       if (msg.partial !== undefined) {
-        // #620: a sound pausing a reply is cut off by its first word.
-        if (hasWords(msg.partial)) this._wordsAt = Date.now()
+        // #620/#632: a sound pausing a reply is cut off by words that mean
+        // to stop the AIs, not by a "yeah" or a remark to someone else.
+        if (this._bargeIn.held) {
+          const { verdict } = this._judgeWords(msg.partial)
+          if (verdict === 'cut') this._cutAt = Date.now()
+          if (verdict !== this._heardVerdict) {
+            this._heardVerdict = verdict
+            this._vlog('vad:words', { verdict })  // the verdict only, never the words
+          }
+        }
         this.onPartial?.(msg.partial)
       } else if (msg.final !== undefined) {
         const text = (msg.final || '').trim()
@@ -688,7 +703,9 @@ export default class VoiceController {
     this._lastRoundEventAt = 0
     this._bargeIn = newBargeIn()
     this._pause = null
-    this._wordsAt = 0
+    this._cutAt = 0
+    this._heardVerdict = null
+    this._onAir = null
     this._letGoTurn = null
     resetHandoffWatch(this._handoff)
     // #537: a session that fell back to the backup path starts again on
@@ -907,6 +924,18 @@ export default class VoiceController {
     return !!(this.sttRealtime && this.sttWs && this.sttWs.readyState === WebSocket.OPEN)
   }
 
+  // #632: what words heard over a reply say about it (interruptWords.js),
+  // judged against the seats' names, the people the app knows, and
+  // whether the reply on the air ended its text so far on a question.
+  // That text runs ahead of what's been heard, so "asked" is a guess.
+  _judgeWords(text) {
+    return judgeWords(text, {
+      seats: seatWords(this.getParticipants?.() || []),
+      people: peopleWords(this.getPeople?.() || []),
+      asked: endsOnQuestion(this._onAir?.said || ''),
+    })
+  }
+
   // ---- microphone / VAD ----
 
   _startRecorder() {
@@ -1071,7 +1100,7 @@ export default class VoiceController {
         const heldSince = this._bargeIn.held?.since
         const frame = bargeInFrame(this._bargeIn, {
           confirmed, voiced, speaking: !!this.speechStart, now,
-          live: this._liveWords(), wordsAt: this._wordsAt,
+          live: this._liveWords(), cutAt: this._cutAt,
         })
         this._bargeIn = frame.state
         if (frame.open) {
@@ -1086,6 +1115,7 @@ export default class VoiceController {
         }
         if (frame.hold) {
           this._vlog('vad:hold', { playing: this.playing, roundActive: this.roundActive })
+          this._heardVerdict = null
           this._pauseReplies()
         }
         if (frame.cut) {
@@ -1346,13 +1376,21 @@ export default class VoiceController {
   // 'buffer' dispatch accumulates a capped segment's text; a 'send' joins
   // everything buffered with this text and dispatches ONE user turn.
   _deliverTranscript(text, turnId, dispatch) {
-    // #620: a sound let go as wordless had words after all. They cut what
-    // the models are saying, as they would have while it was held.
+    // #620/#632: a sound let go had words after all. Words that mean to
+    // stop the AIs cut them, as they would have while it was held. Only
+    // listening noises ("yeah", "mm-hm") are dropped, so the AIs never
+    // answer a "yeah". Anything else, like a remark to someone in the
+    // room, is sent as it would be if nothing was playing, and the reply
+    // plays on.
     if (turnId && turnId === this._letGoTurn) {
       this._letGoTurn = null
-      if (text && (this.playing > 0 || this.roundActive)) {
+      const { verdict, content } = this._judgeWords(text)
+      if (verdict === 'cut' && (this.playing > 0 || this.roundActive)) {
         this._vlog('vad:lateWords', { turnId, playing: this.playing })
         this.interrupt()
+      } else if (text && (verdict === 'listen' || (verdict === 'more' && !content))) {
+        this._vlog('vad:listening', { turnId })
+        text = ''
       }
     }
     if (dispatch === 'buffer') {
@@ -1717,8 +1755,12 @@ export default class VoiceController {
     let open = false
     let lastSend = Date.now()
     let finished = false
+    // #632: what this reply has given its voice so far, to tell whether
+    // its last words were a question.
+    player.said = ''
     const send = (obj) => {
       const s = JSON.stringify(obj)
+      if (typeof obj.text === 'string') player.said += obj.text
       if (obj.done) finished = true
       if (open && ws.readyState === WebSocket.OPEN) ws.send(s)
       else if (!open) pending.push(s)
@@ -1788,6 +1830,7 @@ export default class VoiceController {
           (this.getParticipants?.() || []).map((p) => p?.voice_gain))
         this.sink.defaultPlaybackRate = this.playbackRate || 1
         this.sink.playbackRate = this.playbackRate || 1
+        this._onAir = player
         return player.play(
           (err) => this.onError?.(playbackFailureMessage(err, {
             mobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || ''),
@@ -1800,6 +1843,7 @@ export default class VoiceController {
       .then(() => {
         this.playing -= 1
         this._replies.delete(player)
+        if (this._onAir === player) this._onAir = null
         // Only this speaker's own entries: after an abandoned pass (#460)
         // the slug may already belong to its retry.
         if (this.players.get(slug) === player) this.players.delete(slug)

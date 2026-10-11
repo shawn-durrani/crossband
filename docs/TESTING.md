@@ -126,23 +126,29 @@ microphone, and counts the loops reading it on every frame.
 ### Playing a reply and cutting it off
 
 Talking over a reply pauses it straight away, on an iPhone too, and
-your first word cuts it off. A sound with no words in it, like a pan or
-a fan, only pauses the reply. Once the sound stops, or after four
-seconds without a word, the reply plays on from where it paused. If the
-final transcript finds words after all, they cut the reply then and
-they're sent. Without live transcription there are no words to wait
-for, so any steady sound cuts at once. A desktop browser plays a
-reply's audio as it arrives, and so does an iPhone with iOS 17.1 or
-later. Any other browser holds the audio until the whole reply has
-arrived, and a cut stops it while it waits. Audio for a cut reply never
-plays, whether it turns up after the cut or after voice is switched
-off. A reply queued behind the cut one never plays either. Speech that
-carries on after the cut is the same barge-in, so it cuts once, the mic
-opens and the words are sent. A new reply or a new round can be cut
-again. The suite talks over a reply through the real voice client's
-listening loop, with a scripted microphone and clock, on all three
-kinds of player. It plays short and long sounds with no words through
-it too, and checks the reply plays on and nothing is sent.
+words that mean to stop the AIs cut it off. Those are a stop word like
+"wait", an AI's name, an answer to what it just asked, or two words of
+your own. A "yeah" or "mm-hm" lets the reply carry on, and it isn't
+sent. A remark that starts with the name of someone the app knows is
+for them, so the reply carries on and the remark is sent as usual. A
+sound with no words in it, like a pan or a fan, only pauses the reply.
+Once the sound stops, or after four seconds without a word, the reply
+plays on from where it paused. If the final transcript finds words that
+cut after all, they cut the reply then and they're sent. Without live
+transcription there are no words to wait for, so any steady sound cuts
+at once. A desktop browser plays a reply's audio as it arrives, and so
+does an iPhone with iOS 17.1 or later. Any other browser holds the
+audio until the whole reply has arrived, and a cut stops it while it
+waits. Audio for a cut reply never plays, whether it turns up after the
+cut or after voice is switched off. A reply queued behind the cut one
+never plays either. Speech that carries on after the cut is the same
+barge-in, so it cuts once, the mic opens and the words are sent. A new
+reply or a new round can be cut again. The suite talks over a reply
+through the real voice client's listening loop, with a scripted
+microphone and clock, on all three kinds of player. It plays short and
+long sounds with no words through it too, and checks the reply plays on
+and nothing is sent. It says "yeah", "wait", a remark to a known person
+and a single word over a reply, and checks which ones cut.
 
 On an iPhone that streams, a reply starts playing as its first audio
 arrives, and the voice trace marks it heard while the rest is still on

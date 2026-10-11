@@ -29,6 +29,10 @@
 // held again until it stops; words the final transcript finds after all
 // still cut and are sent; the stop button cuts a paused reply; and with no
 // live transcription a sound cuts at once, as before.
+// Not every word cuts (#632). Pins: a "yeah" lets the reply carry on and
+// is never sent; a remark to someone the app knows lets it carry on and is
+// sent; one word of your own lets it carry on and is sent; "wait" cuts at
+// once; and after the AI asks something, "yeah" is an answer that cuts.
 // Run: node --test frontend/src/voiceBargeIn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -275,6 +279,7 @@ beforeEach(async () => {
     getChatId: () => 7,
     getParticipants: () => [{ slug: 'claude', name: 'Claude', voice_id: 'v-claude' },
                             { slug: 'gpt', name: 'GPT', voice_id: 'v-gpt' }],
+    getPeople: () => [{ name: 'Dave', preferred_name: 'Dave' }],
     sendText: (text, turnId) => sent.push({ text, turnId }),
     onState: () => {},
     onError: () => {},
@@ -777,4 +782,74 @@ test('with no live transcription a sound cuts at once, as before', async () => {
   assert.equal(tagged('vad:hold').length, 0, 'no words to wait for')
   assert.equal(tagged('vad:bargeIn').length, 1, 'cut on the sound alone')
   assert.equal(ws.closed, true)
+})
+
+// ---------- words that don't mean to stop the AIs (#632) ----------
+
+// A reply that ends on a question. The number keeps the pass gate from
+// holding it back.
+const QUESTION = 'Want me to sand it with 120 grit first?'
+
+// Someone says `text` over a streaming reply for a second, then stops.
+async function saidOver(text, reply = REPLY) {
+  withMediaSource()
+  relay.texts = [text]
+  const ws = await replyUnderway('claude', reply)
+  const [src] = audible()
+  const t = elapsed()
+  await runUntil(t + 3000, talking(t + 100, t + 1100))
+  return { ws, src }
+}
+
+test('a "yeah" over a reply lets it carry on, and is never sent', async () => {
+  const { ws, src } = await saidOver('yeah')
+  assert.equal(tagged('vad:hold').length, 1, 'the sound paused the reply')
+  assert.equal(tagged('vad:bargeIn').length, 0, 'the "yeah" never cut it')
+  assert.equal(tagged('vad:letGo').length, 1)
+  assert.equal(aborts(), 0)
+  assert.deepEqual(audible(), [src, src], 'the reply played on')
+  assert.equal(ws.closed, false)
+  assert.equal(tagged('vad:listening').length, 1)
+  assert.deepEqual(sent, [], 'the AIs are never asked to answer a "yeah"')
+})
+
+test('a remark to someone the app knows lets the reply carry on, and is sent', async () => {
+  const { src } = await saidOver('Dave, pass the salt')
+  assert.equal(tagged('vad:bargeIn').length, 0)
+  assert.equal(tagged('vad:lateWords').length, 0)
+  assert.equal(aborts(), 0)
+  assert.deepEqual(audible(), [src, src])
+  assert.equal(ctrl.playing, 1)
+  assert.deepEqual(sent.map((m) => m.text), ['Dave, pass the salt'],
+                   'sent, as it would be if nothing was playing')
+})
+
+test('one word of your own lets the reply carry on, and is sent', async () => {
+  const { src } = await saidOver('Tomorrow')
+  assert.equal(aborts(), 0)
+  assert.deepEqual(audible(), [src, src])
+  assert.deepEqual(sent.map((m) => m.text), ['Tomorrow'])
+})
+
+test('"wait" cuts at once', async () => {
+  const { ws } = await saidOver('Wait')
+  assert.equal(tagged('vad:bargeIn').length, 1)
+  assert.equal(aborts(), 1)
+  assert.equal(ws.closed, true)
+  assert.deepEqual(sent.map((m) => m.text), ['Wait'])
+})
+
+test('after the AI asks something, "yeah" is an answer: it cuts and is sent', async () => {
+  const { ws } = await saidOver('yeah', QUESTION)
+  assert.equal(tagged('vad:bargeIn').length, 1)
+  assert.equal(aborts(), 1)
+  assert.equal(ws.closed, true)
+  assert.deepEqual(sent.map((m) => m.text), ['yeah'])
+})
+
+test("the words' verdict reaches the diagnostics, never the words", async () => {
+  await saidOver('Dave, pass the salt')
+  const words = tagged('vad:words')
+  assert.deepEqual(words.map((e) => JSON.parse(e.data).verdict), ['aside'])
+  assert.ok(!JSON.stringify(snapshot()).includes('salt'))
 })
