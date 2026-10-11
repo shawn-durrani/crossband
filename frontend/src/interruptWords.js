@@ -15,7 +15,10 @@
 //   none    no words at all
 //
 // `content` counts the words that are neither listening noises nor
-// fillers, so the caller can tell "um" from "tomorrow".
+// fillers, so the caller can tell "um" from "tomorrow". `why` names the
+// rule that decided: stop, seat, name, answer, words, filler, listen or
+// none. A cut on `words` alone is the unclear middle a judge can weigh in
+// on (#640); the others are clear.
 
 // Said on its own, each of these means "go on, I'm listening".
 const LISTEN_WORDS = new Set([
@@ -24,7 +27,7 @@ const LISTEN_WORDS = new Set([
   'aha', 'ooh', 'oo', 'cool', 'nice', 'great', 'true', 'exactly', 'totally',
   'gotcha', 'interesting', 'ha', 'haha', 'hah', 'alright', 'cheers', 'thanks',
   'perfect', 'awesome', 'lovely', 'brilliant', 'sweet', 'indeed', 'absolutely',
-  'definitely', 'really', 'yes',
+  'definitely', 'really', 'yes', 'huh',
 ])
 
 // The same, as phrases. Matched before single words, so "oh no" is a
@@ -142,17 +145,17 @@ function phraseAt(ws, i, phrases) {
 // `asked`: the AI's last words were a question.
 export function judgeWords(text, { seats = new Set(), people = new Set(), asked = false } = {}) {
   const ws = words(text)
-  if (!ws.length) return { verdict: 'none', content: 0 }
+  if (!ws.length) return { verdict: 'none', content: 0, why: 'none' }
   // "No, no" and the like, before lead-ins are skipped.
-  if (phraseAt(ws, 0, STOP_PHRASES)) return { verdict: 'cut', content: ws.length }
+  if (phraseAt(ws, 0, STOP_PHRASES)) return { verdict: 'cut', content: ws.length, why: 'stop' }
   let i = 0
   while (i < ws.length - 1 && LEAD_INS.has(ws[i].w)) i++
-  if (phraseAt(ws, i, STOP_PHRASES)) return { verdict: 'cut', content: ws.length }
+  if (phraseAt(ws, i, STOP_PHRASES)) return { verdict: 'cut', content: ws.length, why: 'stop' }
   const first = ws[i]
-  if (seats.has(first.w)) return { verdict: 'cut', content: ws.length }
+  if (seats.has(first.w)) return { verdict: 'cut', content: ws.length, why: 'seat' }
   if (people.has(first.w) && !seats.has(first.w)
       && (first.comma || i === ws.length - 1 || !WORD_NAMES.has(first.w))) {
-    return { verdict: 'aside', content: ws.length }
+    return { verdict: 'aside', content: ws.length, why: 'name' }
   }
   // What's left once listening noises and hesitations are set aside.
   let content = 0
@@ -171,9 +174,9 @@ export function judgeWords(text, { seats = new Set(), people = new Set(), asked 
     else if (!LISTEN_WORDS.has(w)) content++
     k++
   }
-  if (asked && (answers || content)) return { verdict: 'cut', content }
-  if (content >= 2) return { verdict: 'cut', content }
-  if (content === 1) return { verdict: 'more', content }
-  if (fillers && fillers === ws.length) return { verdict: 'more', content }
-  return { verdict: 'listen', content }
+  if (asked && (answers || content)) return { verdict: 'cut', content, why: 'answer' }
+  if (content >= 2) return { verdict: 'cut', content, why: 'words' }
+  if (content === 1) return { verdict: 'more', content, why: 'words' }
+  if (fillers && fillers === ws.length) return { verdict: 'more', content, why: 'filler' }
+  return { verdict: 'listen', content, why: 'listen' }
 }

@@ -150,7 +150,7 @@ def test_every_measurement_states_its_cost_and_what_it_touches():
 
 def test_the_table_carries_measurements_and_no_guard():
     ids = [m.id for m in analysis.MEASUREMENTS]
-    assert ids == ["critic", "attribution", "recall", "intent", "voice"]
+    assert ids == ["critic", "attribution", "recall", "intent", "voice", "bargein"]
     assert "eval_silence" not in {m.module for m in analysis.MEASUREMENTS}
 
 

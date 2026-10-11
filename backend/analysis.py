@@ -186,6 +186,20 @@ MEASUREMENTS = (
                  "memory aren't touched. It shares the diariser with your "
                  "app, so it waits while a voice chat is live."),
         timeout_s=2700.0, quiet_voice=True, readme="eval_voice/README.md"),
+    Measurement(
+        id="bargein", module="eval_bargein", title="Interruption judge trial",
+        measures=("When someone talks over a reply, was it meant for the "
+                  "AIs? Today's word rules, a small Claude model and Jev "
+                  "each judge 40 made-up moments, alone and behind the "
+                  "rules, scored on wrong cuts, missed interruptions and "
+                  "speed."),
+        costs=("About 1 cent for Claude. Jev bills on TypeSafe's terms, and "
+               "without a TYPESAFE_API_KEY it's left out."),
+        takes="About a minute.",
+        touches=("Made-up moments from the repo, sent to Anthropic, and to "
+                 "TypeSafe when there's a key. Nothing of yours is read."),
+        args=("--judge", "rules", "--judge", "claude", "--judge", "jev"),
+        timeout_s=900.0, readme="eval_bargein/README.md"),
 )
 
 _BY_ID = {m.id: m for m in MEASUREMENTS}
@@ -673,8 +687,28 @@ def _voice(r: dict):
     return line, spent
 
 
+def _bargein(r: dict):
+    rules = r.get("rules") or {}
+    best = None
+    for name, s in r.items():
+        if name.startswith("rules, then ") and not s.get("errors"):
+            key = (s.get("missed_cuts", 99), s.get("false_cuts", 99))
+            if best is None or key < best[0]:
+                best = (key, name[len("rules, then "):], s)
+    line = (f"The word rules alone cut {rules.get('false_cuts', 0)} of "
+            f"{rules.get('of_not_cut', 0)} moments that weren't for the AIs.")
+    if best:
+        s = best[2]
+        line += (f" Behind them, {best[1]} cut {s['false_cuts']} and missed "
+                 f"{s['missed_cuts']} of {s['of_cut']} real interruptions.")
+    spent = sum(float(s.get("cost_usd") or 0) for name, s in r.items()
+                if not name.startswith("rules, then "))
+    return line, spent
+
+
 _SUMMARIES = {"critic": _critic, "attribution": _attribution,
-              "recall": _recall, "intent": _intent, "voice": _voice}
+              "recall": _recall, "intent": _intent, "voice": _voice,
+              "bargein": _bargein}
 
 
 def summarise(measurement_id: str, report, practice: bool = False) -> dict:

@@ -26,6 +26,7 @@ lists the measurements only.
 | Recall replay | Are the facts a round fetches from memory worth the wait? | your own chat history and your membro |
 | Spoken intent check | Does the model call that reads every turn hear a spoken instruction? | made-up turns from the repo |
 | Voice rig | Does the app put the right name on each spoken turn? | made-up conversations in synthetic voices |
+| Interruption judge trial | When someone talks over a reply, was it meant for the AIs? | made-up moments from the repo |
 
 Each harness has its own `README.md` with the detail and how to read
 its report. [docs/README.md](README.md) links every one of them.
