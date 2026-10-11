@@ -1,6 +1,6 @@
 // Reasoning-effort rules for the seat editor (#236). Mirrors
 // backend/providers.py: REASONING_CHOICES for the vocabulary,
-// _ANTHROPIC_NO_EFFORT_MODEL and the gpt-5/o-series gate for model
+// _ANTHROPIC_NO_EFFORT_MODEL and _openai_reasoning_model for model
 // support - keep the two in sync.
 
 // Does this model support a reasoning-effort setting? Mirrors the per-provider
@@ -17,9 +17,18 @@ export function effortSupport(provider, model) {
       return { ok: false, note: `Not supported on this Claude model (Haiku / Sonnet 4.5) - it would be ignored.` }
     return { ok: true, note: `Default sends no override. Low/Medium/High/Max set output_config.effort ("Max" needs Opus 4.6+, otherwise uses High) - a bounded, non-deliberating request. Adaptive lets Claude decide how long to think per reply, which can add several seconds - including in voice - before the first word.` }
   }
-  if (/^gpt-5|^o1|^o3|^o4/.test(m))
-    return { ok: true, note: `OpenAI: Default sends no override; Low/Medium/High set reasoning.effort ("Max" maps to High). Applies in tool-free chats; automatically skipped when 🌐 research tools are on (provider limitation). No Adaptive option - that's an Anthropic-only concept.` }
-  return { ok: false, note: `Only OpenAI reasoning models (gpt-5.x, o-series) support reasoning effort - it would be ignored otherwise.` }
+  if (openaiReasoningModel(m))
+    return { ok: true, note: `OpenAI: Default sends no override; Low/Medium/High set reasoning.effort ("Max" maps to High). No Adaptive option - that's an Anthropic-only concept.` }
+  return { ok: false, note: `Only OpenAI reasoning models (gpt-5 and later, o-series) support reasoning effort - it would be ignored otherwise.` }
+}
+
+// The o-series, and every gpt-N from gpt-5 on (#622). Mirrors
+// _openai_reasoning_model in backend/providers.py; gpt-oss stays out.
+export function openaiReasoningModel(model) {
+  const m = (model || '').toLowerCase()
+  if (/^o[134]/.test(m)) return true
+  const major = /^gpt-(\d+)/.exec(m)
+  return Boolean(major) && Number(major[1]) >= 5
 }
 
 // The <select> options for this provider - Default + the fixed levels always;
