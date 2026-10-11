@@ -52,10 +52,13 @@ export function takesTurn(player, { dropQueue }) {
 // test. On 11 October two replies in a row were cut by sounds with no
 // words in them, and the rest of each was never heard. So with live
 // transcription on, the sound first pauses the reply while the
-// transcriber listens to it. A word in it cuts the reply off. A sound
-// that stops, or runs on for HOLD_MAX_MS, without a word is let go, and
-// the reply plays on from where it paused. Without live transcription
-// there are no words to wait for, so the sound cuts at once.
+// transcriber listens to it. Words that mean to stop the AIs cut the
+// reply off (interruptWords.js: a stop word, a seat's name, an answer to
+// a question, two words of their own). A "yeah" or a remark to someone
+// else in the room doesn't (#632). A sound that stops, or runs on for
+// HOLD_MAX_MS, without such words is let go, and the reply plays on from
+// where it paused. Without live transcription there are no words to wait
+// for, so the sound cuts at once.
 
 // A held sound this long without a voiced frame has stopped.
 export const HOLD_QUIET_MS = 600
@@ -77,32 +80,27 @@ export function rearm(state) {
   return state?.held ? state : { armed: true }
 }
 
-// Whether a live transcript holds a word: a letter or a digit, outside
-// any bracketed tag a transcriber puts in for a sound, like "(sizzling)".
-export function hasWords(text) {
-  const plain = String(text || '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
-  return /[\p{L}\p{N}]/u.test(plain)
-}
-
 // One frame of the listening loop while the mic is shut for a reply or a
 // round.
 //   confirmed: half a second of steady speech
 //   voiced:    this frame on its own reads as speech
 //   speaking:  an utterance is already open
 //   live:      live transcription is on, so there are words to wait for
-//   wordsAt:   when the live transcript last showed a word, 0 for never
+//   cutAt:     when the live transcript last held words that cut, 0 for
+//              never
 //   now:       this frame's time
 // What to do:
 //   open:    start capturing the utterance, when one isn't open already
 //   hold:    pause the reply while the sound is checked for words
 //   cut:     cut the reply or round off, once per barge-in
-//   release: the held sound had no words: end its capture and play on
+//   release: the held sound had no words that cut: end its capture and
+//            play on
 export function bargeInFrame(state, { confirmed, voiced = false, speaking, live = false,
-                                      wordsAt = 0, now = 0 }) {
+                                      cutAt = 0, now = 0 }) {
   const none = { cut: false, open: false, hold: false, release: false }
   const held = state.held
   if (held) {
-    if (wordsAt >= held.since) return { ...none, state: afterCut(), cut: true }
+    if (cutAt >= held.since) return { ...none, state: afterCut(), cut: true }
     const lastVoiced = voiced ? now : held.lastVoiced
     if (now - lastVoiced >= HOLD_QUIET_MS || now - held.since >= HOLD_MAX_MS) {
       return { ...none, state: { armed: false, letGo: true }, release: true }

@@ -9,13 +9,13 @@
 // again only by something new to cut.
 // On 11 October two replies were cut by sounds with no words in them
 // (#620). Pins: with live transcription a sound holds the reply instead
-// of cutting it; a word cuts; a sound that stops, or runs on too long,
+// of cutting it; words that cut (interruptWords.js) cut; a sound that stops, or runs on too long,
 // without a word is let go; one let go is listened for again once it
 // stops; and a hold survives something new to cut.
 // Run: node --test frontend/src/replyCut.test.js
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { HOLD_MAX_MS, HOLD_QUIET_MS, afterCut, bargeInFrame, hasWords, heldReplyPlays,
+import { HOLD_MAX_MS, HOLD_QUIET_MS, afterCut, bargeInFrame, heldReplyPlays,
          keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
 
 // ---------- a reply's audio ----------
@@ -103,8 +103,8 @@ const FRAME = 20
 
 // Frames of the gated loop with live transcription on, one every 20 ms
 // from `from`. `voiced(t)` says whether a frame reads as speech, steady
-// enough once it has for 500 ms; `wordsAt` is when a word showed.
-function listen(state, { from = 0, until, voiced, wordsAt = 0 }) {
+// enough once it has for 500 ms; `cutAt` is when words that cut showed.
+function listen(state, { from = 0, until, voiced, cutAt = 0 }) {
   let s = state
   let speaking = false
   const did = { holds: 0, cuts: 0, releases: 0, opens: 0, at: {} }
@@ -114,8 +114,8 @@ function listen(state, { from = 0, until, voiced, wordsAt = 0 }) {
     since = v ? (since ?? now) : null
     const confirmed = since !== null && now - since >= 500
     // The word shows on the frame it arrives, not before.
-    const shown = wordsAt && now >= wordsAt ? wordsAt : 0
-    const f = bargeInFrame(s, { confirmed, voiced: v, speaking, live: true, wordsAt: shown, now })
+    const shown = cutAt && now >= cutAt ? cutAt : 0
+    const f = bargeInFrame(s, { confirmed, voiced: v, speaking, live: true, cutAt: shown, now })
     s = f.state
     for (const k of ['hold', 'cut', 'release', 'open']) {
       if (!f[k]) continue
@@ -138,8 +138,8 @@ test('with live transcription a sound holds the reply instead of cutting it', ()
   assert.equal(r.at.hold, 500)
 })
 
-test('a word in the held sound cuts the reply', () => {
-  const r = listen(newBargeIn(), { until: 2000, voiced: between(0, 2000), wordsAt: 760 })
+test('words that cut, heard in the held sound, cut the reply', () => {
+  const r = listen(newBargeIn(), { until: 2000, voiced: between(0, 2000), cutAt: 760 })
   assert.equal(r.holds, 1)
   assert.equal(r.cuts, 1)
   assert.equal(r.at.cut, 760)
@@ -147,9 +147,9 @@ test('a word in the held sound cuts the reply', () => {
   assert.equal(r.state.armed, false, 'the cut is spent')
 })
 
-test('a word from before the hold does not cut it', () => {
+test('words that cut from before the hold do not cut it', () => {
   const r = listen(newBargeIn(), { from: 1000, until: 2400, voiced: between(1000, 1800),
-                                   wordsAt: 900 })
+                                   cutAt: 900 })
   assert.equal(r.cuts, 0)
   assert.equal(r.releases, 1)
 })
@@ -199,18 +199,4 @@ test('something new to cut keeps a hold that is under way', () => {
 test('without live transcription a sound still cuts at once', () => {
   const f = bargeInFrame(newBargeIn(), { confirmed: true, speaking: false, live: false, now: 500 })
   assert.deepEqual([f.cut, f.hold, f.open], [true, false, true])
-})
-
-test('a word is a letter or a digit, outside the tags a transcriber puts in for sounds', () => {
-  assert.equal(hasWords('stop'), true)
-  assert.equal(hasWords('No.'), true)
-  assert.equal(hasWords('2'), true)
-  assert.equal(hasWords('¿qué?'), true)
-  assert.equal(hasWords(''), false)
-  assert.equal(hasWords('   '), false)
-  assert.equal(hasWords('...'), false)
-  assert.equal(hasWords('(sizzling)'), false)
-  assert.equal(hasWords('[clattering] (fan noise)'), false)
-  assert.equal(hasWords('(laughs) wait'), true)
-  assert.equal(hasWords(undefined), false)
 })

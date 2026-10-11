@@ -428,8 +428,9 @@ export default function App() {
   }, [drawerOpen])
 
   useEffect(() => {
-    stateRef.current = { chatId: activeChatId, participants: state.participants }
-  }, [activeChatId, state.participants])
+    stateRef.current = { chatId: activeChatId, participants: state.participants,
+                         people: voicePeople }
+  }, [activeChatId, state.participants, voicePeople])
 
   async function startVoice() {
     try {
@@ -444,6 +445,8 @@ export default function App() {
         voiceRef.current = new VoiceController({
           getChatId: () => stateRef.current.chatId,
           getParticipants: () => stateRef.current.participants,
+          // #632: a remark that starts with one of these names is for them
+          getPeople: () => stateRef.current.people || [],
           sendText: (text, turnId) => { setVoicePartial(null); send(text, [], { batch: false, turnId }) },
           // Live preview of the in-progress transcript. setState is
           // identity-stable, so this once-constructed controller can hold it.
