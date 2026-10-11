@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { eraseLink } from './voiceDiscard.js'
 import { voiceSurface } from './voiceSurface.js'
+import { loadPauseSecs, savePauseSecs } from './voicePause.js'
 import { captureBanner } from './micRegistry.js'
 import Sidebar from './components/Sidebar'
 import Composer from './components/Composer'
@@ -161,7 +162,7 @@ export default function App() {
   const { captions, history: captionHistory, add: addCaption } =
     useCaptions({ enabled: voiceState !== 'off' })
   const [pttMode, setPttMode] = useState(() => localStorage.getItem('voice_ptt') === '1')
-  const [silenceSecs, setSilenceSecs] = useState(() => Number(localStorage.getItem('voice_silence_secs')) || 2.0)
+  const [silenceSecs, setSilenceSecs] = useState(() => loadPauseSecs(localStorage))
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('voice_rate')) || 1.0)
   const [voiceDockOpen, setVoiceDockOpen] = useState(() => localStorage.getItem('voice_dock_open') !== '0')
   // #67: mute is APP state, not per-surface state - the dock, the mobile
@@ -394,9 +395,13 @@ export default function App() {
   }, [pttMode])
 
   useEffect(() => {
-    localStorage.setItem('voice_silence_secs', String(silenceSecs))
     voiceRef.current?.setSilenceMs(silenceSecs * 1000)
   }, [silenceSecs])
+  // #621: only a pause picked on the slider is saved, so the default can move.
+  const pickSilenceSecs = (secs) => {
+    savePauseSecs(localStorage, secs)
+    setSilenceSecs(secs)
+  }
   useEffect(() => {
     localStorage.setItem('voice_rate', String(voiceRate))
     voiceRef.current?.setPlaybackRate(voiceRate)
@@ -1050,7 +1055,7 @@ export default function App() {
                 health={health}
                 onRoomModeOff={roomModeOff}
                 onPttModeChange={setPttMode}
-                onSilenceSecsChange={setSilenceSecs}
+                onSilenceSecsChange={pickSilenceSecs}
                 onVoiceRateChange={setVoiceRate}
                 onDockOpenChange={setVoiceDockOpen}
                 onRoomModeChange={manualRoomMode}
