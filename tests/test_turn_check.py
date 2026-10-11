@@ -50,7 +50,7 @@ def batch(monkeypatch):
     of these turns may cause one."""
     state = {"transcribed": 0}
 
-    def fake_transcribe(data, mime, cfg):
+    def fake_transcribe(data, mime, cfg, **kw):
         state["transcribed"] += 1
         return "hello world", "scribe_v2"
 

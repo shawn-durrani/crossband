@@ -26,6 +26,9 @@ TTD_WS_URL = (
 # Scribe v2 Realtime streaming STT - opt-in, parallel to the batch transcribe()
 # POST. Auth is the xi-api-key header, set on the websocket in routers/voice.py.
 STT_WS_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
+# Named on every connection (#627) rather than left to the endpoint's
+# default, so a change of default upstream can't change what we run.
+STT_REALTIME_MODEL = "scribe_v2_realtime"
 TIMEOUT = 30
 
 # Keyterm biasing on the realtime STT connection (#28 phase 3): roster names
@@ -56,18 +59,32 @@ def clean_keyterms(names) -> list:
     return out
 
 
-def stt_ws_url(keyterms=None, timestamps=False) -> str:
-    """The realtime STT connection URL, with keyterm biasing when there are
-    names to bias towards, and word times when `timestamps` is set (#482
-    item D: the relay asks for them so crosstalk can be split locally).
-    Neither = the exact historical URL."""
-    query = [("keyterms", t) for t in clean_keyterms(keyterms)]
+def stt_ws_url(keyterms=None, timestamps=False, language="") -> str:
+    """The realtime STT connection URL: always the model by name (#627),
+    keyterm biasing when there are names to bias towards, and word times
+    when `timestamps` is set (#482 item D: the relay asks for them so
+    crosstalk can be split locally). #627: a fixed `language` when the
+    stt_language setting names one.
+
+    Not used: Scribe's `filter_background_audio`. Scribe refuses it beside
+    `include_timestamps` ("will be supported in a future update", checked
+    11 October 2026), and the relay needs word times for crosstalk."""
+    from urllib.parse import urlencode
+    query = [("model_id", STT_REALTIME_MODEL)]
+    query += [("keyterms", t) for t in clean_keyterms(keyterms)]
     if timestamps:
         query.append(("include_timestamps", "true"))
-    if not query:
-        return STT_WS_URL
-    from urllib.parse import urlencode
+    if language:
+        query.append(("language_code", language))
     return STT_WS_URL + "?" + urlencode(query)
+
+
+def stt_language(cfg) -> str:
+    """The `stt_language` setting as Scribe takes it (#627): an ISO 639-1
+    or 639-3 code, two or three letters. Empty, or anything else, means
+    Scribe detects the language itself, as it always has."""
+    code = str(cfg.get("stt_language") or "").strip().lower()
+    return code if re.fullmatch(r"[a-z]{2,3}", code) else ""
 
 
 # ---- one final per commit (#482 item D) ----
@@ -357,17 +374,33 @@ def subscription():
     }
 
 
-def transcribe(audio_bytes, mime, cfg, with_words=False):
+def transcribe(audio_bytes, mime, cfg, with_words=False, keyterms=None,
+               voice_turn=False):
     """Speech-to-text via Scribe v2. (No scribe_v1 fallback: ElevenLabs removes
     it on 2026-07-09 - a fallback to a dead model is just a slower error.)
     With `with_words`, Scribe's word list comes back too, as a third item:
     every word, space and sound with its start and end in seconds, which
-    joined in order make the text (#455)."""
+    joined in order make the text (#455).
+
+    #627: `keyterms` bias the spelling of names, as on the realtime
+    connection. A `voice_turn` is someone speaking in the chat: it takes
+    the `stt_language` setting and drops Scribe's sound tags, so a
+    "(laughs)" never lands in the message. Other audio, such as a podcast
+    for transcribe_audio_url, keeps Scribe's defaults."""
     model_id = cfg.get("stt_model") or "scribe_v2"
+    data = {"model_id": model_id}
+    terms = clean_keyterms(keyterms)
+    if terms:
+        data["keyterms"] = terms
+    if voice_turn:
+        data["tag_audio_events"] = "false"
+        language = stt_language(cfg)
+        if language:
+            data["language_code"] = language
     r = httpx.post(
         f"{ELEVEN_BASE}/v1/speech-to-text",
         headers=_headers(),
-        data={"model_id": model_id},
+        data=data,
         files={"file": ("utterance.webm", audio_bytes, mime or "audio/webm")},
         timeout=60,
     )

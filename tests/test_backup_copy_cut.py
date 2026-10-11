@@ -84,7 +84,7 @@ def scribe(monkeypatch):
     """Scribe's batch answer: FULL, with WORDS when asked for them."""
     calls = []
 
-    def fake(data, mime, cfg, with_words=False):
+    def fake(data, mime, cfg, with_words=False, **kw):
         calls.append(with_words)
         return (FULL, "scribe_v2", WORDS) if with_words else (FULL, "scribe_v2")
 
@@ -131,7 +131,7 @@ def test_with_no_word_times_the_whole_text_stands(app, monkeypatch, caplog):
     monkeypatch.setattr(voice_router.voice, "provider_for",
                         lambda cfg: voice_router.voice.PROVIDER_ELEVENLABS)
     monkeypatch.setattr(voice_router.voice, "transcribe",
-                        lambda data, mime, cfg, with_words=False:
+                        lambda data, mime, cfg, with_words=False, **kw:
                         (FULL, "scribe_v2", None))
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
