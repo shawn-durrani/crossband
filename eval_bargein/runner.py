@@ -155,9 +155,28 @@ def summarise(answers) -> dict:
         "p95_ms": round(lat[min(len(lat) - 1, int(len(lat) * 0.95))] * 1000) if lat else None,
         "cost_usd": round(sum(a["cost_usd"] for a in answers), 5),
         "by_category": {k: f"{v[0]}/{v[1]}" for k, v in sorted(by_cat.items())},
-        "wrong": [{"id": a["id"], "expected": a["expected"], "got": a["label"] or a["error"]}
+        "wrong": [{"id": a["id"], "expected": a["expected"], "got": a["label"] or a["error"],
+                   "confidence": a["confidence"]}
                   for a in answers if a["label"] != a["expected"]],
+        "confidence": _confidence(answers),
+        "answers": [{"id": a["id"], "expected": a["expected"], "label": a["label"],
+                     "confidence": a["confidence"]} for a in answers],
     }
+
+
+def _confidence(answers):
+    """For a judge that gives one: its median confidence when right and
+    when wrong, so a cut-off can be judged."""
+    right = sorted(a["confidence"] for a in answers
+                   if a["confidence"] is not None and a["label"] == a["expected"])
+    wrong = sorted(a["confidence"] for a in answers
+                   if a["confidence"] is not None and a["label"] != a["expected"])
+    if not right and not wrong:
+        return None
+    med = lambda xs: round(statistics.median(xs), 3) if xs else None  # noqa: E731
+    return {"right": med(right), "wrong": med(wrong),
+            "lowest_right": right[0] if right else None,
+            "highest_wrong": wrong[-1] if wrong else None}
 
 
 def render(report: dict) -> str:
@@ -177,8 +196,13 @@ def render(report: dict) -> str:
             lines.append(f"Errors: {s['errors']} of {s['cases']}.")
         lines.append("By kind of moment: " + ", ".join(
             f"{k} {v}" for k, v in s["by_category"].items()) + ".")
+        if s.get("confidence"):
+            c = s["confidence"]
+            lines.append(f"Confidence: {c['right']} at the median when right, "
+                         f"{c['wrong']} when wrong.")
         for w in s["wrong"]:
-            lines.append(f"- {w['id']}: wanted {w['expected']}, got {w['got']}")
+            conf = f" ({w['confidence']:.2f})" if w.get("confidence") is not None else ""
+            lines.append(f"- {w['id']}: wanted {w['expected']}, got {w['got']}{conf}")
     return "\n".join(lines) + "\n"
 
 
