@@ -51,6 +51,10 @@ export class StreamPlayer {
     // cut off, whichever comes first. The wait used to poll `ended` alone,
     // so a cut reply stayed "playing" until its stream ended.
     this._settled = new Promise((resolve) => { this._settle = resolve })
+    // A sound being checked for words pauses the reply (replyCut.js). The
+    // owner sets this: while the pause lasts it returns a promise that
+    // settles when it ends, and nothing otherwise.
+    this.pausedFor = null
     // DO NOT touch this.audio here. The sink is shared by every reply in the
     // round, and players are constructed while the previous reply is still
     // playing - assigning audio.src now would hijack the element mid-speech
@@ -191,6 +195,10 @@ export class StreamPlayer {
   }
 
   async play(onPlayFailed, onStart) {
+    // A reply whose turn comes during a pause waits for it to end. With
+    // no pause on, nothing waits and the sink is claimed at once.
+    let pause = this.pausedFor?.()
+    if (pause) await pause
     // Cut off before its turn came: it never claims the sink.
     if (this.stopped) return
     // Deterministic teardown of the previous reply's state on the shared
@@ -207,6 +215,8 @@ export class StreamPlayer {
       if (await this._playSource(onPlayFailed, onStart) !== FELL_BACK) return
     }
     await this._settled
+    pause = this.pausedFor?.()
+    if (pause) await pause
     if (!heldReplyPlays(this)) return
     this.audio.src = URL.createObjectURL(new Blob(this.chunks, { type: 'audio/mpeg' }))
     await this._playSource(onPlayFailed, onStart)
@@ -283,6 +293,8 @@ export class StreamPlayer {
       watch = setInterval(() => {
         if (this.audio.src !== ourSrc) { finish(); return }
         const t = this.audio.currentTime
+        // Paused on purpose, not wedged.
+        if (this.pausedFor?.()) { stalls = 0; lastT = t; return }
         if (this.ended && t === lastT && (++stalls >= 2)) {
           if (!failed('stalled')) finish()
           return

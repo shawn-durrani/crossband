@@ -7,11 +7,16 @@
 // its turn, whatever the drop flag says; and a barge-in cuts once however
 // many frames its speech lasts, opens the utterance once, and is armed
 // again only by something new to cut.
+// On 11 October two replies were cut by sounds with no words in them
+// (#620). Pins: with live transcription a sound holds the reply instead
+// of cutting it; a word cuts; a sound that stops, or runs on too long,
+// without a word is let go; one let go is listened for again once it
+// stops; and a hold survives something new to cut.
 // Run: node --test frontend/src/replyCut.test.js
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { afterCut, bargeInFrame, heldReplyPlays, keepsAudio, newBargeIn, rearm,
-         takesTurn } from './replyCut.js'
+import { HOLD_MAX_MS, HOLD_QUIET_MS, afterCut, bargeInFrame, hasWords, heldReplyPlays,
+         keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
 
 // ---------- a reply's audio ----------
 
@@ -88,6 +93,124 @@ test('a spent cut still opens a new utterance, so the words are heard', () => {
 test('something new to cut arms it again', () => {
   let { state } = run(newBargeIn(), Array(50).fill(true))
   assert.equal(run(state, Array(50).fill(true)).cuts, 0, 'still the same barge-in')
-  state = rearm()
+  state = rearm(state)
   assert.equal(run(state, Array(50).fill(true)).cuts, 1, 'a new reply or round is cut')
+})
+
+// ---------- a sound with no words in it ----------
+
+const FRAME = 20
+
+// Frames of the gated loop with live transcription on, one every 20 ms
+// from `from`. `voiced(t)` says whether a frame reads as speech, steady
+// enough once it has for 500 ms; `wordsAt` is when a word showed.
+function listen(state, { from = 0, until, voiced, wordsAt = 0 }) {
+  let s = state
+  let speaking = false
+  const did = { holds: 0, cuts: 0, releases: 0, opens: 0, at: {} }
+  let since = null
+  for (let now = from; now < until; now += FRAME) {
+    const v = voiced(now)
+    since = v ? (since ?? now) : null
+    const confirmed = since !== null && now - since >= 500
+    // The word shows on the frame it arrives, not before.
+    const shown = wordsAt && now >= wordsAt ? wordsAt : 0
+    const f = bargeInFrame(s, { confirmed, voiced: v, speaking, live: true, wordsAt: shown, now })
+    s = f.state
+    for (const k of ['hold', 'cut', 'release', 'open']) {
+      if (!f[k]) continue
+      did[`${k}s`]++
+      did.at[k] ??= now
+    }
+    if (f.open) speaking = true
+    if (f.release) speaking = false
+  }
+  return { state: s, ...did }
+}
+
+const between = (a, b) => (t) => t >= a && t < b
+
+test('with live transcription a sound holds the reply instead of cutting it', () => {
+  const r = listen(newBargeIn(), { until: 800, voiced: between(0, 2000) })
+  assert.equal(r.holds, 1)
+  assert.equal(r.cuts, 0)
+  assert.equal(r.opens, 1, 'the sound is captured, so its words can be heard')
+  assert.equal(r.at.hold, 500)
+})
+
+test('a word in the held sound cuts the reply', () => {
+  const r = listen(newBargeIn(), { until: 2000, voiced: between(0, 2000), wordsAt: 760 })
+  assert.equal(r.holds, 1)
+  assert.equal(r.cuts, 1)
+  assert.equal(r.at.cut, 760)
+  assert.equal(r.releases, 0)
+  assert.equal(r.state.armed, false, 'the cut is spent')
+})
+
+test('a word from before the hold does not cut it', () => {
+  const r = listen(newBargeIn(), { from: 1000, until: 2400, voiced: between(1000, 1800),
+                                   wordsAt: 900 })
+  assert.equal(r.cuts, 0)
+  assert.equal(r.releases, 1)
+})
+
+test('a held sound that stops without a word is let go', () => {
+  const r = listen(newBargeIn(), { until: 3000, voiced: between(0, 1200) })
+  assert.equal(r.holds, 1)
+  assert.equal(r.cuts, 0)
+  assert.equal(r.releases, 1)
+  // The last voiced frame was at 1180.
+  assert.equal(r.at.release, 1180 + HOLD_QUIET_MS)
+  assert.equal(r.state.armed, true, 'listened for again once it stopped')
+})
+
+test('a short gap inside the held sound does not let it go', () => {
+  const r = listen(newBargeIn(), { until: 1500,
+                                   voiced: (t) => t < 2000 && !(t >= 700 && t < 1000) })
+  assert.equal(r.releases, 0)
+})
+
+test('a held sound that runs on without a word is let go, and not held again until it stops', () => {
+  const r = listen(newBargeIn(), { until: 9000, voiced: between(0, 8000) })
+  assert.equal(r.holds, 1, 'held once, however long it runs')
+  assert.equal(r.releases, 1)
+  assert.equal(r.at.release, 500 + HOLD_MAX_MS)
+  assert.equal(r.cuts, 0)
+  assert.equal(r.state.armed, true, 'armed again once it stopped')
+  const again = listen(r.state, { from: 9000, until: 10000, voiced: between(9000, 10000) })
+  assert.equal(again.holds, 1, 'a new sound is held again')
+})
+
+test('a sound let go is held again when there is something new to cut', () => {
+  const ran = listen(newBargeIn(), { until: 5000, voiced: between(0, 8000) })
+  assert.equal(ran.state.letGo, true)
+  const next = listen(rearm(ran.state), { from: 5000, until: 5100, voiced: between(0, 8000) })
+  assert.equal(next.holds, 0, 'not until the sound is steady again')
+  const f = bargeInFrame(rearm(ran.state), { confirmed: true, speaking: false, live: true, now: 5100 })
+  assert.equal(f.hold, true, 'a new reply starting is something new to cut')
+})
+
+test('something new to cut keeps a hold that is under way', () => {
+  const r = listen(newBargeIn(), { until: 700, voiced: between(0, 2000) })
+  assert.ok(r.state.held)
+  assert.equal(rearm(r.state), r.state)
+})
+
+test('without live transcription a sound still cuts at once', () => {
+  const f = bargeInFrame(newBargeIn(), { confirmed: true, speaking: false, live: false, now: 500 })
+  assert.deepEqual([f.cut, f.hold, f.open], [true, false, true])
+})
+
+test('a word is a letter or a digit, outside the tags a transcriber puts in for sounds', () => {
+  assert.equal(hasWords('stop'), true)
+  assert.equal(hasWords('No.'), true)
+  assert.equal(hasWords('2'), true)
+  assert.equal(hasWords('¿qué?'), true)
+  assert.equal(hasWords(''), false)
+  assert.equal(hasWords('   '), false)
+  assert.equal(hasWords('...'), false)
+  assert.equal(hasWords('(sizzling)'), false)
+  assert.equal(hasWords('[clattering] (fan noise)'), false)
+  assert.equal(hasWords('(laughs) wait'), true)
+  assert.equal(hasWords(undefined), false)
 })

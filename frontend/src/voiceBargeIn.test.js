@@ -9,8 +9,8 @@
 // every frame with an abort each time, and the owner's words were never
 // sent. Switching voice off closed the speech socket, and the held reply
 // played about 38 seconds late.
-// Pins: a barge-in cuts a held reply at once, cuts once however long the
-// speech goes on, and its words are sent; audio still arriving for a cut
+// Pins: a barge-in pauses a held reply and cuts it at its first word,
+// cuts once however long the speech goes on, and its words are sent; audio still arriving for a cut
 // reply never plays; nothing plays after voice is switched off; a reply
 // queued behind the cut one never plays, even when the round ends before
 // the queue drains; a new reply or round can be cut again; a round slow to
@@ -22,6 +22,13 @@
 // stream ends; a barge-in cuts it once and pauses it; a reply queued
 // behind it never plays; and after a cut or voice off, neither late audio
 // nor the source asking for more puts anything in.
+// On 11 October two replies in a row were cut by sounds with no words in
+// them (#620). Pins: a sound with no words pauses a reply and lets it play
+// on from where it paused, on every player; a reply whose turn comes
+// during the pause waits for it; a sound that runs on is let go and isn't
+// held again until it stops; words the final transcript finds after all
+// still cut and are sent; the stop button cuts a paused reply; and with no
+// live transcription a sound cuts at once, as before.
 // Run: node --test frontend/src/voiceBargeIn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -44,20 +51,37 @@ let nextFrame = null
 globalThis.requestAnimationFrame = (cb) => { nextFrame = cb }
 
 // The realtime transcription relay answers each commit with the next of
-// these, `latencyMs` later.
+// these, `latencyMs` later. An utterance with words in it also gets a
+// live partial of its first two, `partialMs` after its audio starts
+// reaching the relay. A sound with no words gets no partial at all.
 const relay = {
   latencyMs: 300,
+  partialMs: 250,
   texts: [],
   queue: [],
   commits: 0,
+  listening: false,
+  audio(ws) {
+    if (this.listening) return
+    this.listening = true
+    const text = this.texts[this.commits] || ''
+    if (text) {
+      this.queue.push({ ws, due: Date.now() + this.partialMs,
+                        partial: text.split(' ').slice(0, 2).join(' ') })
+    }
+  },
   heard(ws, turnId) {
+    this.listening = false
     this.queue.push({ ws, turnId, due: Date.now() + this.latencyMs,
                       text: this.texts[this.commits++] || '' })
   },
   deliverDue() {
     const due = this.queue.filter((q) => q.due <= Date.now())
     this.queue = this.queue.filter((q) => q.due > Date.now())
-    for (const q of due) q.ws.onmessage?.({ data: JSON.stringify({ final: q.text, turn_id: q.turnId }) })
+    for (const q of due) {
+      q.ws.onmessage?.({ data: JSON.stringify(q.partial !== undefined ? { partial: q.partial }
+        : { final: q.text, turn_id: q.turnId }) })
+    }
   },
 }
 
@@ -80,7 +104,10 @@ class FakeWebSocket {
   get isTts() { return this.url.endsWith('/api/voice/tts') }
   send(s) {
     const m = JSON.parse(s)
-    if (m.audio) return
+    if (m.audio) {
+      if (!this.isTts) relay.audio(this)
+      return
+    }
     this.sent.push(m)
     if (m.commit) relay.heard(this, m.turn_id)
   }
@@ -150,7 +177,7 @@ let mseUrls = 0
 let plays
 let pauses
 globalThis.Audio = class {
-  constructor() { this._src = ''; this.currentTime = 0 }
+  constructor() { this._src = ''; this.currentTime = 0; this.paused = true }
   get src() { return this._src }
   set src(v) {
     this._src = v
@@ -161,8 +188,8 @@ globalThis.Audio = class {
     if (mms && this.disableRemotePlayback) queueMicrotask(() => mms.open())
   }
   setAttribute() {}
-  pause() { pauses.push(this._src) }
-  play() { plays.push(this._src); return Promise.resolve() }
+  pause() { pauses.push(this._src); this.paused = true }
+  play() { plays.push(this._src); this.paused = false; return Promise.resolve() }
 }
 globalThis.location = { protocol: 'http:', host: 'localhost:8902' }
 globalThis.window = { addEventListener() {}, removeEventListener() {} }
@@ -225,9 +252,11 @@ beforeEach(async () => {
   delete globalThis.MediaSource
   delete globalThis.ManagedMediaSource
   relay.latencyMs = 300
+  relay.partialMs = 250
   relay.texts = [SAID, SAID_AGAIN]
   relay.queue = []
   relay.commits = 0
+  relay.listening = false
   mic.voiced = false
   plays = []
   pauses = []
@@ -328,14 +357,21 @@ async function nextSpeaker(slug, text) {
 
 // ---------- the iPhone: no MediaSource ----------
 
-test('a barge-in cuts a held reply at once, cuts once, and its words are sent', async () => {
+test('a barge-in pauses a held reply, cuts it at the first word, once, and its words are sent', async () => {
   const ws = await replyUnderway()
   assert.equal(ctrl.playing, 1, 'the reply is playing, held for its whole stream')
   assert.deepEqual(audible(), [], 'the phone plays nothing before the stream ends')
   // The owner talks over it for three seconds, then stops.
-  const talk = talking(elapsed() + 100, elapsed() + 3100)
-  await runUntil(elapsed() + 800, talk)
-  assert.equal(tagged('vad:bargeIn').length, 1, 'the barge-in fired')
+  const t = elapsed()
+  const talk = talking(t + 100, t + 3100)
+  // Steady enough to count by about 400 ms in; the first word comes back
+  // from the transcriber a quarter of a second after that.
+  await runUntil(t + 550, talk)
+  assert.equal(tagged('vad:hold').length, 1, 'the sound paused the reply first')
+  assert.equal(tagged('vad:bargeIn').length, 0, 'not cut before a word is heard')
+  assert.equal(aborts(), 0)
+  await runUntil(t + 800, talk)
+  assert.equal(tagged('vad:bargeIn').length, 1, 'the first word cut it')
   assert.equal(ctrl.playing, 0, 'the cut reply stopped at once')
   assert.equal(ws.closed, true, 'its speech socket is closed')
   const branches = tagged('vad:branch').map((e) => JSON.parse(e.data).gated)
@@ -595,4 +631,150 @@ test('on an iPhone switching voice off stops a streaming reply, and nothing more
   await flush()
   assert.equal(ms.sb.appended, 2, 'the held chunk was thrown away')
   assert.deepEqual(audible(), [src], 'nothing plays after the session ended')
+})
+
+// ---------- a sound with no words in it (#620) ----------
+
+// A pan, a clatter, a fan: steady enough to read as speech, with no words
+// for the transcriber to find.
+const sound = talking
+
+test('a sound with no words pauses a streaming reply, and it plays on from where it paused', async () => {
+  withMediaSource()
+  relay.texts = ['']
+  const ws = await replyUnderway()
+  const [src] = audible()
+  const t = elapsed()
+  await runUntil(t + 1000, sound(t + 100, t + 1100))
+  assert.equal(tagged('vad:hold').length, 1, 'the sound paused the reply')
+  assert.ok(pauses.includes(src))
+  assert.equal(ctrl.sink.paused, true)
+  await runUntil(t + 3000, sound(t + 100, t + 1100))
+  assert.equal(tagged('vad:letGo').length, 1, 'let go once it stopped')
+  assert.equal(tagged('vad:bargeIn').length, 0, 'never cut')
+  assert.equal(aborts(), 0, 'the round was never stopped')
+  assert.deepEqual(audible(), [src, src], 'the same reply plays on')
+  assert.equal(ctrl.sink.paused, false)
+  assert.equal(ctrl.playing, 1)
+  assert.equal(ws.closed, false, 'its speech is still coming')
+  assert.deepEqual(sent, [], 'nothing was sent for the sound')
+  ws.speak({ final: true })
+  await flush()
+  assert.equal(FakeMediaSource.byUrl.get(src).sb.appended, 3, 'and the rest of it goes in')
+})
+
+test('on an iPhone a sound with no words pauses a streaming reply, and it plays on', async () => {
+  withManagedMediaSource()
+  relay.texts = ['']
+  const ws = await replyUnderway()
+  const [src] = audible()
+  const t = elapsed()
+  await runUntil(t + 3000, sound(t + 100, t + 1100))
+  assert.equal(tagged('vad:hold').length, 1)
+  assert.equal(tagged('vad:letGo').length, 1)
+  assert.equal(aborts(), 0)
+  assert.ok(pauses.includes(src))
+  assert.deepEqual(audible(), [src, src], 'paused, then played on')
+  assert.equal(ws.closed, false)
+})
+
+test('a reply whose turn comes during the pause waits for it, then plays whole', async () => {
+  relay.texts = ['']
+  const ws = await replyUnderway()
+  const t = elapsed()
+  const clatter = sound(t + 100, t + 1100)
+  await runUntil(t + 700, clatter)
+  assert.equal(tagged('vad:hold').length, 1)
+  // The reply's speech ends during the pause, which is when the phone
+  // would play it.
+  ws.speak({ final: true })
+  await runUntil(t + 1200, clatter)
+  assert.deepEqual(audible(), [], 'it waits for the pause')
+  await runUntil(t + 3000, clatter)
+  assert.equal(tagged('vad:letGo').length, 1)
+  assert.equal(audible().length, 1, 'then plays')
+  assert.match(audible()[0], /^blob:/)
+  assert.equal(aborts(), 0)
+})
+
+test('a sound that runs on without a word is let go, and not held again until it stops', async () => {
+  withMediaSource()
+  relay.texts = ['', '']
+  const ws = await replyUnderway()
+  const t = elapsed()
+  const fan = sound(t + 100, t + 9100)
+  await runUntil(t + 9000, fan)
+  assert.equal(tagged('vad:hold').length, 1, 'held once')
+  assert.equal(tagged('vad:letGo').length, 1, 'let go after four seconds without a word')
+  assert.equal(audible().length, 2, 'the reply played on while the sound ran on')
+  // Once it stops, a new sound can pause the reply again.
+  const knock = sound(t + 10100, t + 11100)
+  await runUntil(t + 13000, knock)
+  assert.equal(tagged('vad:hold').length, 2)
+  assert.equal(tagged('vad:letGo').length, 2)
+  assert.equal(aborts(), 0)
+  assert.equal(ws.closed, false)
+})
+
+test('a reply paused for a long sound is not taken for a stalled one', async () => {
+  withMediaSource()
+  relay.texts = ['']
+  const ws = await replyUnderway()
+  ws.speak({ final: true }) // all its audio is in, and it's playing the rest
+  await flush()
+  // The player checks every two seconds that a reply whose audio is all
+  // in is still moving. Two seconds on, its third check falls inside the
+  // pause below. (The test's element never moves, so only the pause can
+  // excuse it.)
+  await runUntil(elapsed() + 2000, silence)
+  const t = elapsed()
+  const hum = sound(t + 100, t + 6000)
+  await runUntil(t + 4300, hum)
+  assert.equal(tagged('vad:hold').length, 1)
+  assert.equal(ctrl.playing, 1, 'still there after four seconds paused')
+  await runUntil(t + 4600, hum)
+  assert.equal(tagged('vad:letGo').length, 1)
+  assert.equal(ctrl.playing, 1, 'and it plays on')
+  assert.equal(audible().length, 2)
+})
+
+test('words the final transcript finds in a sound that was let go still cut, and are sent', async () => {
+  withMediaSource()
+  relay.partialMs = 60000 // the live transcript never shows them in time
+  const ws = await replyUnderway()
+  const t = elapsed()
+  await runUntil(t + 4000, sound(t + 100, t + 1100))
+  assert.equal(tagged('vad:letGo').length, 1, 'no word came in time, so it was let go')
+  assert.equal(tagged('vad:lateWords').length, 1, 'then the final transcript had words')
+  assert.equal(aborts(), 1, 'the round was stopped')
+  assert.equal(ctrl.playing, 0)
+  assert.equal(ws.closed, true)
+  assert.deepEqual(sent.map((m) => m.text), [SAID])
+})
+
+test('the stop button cuts a paused reply, and it never plays on', async () => {
+  withMediaSource()
+  relay.texts = ['']
+  const ws = await replyUnderway()
+  const t = elapsed()
+  await runUntil(t + 700, sound(t + 100, t + 1100))
+  assert.equal(tagged('vad:hold').length, 1)
+  ctrl.interrupt()
+  await runUntil(t + 4000, sound(t + 100, t + 1100))
+  assert.equal(ctrl.playing, 0)
+  assert.equal(ws.closed, true)
+  assert.equal(audible().length, 1, 'it never played on')
+  assert.equal(tagged('vad:letGo').length, 0)
+  assert.deepEqual(sent, [])
+})
+
+test('with no live transcription a sound cuts at once, as before', async () => {
+  withMediaSource()
+  ctrl.setSttRealtime(false)
+  const ws = await replyUnderway()
+  const t = elapsed()
+  await runUntil(t + 500, sound(t + 100, t + 2100))
+  assert.equal(tagged('vad:hold').length, 0, 'no words to wait for')
+  assert.equal(tagged('vad:bargeIn').length, 1, 'cut on the sound alone')
+  assert.equal(ws.closed, true)
 })
