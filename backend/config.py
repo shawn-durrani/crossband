@@ -129,6 +129,15 @@ _OPENAI_VERIFIED_AS_OF = "2026-07-31"
 OPUS_5_5_CACHE = {"read_mult": 0.05, "write_mult": 1.25}
 FABLE_5_1_CACHE = {"read_mult": 0.025, "write_mult": 1.25}
 
+# The seats' current models, verified on 12 October 2026 against the same two
+# pages and stamped on their own. Sonnet 5.5 reads cache at 0.05x ($0.10/M),
+# like Opus 5.5. GPT 6.1 Sol reads at 0.05x too ($0.10/M against $2.00), where
+# GPT 6 Sol reads at OpenAI's usual 0.1x ($0.20/M). Writes stay 1.25x on all
+# three. Before these rows the seats on them recorded cost=None.
+_VERIFIED_2026_10_12 = "2026-10-12"
+SONNET_5_5_CACHE = {"read_mult": 0.05, "write_mult": 1.25}
+GPT_6_1_CACHE = {"read_mult": 0.05, "write_mult": 1.25}
+
 DEFAULT_PRICING = {
     "claude-fable-5-1": _rate_card(10.0, 50.0, _ANTHROPIC_VERIFIED_AS_OF,
                                    _ANTHROPIC_DOCS_PRICING_URL,
@@ -157,6 +166,9 @@ DEFAULT_PRICING = {
     # $2/$10 launched as introductory with a rise to $3/$15 scheduled for
     # 2026-09-01; the pricing page now says the rise will not occur and $2/$10
     # is the standard rate. Not a typo - do not "fix" this back to 3/15.
+    "claude-sonnet-5-5": _rate_card(2.0, 10.0, _VERIFIED_2026_10_12,
+                                    _ANTHROPIC_DOCS_PRICING_URL,
+                                    cache=SONNET_5_5_CACHE),
     "claude-sonnet-5": _rate_card(2.0, 10.0, _ANTHROPIC_VERIFIED_AS_OF,
                                   _ANTHROPIC_DOCS_PRICING_URL),
     "claude-sonnet-4-6": _rate_card(3.0, 15.0, _ANTHROPIC_VERIFIED_AS_OF,
@@ -173,6 +185,14 @@ DEFAULT_PRICING = {
     # change, tracked separately.
     "gpt-5.6-terra": _openai_rate_card(2.0, 12.0, _OPENAI_VERIFIED_AS_OF,
                                        _OPENAI_DEV_PRICING_URL),
+    # Standard tier, short context. Both also have a long-context tier
+    # (input, cached and writes at 2x, output at 1.5x), which OpenAI now
+    # says starts above 272K input tokens. A seat call is far below that,
+    # and a rate card holds one pair, so the tier isn't modelled.
+    "gpt-6.1-sol": _rate_card(2.0, 10.0, _VERIFIED_2026_10_12,
+                              _OPENAI_DEV_PRICING_URL, cache=GPT_6_1_CACHE),
+    "gpt-6-sol": _openai_rate_card(2.0, 10.0, _VERIFIED_2026_10_12,
+                                   _OPENAI_DEV_PRICING_URL),
     "gpt-5.5": _openai_rate_card(1.75, 14.0, _PRICING_AS_OF, _OPENAI_PRICING_URL),
     "gpt-5.1": _openai_rate_card(1.25, 10.0, _PRICING_AS_OF, _OPENAI_PRICING_URL),
     "gpt-5": _openai_rate_card(1.25, 10.0, _PRICING_AS_OF, _OPENAI_PRICING_URL),
