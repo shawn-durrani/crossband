@@ -54,29 +54,35 @@ shows the same money as Utility (titles/summaries).
 ## How a Claude request is laid out
 
 Every time a Claude seat replies, Crossband sends one request made of
-four blocks. A round is one pass where each seated model gets a turn
+five blocks. A round is one pass where each seated model gets a turn
 to reply, and the blocks come in this order.
 
 1. The tool definitions.
 2. The stable system block: the seat's persona, the project
    instructions and the shared instructions. It reads the same on
    every call for that seat, project and round.
-3. The conversation so far.
-4. The volatile block: the memory summary, memory fetched for this
-   message, the delegation note, the memory-write warning, and who has
-   already replied this round. The delegation note says a summons is
-   already claimed, and the warning appears when the memory service
-   isn't healthy. The block changes on nearly every call.
+3. The memory summary, what the memory service knows about you. It
+   changes only when the memory service rebuilds it, about once an
+   hour.
+4. The conversation so far.
+5. The volatile block: memory fetched for this message, the delegation
+   note, the memory-write warning, and who has already replied this
+   round. The delegation note says a summons is already claimed, and
+   the warning appears when the memory service isn't healthy. The block
+   changes on nearly every call.
 
-Crossband puts a cache mark at the end of the stable block and another
-on the second-last message of the conversation. The cache works on the
+Crossband puts a cache mark at the end of the stable block, another at
+the end of the memory summary, and a third on the second-last message
+of the conversation. The cache works on the
 start of the request, called the prefix, so everything before a mark
 can be stored and read back on the next call. A change anywhere before
 a mark throws away everything from that point on, and the next call
 stores it again.
 
-The volatile block comes after both marks, so it can change freely
-without touching what's stored. A model that accepts a system turn at
+The volatile block comes after every mark, so it can change freely
+without touching what's stored. A new memory summary throws away the
+conversation stored behind it, so the next call stores it again. That
+happens about once in twenty replies. A model that accepts a system turn at
 the end of the conversation gets it as one, and the others get it
 added to the end of the last user turn, framed as text Crossband
 assembled.
@@ -316,17 +322,15 @@ holds across a short burst of messages is the shape you want.
 
 ## How often the memory summary repeats
 
-The memory summary is about 3,000 tokens, and every Claude seat call
-sends it at full price in the volatile block. It changes only when the
-memory service rebuilds it, and a new one never causes a miss, because
-it sits after both cache marks. A cached block of its own, after the
-stable block, would let a call read it back at the cache price. The cache
-would serve that block when an earlier call on the same model sent the
-same tools, the same stable block and the same summary less than five
-minutes before.
+The memory summary is about 3,000 tokens. It has a cached block of its
+own after the stable block, so a call reads it back at the cache price
+instead of sending it at full price. The cache serves that block when an
+earlier call on the same model sent the same tools, the same stable
+block and the same summary less than five minutes before. In a typical
+week that's about 19 calls in 20.
 
 Each call records the summary it carried in `usage_json.cache_prefix`,
-so you can measure how often that happens before anything moves.
+so you can keep checking how often it changes.
 `summary` is the first 16 characters of the summary's SHA-256
 fingerprint, or `none` when the call sent no summary. `summary_chars`
 is its length in characters. `requests` is how many requests the call

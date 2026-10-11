@@ -26,6 +26,7 @@ No TTL change ships here: cache_control stays a bare {"type": "ephemeral"}
 (the 5-minute default) on every block -- asserted explicitly below.
 """
 
+import json
 import asyncio
 import logging
 
@@ -286,47 +287,55 @@ def test_prefix_is_byte_stable_when_only_volatile_changes(cfg, monkeypatch):
 # with many summons it was re-written more than it was ever read back.
 
 
-def test_stable_block_excludes_delegation_note_and_memory_summary(cfg):
+def test_summary_has_its_own_block_and_delegation_stays_volatile(cfg):
+    """#565: the memory summary is in neither the stable block nor the
+    volatile tail, but its own block between them. The delegation note
+    still flips mid-round, so it stays in the tail."""
     live_cfg = _cfg(cfg, memory_summary="Alex ships via issue then PR then merge.",
                     delegation_note="Claude Code has ALREADY been summoned this round.")
     stable, volatile = providers.split_system_prompt(
         PARTICIPANT, ROSTER, live_cfg, None, "", False)
+    summary = providers.memory_summary_block(live_cfg)
     assert "issue then PR then merge" not in stable
+    assert "issue then PR then merge" not in volatile
+    assert "issue then PR then merge" in summary
     assert "ALREADY been summoned" not in stable
-    assert "issue then PR then merge" in volatile
     assert "ALREADY been summoned" in volatile
     # the stable block still carries the persona/rules content
     assert "Reply as yourself only" in stable
+    assert providers.memory_summary_block(_cfg(cfg, memory_summary="")) == ""
 
 
-def test_memory_summary_precedes_ambient_detail_in_volatile(cfg):
-    """Reading order survives the move: the summary is the index, the
+def test_memory_summary_precedes_ambient_detail(cfg):
+    """Reading order survives both moves: the summary is the index, the
     auto-retrieved facts are the detail, and delegation state sits with this
-    round's position. Only the position relative to the TRANSCRIPT changed."""
-    _, volatile = providers.split_system_prompt(
+    round's position. #565 put the summary ahead of the conversation; the
+    rest still follows the transcript, in this order."""
+    whole = providers.group_chat_system(
         PARTICIPANT, ROSTER,
         _cfg(cfg, memory_summary="INDEXTOKEN", memory_ambient="DETAILTOKEN",
              delegation_note="CLAIMTOKEN", round_predecessors=["gpt"]),
         None, "", False)
-    assert (volatile.index("INDEXTOKEN") < volatile.index("DETAILTOKEN")
-            < volatile.index("CLAIMTOKEN") < volatile.index("already replied to this"))
+    assert (whole.index("INDEXTOKEN") < whole.index("DETAILTOKEN")
+            < whole.index("CLAIMTOKEN") < whole.index("already replied to this"))
 
 
-def test_prefix_is_byte_stable_when_delegation_or_memory_summary_changes(cfg, monkeypatch):
+def test_prefix_is_byte_stable_when_delegation_changes(cfg, monkeypatch):
     """THE regression guard, for both delivery shapes. A Claude Code
-    summons (delegation_note set, then cleared) or a save_memory-triggered
-    summary rebuild must not move a single byte of the cached prefix. Before
-    the fix each flip re-wrote the entire 110-184k-token prefix at Anthropic's
-    1.25x cache-WRITE rate - 12.5x what reading it back costs."""
+    summons (delegation_note set, then cleared) must not move a single byte
+    of the cached prefix. Before the fix each flip re-wrote the entire
+    110-184k-token prefix at Anthropic's 1.25x cache-WRITE rate - 12.5x
+    what reading it back costs. (A summary rebuild now does move it, on
+    purpose and rarely: see the #565 tests below.)"""
     for seat in (SONNET, OPUS5):
         a_client, _ = _drive(
             monkeypatch,
-            _cfg(cfg, delegation_note="", memory_summary="the summary as it was"),
+            _cfg(cfg, delegation_note="", memory_summary="the summary"),
             ambient="same fact", preds=["gpt"], participant=seat)
         b_client, _ = _drive(
             monkeypatch,
             _cfg(cfg, delegation_note="Claude Code has ALREADY been summoned this round.",
-                 memory_summary="a rebuilt, entirely different summary"),
+                 memory_summary="the summary"),
             ambient="same fact", preds=["gpt"], participant=seat)
         a, b = a_client.messages.captured_kwargs, b_client.messages.captured_kwargs
         assert a["system"] == b["system"], seat["model"]
@@ -339,24 +348,64 @@ def test_prefix_is_byte_stable_when_delegation_or_memory_summary_changes(cfg, mo
             return msgs                            # in-turn shape
 
         assert prefix(a) == prefix(b), seat["model"]
-        # the delegation/summary change DID land somewhere (not vacuous)
+        # the delegation change DID land somewhere (not vacuous)
         assert a["messages"][-1] != b["messages"][-1], seat["model"]
 
 
-def test_openai_prefix_byte_stable_when_delegation_or_memory_summary_changes(cfg, monkeypatch):
+def test_the_summary_is_its_own_cached_block_ahead_of_the_chat(cfg, monkeypatch):
+    """#565: Claude gets the summary as a second system block with its own
+    cache mark, so the stable block before it is untouched by a rebuild and
+    the summary is read from cache while it holds. The tail no longer
+    carries it."""
+    for seat in (SONNET, OPUS5):
+        a_client, _ = _drive(monkeypatch, _cfg(cfg, memory_summary="SUMMARY_ONE"),
+                             ambient="same fact", preds=["gpt"], participant=seat)
+        b_client, _ = _drive(monkeypatch, _cfg(cfg, memory_summary="SUMMARY_TWO"),
+                             ambient="same fact", preds=["gpt"], participant=seat)
+        a, b = a_client.messages.captured_kwargs, b_client.messages.captured_kwargs
+        assert len(a["system"]) == 2, seat["model"]
+        assert a["system"][0] == b["system"][0], seat["model"]
+        assert "SUMMARY_ONE" in a["system"][1]["text"]
+        assert a["system"][1]["cache_control"] == {"type": "ephemeral"}
+        assert "SUMMARY_ONE" not in json.dumps(a["messages"])
+        marks = json.dumps(a).count('"cache_control"')
+        assert marks <= 4, "Anthropic allows four cache marks"
+    c_client, _ = _drive(monkeypatch, _cfg(cfg, memory_summary=""),
+                         ambient="same fact", preds=["gpt"], participant=SONNET)
+    assert len(c_client.messages.captured_kwargs["system"]) == 1
+
+
+def test_openai_prefix_byte_stable_when_delegation_changes(cfg, monkeypatch):
     """Same guarantee on the OpenAI seat: `instructions` leads that provider's
-    cache prefix, so neither field may reach it."""
+    cache prefix, so the delegation note may never reach it."""
     fake_a = _drive_openai(monkeypatch,
-                           _cfg(cfg, delegation_note="", memory_summary="before"),
+                           _cfg(cfg, delegation_note="", memory_summary="same"),
                            ambient="same fact", preds=["claude"])
     ka = dict(fake_a.responses.captured_kwargs)
     fake_b = _drive_openai(monkeypatch,
-                           _cfg(cfg, delegation_note="CLAIMTOKEN", memory_summary="after"),
+                           _cfg(cfg, delegation_note="CLAIMTOKEN", memory_summary="same"),
                            ambient="same fact", preds=["claude"])
     kb = fake_b.responses.captured_kwargs
     assert ka["instructions"] == kb["instructions"]
     assert ka["input"][:-1] == kb["input"][:-1]
     assert ka["input"][-1] != kb["input"][-1]
+
+
+def test_openai_reads_the_summary_after_the_stable_instructions(cfg, monkeypatch):
+    """#565: the summary closes `instructions`, ahead of the conversation,
+    so OpenAI and a local server reuse it with the chat behind it. A
+    rebuild changes only what follows the stable block."""
+    fake_a = _drive_openai(monkeypatch, _cfg(cfg, memory_summary="SUMMARY_ONE"),
+                           ambient="same fact", preds=["claude"])
+    ka = dict(fake_a.responses.captured_kwargs)
+    fake_b = _drive_openai(monkeypatch, _cfg(cfg, memory_summary="SUMMARY_TWO"),
+                           ambient="same fact", preds=["claude"])
+    kb = fake_b.responses.captured_kwargs
+    assert "SUMMARY_ONE" in ka["instructions"]
+    assert "SUMMARY_ONE" not in json.dumps(ka["input"])
+    head = ka["instructions"].index("SUMMARY_ONE")
+    assert ka["instructions"][:head] == kb["instructions"][:head]
+    assert ka["input"] == kb["input"]
 
 
 # ---------- the write-failure note, and why chat_summary stays put ----------
@@ -693,14 +742,67 @@ def test_no_summary_is_recorded_as_none(cfg, monkeypatch):
             u["cache_prefix"]["summary_chars"]) == ("none", 0)
 
 
-def test_a_new_summary_is_not_reported_as_a_prefix_change(cfg, monkeypatch):
-    """The summary sits after both cache marks, so a new one can't cause a
-    miss. It changes the volatile block, which `changed` already names, and
-    names nothing more."""
+class _FakeChatStream:
+    def __init__(self):
+        self._sent = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._sent:
+            raise StopAsyncIteration
+        self._sent = True
+        delta = type("Delta", (), {"content": "ok", "tool_calls": None})()
+        choice = type("Choice", (), {"delta": delta, "finish_reason": "stop"})()
+        return type("Chunk", (), {"choices": [choice], "usage": None})()
+
+
+def test_a_local_seat_reads_the_summary_with_the_system_prompt(cfg, monkeypatch):
+    """#565 on a local server (mlx_lm.server, the Qwen seat): the summary
+    closes the system message, ahead of the conversation, so the server's
+    prompt cache reuses it with the chat behind it (workbench#126). Only
+    the volatile tail is read fresh each turn."""
+    base = "http://127.0.0.1:8080/v1"
+    seat = {"name": "Qwen", "slug": "qwen", "model": "local-model",
+            "provider": "openai", "system_prompt": "", "base_url": base,
+            "api_key_env": ""}
+    monkeypatch.setattr(providers, "_chat_completions_only", {base})
+    calls = []
+
+    async def chat_create(**kwargs):
+        calls.append(kwargs)
+        return _FakeChatStream()
+
+    fake = type("C", (), {})()
+    fake.chat = type("Chat", (), {})()
+    fake.chat.completions = type("Comp", (), {"create": staticmethod(chat_create)})()
+    monkeypatch.setattr(providers, "_openai_client", lambda p: fake)
+    live = _cfg(cfg, memory_summary="SUMMARY_TOKEN", memory_ambient="AMBIENT_TOKEN",
+                round_predecessors=[])
+
+    async def go():
+        async for _ in providers.stream_reply(seat, ROSTER, [], {}, live, None, "", False):
+            pass
+
+    asyncio.run(go())
+    msgs = calls[0]["messages"]
+    assert msgs[0]["role"] == "system"
+    assert "Reply as yourself only" in msgs[0]["content"]
+    assert msgs[0]["content"].index("Reply as yourself only") < \
+        msgs[0]["content"].index("SUMMARY_TOKEN")
+    assert all("SUMMARY_TOKEN" not in (m.get("content") or "") for m in msgs[1:])
+    assert "AMBIENT_TOKEN" in msgs[-1]["content"]
+
+
+def test_a_new_summary_is_reported_as_a_prefix_change(cfg, monkeypatch):
+    """#565: the summary sits ahead of the conversation now, so a new one
+    is a miss for what follows it, and `changed` names it and nothing
+    else. The volatile tail no longer carries it."""
     providers._last_prefix.clear()
     _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, summary="one")
     u2 = _usage_of(monkeypatch, cfg, tools=TOOL_A, chat_id=1, summary="two")
-    assert u2["cache_prefix"]["changed"] == ["volatile"]
+    assert u2["cache_prefix"]["changed"] == ["summary"]
     assert u2["cache_prefix"]["summary"] == providers._content_hash("two")
 
 

@@ -1,13 +1,14 @@
 """How often the memory summary repeats between Claude seat calls (#565).
 
-Every Claude seat call sends the memory summary in the uncached tail of its
-prompt, about 3,000 tokens at full price. A cached block of its own, after
-the stable system block, would let a call read it back cheaply instead. The
-cache only serves that block when an earlier call sent the same bytes ahead
-of it and the same summary less than five minutes before, on the same
-model. Each call's usage block records the summary's fingerprint and length,
-never its text, under usage_json.cache_prefix. This report reads those
-records and says what caching the summary would have saved.
+Every Claude seat call sends the memory summary, about 3,000 tokens. Since
+#565 it has a cached block of its own after the stable system block, so a
+call reads it back cheaply instead of sending it at full price. The cache
+only serves that block when an earlier call sent the same bytes ahead of it
+and the same summary less than five minutes before, on the same model. Each
+call's usage block records the summary's fingerprint and length, never its
+text, under usage_json.cache_prefix. This report reads those records and
+says how often the summary changed and what caching it saves against
+sending it at full price.
 
 Read-only: it opens chat.db read-only and writes nothing.
 

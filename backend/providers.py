@@ -677,7 +677,8 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
     if shared:
         parts.append("\n## Conversation style (set by the user - follow it strictly)\n" + shared)
     # memory_summary and delegation_note used to sit HERE, and both mutate
-    # mid-conversation - see _volatile_system_parts, which now carries them.
+    # mid-conversation. The summary has its own block (memory_summary_block,
+    # #565) and delegation_note rides _volatile_system_parts.
     parts.append(
         "\n## Passing\nIf, when your turn comes, you truly have nothing to "
         "add beyond what has already been said, reply with exactly [pass] "
@@ -714,6 +715,31 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
     return parts
 
 
+def memory_summary_block(cfg):
+    """The memory summary as its own block (#565), or "" with none.
+
+    It sits after the stable block and before the conversation, cached on
+    its own. It used to ride the uncached volatile tail, re-sent at full
+    price on every call, because it was once rebuilt every round. The memory
+    service now rebuilds it about hourly: a week of real use found the same
+    summary on about 19 calls in 20 (scripts/summary_reuse_report.py). When
+    it does change, the conversation behind it is read again, once."""
+    mem = (cfg.get("memory_summary") or "").strip()
+    if not mem:
+        return ""
+    user = cfg["user_name"]
+    return (
+        f"\n## What you know about {user} (memory summary - newest info wins)\n" + mem +
+        "\n\nThis is a fast index over a complete, never-summarized memory ledger "
+        "holding far more than fits above. Absence from this summary means NOTHING: "
+        f"NEVER tell {user} you don't know about, don't remember, or have no record "
+        "of something without FIRST calling recall_memory (for facts) and "
+        "search_history (for verbatim past-chat excerpts) with a couple of query "
+        "phrasings. Treat 'not in the summary' strictly as 'not checked yet'. Use "
+        "save_memory to record genuinely durable new facts about them."
+    )
+
+
 def _volatile_system_parts(cfg):
     """Content that changes on nearly every call by design: freshly
     auto-retrieved memory for THIS message, and who has already replied THIS
@@ -725,7 +751,8 @@ def _volatile_system_parts(cfg):
     they are not: `memory_summary` is re-fetched from the memory service every
     round (backend/engine.py) and rebuilt whenever save_memory runs, and
     `delegation_note` flips on every Claude Code claim and again when it
-    clears. The system block leads the whole request, so a single edit to
+    clears. (#565 then moved the summary out again, into its own cached block
+    ahead of the conversation: see memory_summary_block.) The system block leads the whole request, so a single edit to
     either one invalidated everything downstream (the transcript breakpoint
     included), re-writing the entire cached prefix at Anthropic's 1.25x cache
     WRITE rate, which is 12.5x a read. Two consequences worth keeping in mind:
@@ -752,18 +779,6 @@ def _volatile_system_parts(cfg):
         # #253/#417: spoken research mode, per chat - volatile by the same
         # reasoning as depth_note, right beside it.
         parts.append("\n" + research_note)
-    mem = (cfg.get("memory_summary") or "").strip()
-    if mem:
-        parts.append(
-            f"\n## What you know about {user} (memory summary - newest info wins)\n" + mem +
-            "\n\nThis is a fast index over a complete, never-summarized memory ledger "
-            "holding far more than fits above. Absence from this summary means NOTHING: "
-            f"NEVER tell {user} you don't know about, don't remember, or have no record "
-            "of something without FIRST calling recall_memory (for facts) and "
-            "search_history (for verbatim past-chat excerpts) with a couple of query "
-            "phrasings. Treat 'not in the summary' strictly as 'not checked yet'. Use "
-            "save_memory to record genuinely durable new facts about them."
-        )
     # Flips with memory-service health, independently of the transcript
     # (`summary_upto` never moves for it) - so it belongs here, not folded into
     # the cached chat_summary where every flip re-wrote the prefix.
@@ -930,14 +945,17 @@ def room_state_note(cfg) -> str:
 
 
 def group_chat_system(participant, roster, cfg, project, chat_summary, voice_mode):
-    """Full assembled system prompt: stable parts, then the volatile
-    memory/round-state block, then (voice mode only) the brevity override -
+    """Full assembled system prompt: stable parts, the memory summary,
+    then the volatile memory/round-state block, then (voice mode only) the brevity override -
     kept textually last so it stays the freshest instruction, exactly as
     before. The monolithic accessor for anything that wants the whole prompt
     in one string (tests, docs); BOTH live adapters assemble from
     split_system_prompt instead, keeping the volatile block out of the
     cacheable prefix entirely - see _stream_anthropic / _stream_openai."""
     parts = _stable_system_parts(participant, roster, cfg, project, chat_summary)
+    summary = memory_summary_block(cfg)
+    if summary:
+        parts.append(summary)
     parts += _volatile_system_parts(cfg)
     if voice_mode:
         # last position on purpose: brevity must be the freshest instruction,
@@ -1583,14 +1601,20 @@ async def stream_reply(participant, roster, transcript, names, cfg, project,
         # Static, config-driven text that doesn't depend on the message -
         # belongs in the stable/cacheable block, not the volatile one.
         stable += TOOLS_SYSTEM_NOTE
+    summary = memory_summary_block(cfg)
     if participant["provider"] == "anthropic":
-        agen = _stream_anthropic(participant, stable, volatile, transcript, names, cfg, tools, memory)
+        agen = _stream_anthropic(participant, stable, volatile, transcript, names, cfg, tools, memory,
+                                 summary=summary)
     elif participant["provider"] == "openai":
-        # `instructions` carries ONLY the stable block; the volatile block
-        # rides at the end of the input list - OpenAI's
+        # `instructions` carries the stable block and then the memory
+        # summary (#565), which changes about one call in twenty; the
+        # volatile block rides at the end of the input list - OpenAI's
         # automatic prefix caching hashes instructions first, so one changed
         # ambient fact there used to zero out caching for the whole request.
-        agen = _stream_openai(participant, stable, volatile, transcript, names, cfg, tools, memory)
+        # A local server caches the same way (workbench#126), so Qwen reads
+        # the summary once instead of on every turn.
+        agen = _stream_openai(participant, stable + summary, volatile, transcript, names, cfg,
+                              tools, memory)
     else:
         raise ValueError(f"Unknown provider: {participant['provider']}")
     async for event in agen:
@@ -2066,13 +2090,15 @@ def round_break(before: str, after: str) -> str:
     return "\n\n"
 
 
-async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, memory):
+async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, memory,
+                            summary=""):
     client = _anthropic_client(p)
     messages = build_anthropic_messages(p["slug"], transcript, names, cfg)
     # Prompt caching (an earlier change completed the system-prompt half;
     # this is the message-side half): the STABLE block (persona/project/shared
-    # instructions - identical across calls for this participant/round) is
-    # the ONLY system content and carries its own breakpoint. The VOLATILE
+    # instructions - identical across calls for this participant/round)
+    # carries its own breakpoint, and the memory summary follows it with a
+    # second one (#565). The VOLATILE
     # system block (memory_ambient, round_predecessors, voice tail -
     # different on nearly every call by design) is appended INSIDE the final
     # user turn, after the transcript breakpoint below.
@@ -2093,6 +2119,11 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     # default - see CACHE_TTL_LABEL above).
     stable_hash, volatile_hash = _content_hash(stable), _content_hash(volatile)
     system = [{"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}]
+    if summary:
+        # #565: the memory summary, cached on its own between the stable
+        # block and the conversation. Three marks of the four allowed.
+        system.append({"type": "text", "text": summary,
+                       "cache_control": {"type": "ephemeral"}})
     if len(messages) >= 2:
         _bp = messages[-2]
     elif messages:
@@ -2155,8 +2186,13 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     # while every fingerprint stays the same, and a spoken "think harder"
     # changes effort mid-chat. Both are recorded as SENT, not as configured,
     # since a level the model doesn't take is never sent and busts nothing.
+    # #565: the memory summary is a prefix component now, ahead of the
+    # conversation, so a new one is a miss and `changed` names it.
+    mem = (cfg.get("memory_summary") or "").strip()
     prefix_now = {"model": p.get("model") or "", "tools": tools_hash,
-                  "stable": stable_hash, "volatile": volatile_hash,
+                  "stable": stable_hash,
+                  "summary": _content_hash(mem) if mem else "none",
+                  "volatile": volatile_hash,
                   "transcript": transcript_hash,
                   "thinking": (thinking or {}).get("type", "none"),
                   "effort": effort or "default"}
@@ -2165,23 +2201,16 @@ async def _stream_anthropic(p, stable, volatile, transcript, names, cfg, tools, 
     changed = ([k for k, v in prefix_now.items() if _prev.get(k) != v]
                if _prev else ["first-call"])
     _last_prefix[seat_key] = prefix_now
-    # #565: the memory summary rides the uncached volatile tail, about 3,000
-    # tokens on every call. Its fingerprint and length go on the record, never
-    # its text, so a week of real use shows how often a cached block of its
-    # own would have been read back (scripts/summary_reuse_report.py). Kept
-    # out of prefix_now: it sits after both cache marks, so a new summary is
-    # no miss, and `changed` stays a list of what can cause one. `requests`
-    # counts the requests this seat call made, one per tool round, since
-    # each one sends the summary again.
-    summary = (cfg.get("memory_summary") or "").strip()
+    # #565: the summary's fingerprint (in prefix_now) and length go on the
+    # record, never its text, so scripts/summary_reuse_report.py can keep
+    # counting how often it changes. `requests` counts the requests this
+    # seat call made, one per tool round.
     usage = {"input": 0, "cache_read": 0, "cache_creation": 0, "output": 0,
              # Rides usage_json so a miss is SQL-queryable: the INFO log line is
              # dark unless log_level is set, and this repo's guidance is to query
              # usage_json rather than hunt logs.
              "cache_prefix": {**prefix_now, "changed": changed,
-                              "summary": (_content_hash(summary) if summary
-                                          else "none"),
-                              "summary_chars": len(summary),
+                              "summary_chars": len(mem),
                               "requests": 0}}
     meter = cfg.get("_call_meter")  # #576: read if the call is cut off
     if meter is not None:
@@ -2330,8 +2359,9 @@ async def _stream_openai(p, stable, volatile, transcript, names, cfg, tools, mem
     """OpenAI adapter on the Responses API: streaming, native reasoning-effort
     support alongside function tools, and cached-token accounting.
 
-    Cache layout: `instructions` carries only the STABLE
-    block; the VOLATILE block is the last input item, as a `developer` turn
+    Cache layout: `instructions` carries the STABLE block and the
+    memory summary (#565, joined by stream_reply); the VOLATILE block is
+    the last input item, as a `developer` turn
     (instruction-ranked, so the position note and voice tail keep their
     authority). OpenAI's automatic prefix caching hashes instructions before
     the input list, so per-round content in instructions used to zero out
