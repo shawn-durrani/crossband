@@ -274,6 +274,28 @@ def test_current_anthropic_flagships_are_priced():
     assert DEFAULT_PRICING["claude-sonnet-5"]["output"] == 10.0
 
 
+def test_the_seats_current_models_are_priced():
+    """Sonnet 5.5 and GPT 6.1 Sol had no rows, so every reply from the two
+    seats in daily use recorded cost=None. Figures from Anthropic's and
+    OpenAI's pricing pages, 12 Oct 2026 (#630)."""
+    one_m = 1_000_000
+    for m in ("claude-sonnet-5-5", "gpt-6.1-sol", "gpt-6-sol"):
+        assert compute_cost(m, {"input": one_m, "output": one_m},
+                            DEFAULT_PRICING) == pytest.approx(12.0), m
+        assert compute_cost(m, {"cache_creation": one_m},
+                            DEFAULT_PRICING) == pytest.approx(2.5), m
+    # cache reads: 0.05x on the two newest, OpenAI's usual 0.1x on GPT 6 Sol
+    assert compute_cost("claude-sonnet-5-5", {"cache_read": one_m},
+                        DEFAULT_PRICING) == pytest.approx(0.10)
+    assert compute_cost("gpt-6.1-sol", {"cache_read": one_m},
+                        DEFAULT_PRICING) == pytest.approx(0.10)
+    assert compute_cost("gpt-6-sol", {"cache_read": one_m},
+                        DEFAULT_PRICING) == pytest.approx(0.20)
+    # Sonnet 5 keeps its own terms
+    assert compute_cost("claude-sonnet-5", {"cache_read": one_m},
+                        DEFAULT_PRICING) == pytest.approx(0.20)
+
+
 def test_point_releases_have_their_own_rows():
     """`claude-opus-5-5` used to read as a date-stamped reissue of
     `claude-opus-5` and cost Opus 5's $5/$25, and `claude-fable-5-1` took
