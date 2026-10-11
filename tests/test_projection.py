@@ -8,7 +8,8 @@ import json
 import re
 
 from backend.providers import (CONTINUE_NUDGE, build_anthropic_messages,
-                               build_openai_input, split_system_prompt)
+                               build_openai_input, memory_summary_block,
+                               split_system_prompt)
 from tests.conftest import make_msg
 
 LABEL_RE = re.compile(
@@ -665,20 +666,20 @@ def test_room_roster_names_never_reach_the_transcript_turns(transcript, names, c
 def test_system_only_fields_are_real_and_reach_the_system_channel(cfg):
     """Positive control for the two leak tests above: proves the sentinels
     aren't silently unused anywhere -- they DO reach the model, just only
-    through split_system_prompt (persona/project/summary), never through the
-    transcript builders (asserted above)."""
+    through split_system_prompt (persona/project) and memory_summary_block
+    (#565), never through the transcript builders (asserted above)."""
     live_cfg = _cfg_with_system_only_fields(cfg)
     stable, volatile = split_system_prompt(
         PARTICIPANT, ROSTER, live_cfg, PROJECT, CHAT_SUMMARY, False)
-    combined = stable + volatile
+    combined = stable + memory_summary_block(live_cfg) + volatile
     for sentinel in _SYSTEM_ONLY_SENTINELS:
         assert sentinel in combined, f"{sentinel} never reached the system prompt at all"
 
 
 # ---------- how the recall block introduces its facts (#594) ----------
 #
-# The recalled facts ride the uncached volatile tail after the memory
-# summary, the order tests/test_cache_split.py pins. What the block says
+# The recalled facts ride the uncached volatile tail, which follows the
+# memory summary in reading order (tests/test_cache_split.py pins it). What the block says
 # about them decides whether a seat uses them. "Silently ignore what
 # doesn't, and don't treat their presence as a request to bring them up"
 # read as "these are optional": in the memory benchmark a seat asked for
@@ -707,9 +708,10 @@ def test_recall_block_asks_for_advice_built_on_memory(cfg):
     assert "never recite an entry just because it's here" in block
     assert "silently ignore" not in block
     assert "request to bring them up" not in block
-    # same place as before: the volatile tail, after the summary
+    # same place as before: the volatile tail. The summary it used to
+    # follow has its own block ahead of the chat now (#565).
     assert head not in stable
-    assert volatile.index("SUMMARY_TOKEN") < volatile.index(head)
+    assert "SUMMARY_TOKEN" not in volatile
 
 
 # ---------- attachment projection (#242) ----------
