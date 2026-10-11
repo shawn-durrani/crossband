@@ -7,6 +7,7 @@ import { PassSpeechGate, couldBePass, isPassShaped } from './passView.js'
 import { WrittenFilter } from './writtenChannel.js'
 import { speaksNow } from './spokenLine.js'
 import { effectiveVolume } from './voiceGain.js'
+import { DEFAULT_PAUSE_SECS } from './voicePause.js'
 import { gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
 import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
 import { StreamPlayer } from './streamPlayer.js'
@@ -29,7 +30,7 @@ import { STAGE_EMPTY, STAGE_FAILED, STAGE_HELD, STAGE_SENT, handoffBegan,
 // models to cut them off. Voice detection requires sustained low-frequency
 // (speech-shaped) energy, so keyboard clicks and other transients are ignored.
 
-const DEFAULT_SILENCE_MS = 1500 // default pause that ends your turn in auto mode (user-tunable)
+const DEFAULT_SILENCE_MS = DEFAULT_PAUSE_SECS * 1000 // default pause that ends your turn in auto mode (user-tunable, voicePause.js)
 const MIN_SPEECH_MS = 500       // ignore anything shorter than this
 const LEVEL = 0.013             // RMS floor while listening
 const INTERRUPT_LEVEL = 0.03    // stricter floor while AI audio is playing
