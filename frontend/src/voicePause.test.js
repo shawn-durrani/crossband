@@ -1,3 +1,5 @@
+// Tests for the end-of-turn pause: its default and what the browser keeps (#621).
+// Run: node --test frontend/src/voicePause.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_PAUSE_SECS, loadPauseSecs, savePauseSecs } from './voicePause.js'
