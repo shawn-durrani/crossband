@@ -64,6 +64,14 @@ def load_cases(path=CASES) -> list:
     return cases
 
 
+def as_heard(case: Case) -> Case:
+    """The moment with its words as a live transcript often arrives: lower
+    case, and no punctuation but apostrophes."""
+    import dataclasses
+    plain = re.sub(r"[^\w\s'’]", " ", case.words.lower())
+    return dataclasses.replace(case, words=" ".join(plain.split()))
+
+
 def _who(case: Case) -> str:
     if case.speaker == "owner":
         return f"{OWNER}, the owner"

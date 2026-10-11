@@ -22,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-from eval_bargein.judge import (CASES, OWNER, ROSTER, SEATS, jev_body,
+from eval_bargein.judge import (CASES, OWNER, ROSTER, SEATS, as_heard, jev_body,
                                 load_cases, parse_jev, parse_label, prompt)
 
 JUDGES = ("rules", "claude", "local", "jev", "mock")
@@ -208,6 +208,8 @@ def render(report: dict) -> str:
 
 async def run(args) -> dict:
     cases = load_cases(args.cases)
+    if args.as_heard:
+        cases = [as_heard(c) for c in cases]
     judges = ["mock"] if args.mock else (args.judges or ["rules"])
     report = {}
     rules = judge_rules(cases)
@@ -239,6 +241,9 @@ def build_arg_parser():
     p.add_argument("--local-url", default="http://127.0.0.1:8131/v1")
     p.add_argument("--local-model", default="mlx-community/Qwen3.5-4B-OptiQ-4bit")
     p.add_argument("--timeout-s", type=float, default=30.0)
+    p.add_argument("--as-heard", action="store_true",
+                   help="give the words as a live transcript often has them: lower "
+                        "case, no punctuation")
     p.add_argument("--env", help="a .env file to take the keys from, for this run alone")
     p.add_argument("--mock", action="store_true",
                    help="keyless stand-in; for checking the harness, never for numbers")

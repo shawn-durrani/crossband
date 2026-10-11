@@ -10,7 +10,7 @@ unclear middle. That's a few words of your own that might be for the
 AIs, or might be for someone else in the room.
 
 This trial measures the judges that could decide that middle. They all
-answer the same 40 made-up moments. Each moment says what the AI was
+answer the same 136 made-up moments. Each moment says what the AI was
 saying, who spoke over it, and what they said. Someone can be you,
 someone else in the room, a voice the app doesn't know, or the TV. Each
 moment carries the right answer, one of three:
@@ -61,5 +61,7 @@ time.
 
 Made-up moments don't sound like a real kitchen. The words arrive typed,
 so there are no transcription mistakes, and nobody's voice is checked.
+With `--as-heard` they arrive the way a live transcript often has them,
+in lower case with no punctuation, which is closer but still clean.
 The trial picks a judge worth trying in the app. It isn't the final word
 on one.

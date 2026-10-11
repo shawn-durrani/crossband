@@ -47,6 +47,14 @@ def test_every_judge_reads_the_same_description():
     assert q["type"] == "choice" and set(q["criteria"]) == set(judge.LABELS)
 
 
+def test_as_heard_gives_the_words_as_a_live_transcript_has_them():
+    c = judge.load_cases()[0]
+    import dataclasses
+    heard = judge.as_heard(dataclasses.replace(c, words="Sam, it's NOT ready... yet!"))
+    assert heard.words == "sam it's not ready yet"
+    assert heard.ai_said == c.ai_said
+
+
 def test_a_written_answer_is_read_whatever_comes_with_it():
     assert judge.parse_label("interrupt") == "interrupt"
     assert judge.parse_label("Aside.") == "aside"

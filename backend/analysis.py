@@ -190,10 +190,10 @@ MEASUREMENTS = (
         id="bargein", module="eval_bargein", title="Interruption judge trial",
         measures=("When someone talks over a reply, was it meant for the "
                   "AIs? Today's word rules, a small Claude model and Jev "
-                  "each judge 40 made-up moments, alone and behind the "
+                  "each judge 136 made-up moments, alone and behind the "
                   "rules, scored on wrong cuts, missed interruptions and "
                   "speed."),
-        costs=("About 1 cent for Claude. Jev bills on TypeSafe's terms, and "
+        costs=("About 3 cents for Claude. Jev bills on TypeSafe's terms, and "
                "without a TYPESAFE_API_KEY it's left out."),
         takes="About a minute.",
         touches=("Made-up moments from the repo, sent to Anthropic, and to "
