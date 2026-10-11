@@ -51,6 +51,9 @@ const MESSAGES = [
     content: '| Person | Saturday |\n| --- | --- |\n| Alex | Woodworking workshop |' },
   { id: 13, speaker: 'user', created_at: 13, attachments: [],
     content: '| Item | Who |\n| --- | --- |\n| Sausages | Sam |' },
+  // #634: a spoken reply cut off partway, as the server reads it back.
+  { id: 14, speaker: 'gpt', created_at: 14, attachments: [],
+    content: 'Sand it first.\n\n[cut off by Alex]', unheard: 'Then wipe it down.' },
 ]
 
 export function renderSmoke() {
@@ -80,7 +83,8 @@ export function renderSmoke() {
     />,
   )
   for (const needle of ['hello both of you', 'a captured voice turn', 'Claude is thinking',
-                        'Oil it after sanding.']) {
+                        'Oil it after sanding.', 'The rest of this reply, not heard',
+                        'Then wipe it down.']) {
     if (!html.includes(needle)) {
       throw new Error(`render smoke: expected ${JSON.stringify(needle)} in the markup`)
     }

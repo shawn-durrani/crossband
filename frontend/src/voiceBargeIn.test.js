@@ -35,7 +35,10 @@
 // once; and after the AI asks something, "yeah" is an answer that cuts.
 // With ElevenLabs' word timings (#634): a reply carrying on after a pause
 // backs up to the start of the phrase the sound began in, and a cut logs
-// how much of the reply on the air was heard, as counts, never words.
+// how much of the reply on the air was heard, as counts, never words. The
+// stop tells the server how much of each reply was heard: the one on the
+// air by its timings, a half-heard word left out, one queued behind it as
+// nothing.
 // Run: node --test frontend/src/voiceBargeIn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -275,7 +278,7 @@ beforeEach(async () => {
   // The app's stop: every cut aborts the round (one POST each), and the
   // first ends the round's stream, whose end the app reports `endsInMs`
   // later, as the stream's own finally does.
-  app = { aborts: 0, streamOpen: false, endsInMs: 8 }
+  app = { aborts: 0, heard: [], streamOpen: false, endsInMs: 8 }
   globalThis.fetch = async (url) => {
     posts.push(url)
     return { ok: true, status: 200, json: async () => ({ ok: true }) }
@@ -289,8 +292,9 @@ beforeEach(async () => {
     onState: () => {},
     onError: () => {},
     onPartial: () => {},
-    onInterruptRound: () => {
+    onInterruptRound: (heard) => {
       app.aborts++
+      app.heard.push(heard)
       if (app.streamOpen) {
         app.streamOpen = false
         setTimeout(() => ctrl.onRoundDone(), app.endsInMs)
@@ -908,4 +912,30 @@ test('a cut logs how much of the reply was heard, as counts, never words', async
   assert.deepEqual(heard, { seat: 'claude', heard: 20, of: REPLY.length },
                    'twenty characters had played by the pause')
   assert.ok(!JSON.stringify(snapshot()).includes('bench'))
+})
+
+test('the stop says how much of each reply was heard', async () => {
+  withMediaSource()
+  const first = await replyUnderway('claude', REPLY)
+  first.onmessage({ data: JSON.stringify({ audio: 'SUQz', align: timings(REPLY) }) })
+  ctrl.onEvent({ type: 'speaker_end', speaker: 'claude', message: { id: 41 } })
+  await nextSpeaker('gpt', SECOND) // queued behind Claude's
+  // "Sand the bench top wi": four whole words, and half of "with".
+  ctrl.sink.currentTime = 2.05
+  const t = elapsed()
+  await runUntil(t + 1500, talking(t + 100, t + 1100))
+  assert.equal(aborts(), 1)
+  assert.deepEqual(app.heard[0], [
+    { seat: 'claude', message_id: 41, words: 4, tail: ['Sand', 'the', 'bench', 'top'] },
+    { seat: 'gpt', message_id: null, words: 0, tail: [] },
+  ])
+})
+
+test('a reply on the air without word timings is left out of the stop', async () => {
+  withMediaSource()
+  await replyUnderway('claude', REPLY)
+  const t = elapsed()
+  await runUntil(t + 1500, talking(t + 100, t + 1100))
+  assert.equal(aborts(), 1)
+  assert.deepEqual(app.heard[0], [])
 })

@@ -492,10 +492,12 @@ export function useRoundStream({
     runStream(`/api/chats/${chatId}/continue`, { rounds })
   }
 
-  function stopRound() {
+  function stopRound(heard) {
     // Detached rounds don't die with the connection - stopping is explicit.
+    // #634: a voice stop passes how much of each reply was heard; the stop
+    // button passes its click event, which isn't.
     const chatId = activeChatIdRef.current
-    if (chatId) api.abortRound(chatId).catch(() => {})
+    if (chatId) api.abortRound(chatId, Array.isArray(heard) ? heard : null).catch(() => {})
     roundCtrl.current?.abort()
     attachCtrl.current?.abort()
   }

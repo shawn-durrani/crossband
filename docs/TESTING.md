@@ -146,14 +146,18 @@ stops it while it waits. Audio for a cut reply never plays, whether it
 turns up after the cut or after voice is switched off. A reply queued
 behind the cut one never plays either. Speech that carries on after the
 cut is the same barge-in, so it cuts once, the mic opens and the words
-are sent. A new reply or a new round can be cut again. The suite talks
-over a reply through the real voice client's listening loop, with a
-scripted microphone and clock, on all three kinds of player. It plays
-short and long sounds with no words through it too, and checks the
-reply plays on and nothing is sent. It says "yeah", "wait", a remark to
-a known person and a single word over a reply, and checks which ones
-cut. It checks the back-up with made-up word timings, and that a cut
-logs how much of the reply was heard, as counts and never words.
+are sent. A new reply or a new round can be cut again. A cut reply is
+saved as far as you heard it, then its cut-off note, and that's all the
+AIs and memory read. The rest stays in the chat, folded away under "The
+rest of this reply, not heard". A reply queued behind the cut one
+counts as not heard at all. The suite talks over a reply through the
+real voice client's listening loop, with a scripted microphone and
+clock, on all three kinds of player. It plays short and long sounds
+with no words through it too, and checks the reply plays on and nothing
+is sent. It says "yeah", "wait", a remark to a known person and a
+single word over a reply, and checks which ones cut. It checks the
+back-up with made-up word timings, and that a cut logs how much of the
+reply was heard, as counts and never words.
 
 On an iPhone that streams, a reply starts playing as its first audio
 arrives, and the voice trace marks it heard while the rest is still on

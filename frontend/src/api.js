@@ -149,7 +149,11 @@ export const api = {
   youtubeTranscript: (url) => fetch('/api/youtube-transcript', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
   }).then(json),
-  abortRound: (id) => fetch(`/api/chats/${id}/round/abort`, { method: 'POST' }).then(json),
+  // #634: a voice stop says how much of each reply was heard.
+  abortRound: (id, heard) => fetch(`/api/chats/${id}/round/abort`, heard?.length
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ heard }) }
+    : { method: 'POST' }).then(json),
   // The chat's currently-generating detached round id, if any. A
   // voice-active client that didn't start the round (a Claude Code hand-back)
   // uses it to attach and voice that round; {round_id: null} when idle.
