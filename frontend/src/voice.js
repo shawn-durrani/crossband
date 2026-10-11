@@ -8,7 +8,8 @@ import { WrittenFilter } from './writtenChannel.js'
 import { speaksNow } from './spokenLine.js'
 import { effectiveVolume } from './voiceGain.js'
 import { gateEvent, gateRoundDone, roundBegins } from './voiceGate.js'
-import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm, takesTurn } from './replyCut.js'
+import { afterCut, bargeInFrame, hasWords, keepsAudio, newBargeIn, rearm,
+         takesTurn } from './replyCut.js'
 import { StreamPlayer } from './streamPlayer.js'
 import { playbackPath } from './streamFeed.js'
 import { realtimeCommitAction, realtimeRetryMs, recoveryPlan,
@@ -94,6 +95,13 @@ export default class VoiceController {
     // Whether talking over a reply may cut it off (replyCut.js): once per
     // barge-in, armed again by a new reply or round.
     this._bargeIn = newBargeIn()
+    // #620: a reply paused while a sound is checked for words, and when
+    // the live transcript last showed a word.
+    this._pause = null
+    this._wordsAt = 0
+    // The turn a wordless sound became when it was let go. Words in its
+    // final transcript still cut, as they would have while it was held.
+    this._letGoTurn = null
     this.playChain = Promise.resolve()
     this.playing = 0
     this.roundActive = false
@@ -372,6 +380,8 @@ export default class VoiceController {
         return
       }
       if (msg.partial !== undefined) {
+        // #620: a sound pausing a reply is cut off by its first word.
+        if (hasWords(msg.partial)) this._wordsAt = Date.now()
         this.onPartial?.(msg.partial)
       } else if (msg.final !== undefined) {
         const text = (msg.final || '').trim()
@@ -676,6 +686,9 @@ export default class VoiceController {
     this.dropQueue = false
     this._lastRoundEventAt = 0
     this._bargeIn = newBargeIn()
+    this._pause = null
+    this._wordsAt = 0
+    this._letGoTurn = null
     resetHandoffWatch(this._handoff)
     // #537: a session that fell back to the backup path starts again on
     // live transcription.
@@ -846,6 +859,51 @@ export default class VoiceController {
     for (const s of this.sockets.values()) try { s.ws.close() } catch { /* */ }
     this.sockets.clear()
     this.players.clear()
+    // A reply paused for a sound is cut with the rest, and one waiting
+    // for the pause to end finds itself cut.
+    this._endPause({ play: false })
+  }
+
+  // #620: a sound that might be someone talking is checked for words
+  // (replyCut.js). Meanwhile the reply playing pauses where it is, and a
+  // reply whose turn comes waits.
+  _pauseReplies() {
+    if (this._pause) return
+    let resolve
+    const done = new Promise((r) => { resolve = r })
+    const src = this.sink.src
+    this._pause = { done, resolve, src, wasPlaying: !!src && !this.sink.paused }
+    try { this.sink.pause() } catch { /* */ }
+  }
+
+  // The pause is over. The reply that was playing carries on from where
+  // it paused, unless it was cut, and any reply waiting for its turn
+  // takes it.
+  _endPause({ play = true } = {}) {
+    const pause = this._pause
+    if (!pause) return
+    this._pause = null
+    if (play && pause.wasPlaying && this.sink.src === pause.src && this.playing > 0) {
+      try { this.sink.play()?.catch?.(() => {}) } catch { /* */ }
+    }
+    pause.resolve()
+  }
+
+  // The held sound had no words. Its capture ends as a turn of its own:
+  // if the final transcript finds words after all, they cut and are sent
+  // (_deliverTranscript). The reply plays on.
+  _letGo() {
+    if (this.speechStart) this._finalizeUtterance('gap', { letGo: true })
+    this._endPause()
+    if (this.active) {
+      this._state(this.playing > 0 ? 'speaking' : (this.roundActive ? 'working' : 'listening'))
+    }
+  }
+
+  // Whether the live transcriber is hearing the mic, so a sound's words
+  // can be waited for before cutting a reply.
+  _liveWords() {
+    return !!(this.sttRealtime && this.sttWs && this.sttWs.readyState === WebSocket.OPEN)
   }
 
   // ---- microphone / VAD ----
@@ -1006,8 +1064,14 @@ export default class VoiceController {
         // every frame of it still reads as one. It cuts once (replyCut.js):
         // repeating it every frame while the gate stayed shut sent an
         // abort per frame and moved the turn's start along with it.
+        // #620: with live transcription, the sound first pauses the reply,
+        // and only a word in it cuts.
         const confirmed = this._confirmedSpeech(now, INTERRUPT_CONFIRM_MS)
-        const frame = bargeInFrame(this._bargeIn, { confirmed, speaking: !!this.speechStart })
+        const heldSince = this._bargeIn.held?.since
+        const frame = bargeInFrame(this._bargeIn, {
+          confirmed, voiced, speaking: !!this.speechStart, now,
+          live: this._liveWords(), wordsAt: this._wordsAt,
+        })
         this._bargeIn = frame.state
         if (frame.open) {
           this.speechStart = now - INTERRUPT_CONFIRM_MS
@@ -1019,11 +1083,28 @@ export default class VoiceController {
         } else if (!this.speechStart && now - this.recStarted > RECORDER_ROTATE_MS) {
           this._startRecorder() // bound stale audio while they monologue
         }
+        if (frame.hold) {
+          this._vlog('vad:hold', { playing: this.playing, roundActive: this.roundActive })
+          this._pauseReplies()
+        }
         if (frame.cut) {
           this._vlog('vad:bargeIn', { playing: this.playing, roundActive: this.roundActive })
           this.interrupt() // capture continues; finalize sends the interjection
         }
+        if (frame.release) {
+          this._vlog('vad:letGo', { heldMs: now - heldSince,
+                                    playing: this.playing, roundActive: this.roundActive })
+          this._letGo()
+        }
         return
+      }
+
+      // The gate opened while a sound was held: the round ended with
+      // nothing left to play. Nothing is paused now, and the sound's
+      // capture carries on as an ordinary turn.
+      if (this._bargeIn.held) {
+        this._bargeIn = newBargeIn()
+        this._endPause()
       }
 
       if (!this.speechStart) {
@@ -1079,7 +1160,7 @@ export default class VoiceController {
     requestAnimationFrame(tick)
   }
 
-  async _finalizeUtterance(cause = 'gap') {
+  async _finalizeUtterance(cause = 'gap', { letGo = false } = {}) {
     const speechMs = this.lastVoice - this.speechStart
     this._vlog('finalizeUtterance', { cause, speechMs, roundActive: this.roundActive, playing: this.playing })
     // #104: a cap ends the SEGMENT, not the turn - text buffers and the
@@ -1099,6 +1180,10 @@ export default class VoiceController {
     // stages, the /send that persists the message, and (via the commit frame
     // below) the diarization pass that labels who spoke it.
     const turnId = this._trace.begin(undefined, endedAgoMs)
+    // #620: a sound let go as wordless. Its reply plays on, so the screen
+    // doesn't move to Transcribing, and an empty transcript is expected,
+    // not a stalled hand-off.
+    if (letGo) this._letGoTurn = turnId
     // #453: a cut leaves the turn waiting between pieces, so the pause that
     // follows can still end it (the listening loop and _endLongTurn). Any
     // other end closes the wait; a too-short tail below hands the piece
@@ -1162,10 +1247,10 @@ export default class VoiceController {
         onCommit(this._ledger, turnId, continuation ? 'buffer' : 'send', speechMs,
                  { rec: this.recStarted, cutAt: Date.now() })
         // Only a real end of turn is a hand-off; a capped segment buffers.
-        if (!continuation) this._watchHandoff(turnId, speechMs)
+        if (!continuation && !letGo) this._watchHandoff(turnId, speechMs)
         // A continuation commit is mid-speech: capture keeps flowing, so
         // the state stays 'listening' and the user sees nothing change.
-        if (!continuation) this._state('transcribing')
+        if (!continuation && !letGo) this._state('transcribing')
         clearTimeout(this._sttCommitTimer)
         this._sttCommitTurn = turnId
         // #104: patience scales with the audio just committed - a capped
@@ -1260,6 +1345,15 @@ export default class VoiceController {
   // 'buffer' dispatch accumulates a capped segment's text; a 'send' joins
   // everything buffered with this text and dispatches ONE user turn.
   _deliverTranscript(text, turnId, dispatch) {
+    // #620: a sound let go as wordless had words after all. They cut what
+    // the models are saying, as they would have while it was held.
+    if (turnId && turnId === this._letGoTurn) {
+      this._letGoTurn = null
+      if (text && (this.playing > 0 || this.roundActive)) {
+        this._vlog('vad:lateWords', { turnId, playing: this.playing })
+        this.interrupt()
+      }
+    }
     if (dispatch === 'buffer') {
       if (text) this._turnBuffer.push(text)
       return
@@ -1415,7 +1509,7 @@ export default class VoiceController {
     this.roundActive = gate.roundActive
     this.dropQueue = gate.dropQueue
     // A new round is something new to cut: talking over it may cut again.
-    if (roundBegins(before, ev.type)) this._bargeIn = rearm()
+    if (roundBegins(before, ev.type)) this._bargeIn = rearm(this._bargeIn)
     if (gate.roundActive !== before.roundActive || gate.dropQueue !== before.dropQueue) {
       this._vlog('gate:onEvent', { evType: ev.type, before, after: gate })
     }
@@ -1605,12 +1699,14 @@ export default class VoiceController {
   _beginSpeaker(slug) {
     if (this.dropQueue) return // user already cut this round off
     // A reply starting to play is something new to cut (replyCut.js).
-    this._bargeIn = rearm()
+    this._bargeIn = rearm(this._bargeIn)
     const participant = this.getParticipants().find((p) => p.slug === slug)
     const player = new StreamPlayer(this.sink)
     // The managed path's holds, evictions and fallbacks land in the
     // diagnostics ring (streamPlayer.js).
     player.log = (tag, data) => this._vlog(tag, { seat: slug, ...data })
+    // #620: it waits out a pause for a sound being checked for words.
+    player.pausedFor = () => this._pause?.done
     this.players.set(slug, player)
     this._replies.add(player)
     const ws = new WebSocket(`${wsBase()}/api/voice/tts`)

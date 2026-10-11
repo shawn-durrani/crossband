@@ -125,17 +125,24 @@ microphone, and counts the loops reading it on every frame.
 
 ### Playing a reply and cutting it off
 
-Talking over a reply stops it straight away, on an iPhone too. A
-desktop browser plays a reply's audio as it arrives, and so does an
-iPhone with iOS 17.1 or later. Any other browser holds the audio until
-the whole reply has arrived, and a cut stops it while it waits. Audio
-for a cut reply never plays, whether it turns up after the cut or after
-voice is switched off. A reply queued behind the cut one never plays
-either. Speech that carries on after the cut is the same barge-in, so
-it cuts once, the mic opens and the words are sent. A new reply or a
-new round can be cut again. The suite talks over a reply through the
-real voice client's listening loop, with a scripted microphone and
-clock, on all three kinds of player.
+Talking over a reply pauses it straight away, on an iPhone too, and
+your first word cuts it off. A sound with no words in it, like a pan or
+a fan, only pauses the reply. Once the sound stops, or after four
+seconds without a word, the reply plays on from where it paused. If the
+final transcript finds words after all, they cut the reply then and
+they're sent. Without live transcription there are no words to wait
+for, so any steady sound cuts at once. A desktop browser plays a
+reply's audio as it arrives, and so does an iPhone with iOS 17.1 or
+later. Any other browser holds the audio until the whole reply has
+arrived, and a cut stops it while it waits. Audio for a cut reply never
+plays, whether it turns up after the cut or after voice is switched
+off. A reply queued behind the cut one never plays either. Speech that
+carries on after the cut is the same barge-in, so it cuts once, the mic
+opens and the words are sent. A new reply or a new round can be cut
+again. The suite talks over a reply through the real voice client's
+listening loop, with a scripted microphone and clock, on all three
+kinds of player. It plays short and long sounds with no words through
+it too, and checks the reply plays on and nothing is sent.
 
 On an iPhone that streams, a reply starts playing as its first audio
 arrives, and the voice trace marks it heard while the rest is still on

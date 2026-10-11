@@ -11,6 +11,9 @@
 // barge-in fired again on every frame (about 230 times, each one another
 // abort). Switching voice off closed the speech socket, which ended the
 // stream, and the held reply played about 38 seconds late.
+//
+// Before any cut, a sound that might be someone talking pauses the reply
+// until it's known to hold words (below).
 
 // ---- a reply's audio ----
 
@@ -44,6 +47,20 @@ export function takesTurn(player, { dropQueue }) {
 // a barge-in. A cut is spent once made, and only something new to cut
 // arms it again: a reply starting to play, or a new round starting.
 // The stop button spends it too.
+//
+// A clatter, a pan or a fan can sound enough like speech to pass that
+// test. On 11 October two replies in a row were cut by sounds with no
+// words in them, and the rest of each was never heard. So with live
+// transcription on, the sound first pauses the reply while the
+// transcriber listens to it. A word in it cuts the reply off. A sound
+// that stops, or runs on for HOLD_MAX_MS, without a word is let go, and
+// the reply plays on from where it paused. Without live transcription
+// there are no words to wait for, so the sound cuts at once.
+
+// A held sound this long without a voiced frame has stopped.
+export const HOLD_QUIET_MS = 600
+// A held sound this long without a word isn't someone talking.
+export const HOLD_MAX_MS = 4000
 
 export function newBargeIn() {
   return { armed: true }
@@ -54,22 +71,52 @@ export function afterCut() {
   return { armed: false }
 }
 
-// Something new to cut: a reply starts to play, or a round starts.
-export function rearm() {
-  return { armed: true }
+// Something new to cut: a reply starts to play, or a round starts. A
+// sound still being checked for words keeps its hold.
+export function rearm(state) {
+  return state?.held ? state : { armed: true }
+}
+
+// Whether a live transcript holds a word: a letter or a digit, outside
+// any bracketed tag a transcriber puts in for a sound, like "(sizzling)".
+export function hasWords(text) {
+  const plain = String(text || '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
+  return /[\p{L}\p{N}]/u.test(plain)
 }
 
 // One frame of the listening loop while the mic is shut for a reply or a
-// round. `confirmed`: half a second of steady speech. `speaking`: an
-// utterance is already open.
-//   open: start capturing the utterance, when one isn't open already
-//   cut:  cut the reply or round off, once per barge-in
-export function bargeInFrame(state, { confirmed, speaking }) {
-  const heard = !!confirmed
-  const cut = heard && state.armed
-  return {
-    state: cut ? afterCut() : state,
-    cut,
-    open: heard && !speaking,
+// round.
+//   confirmed: half a second of steady speech
+//   voiced:    this frame on its own reads as speech
+//   speaking:  an utterance is already open
+//   live:      live transcription is on, so there are words to wait for
+//   wordsAt:   when the live transcript last showed a word, 0 for never
+//   now:       this frame's time
+// What to do:
+//   open:    start capturing the utterance, when one isn't open already
+//   hold:    pause the reply while the sound is checked for words
+//   cut:     cut the reply or round off, once per barge-in
+//   release: the held sound had no words: end its capture and play on
+export function bargeInFrame(state, { confirmed, voiced = false, speaking, live = false,
+                                      wordsAt = 0, now = 0 }) {
+  const none = { cut: false, open: false, hold: false, release: false }
+  const held = state.held
+  if (held) {
+    if (wordsAt >= held.since) return { ...none, state: afterCut(), cut: true }
+    const lastVoiced = voiced ? now : held.lastVoiced
+    if (now - lastVoiced >= HOLD_QUIET_MS || now - held.since >= HOLD_MAX_MS) {
+      return { ...none, state: { armed: false, letGo: true }, release: true }
+    }
+    return { ...none, state: { armed: false, held: { since: held.since, lastVoiced } } }
   }
+  const heard = !!confirmed
+  // A sound that was let go may run on. It's listened for again once it
+  // stops, or when there's something new to cut.
+  if (state.letGo) return { ...none, state: heard ? state : newBargeIn() }
+  if (heard && state.armed && live) {
+    return { ...none, state: { armed: false, held: { since: now, lastVoiced: now } },
+             hold: true, open: !speaking }
+  }
+  const cut = heard && state.armed
+  return { ...none, state: cut ? afterCut() : state, cut, open: heard && !speaking }
 }
