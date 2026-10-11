@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from eval_bargein.judge import (CASES, OWNER, ROSTER, SEATS, as_heard, jev_body,
-                                load_cases, parse_jev, parse_label, prompt)
+                                load_cases, parse_jev, parse_label, prompt, unnamed)
 
 JUDGES = ("rules", "claude", "local", "jev", "mock")
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
@@ -210,6 +210,8 @@ async def run(args) -> dict:
     cases = load_cases(args.cases)
     if args.as_heard:
         cases = [as_heard(c) for c in cases]
+    if args.unnamed:
+        cases = [unnamed(c) for c in cases]
     judges = ["mock"] if args.mock else (args.judges or ["rules"])
     report = {}
     rules = judge_rules(cases)
@@ -241,6 +243,8 @@ def build_arg_parser():
     p.add_argument("--local-url", default="http://127.0.0.1:8131/v1")
     p.add_argument("--local-model", default="mlx-community/Qwen3.5-4B-OptiQ-4bit")
     p.add_argument("--timeout-s", type=float, default=30.0)
+    p.add_argument("--unnamed", action="store_true",
+                   help="don't say who spoke, as in the app while a reply is paused")
     p.add_argument("--as-heard", action="store_true",
                    help="give the words as a live transcript often has them: lower "
                         "case, no punctuation")

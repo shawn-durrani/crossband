@@ -64,6 +64,14 @@ def load_cases(path=CASES) -> list:
     return cases
 
 
+def unnamed(case: Case) -> Case:
+    """The moment as the app has it while a reply is paused: the voice
+    check names a speaker only after they finish, so who spoke isn't
+    known yet."""
+    import dataclasses
+    return dataclasses.replace(case, speaker="someone")
+
+
 def as_heard(case: Case) -> Case:
     """The moment with its words as a live transcript often arrives: lower
     case, and no punctuation but apostrophes."""
@@ -73,6 +81,8 @@ def as_heard(case: Case) -> Case:
 
 
 def _who(case: Case) -> str:
+    if case.speaker == "someone":
+        return "someone in the room (the app can't tell who yet)"
     if case.speaker == "owner":
         return f"{OWNER}, the owner"
     if case.speaker == "tv":
