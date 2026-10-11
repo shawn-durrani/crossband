@@ -5,10 +5,10 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import accounting, auth, context_weight, db, diarize, engine, introductions, memory_client, rounds
-from .. import seat_trace
+from .. import heard, seat_trace
 
 router = APIRouter(tags=["chats"])
 
@@ -638,12 +638,33 @@ async def active_round(chat_id: int):
     return out
 
 
+class HeardIn(BaseModel):
+    """How much of one reply was heard when it was cut off (#634): words of
+    its spoken text that played, and the last few of them."""
+    seat: str = Field(max_length=64)
+    message_id: int | None = None
+    words: int = Field(ge=0, le=100_000)
+    tail: list[str] = Field(default_factory=list, max_length=heard.MAX_TAIL_WORDS)
+
+
+class AbortIn(BaseModel):
+    heard: list[HeardIn] = Field(default_factory=list, max_length=heard.MAX_ENTRIES)
+
+
 @router.post("/api/chats/{chat_id}/round/abort")
-async def round_abort(chat_id: int):
+async def round_abort(chat_id: int, request: Request, body: AbortIn | None = None):
     """The deliberate stop (barge-in / Stop button). Network drops no longer
     cancel generation, so cutting the models off is an explicit act; the
-    in-flight reply persists with its cut-off marker."""
-    return {"aborted": await rounds.abort(chat_id)}
+    in-flight reply persists with its cut-off marker. A voice stop also
+    says how much of each reply was heard (#634), recorded once the round
+    has settled, so the reply it just saved is there to record against."""
+    aborted = await rounds.abort(chat_id)
+    recorded = 0
+    if body and body.heard:
+        cfg = request.app.state.settings.as_cfg()
+        recorded = await asyncio.to_thread(
+            heard.apply, chat_id, [h.model_dump() for h in body.heard], cfg)
+    return {"aborted": aborted, "heard": recorded}
 
 
 class ContinueIn(BaseModel):

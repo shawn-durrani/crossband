@@ -256,7 +256,7 @@ def test_an_older_database_gains_the_table(tmp_path):
     db.init()
     con = db.connect()
     try:
-        assert con.execute("PRAGMA user_version").fetchone()[0] == 33
+        assert con.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
         cols = {r[1] for r in con.execute("PRAGMA table_info(seat_usage)")}
         assert cols == {"id", "chat_id", "speaker", "outcome", "usage_json",
                         "created_at"}

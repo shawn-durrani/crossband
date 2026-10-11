@@ -132,10 +132,11 @@ def _read_context(chat_id, message_id):
             return None
         roster = db.get_room_roster(con, chat_id, present_only=True)
         names = db.participant_names(con)
-        recent = con.execute(
-            "SELECT speaker, content FROM messages WHERE chat_id=? AND id<? "
+        # #634: a cut reply reads only as far as it was heard.
+        recent = [db.heard_view(dict(r)) for r in con.execute(
+            "SELECT speaker, content, heard FROM messages WHERE chat_id=? AND id<? "
             "ORDER BY id DESC LIMIT ?",
-            (chat_id, message_id, CONTEXT_TURNS)).fetchall()
+            (chat_id, message_id, CONTEXT_TURNS)).fetchall()]
         lines = []
         for r in reversed(recent):
             who = "User" if r["speaker"] == "user" else names.get(

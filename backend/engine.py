@@ -17,7 +17,7 @@ import re
 import time
 
 from . import attachments as att_mod
-from . import chat_memory, citations, context_marker, db, echo, guest
+from . import chat_memory, citations, context_marker, db, echo, guest, heard
 from . import passes, person_sync
 from . import depth as depth_mod
 from . import history_prefetch
@@ -594,7 +594,7 @@ async def run_round(chat_id, responders, next_first, settings, memory,
             # #460: a real reply cut off while it was writing a trailing
             # [pass] keeps its words, never the half-written token.
             content = passes.strip_pass(content, partial=True)
-            cut = f"[cut off by {cfg['user_name']}]"
+            cut = heard.cut_marker(cfg)
             content = f"{content}\n\n{cut}" if content else cut
         if live.get("preface"):
             # membro#136: the line the seat opened with was spoken, so the
@@ -1701,9 +1701,13 @@ def ingest_rows(con, chat_id, upto) -> list:
     """The rows past the ingest watermark that memory should see. The
     running-cost line (#259) is left out: a dollar figure is not a fact about
     anyone. The watermark still moves past it with the rest."""
-    rows = [dict(r) for r in con.execute(
-        "SELECT id, speaker, content, created_at, voice_labels, web_sources "
+    # #634: memory gets a cut reply only as far as it was heard.
+    rows = [db.heard_view(dict(r)) for r in con.execute(
+        "SELECT id, speaker, content, created_at, voice_labels, web_sources, heard "
         "FROM messages WHERE chat_id=? AND id>? ORDER BY id", (chat_id, upto))]
+    for r in rows:
+        r.pop("heard", None)
+        r.pop("unheard", None)
     return [m for m in rows if not spend_note.is_spend_note(m)]
 
 

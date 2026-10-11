@@ -520,6 +520,20 @@ function Message({ msg, prev, participants, mismatchFlag, roomRoster,
           </ReactMarkdown>
         </div>
       )}
+      {/* #634: a spoken reply cut off partway shows what was heard above,
+          with its cut-off note. The rest is here to read, folded away. */}
+      {!msg.streaming && msg.unheard && (
+        <details className="mt-1 w-full min-w-0 max-w-[68ch]">
+          <summary className="cursor-pointer text-xs text-ink-dim hover:text-ink select-none">
+            The rest of this reply, not heard
+          </summary>
+          <div className="md-body break-words mt-1 text-ink-mid">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              {msg.unheard}
+            </ReactMarkdown>
+          </div>
+        </details>
+      )}
       {msg.error && (
         <div className="flex items-center gap-1.5 text-xs mt-1" style={{ color: 'var(--t-err)' }}>
           <AlertTriangle size={13} /> {msg.error}
@@ -588,6 +602,7 @@ function propsEqual(prev, next) {
   if (
     a.id !== b.id ||
     a.content !== b.content ||
+    (a.unheard || '') !== (b.unheard || '') ||  // #634: recorded after the cut
     !!a.streaming !== !!b.streaming ||  // undefined vs false must compare equal
     a.speaker !== b.speaker ||
     a.created_at !== b.created_at ||

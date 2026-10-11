@@ -14,8 +14,8 @@ import { afterCut, bargeInFrame, keepsAudio, newBargeIn, rearm,
 import { endsOnQuestion, judgeWords, peopleWords, seatWords } from './interruptWords.js'
 import { StreamPlayer } from './streamPlayer.js'
 import { playbackPath, rangesOf } from './streamFeed.js'
-import { MP3_BYTES_PER_SECOND, addTimings, base64Bytes, heardChars, newTimeline,
-         phraseStart } from './replyTimeline.js'
+import { MP3_BYTES_PER_SECOND, addTimings, base64Bytes, heardChars, heardWords,
+         newTimeline, phraseStart } from './replyTimeline.js'
 import { realtimeCommitAction, realtimeRetryMs, recoveryPlan,
          shouldReopenAfterClose } from './voiceRecovery.js'
 import { HARD_MAX_TURN_MS, MAX_TURN_TOTAL_MS, shouldForceEndpoint,
@@ -860,8 +860,9 @@ export default class VoiceController {
   interrupt() {
     // #634: how much of the reply on the air was heard, before the cut
     // ends its pause. Counts only, never the words.
-    const heard = this._heardOnAir()
-    if (heard) this._vlog('vad:heard', heard)
+    const onAir = this._heardOnAir()
+    if (onAir) this._vlog('vad:heard', onAir)
+    const heard = this._heardReplies()
     this.dropQueue = true
     this._bargeIn = afterCut()
     // #460: a reply waiting to start (it could still be a pass) has no
@@ -870,7 +871,9 @@ export default class VoiceController {
     // rest below.
     this._pendingSpeaker = null
     this._cutReplies()
-    this.onInterruptRound?.()
+    // #634: the stop carries how much of each reply was heard, so the
+    // server saves them as heard, not as written.
+    this.onInterruptRound?.(heard)
   }
 
   // Every reply still to be heard stops now: the one playing, one held
@@ -933,6 +936,27 @@ export default class VoiceController {
   // A reply's audio length in seconds, once all of it is in.
   _audioSeconds(p) {
     return p.audioDone ? p.audioBytes / MP3_BYTES_PER_SECOND : 0
+  }
+
+  // #634: how much of each reply still to be heard has been heard, for
+  // the stop to carry. The one on the air counts what played, up to the
+  // pause if one is on, and one queued behind it counts nothing. One on
+  // the air without word timings is left out, since nobody can say.
+  _heardReplies() {
+    const out = []
+    for (const p of this._replies) {
+      if (p.stopped || p.abandoned || !p.slug) continue
+      let chars = 0
+      if (p === this._onAir) {
+        if (!p.timeline?.text) continue
+        const at = this._pause?.player === p ? this._pause.at
+          : Number(this.sink.currentTime) || 0
+        chars = heardChars(p.timeline, at, { audioSeconds: this._audioSeconds(p) })
+      }
+      out.push({ seat: p.slug, message_id: p.messageId || null,
+                 ...heardWords(p.timeline, chars) })
+    }
+    return out
   }
 
   // How much of the reply on the air has been heard: characters of its
@@ -1645,6 +1669,10 @@ export default class VoiceController {
       this._writtenFilters.delete(ev.speaker)
       this._passGates.delete(ev.speaker)
     } else if (ev.type === 'speaker_end' || ev.type === 'error') {
+      // #634: the saved reply's id, so a later stop can say how much of
+      // this one was heard.
+      const playing = this.players.get(ev.speaker)
+      if (playing && ev.message?.id) playing.messageId = ev.message.id
       const p = this._pendingSpeaker
       if (p && p.slug === ev.speaker && !p.started) {
         this._pendingSpeaker = null // ellipsis/empty reply - never opened, nothing to flush

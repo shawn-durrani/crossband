@@ -10,8 +10,8 @@
 // Run: node --test frontend/src/replyTimeline.test.js
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MAX_REWIND_S, addTimings, base64Bytes, heardChars, newTimeline,
-         phraseStart } from './replyTimeline.js'
+import { MAX_REWIND_S, TAIL_WORDS, addTimings, base64Bytes, heardChars, heardWords,
+         newTimeline, phraseStart } from './replyTimeline.js'
 
 // A batch timing every character at `ms` each, from 0.
 function batch(text, ms = 50) {
@@ -83,4 +83,21 @@ test('a base64 chunk is three bytes for every four characters', () => {
   assert.equal(base64Bytes('SUQ='), 2)
   assert.equal(base64Bytes('SQ=='), 1)
   assert.equal(base64Bytes(''), 0)
+})
+
+test('the words heard, and the last few of them, for the server to find', () => {
+  const tl = timeline("Sand it first, then wipe it down. Don't rush it.")
+  assert.deepEqual(heardWords(tl, 14), { words: 3, tail: ['Sand', 'it', 'first'] })
+  assert.deepEqual(heardWords(tl, 0), { words: 0, tail: [] })
+  assert.equal(heardWords(tl, 999).words, 10)
+  assert.equal(heardWords(tl, 999).tail.length, TAIL_WORDS)
+  assert.ok(heardWords(tl, 999).tail.includes("Don't"), 'an apostrophe stays in its word')
+})
+
+test('a word cut off halfway was not heard', () => {
+  const tl = timeline('Sand it first, then wipe it down.')
+  assert.deepEqual(heardWords(tl, 17), { words: 3, tail: ['Sand', 'it', 'first'] },
+                   '"th" of "then" is not a word heard')
+  assert.equal(heardWords(tl, 19).words, 4, 'all of "then"')
+  assert.deepEqual(heardWords(null, 5), { words: 0, tail: [] })
 })

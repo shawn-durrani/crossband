@@ -28,7 +28,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -259,7 +259,13 @@ CREATE TABLE IF NOT EXISTS messages(
   -- ([{kind, who, claim}]), or ''. A finding means "said-claim not found
   -- verbatim in that speaker's turns in the window" - a flag for the row's
   -- quiet chip, never a fabrication verdict and never a block.
-  audit_flags TEXT NOT NULL DEFAULT ''
+  audit_flags TEXT NOT NULL DEFAULT '',
+  -- #634: how much of a spoken reply was heard before it was cut off -
+  -- JSON {"upto": <characters of content heard>, "note": "[cut off by …]"},
+  -- or '' (heard in full, or never spoken). Written once, after the cut.
+  -- The content itself stays as the seat wrote it; heard_view() shows
+  -- readers only the heard part.
+  heard TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_messages_voice_turn
   ON messages(voice_turn_id) WHERE voice_turn_id != '';
@@ -908,6 +914,13 @@ def init(settings=None):
         if mcols and "audit_flags" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN audit_flags "
                         "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 33:  # v34: how much of a cut reply was heard (#634)
+        # Default empty, which reads as heard in full - exactly what every
+        # existing row has meant.
+        mcols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
+        if mcols and "heard" not in mcols:
+            con.execute("ALTER TABLE messages ADD COLUMN heard "
+                        "TEXT NOT NULL DEFAULT ''")
     # v6: inbound_events - new table, created by the executescript below
     if 1 <= version <= 6:  # v7: per-seat onboarding lifecycle. The
         # column DEFAULTS to 'trial' (conservative), so the ALTER lands every
@@ -1239,8 +1252,47 @@ def prune_empty_chats(con, min_age_s=EMPTY_CHAT_MIN_AGE_S) -> int:
     return cur.rowcount
 
 
+def heard_view(msg):
+    """A message as its readers should see it (#634). A spoken reply cut
+    off partway shows only the part that was heard, then its cut-off note,
+    and carries the rest as `unheard` for the screen to offer. The models,
+    memory and the chat all read rows through here, so none of them treats
+    unheard words as said. Every other row comes back as it is."""
+    raw = msg.get("heard") or ""
+    if not raw:
+        return msg
+    import json
+    try:
+        h = json.loads(raw)
+        upto, note = int(h["upto"]), str(h["note"])
+    except (ValueError, KeyError, TypeError):
+        return msg
+    body = msg.get("content") or ""
+    from .heard import strip_cut_marker  # lazy: heard imports this module
+    body = strip_cut_marker(body)
+    if upto < 0 or upto >= len(body.rstrip()):
+        return msg
+    kept = body[:upto].rstrip()
+    msg["unheard"] = body[upto:].strip()
+    msg["content"] = f"{kept}\n\n{note}" if kept else note
+    return msg
+
+
+def set_message_heard(con, message_id, upto, note):
+    """THE write path for how much of a cut reply was heard (#634), the
+    heard sibling of set_message_voice_labels. It touches only `heard` and
+    the update cursor, so a connected chat refetches the row. The content
+    stays as written."""
+    con.execute(
+        "UPDATE messages SET heard=?, labels_updated_at=? WHERE id=?",
+        (_json_dumps({"upto": int(upto), "note": note}), now(), message_id))
+    con.commit()
+    from . import events  # lazy for the same circularity reason as insert_message
+    events.notify_message_update()
+
+
 def get_chat_messages(con, chat_id):
-    msgs = [dict(r) for r in con.execute(
+    msgs = [heard_view(dict(r)) for r in con.execute(
         "SELECT * FROM messages WHERE chat_id=? ORDER BY id", (chat_id,))]
     by_id = {m["id"]: m for m in msgs}
     for m in msgs:
@@ -1279,7 +1331,7 @@ def get_messages_after(con, since, chat_id=None):
         return [dict(r) for r in con.execute(
             "SELECT id, chat_id, speaker FROM messages WHERE id > ? ORDER BY id",
             (since,))]
-    msgs = [dict(r) for r in con.execute(
+    msgs = [heard_view(dict(r)) for r in con.execute(
         "SELECT * FROM messages WHERE chat_id=? AND id > ? ORDER BY id",
         (chat_id, since))]
     by_id = {m["id"]: m for m in msgs}

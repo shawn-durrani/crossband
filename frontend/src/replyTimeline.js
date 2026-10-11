@@ -107,3 +107,21 @@ export function base64Bytes(b64) {
   const pad = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0
   return Math.max(0, (s.length * 3) / 4 - pad)
 }
+
+// How many words of a reply's spoken text the first `chars` characters
+// hold, and the last few of them, for the server to find where in the
+// saved reply the cut fell (#634). Counted the way the server counts:
+// letters and digits, with an apostrophe inside allowed.
+export const TAIL_WORDS = 6
+
+export function heardWords(tl, chars) {
+  const text = String(tl?.text || '')
+  const n = Math.max(0, chars || 0)
+  let heard = text.slice(0, n)
+  // A word cut off halfway wasn't heard.
+  if (/[\p{L}\p{N}]$/u.test(heard) && /^[\p{L}\p{N}'’]/u.test(text.slice(n))) {
+    heard = heard.replace(/[\p{L}\p{N}'’]+$/u, '')
+  }
+  const words = heard.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || []
+  return { words: words.length, tail: words.slice(-TAIL_WORDS) }
+}
