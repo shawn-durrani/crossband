@@ -17,6 +17,7 @@ from backend import auth, voice
 from backend.app import create_app
 from backend.config import Settings
 from backend.routers import voice as voice_router
+from tests.test_stt_relay import APPS, SEATS
 
 
 def _query(url):
@@ -103,7 +104,7 @@ def test_the_backup_route_asks_for_a_voice_turn_with_name_hints(app, monkeypatch
                                    "audio/webm")},
                    data={"duration_ms": "900", "why": "late"})
     assert r.status_code == 200
-    assert calls == [{"keyterms": ["User"], "voice_turn": True}]
+    assert calls == [{"keyterms": ["User", *SEATS, *APPS], "voice_turn": True}]
 
 
 def test_the_relay_connects_with_the_language_setting(app, monkeypatch):
@@ -135,4 +136,4 @@ def test_the_relay_connects_with_the_language_setting(app, monkeypatch):
     assert q["model_id"] == ["scribe_v2_realtime"]
     assert q["language_code"] == ["en"]
     assert "filter_background_audio" not in q
-    assert q["keyterms"] == ["User"]
+    assert q["keyterms"] == ["User", *SEATS, *APPS]

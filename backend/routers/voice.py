@@ -217,8 +217,16 @@ async def _keyterm_names(cfg, chat_id):
     roster's display names, so the transcriber stops spelling the people in
     the room by ear. The realtime relay reads them once at session open,
     and the backup path once per turn (#627). A failed read degrades to the
-    owner's name alone, never to a failed transcription."""
+    owner's name alone, never to a failed transcription.
+
+    #652: the chat's seats ride right after the owner, so a seat's name
+    said over a reply comes out as the name that cuts it, and the apps
+    (voice.app_terms) ride after the room, so an app named aloud is spelt
+    as an app and never reads as a new person (#602). The order is the
+    priority: the relay's cap cuts from the end, where the remembered
+    people are."""
     keyterm_names = [cfg.get("user_name") or ""]
+    apps = voice.app_terms(cfg)
     if chat_id:
         try:
             def _reads():
@@ -226,14 +234,15 @@ async def _keyterm_names(cfg, chat_id):
                 try:
                     roster = db.get_room_roster(con, chat_id,
                                                 present_only=True)
+                    seats = [p["name"] for p in db.get_chat_participants(con, chat_id)]
                 finally:
                     con.close()
                 from .. import anchors
                 people = anchors.store().people()
                 preferred = {p["name"].lower(): p["preferred_name"]
                              for p in people}
-                names = [preferred.get(r["name"].lower(), r["name"])
-                         for r in roster]
+                names = seats + [preferred.get(r["name"].lower(), r["name"])
+                                 for r in roster] + apps
                 # Every REMEMBERED person's names ride the keyterm hints too
                 # (#28, sixth field test): pre-arm the roster is empty, so a
                 # known name got no transcription bias and arrived misspelt
@@ -250,11 +259,11 @@ async def _keyterm_names(cfg, chat_id):
                     # merge just resolved.
                     names.extend(p["merged_names"])
                 return names
-            keyterm_names += await asyncio.to_thread(_reads)
+            return keyterm_names + await asyncio.to_thread(_reads)
         except Exception:
             log.warning("keyterm names not read; transcription continues",
                         exc_info=True)
-    return keyterm_names
+    return keyterm_names + apps
 
 
 @router.post("/api/chats/{chat_id}/stt")
