@@ -39,6 +39,11 @@
 // stop tells the server how much of each reply was heard: the one on the
 // air by its timings, a half-heard word left out, one queued behind it as
 // nothing.
+// Where the word rules would cut on word count alone, the judge is asked
+// first (#642). Pins: its "aside" lets the reply carry on and the words
+// are sent; its "listening" drops them; its "interrupt" cuts; off, failed
+// or too slow, the word rules cut as before; and a clear case (a stop word,
+// a "yeah") never asks it.
 // Run: node --test frontend/src/voiceBargeIn.test.js
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, mock, test } from 'node:test'
@@ -278,9 +283,17 @@ beforeEach(async () => {
   // The app's stop: every cut aborts the round (one POST each), and the
   // first ends the round's stream, whose end the app reports `endsInMs`
   // later, as the stream's own finally does.
-  app = { aborts: 0, heard: [], streamOpen: false, endsInMs: 8 }
-  globalThis.fetch = async (url) => {
+  // The judge (#642) answers what `app.judge` says: off unless a test sets
+  // a verdict, and 'hang' never answers at all.
+  app = { aborts: 0, heard: [], streamOpen: false, endsInMs: 8,
+          judge: { verdict: '', reason: 'off' }, judgeAsks: [] }
+  globalThis.fetch = async (url, opts) => {
     posts.push(url)
+    if (String(url).endsWith('/api/voice/judge')) {
+      app.judgeAsks.push(JSON.parse(opts.body))
+      if (app.judge === 'hang') return new Promise(() => {})
+      return { ok: true, status: 200, json: async () => app.judge }
+    }
     return { ok: true, status: 200, json: async () => ({ ok: true }) }
   }
   ctrl = new VoiceController({
@@ -938,4 +951,58 @@ test('a reply on the air without word timings is left out of the stop', async ()
   await runUntil(t + 1500, talking(t + 100, t + 1100))
   assert.equal(aborts(), 1)
   assert.deepEqual(app.heard[0], [])
+})
+
+// ---------- the judge for unclear words (#642) ----------
+
+test("words the judge says weren't for the AIs let the reply carry on, and are sent", async () => {
+  app.judge = { verdict: 'aside', confidence: 0.91 }
+  const { src } = await saidOver('These are not gonna work')
+  assert.equal(app.judgeAsks.length, 1, 'asked once')
+  assert.equal(app.judgeAsks[0].words, 'These are')
+  assert.equal(app.judgeAsks[0].seat, 'claude')
+  assert.equal(aborts(), 0)
+  assert.deepEqual(audible(), [src, src], 'the reply played on')
+  assert.deepEqual(sent.map((m) => m.text), ['These are not gonna work'])
+  assert.deepEqual(tagged('judge:verdict').map((e) => JSON.parse(e.data).verdict), ['aside'])
+  assert.ok(!JSON.stringify(snapshot()).includes('gonna'), 'never the words')
+})
+
+test("the judge's interrupt cuts the reply", async () => {
+  app.judge = { verdict: 'interrupt', confidence: 0.98 }
+  const { ws } = await saidOver('Is that fan forced')
+  assert.equal(aborts(), 1)
+  assert.equal(ws.closed, true)
+  assert.deepEqual(sent.map((m) => m.text), ['Is that fan forced'])
+})
+
+test("the judge's listening drops the words", async () => {
+  app.judge = { verdict: 'listening', confidence: 0.8 }
+  const { src } = await saidOver('Those look good')
+  assert.equal(aborts(), 0)
+  assert.deepEqual(audible(), [src, src])
+  assert.deepEqual(sent, [])
+})
+
+test('with the judge off, the word rules cut as before', async () => {
+  const { ws } = await saidOver('These are not gonna work')
+  assert.equal(app.judgeAsks.length, 1)
+  assert.equal(aborts(), 1)
+  assert.equal(ws.closed, true)
+  assert.deepEqual(tagged('judge:none').map((e) => JSON.parse(e.data).why), ['off'])
+})
+
+test('a judge too slow to answer leaves it to the word rules', async () => {
+  app.judge = 'hang'
+  const { ws } = await saidOver('These are not gonna work')
+  assert.equal(aborts(), 1)
+  assert.equal(ws.closed, true)
+  assert.deepEqual(tagged('judge:none').map((e) => JSON.parse(e.data).why), ['slow'])
+})
+
+test('a clear case never asks the judge', async () => {
+  app.judge = { verdict: 'aside' }
+  await saidOver('Wait')
+  assert.equal(aborts(), 1, 'a stop word cuts at once')
+  assert.deepEqual(app.judgeAsks, [])
 })

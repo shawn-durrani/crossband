@@ -24,9 +24,9 @@ starting.
 API keys aren't settings. They live in `.env` only and never reach the
 browser: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`,
 `TAVILY_API_KEY`, `BRAVE_API_KEY`, `REDDIT_CLIENT_ID`,
-`REDDIT_CLIENT_SECRET`, `GITHUB_TOKEN` or `GH_TOKEN`, and
-`CLAUDE_CODE_OAUTH_TOKEN`. A seat added from a one-click preset takes
-its own provider key, listed with that preset in
+`REDDIT_CLIENT_SECRET`, `GITHUB_TOKEN` or `GH_TOKEN`,
+`CLAUDE_CODE_OAUTH_TOKEN`, and `TYPESAFE_API_KEY`. A seat added from a
+one-click preset takes its own provider key, listed with that preset in
 [MODELS.md](MODELS.md).
 
 A broken config file never stops the app starting. It reads as empty
@@ -117,6 +117,7 @@ a default install records it.
 
 | key | default | what it does |
 |---|---|---|
+| `interrupt_judge` | `jev` | When the word rules can't tell whether words said over a reply were for the AIs, TypeSafe's Jev decides, given `TYPESAFE_API_KEY` in `.env`. `off` leaves it to the word rules. [SECURITY.md](../SECURITY.md) says what Jev reads. |
 | `voice_provider` | `auto` | Which engine hears and speaks. `auto` uses ElevenLabs when `ELEVENLABS_API_KEY` is set and no voice when it isn't, and `elevenlabs` makes that choice explicit. `local` is reserved for a local engine and, until one lands, selects nothing. |
 | `tts_model` | `eleven_flash_v2_5` | The ElevenLabs model that speaks replies. Pick it on the Models page, which saves it here, or set `auto` to follow the newest model the app can stream live. A seat can pick its own. [Choosing the voice model](#choosing-the-voice-model). |
 | `tts_speed` | `1.0` | Speaking speed, from 0.7 to 1.2. The v3 models don't take it. Playback speed also has a live slider in the voice dock. |

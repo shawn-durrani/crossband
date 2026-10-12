@@ -69,9 +69,9 @@ import logging
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi import WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .. import (config, crosstalk, db, diagnostics, diarize, engine,
+from .. import (config, crosstalk, db, diagnostics, diarize, engine, judge,
                 seat_trace, tts_models, voice, voice_sessions, voice_trace)
 
 router = APIRouter(tags=["voice"])
@@ -358,6 +358,77 @@ def voice_trace_ingest(payload: dict = Body(...)):
 # stopped at, from the same kind of allowlist.
 STALL_KINDS = {"round_guard_forced", "gated_speech_stranded", "handoff_stalled"}
 STALL_STAGES = {"transcribing", "empty", "failed", "held", "sent"}
+
+
+class JudgeIn(BaseModel):
+    """One unclear moment while a reply is paused (#642): the seat that was
+    speaking, the last of what it had said, and the words said over it."""
+    chat_id: int
+    seat: str = Field(default="", max_length=64)
+    ai_said: str = Field(default="", max_length=4000)
+    words: str = Field(max_length=4000)
+
+
+def _judge_context(chat_id, seat, cfg):
+    """Who the moment is between: the owner, the chat's seats by name, the
+    people the room has present (the owner left out), and the speaking
+    seat's name."""
+    con = db.connect()
+    try:
+        seats = [p["name"] for p in db.get_chat_participants(con, chat_id)]
+        names = db.participant_names(con)
+        owner = (cfg.get("user_name") or "User").strip()
+        room = [r["name"] for r in db.get_room_roster(con, chat_id, present_only=True)
+                if r["name"].casefold() != owner.casefold()]
+    finally:
+        con.close()
+    return owner, seats, room, names.get(seat) or (seats[0] if seats else "the AI")
+
+
+def _record_judge_call(chat_id, got, cfg):
+    """One utility_usage row per call, so the Spend page counts them.
+    Unpriced until Jev is on the rate card: recorded as not tracked, never
+    as $0."""
+    usage = got.get("usage") or {}
+    tokens = {"input": int(usage.get("input_tokens") or 0),
+              "output": int(usage.get("output_tokens") or 0)}
+    pricing = cfg.get("pricing") or config.DEFAULT_PRICING
+    cost = config.compute_cost(got["model"], tokens, pricing)
+    con = db.connect()
+    try:
+        db.log_utility_usage(con, chat_id, "interrupt_judge", got["model"],
+                             tokens["input"], tokens["output"], cost,
+                             provenance=config.provenance_for(got["model"], pricing)["source"])
+        con.commit()
+    finally:
+        con.close()
+
+
+@router.post("/api/voice/judge")
+async def voice_judge(body: JudgeIn, request: Request):
+    """Were words said over a paused reply meant for the AIs (#642)? Asked
+    by the browser only when its word rules would cut on word count alone.
+    Answers `verdict` interrupt, aside or listening, or '' with a reason,
+    in which case the browser lets its word rules decide. Logs the verdict
+    and its timing, never the words."""
+    cfg = request.app.state.settings.as_cfg()
+    reason = judge.off_reason(cfg)
+    if reason:
+        return {"verdict": "", "reason": reason}
+    owner, seats, room, seat = await asyncio.to_thread(
+        _judge_context, body.chat_id, body.seat, cfg)
+    state = judge.describe(owner, seats, room, seat,
+                           body.ai_said[-judge.MAX_SAID_CHARS:], judge.SOMEONE,
+                           body.words[:judge.MAX_WORDS_CHARS])
+    got = await judge.ask(state, seat)
+    log.info("interrupt judge: chat=%s verdict=%s confidence=%s ms=%s%s",
+             body.chat_id, got["verdict"] or "none", got["confidence"], got["ms"],
+             f" error={got['error']}" if got.get("error") else "")
+    if not got.get("error"):
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_record_judge_call, body.chat_id, got, cfg)
+    return {"verdict": got["verdict"], "confidence": got["confidence"], "ms": got["ms"],
+            **({"reason": "no_answer"} if not got["verdict"] else {})}
 
 
 @router.post("/api/voice/stall")
