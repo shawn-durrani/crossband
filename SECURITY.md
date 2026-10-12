@@ -212,6 +212,10 @@ limits.
   typed or spoken, with the seats' names, the people present and the
   people the app knows by name. Jev reads it for instructions to the app.
   The default, `claude`, keeps that check on the utility model.
+- With `turn_end_shadow` on, every pause in a spoken turn sends the
+  words so far and the last thing an AI said to Jev. Smart Turn hears
+  the turn's audio on this computer, and no audio leaves it. The model is
+  fetched once from Hugging Face and checked against a pinned hash.
 - With `addressee_shadow` on, each spoken turn goes to Jev too, with
   the last three messages before it, the seats' names and the names of
   the people in the room. Jev says who the turn was for, and the app

@@ -323,6 +323,13 @@ class Settings(BaseModel):
     # any failure. Needs TYPESAFE_API_KEY.
     intent_check: str = "claude"
 
+    # #661: at every pause in a spoken turn, ask Jev and Smart Turn (a small
+    # model on this Mac) whether you'd finished, and keep both guesses with
+    # what you did next, without acting on them (backend/turn_end.py,
+    # scripts/turn_end_shadow_report.py). Off unless set true
+    # (CROSSBAND_TURN_END_SHADOW).
+    turn_end_shadow: bool = False
+
     # #650: ask Jev who each spoken turn is for, in the background, and keep
     # its answer beside the turn without acting on it
     # (backend/addressee_shadow.py, scripts/addressee_shadow_report.py).
