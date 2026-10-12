@@ -1,0 +1,1291 @@
+[
+  {
+    "id": "owner_asks_1",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "How long in the fridge again?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_2",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "What temperature for the oven?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_3",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "Can you give me the short version?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_4",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "And what about the sauce?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_5",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Is panko better than breadcrumbs?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_6",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "Tell me more about the second option.",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_7",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "Go on.",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_8",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "Wait, how much garlic?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_9",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Can I use pork instead?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_asks_10",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "What time does the train leave?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_thanks",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Thanks, that's really helpful.",
+    "expected": {
+      "for": "ais",
+      "asks": "no",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_quiet_please",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "You don't need to respond to this, we're just chatting.",
+    "expected": {
+      "for": "ais",
+      "asks": "no",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "owner_names_start_1",
+    "category": "owner_names_seat",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "Claude, how long for the sauce?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "Claude"
+    }
+  },
+  {
+    "id": "owner_names_start_2",
+    "category": "owner_names_seat",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "GPT, your turn.",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "GPT"
+    }
+  },
+  {
+    "id": "owner_names_end_1",
+    "category": "owner_names_seat",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "What do you think, GPT?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "GPT"
+    }
+  },
+  {
+    "id": "owner_names_end_2",
+    "category": "owner_names_seat",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "I like that idea, Claude.",
+    "expected": {
+      "for": "ais",
+      "asks": "no",
+      "seat": "Claude"
+    }
+  },
+  {
+    "id": "owner_names_end_3",
+    "category": "owner_names_seat",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "And you, Claude?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "Claude"
+    }
+  },
+  {
+    "id": "owner_names_mid",
+    "category": "owner_names_seat",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "Okay so GPT, what would you do?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "GPT"
+    }
+  },
+  {
+    "id": "answer_claude_yes",
+    "category": "answer",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "I can put together a shopping list for the week. Want me to?"
+      }
+    ],
+    "who": "Alex",
+    "text": "Yes please.",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "Claude"
+    }
+  },
+  {
+    "id": "answer_claude_no",
+    "category": "answer",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "I can put together a shopping list for the week. Want me to?"
+      }
+    ],
+    "who": "Alex",
+    "text": "No, I'm good thanks.",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "Claude"
+    }
+  },
+  {
+    "id": "answer_gpt_pork",
+    "category": "answer",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "Should I go with the beef or the pork version?"
+      }
+    ],
+    "who": "Alex",
+    "text": "Pork.",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "GPT"
+    }
+  },
+  {
+    "id": "answer_gpt_either",
+    "category": "answer",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "Should I go with the beef or the pork version?"
+      }
+    ],
+    "who": "Alex",
+    "text": "Whichever is quicker.",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "GPT"
+    }
+  },
+  {
+    "id": "owner_to_sam_colander",
+    "category": "owner_to_person_named",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Sam, can you grab the colander?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_mateo_hotel",
+    "category": "owner_to_person_named",
+    "room": [
+      "Alex",
+      "Mateo"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "Mateo, did you book the hotel?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_sam_taste",
+    "category": "owner_to_person_named",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "Sam, taste this.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_sam_later",
+    "category": "owner_to_person_named",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "What do you reckon, Sam?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_q_1",
+    "category": "owner_to_person_question",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "Is the water boiling yet?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_q_2",
+    "category": "owner_to_person_question",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "Did you lock the car?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_q_3",
+    "category": "owner_to_person_question",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Can you pass me that?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_q_4",
+    "category": "owner_to_person_question",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Where did we put the grater?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_q_5",
+    "category": "owner_to_person_question",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Do we have any more eggs?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_q_6",
+    "category": "owner_to_person_question",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "Can you turn the oven down a bit?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_s_1",
+    "category": "owner_to_person_statement",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "I'll do the sauce, you do the pasta.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_s_2",
+    "category": "owner_to_person_statement",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "These are not gonna work.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_s_3",
+    "category": "owner_to_person_statement",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Careful, that pan's hot.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "owner_to_person_s_4",
+    "category": "owner_to_person_statement",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Alex",
+    "text": "We should leave by nine.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "guest_to_owner_1",
+    "category": "guest_to_owner",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Sam",
+    "text": "Do you want a glass of wine?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "guest_to_owner_2",
+    "category": "guest_to_owner",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Sam",
+    "text": "Babe, they're falling apart.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "guest_to_owner_3",
+    "category": "guest_to_owner",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Sam",
+    "text": "I'm not getting up at six.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "guest_to_owner_4",
+    "category": "guest_to_owner",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Sam",
+    "text": "Should we eat outside tonight?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "guest_to_ais_1",
+    "category": "guest_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Sam",
+    "text": "Can you do one without eggs?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "guest_to_ais_2",
+    "category": "guest_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Sam",
+    "text": "Hey GPT, what about breadcrumbs?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "GPT"
+    }
+  },
+  {
+    "id": "guest_to_ais_3",
+    "category": "guest_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Sam",
+    "text": "Claude, how long do they rest?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "Claude"
+    }
+  },
+  {
+    "id": "guest_to_ais_4",
+    "category": "guest_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "Sam",
+    "text": "Is there a later train?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "chat_back_and_forth_1",
+    "category": "person_to_person",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Sam",
+        "text": "Should we eat outside?"
+      }
+    ],
+    "who": "Alex",
+    "text": "Is it warm enough?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "chat_back_and_forth_2",
+    "category": "person_to_person",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Alex",
+        "text": "Did you feed the dog?"
+      },
+      {
+        "who": "Sam",
+        "text": "Yeah, this morning."
+      }
+    ],
+    "who": "Alex",
+    "text": "Okay, good.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "chat_back_and_forth_3",
+    "category": "person_to_person",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Sam",
+        "text": "I think we need more mince."
+      }
+    ],
+    "who": "Alex",
+    "text": "Really? How much more?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "chat_back_and_forth_4",
+    "category": "person_to_person",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Alex",
+        "text": "Is the oven on?"
+      },
+      {
+        "who": "Sam",
+        "text": "Not yet."
+      }
+    ],
+    "who": "Alex",
+    "text": "Can you put it on?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "relay_1",
+    "category": "relay",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "It says two eggs.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "relay_2",
+    "category": "relay",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "GPT reckons half an hour.",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "aloud_1",
+    "category": "thinking_aloud",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Hmm, where did I put that?",
+    "expected": {
+      "for": "nobody",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "aloud_2",
+    "category": "thinking_aloud",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Oh no, it's burning!",
+    "expected": {
+      "for": "nobody",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "aloud_3",
+    "category": "thinking_aloud",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "Alex",
+    "text": "Okay, okay, okay.",
+    "expected": {
+      "for": "nobody",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "aloud_4",
+    "category": "thinking_aloud",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Ouch!",
+    "expected": {
+      "for": "nobody",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "tv_1",
+    "category": "tv",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "tv",
+    "text": "And in other news tonight, the council has approved the new bridge.",
+    "expected": {
+      "for": "background",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "tv_2",
+    "category": "tv",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "For the sauce, soften an onion, add crushed tomatoes and simmer for half an hour."
+      }
+    ],
+    "who": "tv",
+    "text": "So what do you think happens next?",
+    "expected": {
+      "for": "background",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "tv_3",
+    "category": "tv",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "tv",
+    "text": "Text in now and tell us what you think.",
+    "expected": {
+      "for": "background",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "unknown_kid",
+    "category": "unknown",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "unknown",
+    "text": "Mum, where's my charger?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "unknown_delivery",
+    "category": "unknown",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "The train gets into Melbourne at four, so you'd have time to check in before dinner."
+      }
+    ],
+    "who": "unknown",
+    "text": "Delivery for Alex?",
+    "expected": {
+      "for": "someone",
+      "asks": "no",
+      "seat": "none"
+    }
+  },
+  {
+    "id": "room_question_1",
+    "category": "room_question",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "GPT",
+        "text": "Should I go with the beef or the pork version?"
+      }
+    ],
+    "who": "Alex",
+    "text": "What do you all think, pork or beef?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  },
+  {
+    "id": "about_guest_to_ais",
+    "category": "owner_to_ais",
+    "room": [
+      "Alex",
+      "Sam"
+    ],
+    "recent": [
+      {
+        "who": "Claude",
+        "text": "Soak the breadcrumbs in milk, mix them through the mince with an egg, then chill the balls for twenty minutes."
+      }
+    ],
+    "who": "Alex",
+    "text": "Sam thinks we should add cheese. What do you reckon?",
+    "expected": {
+      "for": "ais",
+      "asks": "yes",
+      "seat": "all"
+    }
+  }
+]

@@ -200,6 +200,19 @@ MEASUREMENTS = (
                  "TypeSafe when there's a key. Nothing of yours is read."),
         args=("--judge", "rules", "--judge", "claude", "--judge", "jev"),
         timeout_s=900.0, readme="eval_bargein/README.md"),
+    Measurement(
+        id="addressee", module="eval_addressee", title="Addressee trial",
+        measures=("Is a turn for the AIs, and which of them? Today's rules, "
+                  "a small Claude model and Jev each judge 61 made-up turns "
+                  "in a room with other people, scored on questions skipped, "
+                  "needless rounds and forced replies."),
+        costs=("About 3 cents for Claude. Jev bills on TypeSafe's terms, and "
+               "without a TYPESAFE_API_KEY it's left out."),
+        takes="About two minutes.",
+        touches=("Made-up turns from the repo, sent to Anthropic, and to "
+                 "TypeSafe when there's a key. Nothing of yours is read."),
+        args=("--judge", "rules", "--judge", "jev", "--judge", "claude"),
+        timeout_s=900.0, readme="eval_addressee/README.md"),
 )
 
 _BY_ID = {m.id: m for m in MEASUREMENTS}
@@ -706,9 +719,25 @@ def _bargein(r: dict):
     return line, spent
 
 
+def _addressee(r: dict):
+    rules = r.get("rules")
+    parts = []
+    if rules:
+        parts.append(f"Today's rules start a round on "
+                     f"{rules.get('needless_rounds', 0)} of "
+                     f"{rules.get('of_not_ais', 0)} turns that weren't for the AIs.")
+    for name, s in r.items():
+        if name != "rules" and not s.get("errors"):
+            parts.append(f"{name.capitalize()} got {s['all_right']} of "
+                         f"{s['cases']} right and skipped {s['wrong_skips']} "
+                         f"of {s['of_for_ais']} turns for the AIs.")
+    spent = sum(float(s.get("cost_usd") or 0) for s in r.values())
+    return " ".join(parts) or "The report is saved.", spent
+
+
 _SUMMARIES = {"critic": _critic, "attribution": _attribution,
               "recall": _recall, "intent": _intent, "voice": _voice,
-              "bargein": _bargein}
+              "bargein": _bargein, "addressee": _addressee}
 
 
 def summarise(measurement_id: str, report, practice: bool = False) -> dict:

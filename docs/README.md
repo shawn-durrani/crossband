@@ -117,6 +117,11 @@ how.
   interruption question. When someone talks over a reply, was it meant
   for the AIs? Today's word rules, a small Claude model and Jev judge
   made-up moments. Anthropic spend per run, and TypeSafe's with a key.
+- [eval_addressee/README.md](../eval_addressee/README.md): the
+  addressee question. In a room with other people, is a turn for the
+  AIs, do they owe it a reply, and which seat does it name? Today's
+  rules, a small Claude model and Jev judge made-up turns. Anthropic
+  spend per run, and TypeSafe's with a key.
 - [eval_voice/README.md](../eval_voice/README.md): the voice naming
   question. Does the app put the right name on each spoken turn, over
   noise and when two people talk at once? Made-up conversations in

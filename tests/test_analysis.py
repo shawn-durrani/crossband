@@ -150,7 +150,8 @@ def test_every_measurement_states_its_cost_and_what_it_touches():
 
 def test_the_table_carries_measurements_and_no_guard():
     ids = [m.id for m in analysis.MEASUREMENTS]
-    assert ids == ["critic", "attribution", "recall", "intent", "voice", "bargein"]
+    assert ids == ["critic", "attribution", "recall", "intent", "voice", "bargein",
+                   "addressee"]
     assert "eval_silence" not in {m.module for m in analysis.MEASUREMENTS}
 
 
@@ -383,6 +384,15 @@ def test_each_headline_reads_its_own_report():
                         "cost": {"tts": {"usd": 0.3453}, "stt_usd": 0.01}})
     assert voice == {"headline": "Named 86% of 29 turns right, with 3.4 wrong "
                                  "names per 100 turns.", "spent_usd": 0.3553}
+    addr = s("addressee", {
+        "rules": {"needless_rounds": 33, "of_not_ais": 33, "cost_usd": 0.0},
+        "jev": {"all_right": 55, "cases": 61, "wrong_skips": 0, "of_for_ais": 28,
+                "errors": 0, "cost_usd": 0.0018},
+        "claude": {"errors": 61, "cost_usd": 0.0}})
+    assert addr == {"headline": "Today's rules start a round on 33 of 33 turns "
+                                "that weren't for the AIs. Jev got 55 of 61 right "
+                                "and skipped 0 of 28 turns for the AIs.",
+                    "spent_usd": 0.0018}
 
 
 def test_a_run_with_no_key_says_so_before_its_numbers():
