@@ -118,6 +118,7 @@ a default install records it.
 | key | default | what it does |
 |---|---|---|
 | `interrupt_judge` | `jev` | When the word rules can't tell whether words said over a reply were for the AIs, TypeSafe's Jev decides, given `TYPESAFE_API_KEY` in `.env`. `off` leaves it to the word rules. [SECURITY.md](../SECURITY.md) says what Jev reads. |
+| `addressee_shadow` | `false` | Asks Jev who each spoken turn is for, and keeps the answer beside the turn without acting on it. `scripts/addressee_shadow_report.py` sets the answers against what the AIs did. Needs `TYPESAFE_API_KEY`. |
 | `voice_provider` | `auto` | Which engine hears and speaks. `auto` uses ElevenLabs when `ELEVENLABS_API_KEY` is set and no voice when it isn't, and `elevenlabs` makes that choice explicit. `local` is reserved for a local engine and, until one lands, selects nothing. |
 | `tts_model` | `eleven_flash_v2_5` | The ElevenLabs model that speaks replies. Pick it on the Models page, which saves it here, or set `auto` to follow the newest model the app can stream live. A seat can pick its own. [Choosing the voice model](#choosing-the-voice-model). |
 | `tts_speed` | `1.0` | Speaking speed, from 0.7 to 1.2. The v3 models don't take it. Playback speed also has a live slider in the voice dock. |

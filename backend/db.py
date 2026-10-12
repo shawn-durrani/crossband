@@ -28,7 +28,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 35
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -83,6 +83,10 @@ SCHEMA_VERSION = 34
 #   v32  auth_sessions (browser sign-ins kept across restarts, hashed, #471)
 #   v33  seat_usage (the cost of a seat's call that left no message: a pass,
 #        a refused try, an empty reply, #560)
+#   v34  messages.heard (how much of a spoken reply cut off partway was
+#        heard, #634)
+#   v35  addressee_shadow (Jev's answer on who a spoken turn was for, kept
+#        and never acted on, #650)
 
 # v29's columns (#254), shared by the migration step and nothing else: the
 # CREATE TABLE in SCHEMA spells the same list out for a fresh database.
@@ -395,6 +399,24 @@ CREATE TABLE IF NOT EXISTS seat_usage(
   usage_json TEXT NOT NULL,
   created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS addressee_shadow(
+  -- Who a spoken turn was for, as Jev answered in the background (#650),
+  -- kept beside the turn and never acted on. Content-free: the answers, the
+  -- kind of speaker (owner, guest, unknown, tv), how many others were
+  -- present, and the time Jev took. Never any words or names of people.
+  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
+  created_at REAL NOT NULL,
+  said_for TEXT NOT NULL DEFAULT '',   -- ais | someone | nobody | background
+  asks TEXT NOT NULL DEFAULT '',       -- yes | no
+  seat TEXT NOT NULL DEFAULT '',       -- a seat's name, all or none
+  confidence REAL,
+  speaker TEXT NOT NULL DEFAULT '',
+  others INTEGER NOT NULL DEFAULT 0,
+  ms INTEGER NOT NULL DEFAULT 0,
+  model TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS inbound_events(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,                -- producer name (badge label; stored as ext:<source> on the message)
@@ -570,6 +592,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_events_msg ON tool_events(message_id);
 CREATE INDEX IF NOT EXISTS idx_voice_usage_chat ON voice_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_utility_usage_chat ON utility_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_seat_usage_chat ON seat_usage(chat_id);
+CREATE INDEX IF NOT EXISTS idx_addressee_shadow_chat ON addressee_shadow(chat_id);
 """
 
 
@@ -959,6 +982,8 @@ def init(settings=None):
     # first start on it signs every browser out once, as any restart did.
     # v33: seat_usage - likewise a NEW table. Nothing to backfill: a pass
     # made before it existed left no usage anywhere to copy.
+    # v35: addressee_shadow - likewise a NEW table, filled from the first
+    # spoken turn after the setting is on.
     if 1 <= version <= 10:  # v11: utility_usage.provenance -
         # persist cost provenance AT WRITE TIME instead of recomputing it from
         # the live rate card at read time, matching every other cost source
