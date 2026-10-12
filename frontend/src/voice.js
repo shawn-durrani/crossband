@@ -47,6 +47,10 @@ const INTERRUPT_CEIL = 0.06
 const CONFIRM_MS = 280          // sustained voicing needed to count as speech
 const INTERRUPT_CONFIRM_MS = 500 // sustained voicing needed to barge in
 const RECORDER_ROTATE_MS = 9000 // bound the pre-speech audio we keep
+// #642: how long a paused reply waits for the judge before the word rules
+// decide, and how many times one sound may be asked about as it grows.
+const JUDGE_WAIT_MS = 1200
+const JUDGE_MAX_ASKS = 3
 
 function wsBase() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
@@ -107,6 +111,11 @@ export default class VoiceController {
     this._pause = null
     this._cutAt = 0
     this._heardVerdict = null
+    // #642: the judge's view of the sound being held, and of the last one
+    // let go, for its final words.
+    this._judge = null
+    this._letGoJudge = null
+    this._heldSince = 0
     // The reply that holds the shared audio element right now.
     this._onAir = null
     // The turn a wordless sound became when it was let go. Words in its
@@ -393,8 +402,12 @@ export default class VoiceController {
         // #620/#632: a sound pausing a reply is cut off by words that mean
         // to stop the AIs, not by a "yeah" or a remark to someone else.
         if (this._bargeIn.held) {
-          const { verdict } = this._judgeWords(msg.partial)
-          if (verdict === 'cut') this._cutAt = Date.now()
+          const { verdict, why } = this._judgeWords(msg.partial)
+          // #642: a cut on word count alone is the unclear middle, so the
+          // judge is asked first. The clear cuts go at once.
+          if (verdict === 'cut' && !(why === 'words' && this._askJudge(msg.partial))) {
+            this._cutAt = Date.now()
+          }
           if (verdict !== this._heardVerdict) {
             this._heardVerdict = verdict
             this._vlog('vad:words', { verdict })  // the verdict only, never the words
@@ -709,6 +722,9 @@ export default class VoiceController {
     this._heardVerdict = null
     this._onAir = null
     this._letGoTurn = null
+    this._judge = null
+    this._letGoJudge = null
+    this._heldSince = 0
     resetHandoffWatch(this._handoff)
     // #537: a session that fell back to the backup path starts again on
     // live transcription.
@@ -973,11 +989,70 @@ export default class VoiceController {
   // if the final transcript finds words after all, they cut and are sent
   // (_deliverTranscript). The reply plays on.
   _letGo() {
+    // #642: what the judge made of this sound decides its final words too.
+    this._letGoJudge = this._judge?.hold === this._heldSince ? this._judge : null
     if (this.speechStart) this._finalizeUtterance('gap', { letGo: true })
     this._endPause()
     if (this.active) {
       this._state(this.playing > 0 ? 'speaking' : (this.roundActive ? 'working' : 'listening'))
     }
+  }
+
+  // #642: ask the judge whether words said over the paused reply were
+  // meant for the AIs. Returns true while its answer decides: asked and
+  // waiting, or answered aside or listening. Returns false when the word
+  // rules should decide, because the judge is off, failed or was too slow.
+  // An answer of interrupt cuts the reply. A sound is asked about again as
+  // it grows by three words, up to JUDGE_MAX_ASKS times.
+  _askJudge(words) {
+    const hold = this._heldSince
+    let j = this._judge
+    if (!j || j.hold !== hold) j = this._judge = { hold, asks: 0, lastN: 0, inFlight: false }
+    if (j.failed) return false
+    const n = (String(words).match(/[\p{L}\p{N}]+/gu) || []).length
+    if (!j.inFlight && j.asks < JUDGE_MAX_ASKS && (j.asks === 0 || n >= j.lastN + 3)) {
+      j.inFlight = true
+      j.asks++
+      j.lastN = n
+      const t0 = Date.now()
+      const still = () => this._judge === j && this._heldSince === hold && !!this._bargeIn.held
+      const fail = (why) => {
+        if (j.failed) return
+        j.failed = true
+        j.inFlight = false
+        this._vlog('judge:none', { why })
+        if (still()) this._cutAt = Date.now() // the word rules decide: cut
+      }
+      const timer = setTimeout(() => { if (j.inFlight) fail('slow') }, JUDGE_WAIT_MS)
+      fetch('/api/voice/judge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: this.getChatId(), seat: this._onAir?.slug || '',
+                               ai_said: this._aiSaidSoFar(), words }),
+      }).then((r) => r.json()).then((d) => {
+        clearTimeout(timer)
+        if (j.failed) return
+        if (!d?.verdict) { fail(d?.reason || 'none'); return }
+        j.inFlight = false
+        j.verdict = d.verdict
+        // The verdict, its confidence and its time, never the words.
+        this._vlog('judge:verdict', { verdict: d.verdict, confidence: d.confidence ?? null,
+                                      ms: Date.now() - t0 })
+        if (d.verdict === 'interrupt' && still()) this._cutAt = Date.now()
+      }).catch(() => { clearTimeout(timer); fail('error') })
+    }
+    return !j.failed
+  }
+
+  // The last of what the reply on the air has said: as far as it's been
+  // heard when its word timings are in, else the text it was given.
+  _aiSaidSoFar() {
+    const p = this._onAir
+    if (!p) return ''
+    const at = this._pause?.player === p ? this._pause.at : Number(this.sink.currentTime) || 0
+    const heard = p.timeline?.text
+      ? p.timeline.text.slice(0, heardChars(p.timeline, at, { audioSeconds: this._audioSeconds(p) }))
+      : (p.said || '')
+    return heard.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim().slice(-400)
   }
 
   // Whether the live transcriber is hearing the mic, so a sound's words
@@ -1178,6 +1253,7 @@ export default class VoiceController {
         if (frame.hold) {
           this._vlog('vad:hold', { playing: this.playing, roundActive: this.roundActive })
           this._heardVerdict = null
+          this._heldSince = now // #642: which sound the judge is asked about
           this._pauseReplies()
         }
         if (frame.cut) {
@@ -1446,7 +1522,14 @@ export default class VoiceController {
     // plays on.
     if (turnId && turnId === this._letGoTurn) {
       this._letGoTurn = null
-      const { verdict, content } = this._judgeWords(text)
+      let { verdict, content, why } = this._judgeWords(text)
+      // #642: the judge's answer about this sound stands for its final
+      // words when the rules would cut on word count alone.
+      const judged = this._letGoJudge?.verdict
+      this._letGoJudge = null
+      if (verdict === 'cut' && why === 'words' && judged && judged !== 'interrupt') {
+        verdict = judged === 'listening' ? 'listen' : 'aside'
+      }
       if (verdict === 'cut' && (this.playing > 0 || this.roundActive)) {
         this._vlog('vad:lateWords', { turnId, playing: this.playing })
         this.interrupt()

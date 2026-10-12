@@ -311,6 +311,11 @@ class Settings(BaseModel):
     # (CROSSBAND_HISTORY_PREFETCH=false) to leave searching to the seats.
     history_prefetch: bool = True
 
+    # #642: when it's unclear whether words said over a paused reply were
+    # meant for the AIs, ask TypeSafe's Jev (backend/judge.py). Needs
+    # TYPESAFE_API_KEY in .env. "off" leaves it to the browser's word rules.
+    interrupt_judge: str = "jev"
+
     # voice
     # Provider seam: which engine serves STT/TTS. "auto" (default) =
     # current behaviour exactly: ElevenLabs when ELEVENLABS_API_KEY is

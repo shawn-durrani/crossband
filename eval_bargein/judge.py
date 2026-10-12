@@ -11,7 +11,9 @@ the reply is paused. The judge says which of three it was:
   should carry on
 
 The same description of the moment goes to every judge, so they're compared
-on one footing.
+on one footing. The description, the criteria and Jev's request come from
+backend/judge.py, which the app sends live, so the trial measures exactly
+what the app asks.
 """
 
 import json
@@ -19,21 +21,16 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-LABELS = ("interrupt", "aside", "listening")
+from backend.judge import CRITERIA, LABELS, SOMEONE
+from backend.judge import describe as describe_moment
+from backend.judge import jev_body as jev_request
+from backend.judge import parse_jev, question  # noqa: F401  (parse_jev is the trial's too)
+
 OWNER = "Alex"
 SEATS = ("Claude", "GPT")
 # The made-up roster: nothing here may name a real person.
 ROSTER = ("Alex", "Sam", "Dave", "Mateo")
 CASES = Path(__file__).with_name("cases.json")
-
-CRITERIA = {
-    "interrupt": "Said to the AIs: a question, an answer, a correction, or "
-                 "asking them to stop. The AI should stop and listen.",
-    "aside": "Not said to the AIs: talk to someone else in the room, the TV "
-             "or radio, or a remark to nobody. The AI should carry on.",
-    "listening": "Only a sign of listening or a reaction, like 'yeah', "
-                 "'mm-hm' or 'wow'. The AI should carry on.",
-}
 
 
 @dataclass
@@ -82,7 +79,7 @@ def as_heard(case: Case) -> Case:
 
 def _who(case: Case) -> str:
     if case.speaker == "someone":
-        return "someone in the room (the app can't tell who yet)"
+        return SOMEONE
     if case.speaker == "owner":
         return f"{OWNER}, the owner"
     if case.speaker == "tv":
@@ -94,14 +91,8 @@ def _who(case: Case) -> str:
 
 def describe(case: Case) -> str:
     """The moment as plain text: the state every judge reads."""
-    room = (f"Also in the room: {', '.join(case.room)}." if case.room
-            else f"Nobody else is in the room.")
-    return (
-        f"A voice chat at home. {OWNER} is talking out loud with AI assistants "
-        f"({', '.join(SEATS)}). {room}\n"
-        f"{case.seat} was in the middle of saying: \"{case.ai_said}\"\n"
-        f"While it spoke, {_who(case)} said: \"{case.words}\""
-    )
+    return describe_moment(OWNER, list(SEATS), case.room, case.seat, case.ai_said,
+                           _who(case), case.words)
 
 
 def prompt(case: Case) -> str:
@@ -109,7 +100,7 @@ def prompt(case: Case) -> str:
     options = "\n".join(f"{k}: {v}" for k, v in CRITERIA.items())
     return (
         f"{describe(case)}\n\n"
-        f"Was that said to the AIs, so that {case.seat} should stop and listen? "
+        f"{question(case.seat)} "
         "Answer with exactly one word, one of these:\n"
         f"{options}"
     )
@@ -125,27 +116,6 @@ def parse_label(text) -> str:
     return min(hits)[1] if hits else ""
 
 
-def jev_body(case: Case, model: str = "jev-latest") -> dict:
+def jev_body(case: Case) -> dict:
     """The request Jev takes: the moment as its state, and one choice."""
-    return {
-        "state": describe(case),
-        "model": model,
-        "questions": {"verdict": {
-            "type": "choice",
-            "instructions": f"Was that said to the AIs, so that {case.seat} "
-                            "should stop and listen?",
-            "criteria": dict(CRITERIA),
-        }},
-    }
-
-
-def parse_jev(data) -> tuple:
-    """Jev's choice and its confidence, or ('', None) when it gave none."""
-    try:
-        ans = data["answers"]["verdict"]
-        choice = str(ans.get("choice") or "")
-        conf = ans.get("confidence")
-        return (choice if choice in LABELS else "",
-                float(conf) if conf is not None else None)
-    except (KeyError, TypeError, AttributeError, ValueError):
-        return "", None
+    return jev_request(describe(case), case.seat)

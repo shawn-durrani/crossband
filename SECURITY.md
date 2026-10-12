@@ -202,3 +202,9 @@ limits.
   only on this computer. An address anywhere else is refused, and the
   calls follow no redirects and ignore proxy settings. No voice clip is
   sent to a cloud service to be named or split.
+- When you talk over a reply and the app's word rules can't tell whether
+  you meant the AIs, the words you said and the last thing the AI said
+  go to TypeSafe's Jev to decide, with the seats' names and the names
+  of the people in the room. That happens only with `TYPESAFE_API_KEY`
+  in `.env`, and setting `interrupt_judge` to `off` stops it. No audio
+  goes, and the app keeps only Jev's answer and how long it took.
