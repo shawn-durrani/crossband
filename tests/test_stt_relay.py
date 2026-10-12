@@ -218,6 +218,13 @@ def test_same_origin_websocket_still_connects(app, relay):
 # byte-identity pins live in tests/test_room_mode.py and still hold - the
 # keyterms change the connection URL, never a frame.
 
+# The chat's seats ride after the owner, and the apps after the room
+# (#652): a fresh test chat has the two default seats, and the apps are
+# crossband and its default sibling apps.
+SEATS = ["Claude", "GPT"]
+APPS = ["Crossband", "Membro", "Spendglass", "Threadfold"]
+
+
 def _capturing_relay(app, monkeypatch):
     fake = FakeEleven()
     seen = {}
@@ -266,15 +273,16 @@ def test_stt_url_biases_owner_and_roster_display_names(app, monkeypatch):
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
     q = parse_qs(urlparse(seen["url"]).query)
-    # cfg user_name, the present person's preferred name, then their given
-    # form from the remembered-people sweep (deduplicated downstream)
-    assert q["keyterms"] == ["User", "Alex", "Lex"]
+    # cfg user_name, the seats, the present person's preferred name, the
+    # apps, then their given form from the remembered-people sweep
+    # (deduplicated downstream)
+    assert q["keyterms"] == ["User", *SEATS, "Alex", *APPS, "Lex"]
 
 
-def test_stt_url_without_a_roster_biases_the_owner_name_only(app, monkeypatch):
-    """No roster and nobody remembered: the only keyterm is the owner's
-    user_name - the name the introduction utterance itself needs spelt
-    right."""
+def test_stt_url_without_a_roster_biases_the_owner_seats_and_apps(app, monkeypatch):
+    """No roster and nobody remembered: the owner's user_name, the name
+    the introduction utterance itself needs spelt right, then the seats
+    and the apps (#652)."""
     from urllib.parse import parse_qs, urlparse
 
     seen = _capturing_relay(app, monkeypatch)
@@ -287,7 +295,7 @@ def test_stt_url_without_a_roster_biases_the_owner_name_only(app, monkeypatch):
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
     q = parse_qs(urlparse(seen["url"]).query)
-    assert q["keyterms"] == ["User"]
+    assert q["keyterms"] == ["User", *SEATS, *APPS]
 
 
 def test_remembered_names_ride_the_keyterms_even_with_no_roster(app,
@@ -312,7 +320,7 @@ def test_remembered_names_ride_the_keyterms_even_with_no_roster(app,
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
     q = parse_qs(urlparse(seen["url"]).query)
-    assert q["keyterms"] == ["User", "Sam", "Samantha"]
+    assert q["keyterms"] == ["User", *SEATS, *APPS, "Sam", "Samantha"]
 
 
 def test_merged_spellings_ride_the_keyterms_too(app, monkeypatch):
@@ -336,7 +344,7 @@ def test_merged_spellings_ride_the_keyterms_too(app, monkeypatch):
             assert ws.receive_json() == {"partial": "hello"}
             ws.send_json({"done": True})
     q = parse_qs(urlparse(seen["url"]).query)
-    assert q["keyterms"] == ["User", "Samantha", "Sammy"]
+    assert q["keyterms"] == ["User", *SEATS, *APPS, "Samantha", "Sammy"]
 
 
 def test_keyterm_list_is_bounded_and_deduplicated():

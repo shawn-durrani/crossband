@@ -61,6 +61,28 @@ def clean_keyterms(names) -> list:
     return out
 
 
+def app_terms(cfg) -> list:
+    """The apps you might name aloud, as spelling hints (#652): crossband,
+    its sibling apps, and the MCP apps the seats and the guest can use
+    (introductions.app_names). A configured name is a key like
+    `build-watcher`, so it's spoken as words, and an all-lowercase one is
+    capitalised as the proper name it is."""
+    from .introductions import app_names
+    out = []
+    siblings = (cfg or {}).get("sibling_apps")
+    names = ["crossband", *(siblings if isinstance(siblings, dict) else ()),
+             *app_names(cfg)]
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        spoken = " ".join(re.split(r"[-_.\s]+", name)).strip()
+        if spoken and spoken == spoken.lower():
+            spoken = " ".join(w[:1].upper() + w[1:] for w in spoken.split())
+        if spoken:
+            out.append(spoken)
+    return out
+
+
 def stt_ws_url(keyterms=None, timestamps=False, language="") -> str:
     """The realtime STT connection URL: always the model by name (#627),
     keyterm biasing when there are names to bias towards, and word times
