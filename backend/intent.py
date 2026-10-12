@@ -263,9 +263,17 @@ def build_jev_check(text: str, user_name: str, seat_names: list,
 JEV_MIN_CONFIDENCE = 0.5
 
 
-def parse_jev_check(answers) -> tuple:
+def parse_jev_check(answers, message="") -> tuple:
     """Jev's answers as a verdict, without names, and whether the turn
-    needs the merged prompt for them. Anything missing reads as none."""
+    needs the merged prompt for them. Anything missing reads as none.
+
+    The same room-mode guard as the merged parse applies to `message`: an
+    "off" in a turn that only says someone will be back soon, or who the
+    owner is with, is dropped (#540, #638). A turn that switches room mode
+    on goes on for names too (#659): on the held-out turns Jev missed the
+    introduction in "Group mode on, and say hi to Sam.", and a room being
+    armed is when a name matters most."""
+    from . import introductions as intro
     def pick(name, allowed=None, sure=False):
         try:
             c = str(answers[name]["choice"])
@@ -276,7 +284,10 @@ def parse_jev_check(answers) -> tuple:
             return ""
         return c if allowed is None or c in allowed else ""
     out = empty_verdict()
-    out["mode_command"] = pick("mode", {"on", "off", "none"}) or "none"
+    mode = pick("mode", {"on", "off", "none"}) or "none"
+    if mode == "off" and not intro.keep_disarm(intro.COMMAND_DISARM, message):
+        mode = "none"
+    out["mode_command"] = mode
     depth = pick("depth", {"deep", "quick", "max", "normal"})
     if depth:
         out["depth"] = [{"seat": pick("depth_seat") or "all", "depth": depth,
@@ -285,7 +296,7 @@ def parse_jev_check(answers) -> tuple:
     model = pick("model", sure=True)
     out["stronger_model"] = [model] if model and model != "none" else []
     out["media"] = pick("media") == "yes"
-    return out, pick("people") == "yes"
+    return out, pick("people") == "yes" or mode == "on"
 
 
 def _json_object(text):

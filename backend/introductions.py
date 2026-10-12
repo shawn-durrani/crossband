@@ -34,7 +34,7 @@ import re
 import time
 import unicodedata
 
-from . import anchors, db, depth, intent, llm_util, model_step
+from . import anchors, db, depth, intent, jev, llm_util, model_step
 from . import research, room_state
 
 log = logging.getLogger("crossband.introductions")
@@ -1074,12 +1074,8 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
         # told, so "that's Dave" is heard as the answer it is.
         asking = voice_ask.points_at_a_turn(
             await asyncio.to_thread(voice_ask.open_ask, chat_id))
-        prompt = intent.build_merged_prompt(
-            text, cfg.get("user_name", "User"), seats, present, known,
-            asking=asking, apps=app_names(cfg))
-        reply = await llm_util.utility_complete_logged(
-            chat_id, "intent_scan", prompt, cfg, max_tokens=300)
-        verdict = intent.parse_merged(reply, text)
+        verdict, reply = await read_instructions(chat_id, text, cfg, seats,
+                                                 present, known, asking)
         # #494: a correction the spelling guard dropped is logged as set
         # aside, never posted: a word spelt out isn't a name.
         set_aside = (len(parse_correction_verdict(reply))
@@ -1194,6 +1190,52 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
 
 
 TURN_AUDIO_WAIT_S = 2.0   # longest a scan waits for its turn's audio
+JEV_TIMEOUT_S = 1.5       # a slower answer goes to Claude instead (#659)
+
+
+def jev_reads_turns(cfg) -> bool:
+    return str(cfg.get("intent_check") or "claude").lower() == "jev" \
+        and bool(jev.api_key())
+
+
+async def read_instructions(chat_id, text, cfg, seats, present, known, asking):
+    """The turn's verdict, and the merged prompt's reply when Claude was
+    asked (None when only Jev was). With `intent_check` set to jev, Jev
+    answers first and Claude is asked only for names (#659). A failed or
+    slow Jev answer falls back to the merged Claude call, which is also the
+    whole path when the setting is claude. Logs timings, never words."""
+    owner = cfg.get("user_name", "User")
+
+    async def claude():
+        prompt = intent.build_merged_prompt(text, owner, seats, present, known,
+                                            asking=asking, apps=app_names(cfg))
+        return await llm_util.utility_complete_logged(
+            chat_id, "intent_scan", prompt, cfg, max_tokens=300)
+
+    if jev_reads_turns(cfg):
+        state, questions = intent.build_jev_check(text, owner, seats, present,
+                                                  known, asking=asking)
+        got = await jev.ask(state, questions, timeout_s=JEV_TIMEOUT_S)
+        if not got.get("error") and got["answers"]:
+            try:
+                await asyncio.to_thread(jev.record_usage, chat_id, "intent_check",
+                                        got, cfg)
+            except Exception:
+                log.debug("intent check spend row failed", exc_info=True)
+            verdict, needs_names = intent.parse_jev_check(got["answers"], text)
+            reply = None
+            if needs_names:
+                reply = await claude()
+                names = intent.parse_merged(reply, text)
+                for axis in ("introductions", "departures", "aliases", "corrections"):
+                    verdict[axis] = names[axis]
+            log.info("intent check: chat=%s by=jev ms=%s names=%s",
+                     chat_id, got["ms"], needs_names)
+            return verdict, reply
+        log.info("intent check: chat=%s jev failed (%s), asking claude",
+                 chat_id, got.get("error") or "no answer")
+    reply = await claude()
+    return intent.parse_merged(reply, text), reply
 
 
 def _voice_turn(message_id) -> bool:

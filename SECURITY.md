@@ -208,6 +208,10 @@ limits.
   of the people in the room. That happens only with `TYPESAFE_API_KEY`
   in `.env`, and setting `interrupt_judge` to `off` stops it. No audio
   goes, and the app keeps only Jev's answer and how long it took.
+- With `intent_check` set to `jev`, every turn you send goes to Jev,
+  typed or spoken, with the seats' names, the people present and the
+  people the app knows by name. Jev reads it for instructions to the app.
+  The default, `claude`, keeps that check on the utility model.
 - With `addressee_shadow` on, each spoken turn goes to Jev too, with
   the last three messages before it, the seats' names and the names of
   the people in the room. Jev says who the turn was for, and the app

@@ -65,9 +65,19 @@ The `jev` strategy runs only when you name it, with `--strategy jev`,
 and needs `TYPESAFE_API_KEY`. TypeSafe's Jev answers every axis it can in
 one request, with one multiple-choice question each. It can't write out a
 name, so a turn it says introduces, renames or loses a person goes on to
-the merged prompt, and the names come from there. Its time and cost add
-up both calls. The questions live in `backend/intent.py` beside the
-merged prompt, so a switch in the app would send what was measured.
+the merged prompt, and the names come from there. A turn that switches
+room mode on goes on too. Its time and cost add up both calls. The
+questions live in `backend/intent.py` beside the merged prompt, and the
+app sends the same ones when `intent_check` is set to `jev`.
+
+Jev's wording was tuned on the built-in corpus, which flatters it there.
+The turns in `holdout/` were written afterwards, and nothing is tuned
+on them. Score a change to the wording on them too:
+
+```sh
+.venv/bin/python -m eval_intent --strategy merged --strategy jev \
+  --no-builtin-fixtures --fixtures-dir eval_intent/holdout
+```
 
 One number needs no model and no key: how many instruction turns the
 phrase lists never send to a model. It comes from running the lists

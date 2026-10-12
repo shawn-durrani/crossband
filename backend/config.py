@@ -316,6 +316,13 @@ class Settings(BaseModel):
     # TYPESAFE_API_KEY in .env. "off" leaves it to the browser's word rules.
     interrupt_judge: str = "jev"
 
+    # #659: who reads each turn for an instruction to the app (room mode,
+    # names, depth, research, a stronger model, "that's the TV"). "claude"
+    # is the merged utility-model call. "jev" asks TypeSafe's Jev, about
+    # 0.7 s sooner, and Claude only for names, falling back to Claude on
+    # any failure. Needs TYPESAFE_API_KEY.
+    intent_check: str = "claude"
+
     # #650: ask Jev who each spoken turn is for, in the background, and keep
     # its answer beside the turn without acting on it
     # (backend/addressee_shadow.py, scripts/addressee_shadow_report.py).
