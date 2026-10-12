@@ -122,6 +122,11 @@ how.
   AIs, do they owe it a reply, and which seat does it name? Today's
   rules, a small Claude model and Jev judge made-up turns. Anthropic
   spend per run, and TypeSafe's with a key.
+- [eval_turns/README.md](../eval_turns/README.md): the turn-taking
+  question. Does the app wait out a pause in the middle of a sentence,
+  and does talking over a reply cut it only when it should? Made-up
+  moments played into the real voice page in a headless browser, on a
+  second copy of the app. ElevenLabs spend per run.
 - [eval_voice/README.md](../eval_voice/README.md): the voice naming
   question. Does the app put the right name on each spoken turn, over
   noise and when two people talk at once? Made-up conversations in

@@ -28,6 +28,7 @@ lists the measurements only.
 | Voice rig | Does the app put the right name on each spoken turn? | made-up conversations in synthetic voices |
 | Interruption judge trial | When someone talks over a reply, was it meant for the AIs? | made-up moments from the repo |
 | Addressee trial | Is a turn for the AIs, and which of them? | made-up turns from the repo |
+| Turn-taking rig | Does the app wait out a pause, and cut a reply only when it should? | made-up moments played into a second copy of the app |
 
 Each harness has its own `README.md` with the detail and how to read
 its report. [docs/README.md](README.md) links every one of them.
