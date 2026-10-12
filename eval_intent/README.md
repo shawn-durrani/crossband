@@ -61,6 +61,14 @@ lists stay in the code only so the harness has that baseline. Both
 paths parse replies with the app's own parsers, so the judge is the
 same and only the gate changes.
 
+The `jev` strategy runs only when you name it, with `--strategy jev`,
+and needs `TYPESAFE_API_KEY`. TypeSafe's Jev answers every axis it can in
+one request, with one multiple-choice question each. It can't write out a
+name, so a turn it says introduces, renames or loses a person goes on to
+the merged prompt, and the names come from there. Its time and cost add
+up both calls. The questions live in `backend/intent.py` beside the
+merged prompt, so a switch in the app would send what was measured.
+
 One number needs no model and no key: how many instruction turns the
 phrase lists never send to a model. It comes from running the lists
 over the corpus, so it is true in mock mode too.

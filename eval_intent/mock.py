@@ -50,3 +50,31 @@ class MockCaller:
         text = merged_reply(fx) if axis == "merged" else today_reply(fx, axis)
         return UtilityCompletion(text=text, input_tokens=400, output_tokens=60,
                                  latency_s=0.01)
+
+
+class MockJev:
+    """Jev's stand-in: answers each question with the graded verdict, so a
+    --mock run checks the plumbing, never Jev."""
+
+    def __init__(self, fixtures):
+        self._by_text = {fx.text[:1200]: fx for fx in fixtures}
+
+    async def __call__(self, state, questions):
+        fx = self._by_text.get(state.rsplit("Message: ", 1)[-1][:1200])
+        e = fx.expected if fx else {}
+        depth = (e.get("depth") or [{}])[0] if e.get("depth") else {}
+        people = any(e.get(k) for k in ("introductions", "departures", "aliases",
+                                        "corrections"))
+        model = (e.get("stronger_model") or ["none"])[0]
+        answers = {
+            "mode": {"choice": e.get("mode_command", "none")},
+            "people": {"choice": "yes" if people else "no"},
+            "depth": {"choice": depth.get("depth", "none")},
+            "depth_seat": {"choice": depth.get("seat", "all")},
+            "depth_once": {"choice": "yes" if depth.get("once") else "no"},
+            "research": {"choice": e.get("research", "none")},
+            "model": {"choice": model},
+            "media": {"choice": "yes" if e.get("media") else "no"},
+        }
+        return {"answers": answers, "model": "jev-mock", "usage": {"input_tokens": 300},
+                "ms": 10}

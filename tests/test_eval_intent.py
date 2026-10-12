@@ -293,3 +293,31 @@ def test_env_flag_loads_keys_over_a_blank(tmp_path, monkeypatch):
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-made-up"
     with pytest.raises(SystemExit):
         runner.load_env(str(tmp_path / "missing.env"))
+
+
+def test_the_jev_strategy_asks_claude_only_for_names():
+    # #646: Jev answers the axes it can; a turn it says names a person
+    # goes on to the merged prompt for the names. Stand-ins only.
+    from eval_intent.mock import MockCaller, MockJev
+    fixtures = load_fixtures()
+    calls = []
+    merged = MockCaller(fixtures)
+
+    async def counting(prompt, axis="merged"):
+        calls.append(axis)
+        return await merged(prompt, axis)
+    by_id = {fx.id: fx for fx in fixtures}
+    plain = asyncio.run(runner.run_one(by_id["research_more"], "jev", counting, {}, "m",
+                                       jev_caller=MockJev(fixtures)))
+    assert plain.calls == 1 and calls == [] and not plain.wrong_axes()
+    named = next(fx for fx in fixtures if fx.expected.get("introductions"))
+    r = asyncio.run(runner.run_one(named, "jev", counting, {}, "m",
+                                   jev_caller=MockJev(fixtures)))
+    assert r.calls == 2 and calls == ["merged"] and not r.wrong_axes()
+
+
+def test_jev_runs_only_when_asked_for():
+    args = runner.build_arg_parser().parse_args([])
+    assert args.strategies is None
+    from eval_intent.scoring import DEFAULT_STRATEGIES
+    assert "jev" not in DEFAULT_STRATEGIES

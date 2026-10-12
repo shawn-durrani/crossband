@@ -8,7 +8,9 @@ import statistics
 
 from eval_intent.schema import AXES, Fixture
 
-STRATEGIES = ("today", "merged")
+STRATEGIES = ("today", "merged", "jev")
+# Run when none is named: Jev needs its own key (#646).
+DEFAULT_STRATEGIES = ("today", "merged")
 
 
 def _fold(name) -> str:
