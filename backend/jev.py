@@ -19,6 +19,26 @@ def api_key() -> str:
     return os.environ.get("TYPESAFE_API_KEY", "").strip()
 
 
+def record_usage(chat_id, kind, got, cfg) -> None:
+    """One utility_usage row for an answered call, so the Spend page counts
+    it. Unpriced until Jev is on the rate card: recorded as not tracked,
+    never as $0. Worker thread."""
+    from . import config, db
+    usage = got.get("usage") or {}
+    tokens = {"input": int(usage.get("input_tokens") or 0),
+              "output": int(usage.get("output_tokens") or 0)}
+    pricing = cfg.get("pricing") or config.DEFAULT_PRICING
+    con = db.connect()
+    try:
+        db.log_utility_usage(con, chat_id, kind, got["model"], tokens["input"],
+                             tokens["output"],
+                             config.compute_cost(got["model"], tokens, pricing),
+                             provenance=config.provenance_for(got["model"], pricing)["source"])
+        con.commit()
+    finally:
+        con.close()
+
+
 async def ask(state, questions, timeout_s=1.0, client=None) -> dict:
     """Ask Jev `questions` about `state`. Returns {answers, model, usage,
     ms}, with answers {} and an `error` when there was no usable reply."""

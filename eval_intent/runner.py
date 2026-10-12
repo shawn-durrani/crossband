@@ -61,7 +61,7 @@ async def run_jev(fx, caller, jev_caller, cfg, model: str) -> Result:
     state, questions = build_jev_check(fx.text, fx.user_name, fx.seats,
                                        fx.present, fx.known, asking=fx.asking)
     got = await jev_caller(state, questions)
-    heard, needs_names = parse_jev_check(got["answers"])
+    heard, needs_names = parse_jev_check(got["answers"], fx.text)
     cost = (got["usage"].get("input_tokens") or 0) * JEV_PER_M_INPUT / 1_000_000
     latency, calls = got["ms"] / 1000, 1
     replies = {"jev": json.dumps(got["answers"])}

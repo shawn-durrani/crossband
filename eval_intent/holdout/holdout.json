@@ -1,0 +1,398 @@
+[
+  {
+    "id": "ho_buttermilk",
+    "category": "plain",
+    "text": "What's a good substitute for buttermilk?",
+    "expected": {}
+  },
+  {
+    "id": "ho_rest_steak",
+    "category": "plain",
+    "text": "Remind me how long to rest a steak.",
+    "expected": {}
+  },
+  {
+    "id": "ho_rain_saturday",
+    "category": "plain",
+    "text": "Is it going to rain on Saturday?",
+    "expected": {}
+  },
+  {
+    "id": "ho_thanks_recipe",
+    "category": "plain",
+    "text": "That recipe was great last night, thanks.",
+    "expected": {}
+  },
+  {
+    "id": "ho_next_step",
+    "category": "plain",
+    "text": "Okay, what's the next step?",
+    "expected": {}
+  },
+  {
+    "id": "ho_joke",
+    "category": "plain",
+    "text": "Tell me a joke about plumbers.",
+    "expected": {}
+  },
+  {
+    "id": "ho_coast",
+    "category": "plain",
+    "text": "How far is it to the coast from here?",
+    "expected": {}
+  },
+  {
+    "id": "ho_fence_colour",
+    "category": "plain",
+    "text": "Sam reckons the fence needs repainting. What colour would suit a brick house?",
+    "expected": {},
+    "present": [
+      "Sam"
+    ],
+    "known": [
+      "Sam"
+    ]
+  },
+  {
+    "id": "ho_what_group_does",
+    "category": "room_negative",
+    "text": "What does group mode actually do?",
+    "expected": {}
+  },
+  {
+    "id": "ho_prefer_solo",
+    "category": "room_negative",
+    "text": "Do you prefer it when we're in solo mode?",
+    "expected": {}
+  },
+  {
+    "id": "ho_chip_in",
+    "category": "room_negative",
+    "text": "Don't feel you have to answer everything, just chip in when it's useful.",
+    "expected": {},
+    "present": [
+      "Alex",
+      "Sam"
+    ]
+  },
+  {
+    "id": "ho_chatty_yesterday",
+    "category": "room_negative",
+    "text": "I had group mode on yesterday and it was a bit chatty.",
+    "expected": {}
+  },
+  {
+    "id": "ho_switch_group",
+    "category": "room_command",
+    "text": "Switch to group mode.",
+    "expected": {
+      "mode_command": "on"
+    }
+  },
+  {
+    "id": "ho_room_off",
+    "category": "room_command",
+    "text": "Turn room mode off please.",
+    "expected": {
+      "mode_command": "off"
+    }
+  },
+  {
+    "id": "ho_everyone_home",
+    "category": "room_command",
+    "text": "Everyone's gone home, it's just me.",
+    "expected": {
+      "mode_command": "off"
+    },
+    "present": []
+  },
+  {
+    "id": "ho_guests_on",
+    "category": "room_command",
+    "text": "Multi-person mode on, we've got guests.",
+    "expected": {
+      "mode_command": "on"
+    }
+  },
+  {
+    "id": "ho_neighbour",
+    "category": "people",
+    "text": "This is my neighbour Dave.",
+    "expected": {
+      "introductions": [
+        "Dave"
+      ]
+    }
+  },
+  {
+    "id": "ho_walked_in",
+    "category": "people",
+    "text": "Mateo just walked in.",
+    "expected": {
+      "introductions": [
+        "Mateo"
+      ]
+    }
+  },
+  {
+    "id": "ho_bed",
+    "category": "people",
+    "text": "Sam's gone to bed.",
+    "expected": {
+      "departures": [
+        "Sam"
+      ]
+    },
+    "present": [
+      "Sam"
+    ]
+  },
+  {
+    "id": "ho_two_left",
+    "category": "people",
+    "text": "Dave and Mateo have headed off.",
+    "expected": {
+      "departures": [
+        "Dave",
+        "Mateo"
+      ]
+    },
+    "present": [
+      "Dave",
+      "Mateo"
+    ]
+  },
+  {
+    "id": "ho_teo",
+    "category": "people",
+    "text": "This is Mateo, but everyone calls him Teo.",
+    "expected": {
+      "introductions": [
+        "Mateo"
+      ],
+      "aliases": {
+        "Mateo": "Teo"
+      }
+    }
+  },
+  {
+    "id": "ho_call_later",
+    "category": "people_negative",
+    "text": "Dave said he'd call later.",
+    "expected": {},
+    "known": [
+      "Dave"
+    ]
+  },
+  {
+    "id": "ho_talking_trip",
+    "category": "people_negative",
+    "text": "I was talking to Sam about the trip.",
+    "expected": {},
+    "known": [
+      "Sam"
+    ]
+  },
+  {
+    "id": "ho_davey",
+    "category": "spelling",
+    "text": "It's Dave, D-A-V-E, not Davey.",
+    "expected": {
+      "corrections": [
+        {
+          "who": "Davey",
+          "name": "Dave",
+          "also": ""
+        }
+      ]
+    },
+    "known": [
+      "Davey"
+    ],
+    "present": [
+      "Davey"
+    ]
+  },
+  {
+    "id": "ho_grout",
+    "category": "spelling_negative",
+    "text": "No, I said grout. G-R-O-U-T.",
+    "expected": {}
+  },
+  {
+    "id": "ho_rhythm",
+    "category": "spelling_negative",
+    "text": "How do you spell rhythm?",
+    "expected": {}
+  },
+  {
+    "id": "ho_gpt_time",
+    "category": "depth",
+    "text": "GPT, take your time with answers from now on.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "GPT",
+          "depth": "deep"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ho_quick",
+    "category": "depth",
+    "text": "Quick answers from now on, please.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "quick"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ho_normal",
+    "category": "depth",
+    "text": "Back to normal thinking, everyone.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "normal"
+        }
+      ]
+    }
+  },
+  {
+    "id": "ho_once_careful",
+    "category": "depth",
+    "text": "Just for this next answer, think it through really carefully.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "deep",
+          "once": true
+        }
+      ]
+    }
+  },
+  {
+    "id": "ho_think_permit",
+    "category": "depth_negative",
+    "text": "Think about whether the shed needs a permit.",
+    "expected": {}
+  },
+  {
+    "id": "ho_properly",
+    "category": "research",
+    "text": "Can you look into this properly and find me a real answer?",
+    "expected": {
+      "research": "more"
+    }
+  },
+  {
+    "id": "ho_forecast",
+    "category": "research_negative",
+    "text": "Look up tomorrow's forecast.",
+    "expected": {}
+  },
+  {
+    "id": "ho_council",
+    "category": "research",
+    "text": "Dig deeper on the council rules for fences.",
+    "expected": {
+      "research": "more"
+    }
+  },
+  {
+    "id": "ho_claude_best",
+    "category": "stronger_model",
+    "text": "Claude, switch to your best model.",
+    "expected": {
+      "stronger_model": [
+        "Claude"
+      ]
+    }
+  },
+  {
+    "id": "ho_better_chat",
+    "category": "stronger_model",
+    "text": "Use a better model for this chat.",
+    "expected": {
+      "stronger_model": [
+        "all"
+      ]
+    }
+  },
+  {
+    "id": "ho_which_model",
+    "category": "stronger_model_negative",
+    "text": "Which model are you running on?",
+    "expected": {}
+  },
+  {
+    "id": "ho_radio",
+    "category": "ask_answer_media",
+    "text": "That's just the radio.",
+    "expected": {
+      "media": true
+    },
+    "asking": true
+  },
+  {
+    "id": "ho_oh_mateo",
+    "category": "ask_answer",
+    "text": "Oh, that's Mateo.",
+    "expected": {
+      "introductions": [
+        "Mateo"
+      ]
+    },
+    "asking": true
+  },
+  {
+    "id": "ho_telly",
+    "category": "ask_answer_media",
+    "text": "It's the telly, ignore it.",
+    "expected": {
+      "media": true
+    },
+    "asking": true
+  },
+  {
+    "id": "ho_no_idea",
+    "category": "ask_answer_negative",
+    "text": "No idea, sorry.",
+    "expected": {},
+    "asking": true
+  },
+  {
+    "id": "ho_group_hi_sam",
+    "category": "two_intents",
+    "text": "Group mode on, and say hi to Sam.",
+    "expected": {
+      "mode_command": "on",
+      "introductions": [
+        "Sam"
+      ]
+    }
+  },
+  {
+    "id": "ho_gpt_harder_best",
+    "category": "two_intents",
+    "text": "Think harder and use your best model, GPT.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "GPT",
+          "depth": "deep"
+        }
+      ],
+      "stronger_model": [
+        "GPT"
+      ]
+    }
+  }
+]
