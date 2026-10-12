@@ -1,0 +1,135 @@
+{
+  "opening": {
+    "who": "Alex",
+    "text": "How do I make really good meatballs?"
+  },
+  "reply": "Soak some breadcrumbs in milk, then mix them through the mince with an egg, garlic and plenty of parmesan. Roll them small and even, chill them for twenty minutes, then brown them all over before they go into the sauce.",
+  "moments": [
+    {
+      "id": "pause_short",
+      "kind": "pause",
+      "who": "Alex",
+      "parts": [
+        "For dinner tonight I was thinking",
+        "we could do the meatballs again."
+      ],
+      "pause_s": 0.8
+    },
+    {
+      "id": "pause_one",
+      "kind": "pause",
+      "who": "Alex",
+      "parts": [
+        "The thing I need sorted for Saturday is",
+        "a cake for about twelve people."
+      ],
+      "pause_s": 1.2
+    },
+    {
+      "id": "pause_um",
+      "kind": "pause",
+      "who": "Alex",
+      "parts": [
+        "What goes well with roast lamb, um,",
+        "something green maybe."
+      ],
+      "pause_s": 1.4
+    },
+    {
+      "id": "pause_two",
+      "kind": "pause",
+      "who": "Alex",
+      "parts": [
+        "Can you remind me what we said about",
+        "the plumber coming on Thursday."
+      ],
+      "pause_s": 2.0
+    },
+    {
+      "id": "pause_three",
+      "kind": "pause",
+      "who": "Alex",
+      "parts": [
+        "I keep forgetting the name of that",
+        "little Italian place near the station."
+      ],
+      "pause_s": 3.0
+    },
+    {
+      "id": "pause_cafe",
+      "kind": "pause",
+      "who": "Alex",
+      "noise": "cafe",
+      "parts": [
+        "If we leave at ten we could",
+        "get there before the lunch rush."
+      ],
+      "pause_s": 1.2
+    },
+    {
+      "id": "over_stop",
+      "kind": "over",
+      "group": "interrupt",
+      "who": "Alex",
+      "text": "Wait, stop."
+    },
+    {
+      "id": "over_name",
+      "kind": "over",
+      "group": "interrupt",
+      "who": "Alex",
+      "text": "Claude, hang on a second."
+    },
+    {
+      "id": "over_question",
+      "kind": "over",
+      "group": "interrupt",
+      "who": "Alex",
+      "text": "Hold on, how long do they go in the fridge?"
+    },
+    {
+      "id": "over_yeah",
+      "kind": "over",
+      "group": "backchannel",
+      "who": "Alex",
+      "text": "Yeah."
+    },
+    {
+      "id": "over_mmhm",
+      "kind": "over",
+      "group": "backchannel",
+      "who": "Alex",
+      "text": "Mm-hm."
+    },
+    {
+      "id": "over_right",
+      "kind": "over",
+      "group": "backchannel",
+      "who": "Alex",
+      "text": "Right, okay."
+    },
+    {
+      "id": "over_aside_owner",
+      "kind": "over",
+      "group": "aside",
+      "who": "Alex",
+      "text": "Sam, can you grab the plates?"
+    },
+    {
+      "id": "over_aside_guest",
+      "kind": "over",
+      "group": "aside",
+      "who": "Sam",
+      "text": "It smells amazing in here.",
+      "gain_db": -4
+    },
+    {
+      "id": "over_tv",
+      "kind": "over",
+      "group": "background",
+      "who": "TV",
+      "text": "In other news, heavy rain is expected across the city tonight.",
+      "gain_db": -6
+    }
+  ]
+}

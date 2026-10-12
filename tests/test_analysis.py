@@ -151,7 +151,7 @@ def test_every_measurement_states_its_cost_and_what_it_touches():
 def test_the_table_carries_measurements_and_no_guard():
     ids = [m.id for m in analysis.MEASUREMENTS]
     assert ids == ["critic", "attribution", "recall", "intent", "voice", "bargein",
-                   "addressee"]
+                   "addressee", "turns"]
     assert "eval_silence" not in {m.module for m in analysis.MEASUREMENTS}
 
 
@@ -389,6 +389,12 @@ def test_each_headline_reads_its_own_report():
         "jev": {"all_right": 55, "cases": 61, "wrong_skips": 0, "of_for_ais": 28,
                 "errors": 0, "cost_usd": 0.0018},
         "claude": {"errors": 61, "cost_usd": 0.0}})
+    turns = s("turns", {"summary": {"jumped_in_short": 0, "short": 4, "over_right": 8,
+                                    "over": 9, "send_ms": 1890},
+                        "cost": {"lines_usd": 0.04, "replies_usd": 0.22, "stt_usd": 0.01}})
+    assert turns == {"headline": "Ended a turn early on 0 of 4 short pauses. Talking "
+                                 "over a reply, right on 8 of 9. A turn was sent 1.9s "
+                                 "after the last word.", "spent_usd": 0.27}
     assert addr == {"headline": "Today's rules start a round on 33 of 33 turns "
                                 "that weren't for the AIs. Jev got 55 of 61 right "
                                 "and skipped 0 of 28 turns for the AIs.",

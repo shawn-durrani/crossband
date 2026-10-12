@@ -246,6 +246,7 @@ CONVERTED = {
     "eval_intent/README.md",
     "eval_bargein/README.md",
     "eval_addressee/README.md",
+    "eval_turns/README.md",
     "eval_recall/README.md",
     "eval_voice/README.md",
     "docs/README.md",

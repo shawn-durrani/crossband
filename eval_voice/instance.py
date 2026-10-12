@@ -62,9 +62,11 @@ def check_port(port: int) -> None:
         raise InstanceError(f"something is already listening on port {port}")
 
 
-def snapshot_code(dest: Path, repo: Path = REPO) -> Path:
+def snapshot_code(dest: Path, repo: Path = REPO, frontend: bool = False) -> Path:
     """Copy the backend package and config.json, nothing else, into
-    `dest/code`. What runs is the code as it is in this checkout now."""
+    `dest/code`. What runs is the code as it is in this checkout now. With
+    `frontend`, the built page in frontend/dist comes too, so a browser can
+    open the copy (the turn-taking rig, eval_turns)."""
     code = Path(dest) / "code"
     if code.exists():
         shutil.rmtree(code)
@@ -72,12 +74,19 @@ def snapshot_code(dest: Path, repo: Path = REPO) -> Path:
     shutil.copytree(repo / "backend", code / "backend",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(repo / "config.json", code / "config.json")
+    if frontend:
+        dist = repo / "frontend" / "dist"
+        if not (dist / "index.html").is_file():
+            raise InstanceError("the page isn't built; run `npm run build` "
+                                "in frontend/ first")
+        shutil.copytree(dist, code / "frontend" / "dist")
     return code
 
 
 def instance_env(port: int, data_dir: Path, keys: dict, *, owner: str,
                  diariser: str = "", calibrated: bool = True,
-                 session_idle_s: float = 0.0, environ=None) -> dict:
+                 session_idle_s: float = 0.0, environ=None,
+                 allowed_keys=KEYS) -> dict:
     """The instance's whole environment. Pure, so the tests can pin what
     goes in and what's left out."""
     environ = os.environ if environ is None else environ
@@ -97,7 +106,7 @@ def instance_env(port: int, data_dir: Path, keys: dict, *, owner: str,
         env["CROSSBAND_DIARIZE_SHADOW_URL"] = diariser
     if session_idle_s:
         env["CROSSBAND_VOICE_SESSION_IDLE_S"] = f"{float(session_idle_s):g}"
-    for k in KEYS:
+    for k in allowed_keys:
         if keys.get(k):
             env[k] = keys[k]
     return env
@@ -108,7 +117,8 @@ class Instance:
 
     def __init__(self, run_dir, *, port=DEFAULT_PORT, keys=None, owner="Alex",
                  diariser="", calibrated=True, session_idle_s=0.0,
-                 models_dir=None, python=None, repo=REPO):
+                 models_dir=None, python=None, repo=REPO, frontend=False,
+                 allowed_keys=KEYS):
         self.run_dir = Path(run_dir)
         self.port = port
         self.keys = dict(keys or {})
@@ -119,6 +129,8 @@ class Instance:
         self.models_dir = Path(models_dir) if models_dir else None
         self.python = python or sys.executable
         self.repo = Path(repo)
+        self.frontend = frontend
+        self.allowed_keys = tuple(allowed_keys)
         self.proc = None
         self.data_dir = self.run_dir / "data"
         self.log_path = self.run_dir / "instance.log"
@@ -143,11 +155,12 @@ class Instance:
             link = self.data_dir / "voice_models"
             if not link.exists():
                 link.symlink_to(self.models_dir, target_is_directory=True)
-        code = snapshot_code(self.run_dir, self.repo)
+        code = snapshot_code(self.run_dir, self.repo, frontend=self.frontend)
         env = instance_env(self.port, self.data_dir, self.keys,
                            owner=self.owner, diariser=self.diariser,
                            calibrated=self.calibrated,
-                           session_idle_s=self.session_idle_s)
+                           session_idle_s=self.session_idle_s,
+                           allowed_keys=self.allowed_keys)
         log = open(self.log_path, "ab")
         self.proc = subprocess.Popen(
             [self.python, "-m", "backend"], cwd=str(code), env=env,

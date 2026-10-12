@@ -213,6 +213,20 @@ MEASUREMENTS = (
                  "TypeSafe when there's a key. Nothing of yours is read."),
         args=("--judge", "rules", "--judge", "jev", "--judge", "claude"),
         timeout_s=900.0, readme="eval_addressee/README.md"),
+    Measurement(
+        id="turns", module="eval_turns", title="Turn-taking rig",
+        measures=("Does the app wait out a pause in the middle of a "
+                  "sentence, and does talking over a reply cut it only when "
+                  "it should? It plays made-up moments into the real voice "
+                  "page and times every pause, cut and send."),
+        costs=("About 30 cents, most of it the app speaking a stand-in "
+               "seat's replies on ElevenLabs. The moments' own lines cost "
+               "about 4 cents the first time."),
+        takes="About six minutes.",
+        touches=("A second copy of the app on port 8921 with its own data "
+                 "folder and memory switched off, opened in a headless "
+                 "browser. Your chats, people and memory aren't touched."),
+        timeout_s=1800.0, readme="eval_turns/README.md"),
 )
 
 _BY_ID = {m.id: m for m in MEASUREMENTS}
@@ -735,9 +749,22 @@ def _addressee(r: dict):
     return " ".join(parts) or "The report is saved.", spent
 
 
+def _turns(r: dict):
+    s = r.get("summary") or {}
+    send = s.get("send_ms")
+    line = (f"Ended a turn early on {s.get('jumped_in_short', 0)} of "
+            f"{s.get('short', 0)} short pauses. Talking over a reply, right on "
+            f"{s.get('over_right', 0)} of {s.get('over', 0)}.")
+    if send is not None:
+        line += f" A turn was sent {send / 1000:.1f}s after the last word."
+    c = r.get("cost") or {}
+    spent = sum(float(c.get(k) or 0) for k in ("lines_usd", "replies_usd", "stt_usd"))
+    return line, spent
+
+
 _SUMMARIES = {"critic": _critic, "attribution": _attribution,
               "recall": _recall, "intent": _intent, "voice": _voice,
-              "bargein": _bargein, "addressee": _addressee}
+              "bargein": _bargein, "addressee": _addressee, "turns": _turns}
 
 
 def summarise(measurement_id: str, report, practice: bool = False) -> dict:
