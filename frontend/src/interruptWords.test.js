@@ -103,3 +103,16 @@ test('whether the reply so far ends on a question', () => {
   assert.equal(endsOnQuestion('Here they are. Want me to'), false)
   assert.equal(endsOnQuestion(''), false)
 })
+
+test('the verdict says which rule decided, so a judge can weigh in on word count alone', () => {
+  const why = (t, asked = false) => judgeWords(t, { seats, people, asked }).why
+  assert.equal(why('Wait.'), 'stop')
+  assert.equal(why('Claude, hold that'), 'seat')
+  assert.equal(why('Sam, pass the salt'), 'name')
+  assert.equal(why('yeah', true), 'answer')
+  assert.equal(why('These are not gonna work.'), 'words')
+  assert.equal(why('Tomorrow'), 'words')
+  assert.equal(why('Um'), 'filler')
+  assert.equal(why('Mm-hm.'), 'listen')
+  assert.equal(why('(sizzling)'), 'none')
+})

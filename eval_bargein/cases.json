@@ -1,0 +1,1634 @@
+[
+  {
+    "id": "listen_1",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yeah.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_2",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Mm-hm.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_3",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Right, right.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_4",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Oh wow.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_5",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Makes sense.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_6",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Okay, cool.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_7",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yep.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_8",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Huh, interesting.",
+    "expected": "listening"
+  },
+  {
+    "id": "answer_yeah",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "I can pull the live voice numbers now if you like. Want me to?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yeah.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_yes_please",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "I can pull the live voice numbers now if you like. Want me to?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yes please.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_nah",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "I can pull the live voice numbers now if you like. Want me to?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Nah, that's fine.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_number",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "Do you want the oven at one eighty or two hundred?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "One eighty.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_wait_question",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Wait, how long in the fridge?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_correction",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "No, I meant the panko, not bread.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_hang_on",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Hang on, what grit did you say?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_stop_by_name",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Claude, stop.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_repeat",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sorry, can you say that again?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_skip",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Actually, skip the sanding bit, it's already smooth.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_wrong",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "That's not right, the recipe says two eggs.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "aside_named_salt",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sam, pass the salt.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_named_colander",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Mateo"
+    ],
+    "words": "Mateo, can you grab the colander?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_named_babe",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sam, they're falling apart.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_not_gonna_work",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "These are not gonna work.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_oven_down",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can you turn the oven down a bit?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_hot",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Careful, that pan's hot.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_more_mince",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "We're gonna need more mince than this.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_late",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Did you lock the car?",
+    "expected": "aside"
+  },
+  {
+    "id": "relay_two_eggs",
+    "category": "relay",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "It says two eggs.",
+    "expected": "aside"
+  },
+  {
+    "id": "relay_reckons",
+    "category": "relay",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Claude reckons twenty minutes in the fridge.",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_asks_ai",
+    "category": "guest_to_ai",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can you tell us how long to rest them?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "guest_names_ai",
+    "category": "guest_to_ai",
+    "seat": "GPT",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Hey GPT, what about breadcrumbs instead?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "guest_aside_eggs",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Do we have any more eggs?",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_aside_babe",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Babe, they're falling apart.",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_listening",
+    "category": "guest_listening",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Mm, okay.",
+    "expected": "listening"
+  },
+  {
+    "id": "tv_news",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "The rest of the weekend looks dry, so it's a good time to oil the deck",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "And in other news tonight, the council has approved the new bridge.",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_ad",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "Stay with us, we'll be right back after the break.",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_question",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "So what do you think happens next?",
+    "expected": "aside"
+  },
+  {
+    "id": "unknown_door",
+    "category": "unknown",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "unknown",
+    "room": [
+      "Sam"
+    ],
+    "words": "Hello? Anyone home?",
+    "expected": "aside"
+  },
+  {
+    "id": "exclaim_ouch",
+    "category": "exclaim",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Ouch!",
+    "expected": "aside"
+  },
+  {
+    "id": "exclaim_burning",
+    "category": "exclaim",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Oh no, it's burning!",
+    "expected": "aside"
+  },
+  {
+    "id": "listen_more_1",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Uh-huh.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_2",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "True.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_3",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Ha, nice.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_4",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "A fraction is just one number divided by another, so three quarters means three parts out of four",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Gotcha.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_5",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Oh really?",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_6",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Fair enough.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_7",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sure, sure.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_8",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Okay, okay.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_9",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "A fraction is just one number divided by another, so three quarters means three parts out of four",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Right.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_10",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Wow, okay.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_11",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Mm, yeah.",
+    "expected": "listening"
+  },
+  {
+    "id": "listen_more_12",
+    "category": "listening",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yeah, yeah.",
+    "expected": "listening"
+  },
+  {
+    "id": "guest_listen_1",
+    "category": "guest_listening",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Mm-hm.",
+    "expected": "listening"
+  },
+  {
+    "id": "guest_listen_2",
+    "category": "guest_listening",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Oh, nice.",
+    "expected": "listening"
+  },
+  {
+    "id": "guest_listen_3",
+    "category": "guest_listening",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yeah.",
+    "expected": "listening"
+  },
+  {
+    "id": "answer_more_1",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "I can put together a shopping list for the week. Want me to?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yeah, go on.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_more_2",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "I can put together a shopping list for the week. Want me to?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "No thanks.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_more_3",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "Should I go with the beef or the pork version?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "The pork one.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_more_4",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "Should I go with the beef or the pork version?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sure, why not.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_more_5",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "I can put together a shopping list for the week. Want me to?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Maybe later.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "answer_more_6",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "Do you want the oven at one eighty or two hundred?",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Um, yes.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "guest_answer_oven",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "Do you want the oven at one eighty or two hundred?",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Two hundred.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "guest_answer_list",
+    "category": "answer",
+    "seat": "Claude",
+    "ai_said": "I can put together a shopping list for the week. Want me to?",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yes please, do that.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_1",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "What's panko?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_2",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "How many eggs again?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_3",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Do you want the oven at one eighty or two hundred.",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Is that fan forced?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_4",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can I use oil instead of butter?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_5",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Will the kids eat that though?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_6",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "What if it rains tomorrow?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_7",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "What time does it leave?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_8",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "A fraction is just one number divided by another, so three quarters means three parts out of four",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "So what's two thirds then?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_9",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Which takeaway, though?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_asks_10",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Do I need a mask for that?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_redirects_1",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "No, it's a gas oven.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_redirects_2",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "We don't have a food processor.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_redirects_3",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "That's too long, give me the short version.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_redirects_4",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Forget the sauce, just the meatballs.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_redirects_5",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "I asked about the fence, not the deck.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_redirects_6",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "That's not right, we hardly ordered anything.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_holds_1",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Okay, enough about that.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_holds_2",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "A fraction is just one number divided by another, so three quarters means three parts out of four",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Let me think for a sec.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_holds_3",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "That's plenty, thanks.",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_holds_4",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can we pause there?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_names_mid_1",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "What do you think, GPT?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_names_mid_2",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "And Claude, how long for the sauce?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "owner_names_mid_3",
+    "category": "interrupt",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Hang about, what's GPT's take on this?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "aside_named_more_1",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sam, can you stir that?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_named_more_2",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Mateo"
+    ],
+    "words": "Mateo, did you book the hotel?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_named_more_3",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Dave"
+    ],
+    "words": "Dave, grab the other brush.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_named_more_4",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sam, taste this.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_named_more_5",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Sam, did you order Thai last week?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_named_more_6",
+    "category": "aside_named",
+    "seat": "Claude",
+    "ai_said": "A fraction is just one number divided by another, so three quarters means three parts out of four",
+    "speaker": "owner",
+    "room": [
+      "Mateo"
+    ],
+    "words": "Mateo, are you listening?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_1",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Is the water boiling yet?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_2",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can you hand me that?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_3",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Where did we put the grater?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_4",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Did you hear that?",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_5",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "I'll do the sauce, you do the pasta.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_6",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "It's your turn to wash the brushes.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_7",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Look at this mess.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_8",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Smells good though.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_9",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "These look better than last time.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_10",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "I'm starving.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_11",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "We should eat outside tonight.",
+    "expected": "aside"
+  },
+  {
+    "id": "aside_unnamed_more_12",
+    "category": "aside_unnamed",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "See, I told you.",
+    "expected": "aside"
+  },
+  {
+    "id": "self_1",
+    "category": "exclaim",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Oops.",
+    "expected": "aside"
+  },
+  {
+    "id": "self_2",
+    "category": "exclaim",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Where's the... ah, there it is.",
+    "expected": "aside"
+  },
+  {
+    "id": "self_3",
+    "category": "exclaim",
+    "seat": "Claude",
+    "ai_said": "Start with 120 grit, then move up to 180, and wipe the dust off between coats",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Dammit.",
+    "expected": "aside"
+  },
+  {
+    "id": "self_4",
+    "category": "exclaim",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Come on, come on.",
+    "expected": "aside"
+  },
+  {
+    "id": "self_5",
+    "category": "exclaim",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Hmm, where was I.",
+    "expected": "aside"
+  },
+  {
+    "id": "relay_more_1",
+    "category": "relay",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "It's saying to chill them first.",
+    "expected": "aside"
+  },
+  {
+    "id": "relay_more_2",
+    "category": "relay",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "GPT says use panko.",
+    "expected": "aside"
+  },
+  {
+    "id": "relay_more_3",
+    "category": "relay",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Apparently you're meant to soak the bread.",
+    "expected": "aside"
+  },
+  {
+    "id": "relay_more_4",
+    "category": "relay",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "It reckons we'd get there by four.",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_to_ai_more_1",
+    "category": "guest_to_ai",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can you do one without eggs?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "guest_to_ai_more_2",
+    "category": "guest_to_ai",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "What if we don't have milk?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "guest_to_ai_more_3",
+    "category": "guest_to_ai",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "How long for the sauce?",
+    "expected": "interrupt"
+  },
+  {
+    "id": "guest_tells_owner_to_ask",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Ask it about the oven.",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_aside_more_1",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Do you want a glass of wine?",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_aside_more_2",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "I'm not getting up at six.",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_aside_more_3",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Mind the wet paint.",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_aside_more_4",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can you move, I need the fridge.",
+    "expected": "aside"
+  },
+  {
+    "id": "guest_aside_more_5",
+    "category": "guest_aside",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "Sam",
+    "room": [
+      "Sam"
+    ],
+    "words": "That was your fault.",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_more_1",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "Text in now and tell us what you think.",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_more_2",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "Coming up next, how to make the perfect meatball.",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_more_3",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "Wait, what? You can't be serious.",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_more_4",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "Stop right there, police!",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_more_5",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "Tomorrow, a top of twenty six in Melbourne.",
+    "expected": "aside"
+  },
+  {
+    "id": "tv_more_6",
+    "category": "tv",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "tv",
+    "room": [
+      "Sam"
+    ],
+    "words": "Can you believe what this man just said?",
+    "expected": "aside"
+  },
+  {
+    "id": "unknown_delivery",
+    "category": "unknown",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "unknown",
+    "room": [
+      "Sam"
+    ],
+    "words": "Delivery for Alex?",
+    "expected": "aside"
+  },
+  {
+    "id": "unknown_kid",
+    "category": "unknown",
+    "seat": "Claude",
+    "ai_said": "A fraction is just one number divided by another, so three quarters means three parts out of four",
+    "speaker": "unknown",
+    "room": [
+      "Sam"
+    ],
+    "words": "Mum, where's my charger?",
+    "expected": "aside"
+  },
+  {
+    "id": "unknown_speakerphone",
+    "category": "unknown",
+    "seat": "Claude",
+    "ai_said": "Your grocery spending is up about twelve percent on last month, mostly from takeaway",
+    "speaker": "unknown",
+    "room": [
+      "Sam"
+    ],
+    "words": "Hi, it's Dave, can you call me back?",
+    "expected": "aside"
+  },
+  {
+    "id": "phone_1",
+    "category": "phone",
+    "seat": "Claude",
+    "ai_said": "The train gets into Melbourne at four, so you'd have time to check in before dinner",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Hello? Oh, hi Dave.",
+    "expected": "aside"
+  },
+  {
+    "id": "phone_2",
+    "category": "phone",
+    "seat": "Claude",
+    "ai_said": "For the sauce, soften an onion in olive oil, add crushed tomatoes and let it simmer for half an hour",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "I'm cooking, can I call you back?",
+    "expected": "aside"
+  },
+  {
+    "id": "phone_3",
+    "category": "phone",
+    "seat": "Claude",
+    "ai_said": "Give the deck two coats of oil a day apart, and keep it dry for forty eight hours after",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Yeah, Saturday works for us.",
+    "expected": "aside"
+  },
+  {
+    "id": "dog_1",
+    "category": "pet",
+    "seat": "Claude",
+    "ai_said": "Soak the breadcrumbs in milk for a few minutes, then mix them through the mince with an egg",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Get off the bench!",
+    "expected": "aside"
+  },
+  {
+    "id": "dog_2",
+    "category": "pet",
+    "seat": "Claude",
+    "ai_said": "Chill the balls for about twenty minutes before you brown them, so they hold together",
+    "speaker": "owner",
+    "room": [
+      "Sam"
+    ],
+    "words": "Good boy, sit.",
+    "expected": "aside"
+  }
+]

@@ -244,6 +244,7 @@ def test_long_docs_stay_navigable():
 CONVERTED = {
     "README.md",
     "eval_intent/README.md",
+    "eval_bargein/README.md",
     "eval_recall/README.md",
     "eval_voice/README.md",
     "docs/README.md",

@@ -113,6 +113,10 @@ how.
   hear what you meant, and does it hear at least as much as a baseline
   of fixed phrase lists? Made-up turns, the utility model, API spend
   per run.
+- [eval_bargein/README.md](../eval_bargein/README.md): the
+  interruption question. When someone talks over a reply, was it meant
+  for the AIs? Today's word rules, a small Claude model and Jev judge
+  made-up moments. Anthropic spend per run, and TypeSafe's with a key.
 - [eval_voice/README.md](../eval_voice/README.md): the voice naming
   question. Does the app put the right name on each spoken turn, over
   noise and when two people talk at once? Made-up conversations in
