@@ -11,6 +11,7 @@ marker so the transcript stays honest and the models know to drop that thread.
 
 import asyncio
 import base64
+from collections import Counter
 import json
 import logging
 import re
@@ -98,11 +99,20 @@ def _prewarm_matches(prewarm_norm, final_norm):
     punctuation - accept when one normalized form is a prefix of the other
     covering >= PREWARM_MIN_OVERLAP of its length. Ambient recall is
     advisory by design ("use what bears, ignore what doesn't"), and equal
-    transcripts compare equal here, so the acceptance bound above holds."""
+    transcripts compare equal here, so the acceptance bound above holds.
+
+    #625: a live transcript also settles a word or two differently from
+    its final one ("gonna" against "going to"), which no prefix catches.
+    Those match when the words they share are PREWARM_MIN_OVERLAP of the
+    longer one's."""
     if not prewarm_norm or not final_norm:
         return False
     shorter, longer = sorted((prewarm_norm, final_norm), key=len)
-    return longer.startswith(shorter) and len(shorter) / len(longer) >= PREWARM_MIN_OVERLAP
+    if longer.startswith(shorter) and len(shorter) / len(longer) >= PREWARM_MIN_OVERLAP:
+        return True
+    a, b = shorter.split(), longer.split()
+    shared = sum((Counter(a) & Counter(b)).values())
+    return bool(a and b) and shared / max(len(a), len(b)) >= PREWARM_MIN_OVERLAP
 
 
 def _chat_memory_enabled(chat_id):
@@ -115,16 +125,25 @@ def _chat_memory_enabled(chat_id):
         con.close()
 
 
-def prewarm_recall(chat_id, text, memory, history=True, owner_name="User"):
-    """Start the ambient recall for a voice utterance at speech-end (called
-    from the STT relay when the commit frame passes through). Replaces any
-    prior prewarm for the chat, cancelling its task so a superseded
-    utterance can't leak a stray request. Fire-and-forget: the round adopts
-    the task if it matches, and memory.recall itself fails soft to [].
-    `history` is the history_prefetch setting (membro#136), and
+def prewarm_recall(chat_id, text, memory, history=True, owner_name="User",
+                   when="commit"):
+    """Start the ambient recall for a voice utterance (called from the STT
+    relay). #625: it starts when the pause after the words begins (`when`
+    "pause"), from the live transcript so far, and again at the commit.
+    The commit keeps a recent lookup whose words still match, so the head
+    start isn't thrown away, and otherwise replaces it, cancelling its task
+    so a superseded utterance can't leak a stray request. Fire-and-forget:
+    the round adopts the task if it matches, and memory.recall itself fails
+    soft to []. `history` is the history_prefetch setting (membro#136), and
     `owner_name` the user_name setting its owner rule reads."""
     norm = _norm_query(text)
     if memory is None or not norm:
+        return
+    kept = _recall_prewarm.get(chat_id)
+    if kept and not kept["task"].cancelled() \
+            and (time.monotonic() - kept["at"]) <= PREWARM_TTL_S \
+            and _prewarm_matches(kept["norm"], norm):
+        log.info("recall prewarm kept: chat=%s at=%s", chat_id, when)
         return
 
     async def _job():
@@ -142,7 +161,7 @@ def prewarm_recall(chat_id, text, memory, history=True, owner_name="User"):
     _recall_prewarm[chat_id] = {"norm": norm,
                                 "task": asyncio.create_task(_job()),
                                 "at": time.monotonic()}
-    log.info("recall prewarm started: chat=%s norm_chars=%d", chat_id, len(norm))
+    log.info("recall prewarm started: chat=%s norm_chars=%d at=%s", chat_id, len(norm), when)
     # membro#136: a turn that asks about the person or their past starts
     # its search of the saved chats here too, beside the recall, when it
     # can be the owner's (_history_gate).

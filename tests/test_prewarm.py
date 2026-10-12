@@ -52,6 +52,16 @@ def test_norm_and_match_bounds():
     assert not engine._prewarm_matches("", n("anything"))
 
 
+def test_a_word_settled_differently_still_matches():
+    # #625: a live transcript can settle a word differently from its final,
+    # which no prefix catches.
+    n = engine._norm_query
+    assert engine._prewarm_matches(n("how long do I chill the meatballs for"),
+                                   n("How long should I chill the meatballs for?"))
+    assert not engine._prewarm_matches(n("first utterance text"),
+                                       n("second utterance text"))
+
+
 # ---------- the store ----------
 
 def test_prewarm_replaces_and_cancels_the_previous_task(app):
@@ -70,6 +80,29 @@ def test_prewarm_replaces_and_cancels_the_previous_task(app):
             await asyncio.sleep(0.01)
             assert first.cancelled()
             assert engine._recall_prewarm[chat["id"]]["norm"] == "second utterance text"
+    asyncio.run(go())
+
+
+def test_the_commit_keeps_a_lookup_started_at_the_pause_when_the_words_match(app):
+    # #625: the head start isn't thrown away; different words start afresh.
+    class SlowMemory:
+        async def recall(self, q, limit=10, origin="http", **kw):
+            await asyncio.sleep(30)
+            return []
+
+    async def go():
+        with TestClient(app, base_url="http://127.0.0.1") as c:
+            chat = c.post("/api/chats", json={}).json()["id"]
+            engine.prewarm_recall(chat, "how long do I chill the", SlowMemory(), when="pause")
+            early = engine._recall_prewarm[chat]["task"]
+            await asyncio.sleep(0.01)
+            engine.prewarm_recall(chat, "how long do I chill them", SlowMemory())
+            assert engine._recall_prewarm[chat]["task"] is early
+            assert not early.cancelled()
+            engine.prewarm_recall(chat, "what's on the telly tonight", SlowMemory())
+            await asyncio.sleep(0.01)
+            assert early.cancelled()
+            assert engine._recall_prewarm[chat]["norm"] == "whats on the telly tonight"
     asyncio.run(go())
 
 

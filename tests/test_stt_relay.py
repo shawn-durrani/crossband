@@ -132,6 +132,31 @@ def test_relay_round_trip_fires_prewarm_and_returns_final(app, relay, monkeypatc
     assert relay.sent[-1]["commit"] is True  # commit reached the STT provider
 
 
+def test_the_pause_hint_starts_the_lookup_from_words_since_the_last_commit(
+        app, relay, monkeypatch):
+    # #625: the hint starts the memory lookup before the pause runs out.
+    # After a commit, a hint with no new words starts nothing.
+    calls = []
+    monkeypatch.setattr(voice_router.engine, "prewarm_recall",
+                        lambda chat_id, text, memory, history, owner_name, when="commit":
+                        calls.append((text, when)))
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat = c.post("/api/chats", json={}).json()
+        with c.websocket_connect("/api/voice/stt-stream") as ws:
+            ws.send_json({"chat_id": chat["id"]})
+            assert ws.receive_json()["session"]
+            ws.send_json({"speculative": True})          # no words yet
+            ws.send_json(_frame())
+            assert ws.receive_json() == {"partial": "hello"}
+            ws.send_json({"speculative": True})
+            ws.send_json(_frame(commit=True))
+            assert ws.receive_json() == {"final": "hello world"}
+            ws.send_json({"speculative": True})          # nothing new since the commit
+            ws.send_json({"done": True})
+    assert calls == [("hello", "pause"), ("hello", "commit")]
+    assert "speculative" not in json.dumps(relay.sent)
+
+
 def test_prewarm_failure_never_breaks_transcription(app, relay, monkeypatch):
     def boom(chat_id, text, memory):
         raise RuntimeError("prewarm is on fire")
