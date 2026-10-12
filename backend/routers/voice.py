@@ -212,6 +212,51 @@ STT_BACKUP_WHY = {"batch", "reconnecting", "reconnect", "late", "rescue",
 _BATCH_PCM_MAX_BYTES = diarize.MAX_UTTERANCE_SECONDS * 48000 * 2 + 4096
 
 
+async def _keyterm_names(cfg, chat_id):
+    """Keyterms (#28 phase 3): the owner's `user_name` plus the present
+    roster's display names, so the transcriber stops spelling the people in
+    the room by ear. The realtime relay reads them once at session open,
+    and the backup path once per turn (#627). A failed read degrades to the
+    owner's name alone, never to a failed transcription."""
+    keyterm_names = [cfg.get("user_name") or ""]
+    if chat_id:
+        try:
+            def _reads():
+                con = db.connect()
+                try:
+                    roster = db.get_room_roster(con, chat_id,
+                                                present_only=True)
+                finally:
+                    con.close()
+                from .. import anchors
+                people = anchors.store().people()
+                preferred = {p["name"].lower(): p["preferred_name"]
+                             for p in people}
+                names = [preferred.get(r["name"].lower(), r["name"])
+                         for r in roster]
+                # Every REMEMBERED person's names ride the keyterm hints too
+                # (#28, sixth field test): pre-arm the roster is empty, so a
+                # known name got no transcription bias and arrived misspelt
+                # ("Rina"). Remembered people are exactly who is likely to
+                # speak in this house; the relay caps the list at the API's
+                # limit downstream. Preferred and given forms both help.
+                for p in people:
+                    names.append(preferred.get(p["name"].lower()) or p["name"])
+                    names.append(p["name"])
+                    # Merged-away spellings ride too (#28, names collapse
+                    # by voice): a person the store knows under a second
+                    # spelling should have every form biased, or the
+                    # transcriber re-mints the very spelling drift the
+                    # merge just resolved.
+                    names.extend(p["merged_names"])
+                return names
+            keyterm_names += await asyncio.to_thread(_reads)
+        except Exception:
+            log.warning("keyterm names not read; transcription continues",
+                        exc_info=True)
+    return keyterm_names
+
+
 @router.post("/api/chats/{chat_id}/stt")
 async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
               duration_ms: int = Form(0), turn_id: str = Form(""),
@@ -255,14 +300,17 @@ async def stt(chat_id: int, request: Request, file: UploadFile = File(...),
         except Exception:
             log.warning("batch identity check not started; transcription "
                         "continues", exc_info=True)
+    keyterms = await _keyterm_names(cfg, chat_id)
     try:
         if from_ms > 0:
             text, model_used, words = await asyncio.to_thread(
-                voice.transcribe, data, file.content_type, cfg, with_words=True)
+                voice.transcribe, data, file.content_type, cfg, with_words=True,
+                keyterms=keyterms, voice_turn=True)
             text = _backup_words(chat_id, text, words, from_ms / 1000)
         else:
             text, model_used = await asyncio.to_thread(
-                voice.transcribe, data, file.content_type, cfg)
+                voice.transcribe, data, file.content_type, cfg,
+                keyterms=keyterms, voice_turn=True)
     except RuntimeError as e:
         raise HTTPException(502, str(e))
     seconds = max(duration_ms, 0) / 1000
@@ -904,51 +952,11 @@ async def stt_stream_relay(ws: WebSocket):
     # Session-open reads (one worker-thread trip, NEVER on the audio path):
     # the names the transcriber should spell consistently.
     #
-    # Keyterms (#28 phase 3): the owner's `user_name` plus the present
-    # roster's display names ride the upstream connection URL's keyterms
-    # parameter, so the realtime transcriber stops spelling the people in
-    # the room by ear. Chosen here, once, at open - the per-frame relay loop
-    # below is untouched, and a failed read degrades to the owner's name
-    # alone, never to a broken session.
-    keyterm_names = [cfg.get("user_name") or ""]
-    if chat_id:
-        try:
-            def _session_open_reads():
-                con = db.connect()
-                try:
-                    roster = db.get_room_roster(con, chat_id,
-                                                present_only=True)
-                finally:
-                    con.close()
-                from .. import anchors
-                people = anchors.store().people()
-                preferred = {p["name"].lower(): p["preferred_name"]
-                             for p in people}
-                names = [preferred.get(r["name"].lower(), r["name"])
-                         for r in roster]
-                # Every REMEMBERED person's names ride the keyterm hints too
-                # (#28, sixth field test): pre-arm the roster is empty, so a
-                # known name got no transcription bias and arrived misspelt
-                # ("Rina"). Remembered people are exactly who is likely to
-                # speak in this house; the relay caps the list at the API's
-                # limit downstream. Preferred and given forms both help.
-                for p in people:
-                    names.append(preferred.get(p["name"].lower()) or p["name"])
-                    names.append(p["name"])
-                    # Merged-away spellings ride too (#28, names collapse
-                    # by voice): a person the store knows under a second
-                    # spelling should have every form biased, or the
-                    # transcriber re-mints the very spelling drift the
-                    # merge just resolved.
-                    names.extend(p["merged_names"])
-                return names
-            keyterm_names += await asyncio.to_thread(_session_open_reads)
-        except Exception:
-            log.warning("keyterm names not read; session continues",
-                        exc_info=True)
+    keyterm_names = await _keyterm_names(cfg, chat_id)
     try:
         async with websockets.connect(
-            voice.stt_ws_url(keyterm_names, timestamps=True),
+            voice.stt_ws_url(keyterm_names, timestamps=True,
+                             language=voice.stt_language(cfg)),
             additional_headers={"xi-api-key": voice.api_key()},
             max_size=16 * 1024 * 1024,
         ) as eleven:

@@ -353,6 +353,11 @@ class Settings(BaseModel):
     # A seat can set its own (participants.tts_v3_accent_tag).
     tts_v3_accent_tag: str = ""
     stt_model: str = "scribe_v2"
+    # The language people speak to Crossband in, as a two or three letter
+    # code such as "en" (#627). Scribe then skips guessing it on each turn.
+    # Empty leaves Scribe to detect it, which suits a house with more than
+    # one language. Voice turns only: a podcast keeps auto-detect.
+    stt_language: str = ""
     voice_pricing: dict = Field(default_factory=lambda: dict(DEFAULT_VOICE_PRICING))
     # Room mode (#28 phase 2): how many people the roster may hold at once
     # (present people; the cap frees as people leave). A product choice, not a

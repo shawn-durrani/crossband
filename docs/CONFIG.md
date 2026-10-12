@@ -125,7 +125,8 @@ a default install records it.
 | `tts_v3_stability` | `robust` | How steady an Eleven v3 voice stays: `creative`, `natural` or `robust`, the steadiest. Only the v3 models read it. [Keeping a v3 voice steady](#keeping-a-v3-voice-steady). |
 | `tts_v3_sentence_chunks` | `true` | Sends a v3 reply to ElevenLabs a whole sentence at a time. Off sends each piece as the model writes it. Only the v3 models read it. |
 | `tts_v3_accent_tag` | `""` | An ElevenLabs audio tag, such as `[Australian accent]`, sent in front of each piece of a v3 reply and never shown or stored. It must be one bracketed phrase of at most 40 characters. A seat can set its own. |
-| `stt_model` | `scribe_v2` | The transcription model. The realtime variant is used on its own when available. |
+| `stt_model` | `scribe_v2` | The model that transcribes backup voice turns and audio links. Live voice always uses Scribe v2 Realtime. |
+| `stt_language` | `""` | The language people speak to the app in, as a two or three letter code such as `en`, so Scribe stops guessing it each turn. Empty lets Scribe detect it, which suits a house with more than one language. |
 | `voice_pricing` | built in | The ElevenLabs rate card used to price speech in and out. |
 | `room_roster_max` | `6` | How many people the room's roster may hold at once. The cap frees as people leave. An explicit `0` seats no guests, and your tap-correction still seats. |
 | `voice_id_enabled` | `true` | Room mode's offline speaker identification. Off, or with `sherpa-onnx` or the model file absent, no spoken turn is checked or named and the room never arms on its own. [VOICE_ID.md](VOICE_ID.md). |

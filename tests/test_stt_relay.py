@@ -342,7 +342,7 @@ def test_merged_spellings_ride_the_keyterms_too(app, monkeypatch):
 def test_keyterm_list_is_bounded_and_deduplicated():
     """Pure rule: the ElevenLabs caps are enforced before the URL is built -
     at most 50 terms of at most 20 characters, case-insensitively unique,
-    first-seen order; and NO terms means the exact historical URL."""
+    first-seen order; and NO terms means just the model by name (#627)."""
     from backend import voice as voice_mod
 
     many = ["  Alex ", "alex", "", None, 42, "x" * 30] + \
@@ -352,9 +352,10 @@ def test_keyterm_list_is_bounded_and_deduplicated():
     assert "alex" not in terms[1:]
     assert all(isinstance(t, str) and 0 < len(t) <= 20 for t in terms)
     assert len(terms) == 50
-    assert voice_mod.stt_ws_url([]) == voice_mod.STT_WS_URL
-    assert voice_mod.stt_ws_url(None) == voice_mod.STT_WS_URL
-    assert voice_mod.stt_ws_url(["Ana Belle"]).endswith("?keyterms=Ana+Belle")
+    bare = voice_mod.STT_WS_URL + "?model_id=scribe_v2_realtime"
+    assert voice_mod.stt_ws_url([]) == bare
+    assert voice_mod.stt_ws_url(None) == bare
+    assert voice_mod.stt_ws_url(["Ana Belle"]) == bare + "&keyterms=Ana+Belle"
 
 
 # ---- #134: the capture-session registry - every live mic, visible and
@@ -967,7 +968,7 @@ def test_each_backup_path_turn_is_logged_with_why_and_no_words(
     monkeypatch.setattr(voice_router.voice, "provider_for",
                         lambda cfg: voice_router.voice.PROVIDER_ELEVENLABS)
     monkeypatch.setattr(voice_router.voice, "transcribe",
-                        lambda data, mime, cfg: ("Sam fixed the gate", "scribe_v2"))
+                        lambda data, mime, cfg, **kw: ("Sam fixed the gate", "scribe_v2"))
     caplog.set_level("INFO", logger="crossband.voice")
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat = c.post("/api/chats", json={}).json()
