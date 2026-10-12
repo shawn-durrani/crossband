@@ -316,6 +316,12 @@ class Settings(BaseModel):
     # TYPESAFE_API_KEY in .env. "off" leaves it to the browser's word rules.
     interrupt_judge: str = "jev"
 
+    # #650: ask Jev who each spoken turn is for, in the background, and keep
+    # its answer beside the turn without acting on it
+    # (backend/addressee_shadow.py, scripts/addressee_shadow_report.py).
+    # Needs TYPESAFE_API_KEY. Off unless set true (CROSSBAND_ADDRESSEE_SHADOW).
+    addressee_shadow: bool = False
+
     # voice
     # Provider seam: which engine serves STT/TTS. "auto" (default) =
     # current behaviour exactly: ElevenLabs when ELEVENLABS_API_KEY is
