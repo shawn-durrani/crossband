@@ -170,6 +170,124 @@ def build_merged_prompt(text: str, user_name: str, seat_names: list,
     )
 
 
+# ---------- the same check on Jev (#646, measured, not live) ----------
+#
+# TypeSafe's Jev answers typed questions about a text in about a quarter of
+# a second, all at once. It can't write out a name, so a turn it says names
+# or renames a person goes on to the merged prompt above for the names. The
+# trial in eval_intent (strategy "jev") measures this against that prompt.
+
+def build_jev_check(text: str, user_name: str, seat_names: list,
+                    present_names: list, known_names: list,
+                    asking: bool = False) -> tuple:
+    """The state Jev reads and the questions it answers, one per axis."""
+    seats = list(seat_names) or ["the assistants"]
+    state = (
+        f"One message from a conversation between {user_name} and AI "
+        f"assistants ({', '.join(seats)}), sometimes with other people in the "
+        f"room. People known present: {', '.join(present_names) or 'nobody yet'}. "
+        f"People known by name: {', '.join(known_names) or 'nobody yet'}."
+        + (" The app has just asked who a new voice in the room is." if asking else "")
+        + f"\nMessage: {text[:1200]}")
+    about = ("Talking ABOUT it, asking about it or mentioning it doesn't "
+             "count, and nor does asking the assistants to hold back or "
+             "stay quiet.")
+    seat_choice = {"all": "All the assistants, or none named"}
+    seat_choice.update({n: f"{n} by name" for n in seats})
+    q = {
+        "mode": {"type": "choice", "instructions": (
+            "Does the message ask BY NAME to switch room mode (group, "
+            "multi-user or multi-person mode) on or off? " + about),
+            "criteria": {
+                "none": "Neither, which is almost every message. Saying who "
+                        "is here, or introducing someone, is not a mode command.",
+                "on": "Asks for room, group or multi-person mode on, or says "
+                      "it's on now",
+                "off": "Asks for solo mode or room mode off by name, or says "
+                       "the owner is alone now, like 'it's just me now' or "
+                       "'everyone's gone home'",
+            }},
+        "people": {"type": "choice", "instructions": (
+            "Does the message introduce a person who is physically present, "
+            "say a present person has left, give a short form of a person's "
+            "name, or correct how a person's name is spelt or said? Spelling "
+            "out an ordinary word to fix a transcript isn't a name. " + about),
+            "criteria": {"no": "None of these", "yes": "One or more of these"}},
+        "depth": {"type": "choice", "instructions": (
+            "Does it instruct a change to how hard the assistants THINK, "
+            "their reasoning effort, from now on or for the next reply? "
+            "Asking them to research, look things up, look into something "
+            "properly, go or dig deeper, or use a stronger model is NOT a "
+            "change to how hard they think. Nor is asking for more thought "
+            "about one topic ('think harder about whether X'). " + about),
+            "criteria": {
+                "none": "No change to how hard they think, which includes "
+                        "asks to research more or to use a stronger model",
+                "deep": "Think harder, take your time, slow down",
+                "quick": "Faster, shorter or shallower answers",
+                "max": "The hardest possible thinking",
+                "normal": "Back to the default: back to normal, reset",
+            }},
+        "depth_seat": {"type": "choice", "instructions": (
+            "If it changes how hard an assistant thinks, which one does it "
+            "name?"), "criteria": dict(seat_choice)},
+        "depth_once": {"type": "choice", "instructions": (
+            "If it changes how hard they think, does it say plainly that "
+            "it's only for the next reply?"),
+            "criteria": {"no": "From now on, not said, or no change",
+                         "yes": "Said plainly to be only the next reply, like "
+                                "'just for this one'"}},
+        "research": {"type": "choice", "instructions": (
+            "Does it ask the assistants to research or look into things more "
+            "thoroughly, like 'research more', 'dig deeper', 'look it up', "
+            "'find me an answer'? "
+            "A request to use a tool once for something named, like 'look "
+            "up the weather', is not. " + about),
+            "criteria": {"none": "No", "more": "Yes, research more"}},
+        "model": {"type": "choice", "instructions": (
+            "Does it ask an assistant to use a stronger, better or its best "
+            "MODEL? Only an ask that says model counts. Asking for maximum "
+            "effort or harder thinking is not a model change. " + about),
+            "criteria": {"none": "No", **{k: f"Yes: {v}" for k, v in seat_choice.items()}}},
+    }
+    if asking:
+        q["media"] = {"type": "choice", "instructions": (
+            "Does the message say the new voice isn't a person but a TV, "
+            "radio, video, podcast or other recording?"),
+            "criteria": {"no": "No", "yes": "Yes"}}
+    return state, q
+
+
+# Below this confidence, Jev's yes on a secondary question (one-off depth,
+# a stronger model) reads as no: those were its unsure guesses in the trial.
+JEV_MIN_CONFIDENCE = 0.5
+
+
+def parse_jev_check(answers) -> tuple:
+    """Jev's answers as a verdict, without names, and whether the turn
+    needs the merged prompt for them. Anything missing reads as none."""
+    def pick(name, allowed=None, sure=False):
+        try:
+            c = str(answers[name]["choice"])
+            conf = answers[name].get("confidence")
+        except (KeyError, TypeError, AttributeError):
+            return ""
+        if sure and conf is not None and float(conf) < JEV_MIN_CONFIDENCE:
+            return ""
+        return c if allowed is None or c in allowed else ""
+    out = empty_verdict()
+    out["mode_command"] = pick("mode", {"on", "off", "none"}) or "none"
+    depth = pick("depth", {"deep", "quick", "max", "normal"})
+    if depth:
+        out["depth"] = [{"seat": pick("depth_seat") or "all", "depth": depth,
+                         "once": pick("depth_once", sure=True) == "yes"}]
+    out["research"] = RESEARCH_MORE if pick("research") == RESEARCH_MORE else "none"
+    model = pick("model", sure=True)
+    out["stronger_model"] = [model] if model and model != "none" else []
+    out["media"] = pick("media") == "yes"
+    return out, pick("people") == "yes"
+
+
 def _json_object(text):
     if not text:
         return None

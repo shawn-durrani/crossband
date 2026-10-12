@@ -448,3 +448,52 @@ def test_company_only_touches_off():
     on = json.dumps({"mode_command": "on"})
     assert intent.parse_merged(on, "Group mode, it's just Sam and me")[
         "mode_command"] == "on"
+
+
+# ---------- the same check on Jev (#646, measured, not live) ----------
+
+def test_jev_reads_the_turn_and_its_context_with_one_question_per_axis():
+    state, q = intent.build_jev_check("Claude, take your time on this one", "Alex",
+                                      ["Claude", "GPT"], ["Alex", "Sam"], ["Dave"])
+    assert state.endswith("Message: Claude, take your time on this one")
+    assert "People known present: Alex, Sam." in state
+    assert set(q) == {"mode", "people", "depth", "depth_seat", "depth_once",
+                      "research", "model"}
+    assert all(v["type"] == "choice" and v["criteria"] for v in q.values())
+    assert set(q["depth_seat"]["criteria"]) == {"all", "Claude", "GPT"}
+    _, asking = intent.build_jev_check("that's the TV", "Alex", ["Claude"], [], [],
+                                       asking=True)
+    assert "media" in asking
+
+
+def _answers(**choices):
+    return {k: {"choice": v[0], "confidence": v[1]} if isinstance(v, tuple)
+            else {"choice": v, "confidence": 0.99} for k, v in choices.items()}
+
+
+def test_jevs_answers_read_as_a_verdict_without_names():
+    verdict, names = intent.parse_jev_check(_answers(
+        mode="none", people="no", depth="deep", depth_seat="Claude",
+        depth_once="yes", research="more", model="none"))
+    assert verdict["depth"] == [{"seat": "Claude", "depth": "deep", "once": True}]
+    assert verdict["research"] == "more"
+    assert verdict["stronger_model"] == [] and not names
+
+
+def test_a_yes_on_people_sends_the_turn_on_for_its_names():
+    _, names = intent.parse_jev_check(_answers(people="yes"))
+    assert names
+
+
+def test_an_unsure_yes_on_a_secondary_question_reads_as_no():
+    verdict, _ = intent.parse_jev_check(_answers(
+        depth="deep", depth_seat="all", depth_once=("yes", 0.3), model=("all", 0.35)))
+    assert verdict["depth"][0]["once"] is False
+    assert verdict["stronger_model"] == []
+
+
+def test_missing_or_odd_answers_read_as_nothing():
+    verdict, names = intent.parse_jev_check({})
+    assert verdict == intent.empty_verdict() and not names
+    verdict, _ = intent.parse_jev_check(_answers(mode="sideways", research="loads"))
+    assert verdict["mode_command"] == "none" and verdict["research"] == "none"

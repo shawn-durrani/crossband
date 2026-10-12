@@ -23,15 +23,13 @@ timeout, the browser falls back to the word rules.
 """
 
 import logging
-import os
-import time
 
-import httpx
+from . import jev
 
 log = logging.getLogger("crossband.judge")
 
-JEV_URL = "https://api.typesafe.ai/v1/systemone"
-JEV_MODEL = "jev-latest"
+JEV_URL = jev.URL
+JEV_MODEL = jev.MODEL
 LABELS = ("interrupt", "aside", "listening")
 TIMEOUT_S = 1.0
 # The browser sends no more than this of each, and anything longer is cut.
@@ -87,7 +85,7 @@ def parse_jev(data) -> tuple:
 
 
 def api_key() -> str:
-    return os.environ.get("TYPESAFE_API_KEY", "").strip()
+    return jev.api_key()
 
 
 def off_reason(cfg) -> str:
@@ -102,23 +100,11 @@ def off_reason(cfg) -> str:
 async def ask(state, seat, timeout_s=TIMEOUT_S, client=None) -> dict:
     """Ask Jev about one moment. Returns {verdict, confidence, model, usage,
     ms}, with verdict '' when there was no usable answer in time."""
-    t0 = time.monotonic()
-    out = {"verdict": "", "confidence": None, "model": JEV_MODEL, "usage": {}, "ms": 0}
-    own = client is None
-    client = client or httpx.AsyncClient(timeout=timeout_s)
-    try:
-        r = await client.post(JEV_URL, json=jev_body(state, seat),
-                              headers={"Authorization": f"Bearer {api_key()}"},
-                              timeout=timeout_s)
-        r.raise_for_status()
-        data = r.json()
-        out["verdict"], out["confidence"] = parse_jev(data)
-        out["model"] = str(data.get("model") or JEV_MODEL)
-        out["usage"] = data.get("usage") or {}
-    except Exception as e:  # any failure leaves the word rules to decide
-        out["error"] = type(e).__name__
-    finally:
-        if own:
-            await client.aclose()
-        out["ms"] = round((time.monotonic() - t0) * 1000)
+    got = await jev.ask(state, jev_body(state, seat)["questions"],
+                        timeout_s=timeout_s, client=client)
+    verdict, confidence = parse_jev({"answers": got["answers"]})
+    out = {"verdict": verdict, "confidence": confidence, "model": got["model"],
+           "usage": got["usage"], "ms": got["ms"]}
+    if got.get("error"):
+        out["error"] = got["error"]
     return out
