@@ -1006,3 +1006,26 @@ test('a clear case never asks the judge', async () => {
   assert.equal(aborts(), 1, 'a stop word cuts at once')
   assert.deepEqual(app.judgeAsks, [])
 })
+
+// ---------- the pause hint (#625) ----------
+
+test('each pause tells the relay once, so the memory lookup can start early', async () => {
+  const stt = () => FakeWebSocket.all.find((w) => w.url.endsWith('/api/voice/stt-stream'))
+  const hints = () => stt().sent.filter((m) => m.speculative)
+  const commits = () => stt().sent.filter((m) => m.commit)
+  const t = elapsed()
+  // Talk, pause half a second, talk again, then stop.
+  const talk = (x) => (x >= t + 100 && x < t + 1100) || (x >= t + 1600 && x < t + 2400)
+  await runUntil(t + 1300, talk)
+  assert.equal(hints().length, 0, 'not yet 300 ms into the pause')
+  await runUntil(t + 1500, talk)
+  assert.equal(hints().length, 1, 'the first pause')
+  await runUntil(t + 2600, talk)
+  assert.equal(hints().length, 1, 'talking again sends nothing')
+  await runUntil(t + 2800, talk)
+  assert.equal(hints().length, 2, 'the second pause')
+  assert.equal(commits().length, 0, 'both before the turn ends')
+  await runUntil(t + 4500, talk)
+  assert.equal(hints().length, 2, 'once a pause')
+  assert.equal(commits().length, 1)
+})

@@ -962,7 +962,7 @@ async def stt_stream_relay(ws: WebSocket):
                 # yet" case the false "2 microphones live" banner needs.
                 _close_reason = "disconnect"
                 try:
-                    nonlocal seconds
+                    nonlocal seconds, last_partial
                     while True:
                         msg = await ws.receive_json()
                         if msg.get("done"):
@@ -971,11 +971,24 @@ async def stt_stream_relay(ws: WebSocket):
                         if "audio" not in msg and ("room_mode" in msg
                                                    or msg.get("speculative")):
                             # A control frame, ours alone: an older client's
-                            # room toggle or silence-start hint. NOTHING goes
-                            # upstream and nothing runs - the ElevenLabs byte
-                            # stream stays identical to a session that never
-                            # sent one, and every turn gets its check at the
-                            # commit whatever the room is doing.
+                            # room toggle, or the silence-start hint. NOTHING
+                            # goes upstream - the ElevenLabs byte stream stays
+                            # identical to a session that never sent one, and
+                            # every turn gets its check at the commit whatever
+                            # the room is doing. #625: the hint starts the
+                            # memory lookup from the words so far, so it's
+                            # done before the pause runs out. Only words
+                            # heard since the last commit count.
+                            if msg.get("speculative") and chat_id and last_partial:
+                                try:
+                                    engine.prewarm_recall(
+                                        chat_id, last_partial, ws.app.state.memory,
+                                        history=bool(cfg.get("history_prefetch", True)),
+                                        owner_name=cfg.get("user_name", "User"),
+                                        when="pause")
+                                except Exception:
+                                    log.warning("recall prewarm at the pause failed",
+                                                exc_info=True)
                             continue
                         audio = msg.get("audio") or ""
                         sr = int(msg.get("sample_rate", 16000))
@@ -1031,6 +1044,9 @@ async def stt_stream_relay(ws: WebSocket):
                             except Exception:
                                 log.warning("recall prewarm failed; transcription "
                                             "continues without it", exc_info=True)
+                            # #625: the next turn's pause hint mustn't look
+                            # up this one's words.
+                            last_partial = ""
                         if payload["commit"]:
                             # Where this turn sits on Scribe's clock: from
                             # its first audio to the commit (#482 item D).

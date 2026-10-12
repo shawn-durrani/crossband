@@ -51,6 +51,9 @@ const RECORDER_ROTATE_MS = 9000 // bound the pre-speech audio we keep
 // decide, and how many times one sound may be asked about as it grows.
 const JUDGE_WAIT_MS = 1200
 const JUDGE_MAX_ASKS = 3
+// #625: how far into a pause the relay is told it began, so the memory
+// lookup starts from the words so far and is done before the pause ends.
+const PAUSE_HINT_MS = 300
 
 function wsBase() {
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
@@ -1306,6 +1309,16 @@ export default class VoiceController {
         }
       } else {
         if (voiced) this.lastVoice = now
+        // #625: once a pause has run PAUSE_HINT_MS, tell the relay, once a
+        // pause. It starts the memory lookup from the live words, and the
+        // commit keeps that lookup when the final words still match.
+        if (voiced) {
+          this._pauseHinted = false
+        } else if (!this.manualMode && !this._pauseHinted && this.sttStreaming
+                   && now - this.lastVoice >= PAUSE_HINT_MS) {
+          this._pauseHinted = true
+          this._sttSend({ speculative: true })
+        }
         // Auto mode sends after a pause; manual mode waits for finalizeNow().
         if (!this.manualMode && now - this.lastVoice > this.silenceMs) {
           this._vlog('vad:finalize', { cause: 'gap', silenceMs: now - this.lastVoice })

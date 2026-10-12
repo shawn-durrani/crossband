@@ -48,6 +48,11 @@ wrong.
   24 hours, and any seat can read the `voice_latency` diagnostic. Each
   voice stage is also split by the ElevenLabs model that spoke, under
   `by_tts_model`, which is how to compare voice models.
+- For the wait on the memory lookup, read `server_memory_recall_wait`.
+  The lookup starts from your words a third of a second into your
+  pause, so it's usually done before the pause runs out, and this stage
+  reads close to zero. When you carry on talking, or the final words
+  differ, it starts again when your turn ends.
 - For the wait on a search of your saved chats, read
   `server_memory_history_wait`. It's recorded only on your own turn
   that asked about you and whose recall came back thin, so a normal turn
