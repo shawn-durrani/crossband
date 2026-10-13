@@ -242,7 +242,9 @@ def build_jev_check(text: str, user_name: str, seat_names: list,
             "thoroughly, like 'research more', 'dig deeper', 'look it up', "
             "'find me an answer'? "
             "A request to use a tool once for something named, like 'look "
-            "up the weather', is not. " + about),
+            "up the weather', is not. Nor is asking them to check something "
+            "about themselves or this app, like 'find out what your latency "
+            "is' or 'how much has this chat cost'. " + about),
             "criteria": {"none": "No", "more": "Yes, research more"}},
         "model": {"type": "choice", "instructions": (
             "Does it ask an assistant to use a stronger, better or its best "

@@ -95,5 +95,33 @@
     "category": "research_negative",
     "text": "What did the search return last time?",
     "expected": {}
+  },
+  {
+    "id": "research_neg_own_latency",
+    "category": "research_negative",
+    "text": "Hey, can you guys find out what your latency is currently and whether it's improved?",
+    "expected": {},
+    "notes": "A one-off check on the app itself, from the owner's performance check on 12 October (#664)."
+  },
+  {
+    "id": "research_neg_chat_cost",
+    "category": "research_negative",
+    "text": "Can you find out how much this chat has cost so far?",
+    "expected": {}
+  },
+  {
+    "id": "research_neg_check_diagnostics",
+    "category": "research_negative",
+    "text": "Check the diagnostics and tell me if anything's slow.",
+    "expected": {}
+  },
+  {
+    "id": "research_the_albums",
+    "category": "research",
+    "text": "No, if you go and research the albums, you might be able to find it.",
+    "expected": {
+      "research": "more"
+    },
+    "notes": "Like 'do some research': about the question being discussed."
   }
 ]
