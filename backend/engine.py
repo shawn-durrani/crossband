@@ -25,7 +25,7 @@ from . import history_prefetch
 from . import mcpjobs
 from . import model_step
 from . import rounds as rounds_mod
-from . import seat_trace
+from . import seat_names, seat_trace
 from . import spend_note
 from . import memory_client as memory_client_mod
 from . import providers
@@ -489,6 +489,10 @@ def _vocative_responders(text, roster):
         by_name[norm(p["slug"])] = p
         if p.get("name"):
             by_name[norm(p["name"])] = p
+        # #663: how the transcriber writes the seat's name, like "Quinn"
+        # for Qwen, addresses it too.
+        for heard in seat_names.heard_names(p):
+            by_name.setdefault(norm(heard), p)
     greeting = re.compile(r"^(?:hey|hi|ok|okay|so|um|uh)\s+", re.IGNORECASE)
     picked = []
     for t in tokens:

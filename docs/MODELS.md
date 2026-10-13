@@ -60,6 +60,12 @@ computer and serves them on a local port.
    Address it, with `@llama` or by opening your message with "Llama,
    …", to hear from it.
 
+In a voice chat the transcriber may write a seat's name its own way,
+like "Quinn" for Qwen. The seat's Heard as field lists those spellings.
+Saying one talks to the seat and can cut its reply, no one in the room
+can be named it, and every seat is told what it means. A Qwen seat is
+heard as Quinn without a setting.
+
 LM Studio works the same way. Load a model, start its local server on
 its default port, 1234, pick the LM Studio (local) preset, and set the
 model id to a loaded model. No key.

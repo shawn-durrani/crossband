@@ -116,9 +116,12 @@ export function nameWords(names) {
   return out
 }
 
-// The seats' names as heard: each seat's display name and slug.
+// The seats' names as heard: each seat's display name and slug, and how the
+// transcriber writes the name, like "Quinn" for Qwen (#663).
 export function seatWords(participants) {
-  return nameWords((participants || []).flatMap((p) => [p?.name, p?.slug]))
+  return nameWords((participants || []).flatMap((p) => [
+    p?.name, p?.slug, ...(p?.heard_names || []),
+  ]))
 }
 
 // The people the app knows, as heard: each one's names, the ones they were

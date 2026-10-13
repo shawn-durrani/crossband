@@ -35,7 +35,7 @@ import time
 import unicodedata
 
 from . import anchors, db, depth, intent, jev, llm_util, model_step
-from . import research, room_state
+from . import research, room_state, seat_names
 
 log = logging.getLogger("crossband.introductions")
 
@@ -594,10 +594,12 @@ def _participant_names(con) -> list:
     """Every configured participant's slug and display name, for the #65
     boundary. ALL participants, not just this chat's: an agent that is not
     in the round is still software, never a person in the room."""
-    rows = con.execute("SELECT slug, name FROM participants").fetchall()
+    rows = con.execute("SELECT * FROM participants").fetchall()
     out = []
     for r in rows:
         out.extend(n for n in (r["slug"], r["name"]) if n)
+        # #663: a name the transcriber writes for a seat is the seat too.
+        out.extend(seat_names.heard_names(dict(r)))
     return out
 
 

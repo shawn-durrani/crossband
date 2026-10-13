@@ -23,6 +23,7 @@ from . import db
 from . import egress
 from . import engine
 from . import events
+from . import seat_names
 from . import funnel
 from . import guest
 from . import mcpjobs
@@ -476,6 +477,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "code_enabled, archived_at, created_at, updated_at "
             "FROM chats ORDER BY updated_at DESC")]
         participants = db.get_participants(con)
+        for p in participants:
+            # #663: the names the page should hear as this seat, the
+            # built-in ones included, for cutting a reply by name.
+            p["heard_names"] = seat_names.heard_names(p)
         shared_instructions = db.get_setting(con, "shared_instructions")
         # The seed value for the frontend's global live-events
         # watermark. Without this, a client opening GET /api/events/stream for

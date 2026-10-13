@@ -25,6 +25,7 @@ from datetime import datetime
 
 from . import attachments as att_mod
 from . import context_marker
+from . import seat_names
 from . import work_status
 from .tools import replay_output, run_tool
 
@@ -486,12 +487,13 @@ def _stable_system_parts(participant, roster, cfg, project, chat_summary):
     # #562: this chat's marker, the same across restarts, so the cached
     # block this sits in survives a deploy.
     marker_open = context_marker.opening(cfg.get("chat_id"))
-    others = [p["name"] for p in roster if p["slug"] != participant["slug"]]
+    others = [seat_names.described(p) for p in roster if p["slug"] != participant["slug"]]
     members = " and ".join(filter(None, [user + " (a human)", ", ".join(others) or None]))
 
     parts = [
         f"You are {me}, an AI model taking part in a group chat. The other members are "
         f"{members}.",
+        *filter(None, [seat_names.own_line(participant)]),
         "Messages from the other members appear prefixed in square brackets with the "
         f"sender's name and the real send time, e.g. \"[{user} · 2026-06-21T10:24+00:00]: "
         "...\". Use those timestamps to track the current date and how much time has "

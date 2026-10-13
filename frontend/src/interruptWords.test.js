@@ -97,6 +97,13 @@ test("the seats' and people's names are heard by every word of them", () => {
   assert.equal(peopleWords(undefined).size, 0)
 })
 
+test('a seat answers to how the transcriber writes its name (#663)', () => {
+  const qwen = seatWords([{ slug: 'qwen', name: 'Qwen', heard_names: ['Quinn'] }])
+  assert.ok(qwen.has('quinn') && qwen.has('qwen'))
+  assert.equal(judgeWords('Quinn, stop for a sec', { seats: qwen }).verdict, 'cut')
+  assert.equal(judgeWords('Quinn, stop for a sec', { seats: qwen }).why, 'seat')
+})
+
 test('whether the reply so far ends on a question', () => {
   assert.equal(endsOnQuestion('Want me to pull the numbers?'), true)
   assert.equal(endsOnQuestion('Want me to pull the numbers?" '), true)

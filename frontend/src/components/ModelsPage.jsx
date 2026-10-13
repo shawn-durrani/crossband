@@ -16,7 +16,7 @@ import { reasoningOptions, effortSupport, normalizeReasoningEffort } from '../re
 const EMPTY = {
   name: '', provider: 'anthropic', model: '', base_url: '', api_key_env: '',
   system_prompt: '', color: '#a78bfa', enabled: true, reasoning_effort: '',
-  thinking_control: '', keep_alive: '', tts_v3_accent_tag: '',
+  thinking_control: '', keep_alive: '', tts_v3_accent_tag: '', heard_as: '',
 }
 
 // Glanceable "is this what's actually running?" readout for one seat.
@@ -216,6 +216,8 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
         // #493: blank follows the app's v3 accent tag. The backend refuses
         // anything but one short [bracketed phrase].
         ...(voiceEnabled ? { tts_v3_accent_tag: (editing.tts_v3_accent_tag || '').trim() } : {}),
+        // #663: other spellings of the seat's name, comma separated.
+        ...(voiceEnabled ? { heard_as: (editing.heard_as || '').trim() } : {}),
         reasoning_effort: normalizeReasoningEffort(editing.provider, editing.reasoning_effort),
         // Cleared when it no longer applies (see normalizeThinkingControl), so
         // the saved row can never claim a control the request never sends.
@@ -714,6 +716,29 @@ export default function ModelsPage({ participants, settings, voiceEnabled, onCha
                 <span id="seat-accent-tag-note" className="mt-1 block text-xs text-ink-faint">
                   Sent to ElevenLabs in front of each piece of this seat's v3 replies,
                   to keep one accent. One bracketed phrase, up to 40 characters.
+                </span>
+              </label>
+            )}
+            {voiceEnabled && (
+              <label className="block">
+                <span className="text-sm text-ink-mid">
+                  Heard as{' '}
+                  <span className="text-ink-faint">(how the transcriber writes this name)</span>
+                </span>
+                <input
+                  className={field}
+                  value={editing.heard_as || ''}
+                  maxLength={200}
+                  placeholder="e.g. Quinn for Qwen, comma separated"
+                  aria-describedby="seat-heard-as-note"
+                  onChange={(e) => setEditing({ ...editing, heard_as: e.target.value })}
+                />
+                <span id="seat-heard-as-note" className="mt-1 block text-xs text-ink-faint">
+                  Saying one of these names talks to this seat and can cut its reply,
+                  and no one in the room can be named it. Every seat is told them.
+                  {(editing.heard_names || []).length > 0 && (
+                    <> Heard as now: {editing.heard_names.join(', ')}.</>
+                  )}
                 </span>
               </label>
             )}
