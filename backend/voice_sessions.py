@@ -718,6 +718,26 @@ def voice_of_turn(chat_id, turn_id):
     return next((s for t, s in reversed(pairs) if t == tid), None)
 
 
+def named_people(chat_id) -> list:
+    """The names the chat's open voice session has put on its voices, by a
+    tap or an answer as well as by the matcher, in the order they were
+    first heard (#670). Empty with no open session."""
+    with _lock:
+        sess = _sessions.get(chat_id)
+        if not sess:
+            return []
+        out = []
+        for slot, voice in (sess.get("voices") or {}).items():
+            if voice.get(MEDIA):
+                continue
+            human = (voice.get("human") or {}).get("name")
+            named = (sess.get("named") or {}).get(slot) or {}
+            name = human or (named.get("name") if named.get("state") == "named" else "")
+            if name and name not in out:
+                out.append(name)
+        return out
+
+
 def human_named(chat_id, turn_id, name, person_id, cfg):
     """A person named a turn, by tapping it or answering the ask out loud:
     the session voice that spoke it is that person from now on, and its
