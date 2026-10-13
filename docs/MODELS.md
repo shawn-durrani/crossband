@@ -158,10 +158,21 @@ setting and says it didn't apply.
 
 Ask for a stronger model in a chat, and the seats you name can switch
 to one for the rest of that chat. Say "use your best model" or "use a
-stronger model", and add a seat's name to move only that seat. A
-standing "think harder" or "maximum thinking" asks for one too, for the
-seats it names, or every seat when it names none. A new chat starts
-back on the model each seat's settings name.
+stronger model", and add a seat's name to move only that seat. A new
+chat starts back on the model each seat's settings name.
+
+A standing "think harder" or "maximum thinking" doesn't switch a model
+on its own. The seat starts thinking harder straight away, and a line
+lists up to three stronger models it could use, with what a turn would
+cost on each. Name one in the next ten minutes, like "Claude, use Opus
+5", and that seat moves to it. Say "back to normal" and the offer goes.
+For example:
+
+> Claude is thinking harder on Claude Sonnet 5. A stronger model could
+> help too, ranked by a web search (example.org): Claude Opus 5 at
+> about $0.06 a turn. A turn like Claude's last few here is about $0.02
+> on Claude Sonnet 5. Say "Claude, use Opus 5" in the next ten minutes
+> to move Claude for this chat. Rate-card estimates, not a bill.
 
 Asking for research never changes a model. "Do some research" or "find
 me an answer" turns on

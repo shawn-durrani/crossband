@@ -492,8 +492,8 @@ def nothing_changed_line(verdict: dict, outcomes: dict) -> str:
         ("stronger_model", bool(verdict.get("stronger_model")), _model_line),
         ("media", verdict.get("media") is True, _media_line),
     )
-    if outcomes.get("model") == "model_stepped":
-        return ""  # #254: a depth cue or a stronger-model ask moved a model
+    if outcomes.get("model") in ("model_stepped", "model_offered"):
+        return ""  # #254, #667: a model moved, or one was offered
     first_no_op = None
     for key, instructed, line_fn in axes:
         if not instructed:

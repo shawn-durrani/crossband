@@ -179,7 +179,11 @@ WINDOW_HEADROOM = 1.2
 MAX_RESULTS = 10
 RESULT_CHARS = 800
 
-STEP, STAY, SKIP = "step", "stay", "skip"
+STEP, STAY, SKIP, OFFER = "step", "stay", "skip", "offer"
+# A standing "think harder" offers up to this many stronger models (#667),
+# and the offer stands this long for the owner to name one.
+OFFER_LIMIT = 3
+OFFER_TTL_S = 600.0
 
 # Where the Models API says what a model takes. Real payloads are dicts of
 # {"supported": bool}; a flat list names what is supported.
@@ -489,6 +493,26 @@ def _decision(seat, outcome, key="", **extra) -> dict:
             **extra}
 
 
+def options(seat, current, priced_fit, ranking, facts, pricing,
+            limit=OFFER_LIMIT) -> list:
+    """The eligible priced models ranked above the seat's own, best first,
+    each with what a turn would cost (#667)."""
+    by_id = {m["id"]: m for m in priced_fit}
+    out = []
+    for mid, source in ranking:
+        if mid == current["id"]:
+            break
+        if mid in by_id:
+            rec = by_id[mid]
+            out.append({"model": mid, "label": rec.get("label") or mid,
+                        "source": source,
+                        "cost": cost_estimate(seat["slug"], current["id"], mid,
+                                              facts, pricing)})
+            if len(out) >= limit:
+                break
+    return out
+
+
 def choose(seat, current, fit, priced_fit, ranking, facts, pricing) -> dict:
     """Walk the grounded ranking for one seat. The first eligible priced
     model ranked above the seat's own is the step; reaching the seat's own
@@ -521,10 +545,14 @@ def choose(seat, current, fit, priced_fit, ranking, facts, pricing) -> dict:
     return _decision(seat, STAY, "unranked", from_label=from_label)
 
 
-async def find_step_ups(chat_id, seats, cfg, today=None) -> list:
+async def find_step_ups(chat_id, seats, cfg, today=None, offer=frozenset()) -> list:
     """One decision per seat: "step" (with the model, its source and the
     cost), "stay" (with the reason key), or "skip" (say nothing). Discovery
-    and research run once per provider and key, never once per seat."""
+    and research run once per provider and key, never once per seat.
+
+    A seat in `offer` (its slug) that would step gets "offer" instead, with
+    the stronger models it could move to (#667). One with an offer still
+    standing is skipped, so saying "think harder" again researches nothing."""
     facts = await asyncio.to_thread(chat_facts, chat_id,
                                     [s["slug"] for s in seats], cfg)
     if facts is None:
@@ -532,6 +560,8 @@ async def find_step_ups(chat_id, seats, cfg, today=None) -> list:
     decisions, todo = [], []
     for seat in seats:
         why = _skip(seat, facts)
+        if not why and seat["slug"] in offer and offered(chat_id, seat["slug"]):
+            why = "offered"
         if why:
             decisions.append(_decision(seat, SKIP, why))
         else:
@@ -585,8 +615,12 @@ async def find_step_ups(chat_id, seats, cfg, today=None) -> list:
                           for seat, cur, _, _ in ready]
             continue
         for seat, current, fit, priced_fit in ready:
-            decisions.append(choose(seat, current, fit, priced_fit, ranking,
-                                    facts, pricing))
+            d = choose(seat, current, fit, priced_fit, ranking, facts, pricing)
+            if seat["slug"] in offer and d["outcome"] == STEP:
+                d = _decision(seat, OFFER, "offer", from_label=d["from_label"],
+                              options=options(seat, current, priced_fit, ranking,
+                                              facts, pricing))
+            decisions.append(d)
     return decisions
 
 
@@ -612,9 +646,13 @@ def step_line(d, set_by="") -> str:
     name, label, was = d["name"], d["label"], d["from_label"]
     family = VENDORS[d["provider"]][1]
     by = f", set by {set_by}" if set_by else ""
-    parts = [f"{name} moves from {was} to {label} for this chat{by}.",
-             f"A web search ranked it the strongest {family} model the app "
-             f"can use here ({d['source']})."]
+    parts = [f"{name} moves from {was} to {label} for this chat{by}."]
+    if d.get("picked"):
+        parts.append(f"It was picked from the models the app offered, ranked "
+                     f"by a web search ({d['source']}).")
+    else:
+        parts.append(f"A web search ranked it the strongest {family} model "
+                     f"the app can use here ({d['source']}).")
     cost = d.get("cost") or {}
     if cost.get("turns"):
         parts.append(f"A turn like {name}'s last few here is "
@@ -641,6 +679,49 @@ def step_line(d, set_by="") -> str:
                      f"card has no rate for {it}.")
     parts.append(f"Back to normal returns {name} to {was}.")
     return " ".join(parts)
+
+
+def _offer_cost(o, name) -> str:
+    cost = o.get("cost") or {}
+    if cost.get("turns"):
+        return f"{o['label']} at {_money(cost['new'])} a turn"
+    if cost.get("rates_new"):
+        ni, no = cost["rates_new"]
+        return f"{o['label']}, {_rate(ni)} in and {_rate(no)} out per million tokens"
+    return o["label"]
+
+
+def offer_line(d) -> str:
+    """The line a standing "think harder" posts instead of moving a model
+    (#667): the stronger models the seat could use here, what each costs,
+    and how to pick one."""
+    name, was, opts = d["name"], d["from_label"], d["options"]
+    first = opts[0]
+    cost = first.get("cost") or {}
+    if cost.get("turns"):
+        now = (f" A turn like {name}'s last few here is {_money(cost['now'])} "
+               f"on {was}. ")
+    elif cost.get("rates_now"):
+        wi, wo = cost["rates_now"]
+        now = f" {was} is {_rate(wi)} in and {_rate(wo)} out per million tokens. "
+    else:
+        now = " "
+    sources = sorted({o["source"] for o in opts if o.get("source")})
+    picks = "; or ".join(_offer_cost(o, name) for o in opts)
+    return (f"{name} is thinking harder on {was}. A stronger model could help "
+            f"too, ranked by a web search ({', '.join(sources)}): {picks}."
+            f"{now}Say \"{name}, use {_short(first['label'], d['provider'])}\" "
+            f"in the next ten minutes to move {name} for this chat. Rate-card "
+            "estimates, not a bill.")
+
+
+def _short(label, provider) -> str:
+    """"Claude Opus 5.5" is said as "Opus 5.5"."""
+    family = VENDORS.get(provider, ("", ""))[1]
+    words = (label or "").split(" ")
+    if len(words) > 1 and family and words[0].casefold() == family.casefold():
+        return " ".join(words[1:])
+    return label
 
 
 def _reason(d) -> str:
@@ -710,7 +791,56 @@ def stay_lines(decisions) -> list:
 # never move a model up. "Back to normal" is the one spoken way down,
 # through depth.apply_depth.
 
-STEPPED, KEPT = "model_stepped", "model_kept"
+STEPPED, KEPT, OFFERED = "model_stepped", "model_kept", "model_offered"
+
+# Offers a standing "think harder" made (#667), by chat and seat, until the
+# owner names one or OFFER_TTL_S passes. In memory: an offer is a moment in
+# a conversation, and a restart forgetting it costs one more "think harder".
+_offers: dict = {}
+_offers_lock = threading.Lock()
+
+
+def remember_offer(chat_id, d, now=None) -> None:
+    now = time.monotonic() if now is None else now
+    with _offers_lock:
+        _offers[(chat_id, d["slug"])] = {"d": d, "until": now + OFFER_TTL_S}
+
+
+def offered(chat_id, slug, now=None):
+    """The decision behind a standing offer, or None."""
+    now = time.monotonic() if now is None else now
+    with _offers_lock:
+        o = _offers.get((chat_id, slug))
+        if o and o["until"] <= now:
+            _offers.pop((chat_id, slug), None)
+            o = None
+        return o["d"] if o else None
+
+
+def forget_offer(chat_id, slug) -> None:
+    with _offers_lock:
+        _offers.pop((chat_id, slug), None)
+
+
+def picked(chat_id, text, roster, now=None) -> list:
+    """The step-ups a turn picks from the offers standing in this chat: one
+    per seat whose offer names a model the turn names. A turn naming a model
+    offered to more than one seat moves each seat it was offered to."""
+    out = []
+    for p in roster:
+        d = offered(chat_id, p["slug"], now)
+        if not d:
+            continue
+        hits = [o for o in d["options"]
+                if names_model(text, {"id": o["model"], "label": o["label"]})
+                or names_model(text, {"id": o["model"],
+                                      "label": _short(o["label"], d["provider"])})]
+        if len(hits) == 1:
+            o = hits[0]
+            out.append({**d, "outcome": STEP, "key": "picked", "model": o["model"],
+                        "label": o["label"], "source": o["source"],
+                        "cost": o["cost"], "picked": True})
+    return out
 
 # How long a found step-up waits for the chat's replies in flight to finish
 # before it's written, and how often it looks. A research round can run for
@@ -730,11 +860,21 @@ _marks_lock = threading.Lock()
 def _bump_reset(chat_id, slug) -> None:
     with _marks_lock:
         _reset_marks[(chat_id, slug)] = _reset_marks.get((chat_id, slug), 0) + 1
+    forget_offer(chat_id, slug)  # back to normal withdraws an offer too
 
 
 def reset_marks(chat_id, slugs) -> dict:
     with _marks_lock:
         return {slug: _reset_marks.get((chat_id, slug), 0) for slug in slugs}
+
+
+def offer_only(verdict, roster) -> set:
+    """The slugs a verdict reaches only through a standing depth, never
+    through an ask for a stronger model: these get an offer (#667)."""
+    asked = {p["slug"] for p in targets({"stronger_model":
+                                         verdict.get("stronger_model") or []},
+                                        roster)}
+    return {p["slug"] for p in targets(verdict, roster)} - asked
 
 
 def targets(verdict, roster) -> list:
@@ -800,7 +940,7 @@ def apply_decisions(chat_id, decisions, cfg, message_id=None,
     one. Returns the scan outcome word."""
     from .depth import resolve_speaker  # lazy: depth imports this module
     con = db.connect()
-    stepped = kept = 0
+    stepped = kept = offers = 0
     try:
         user = resolve_speaker(con, chat_id, message_id, cfg)
         seats = {p["slug"]: p for p in db.get_chat_participants(con, chat_id)}
@@ -816,8 +956,15 @@ def apply_decisions(chat_id, decisions, cfg, message_id=None,
                          "finder worked: chat=%s seat=%s", chat_id, d["slug"])
                 continue
             current.append(d)
+            if d["outcome"] == OFFER:
+                if d.get("options") and not live_step(seat, steps.get(d["slug"])):
+                    db.insert_message(con, chat_id, "system", offer_line(d))
+                    remember_offer(chat_id, d)
+                    offers += 1
+                continue
             if d["outcome"] != STEP or live_step(seat, steps.get(d["slug"])):
                 continue
+            forget_offer(chat_id, d["slug"])
             db.insert_message(con, chat_id, "system", step_line(d, user))
             db.set_chat_seat_model(con, chat_id, d["slug"], d["model"],
                                    model_from=d["from"], label=d["label"],
@@ -831,6 +978,8 @@ def apply_decisions(chat_id, decisions, cfg, message_id=None,
         con.close()
     if stepped:
         return STEPPED
+    if offers:
+        return OFFERED
     return KEPT if kept else "no_change"
 
 
@@ -866,11 +1015,15 @@ async def step_up(chat_id, verdict, cfg, message_id=None):
         return None
     from . import rounds  # lazy: rounds is the event loop's registry
     try:
-        seats = targets(verdict, await asyncio.to_thread(_roster, chat_id))
+        roster = await asyncio.to_thread(_roster, chat_id)
+        seats = targets(verdict, roster)
         if not seats:
             return None
         marks = reset_marks(chat_id, [s["slug"] for s in seats])
-        decisions = await find_step_ups(chat_id, seats, cfg)
+        # #667: a standing "think harder" offers a stronger model, and only
+        # an ask for one moves a seat straight away.
+        decisions = await find_step_ups(chat_id, seats, cfg,
+                                        offer=offer_only(verdict, roster))
         claimed = False
         if any(d["outcome"] == STEP for d in decisions):
             claimed = await _await_quiet(chat_id)
@@ -885,6 +1038,31 @@ async def step_up(chat_id, verdict, cfg, message_id=None):
                 rounds.release(chat_id)
     except Exception:
         log.info("model step-up failed: chat=%s", chat_id, exc_info=True)
+        return None
+
+
+async def take_offer(chat_id, text, cfg, message_id=None):
+    """A turn that names a model from a standing offer moves that seat to
+    it (#667), through the same write as a step-up, with its cost line.
+    None when no offer stands or the turn names none of them."""
+    if not cfg.get("model_step_up", True):
+        return None
+    from . import rounds  # lazy: rounds is the event loop's registry
+    try:
+        roster = await asyncio.to_thread(_roster, chat_id)
+        decisions = picked(chat_id, text, roster)
+        if not decisions:
+            return None
+        marks = reset_marks(chat_id, [d["slug"] for d in decisions])
+        claimed = await _await_quiet(chat_id)
+        try:
+            return await asyncio.to_thread(apply_decisions, chat_id, decisions,
+                                           cfg, message_id, marks)
+        finally:
+            if claimed:
+                rounds.release(chat_id)
+    except Exception:
+        log.info("model offer failed: chat=%s", chat_id, exc_info=True)
         return None
 
 

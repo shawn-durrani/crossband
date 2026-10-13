@@ -1165,6 +1165,12 @@ async def scan_user_turn(chat_id, message_id, text, cfg):
         # does (the owner's decision of 27 September). After depth and
         # research, so the chat reads the depth line first, then what the
         # model costs.
+        # #667: naming a model a standing offer listed moves that seat.
+        taken = await model_step.take_offer(chat_id, text, cfg, message_id)
+        if taken:
+            outcomes["model"] = taken
+            if outcome is None or outcome == "no_change":
+                outcome = taken
         result = await model_step.step_up(chat_id, verdict, cfg, message_id)
         if result:
             outcomes["model"] = result

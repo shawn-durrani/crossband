@@ -3,11 +3,14 @@
 Pinned here, keyless, with the intent verdict, the model list, the search
 and the ranking all mocked:
 
-1. Who moves: a standing "think harder" or "maximum thinking" moves the
-   seats it names (or all), and so does an explicit ask for a stronger
-   model ("use your best model"). Research mode moves nobody (the owner's
-   decision of 27 September). A one-off, "quick" and "normal" never move a
-   model up, and a misheard name moves nobody.
+1. Who moves: an explicit ask for a stronger model ("use your best model")
+   moves the seats it names (or all). A standing "think harder" or "maximum
+   thinking" offers those seats the stronger models with their costs, and
+   moves one only when the next turns name a model it offered, within ten
+   minutes (#667, the owner's decision of 13 October). Back to normal
+   withdraws an offer. Research mode moves nobody (the owner's decision of
+   27 September). A one-off, "quick" and "normal" never move a model up,
+   and a misheard name moves nobody.
 2. The scan end to end: the depth line first, then the cost line, then the
    step-up written. A step is a change, so no "heard, nothing changed"
    line. The `model_step_up` setting off means no research at all, and a
@@ -83,6 +86,14 @@ def world(monkeypatch):
     return state
 
 
+@pytest.fixture(autouse=True)
+def _no_offers():
+    """Offers live in memory by chat id, and every test's chats start at 1."""
+    model_step._offers.clear()
+    yield
+    model_step._offers.clear()
+
+
 def _cfg(app, **over):
     return {**app.state.settings.as_cfg(), **over}
 
@@ -143,28 +154,75 @@ def test_targets(verdict, moved):
 
 # ---------- the scan, end to end ----------
 
-def test_think_harder_steps_claude_up_and_says_what_it_costs(app, world,
-                                                             monkeypatch):
+def test_think_harder_offers_a_stronger_model_and_moves_nothing(app, world,
+                                                               monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     world["verdict"] = {"depth": [{"seat": "Claude", "depth": "deep"}]}
     with TestClient(app, base_url="http://127.0.0.1") as c:
         chat_id = _chat(c)
         _scan(app, chat_id, "Claude, think harder about this from now on")
         lines = _system(c, chat_id)
-        step = _models(chat_id)
     assert lines[0].startswith("Claude set to deep thinking by Alex")
     assert lines[1].startswith(
+        "Claude is thinking harder on Claude Sonnet 5. A stronger model could "
+        "help too, ranked by a web search (example.org): Claude Opus 5, $")
+    assert lines[1].endswith(
+        'Say "Claude, use Opus 5" in the next ten minutes to move Claude for '
+        "this chat. Rate-card estimates, not a bill.")
+    assert len(lines) == 2  # an offer is news: no "heard, nothing changed"
+    assert _models(chat_id) == {}
+    assert world["calls"]["kinds"] == ["intent_scan", "model_step_up"]
+
+
+def test_naming_an_offered_model_moves_the_seat_and_says_what_it_costs(
+        app, world, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    world["verdict"] = {"depth": [{"seat": "Claude", "depth": "deep"}]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _scan(app, chat_id, "Claude, think harder about this from now on")
+        world["verdict"] = {}
+        _scan(app, chat_id, "Okay Claude, use Opus 5 then.")
+        lines = _system(c, chat_id)
+        step = _models(chat_id)
+    assert lines[2].startswith(
         "Claude moves from Claude Sonnet 5 to Claude Opus 5 for this chat, "
-        "set by Alex. A web search ranked it the strongest Claude model the "
-        "app can use here (example.org).")
-    assert lines[1].endswith("Back to normal returns Claude to Claude Sonnet 5.")
-    assert len(lines) == 2  # a real change: no "heard, nothing changed" line
+        "set by Alex. It was picked from the models the app offered, ranked "
+        "by a web search (example.org).")
+    assert lines[2].endswith("Back to normal returns Claude to Claude Sonnet 5.")
+    assert len(lines) == 3
     assert step["claude"]["model"] == "claude-opus-5"
     assert step["claude"]["from"] == "claude-sonnet-5"
     assert step["claude"]["set_by"] == "Alex"
-    assert step["claude"]["source"] == "example.org"
     assert "gpt" not in step
-    assert world["calls"]["kinds"] == ["intent_scan", "model_step_up"]
+    assert model_step.offered(chat_id, "claude") is None
+
+
+def test_an_offer_lapses_and_back_to_normal_withdraws_it():
+    d = {"slug": "claude", "provider": "anthropic", "options": [
+        {"model": "claude-opus-5", "label": "Claude Opus 5", "source": "x", "cost": {}}]}
+    roster = [{"slug": "claude", "name": "Claude"}]
+    model_step.remember_offer(7, d, now=100.0)
+    assert model_step.picked(7, "use Opus 5", roster, now=200.0)[0]["model"] == "claude-opus-5"
+    assert model_step.picked(7, "use the other one", roster, now=200.0) == []
+    assert model_step.picked(7, "use Opus 5", roster,
+                             now=100.0 + model_step.OFFER_TTL_S + 1) == []
+    model_step.remember_offer(7, d)
+    model_step._bump_reset(7, "claude")
+    assert model_step.offered(7, "claude") is None
+
+
+def test_use_your_best_model_still_moves_straight_away(app, world, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    world["verdict"] = {"stronger_model": ["Claude"],
+                        "depth": [{"seat": "Claude", "depth": "deep"}]}
+    with TestClient(app, base_url="http://127.0.0.1") as c:
+        chat_id = _chat(c)
+        _scan(app, chat_id, "Claude, think harder and use your best model.")
+        lines = _system(c, chat_id)
+    assert lines[1].startswith(
+        "Claude moves from Claude Sonnet 5 to Claude Opus 5 for this chat")
+    assert _models(chat_id)["claude"]["model"] == "claude-opus-5"
 
 
 @pytest.mark.parametrize("text", ["Can you do some research on this?",
