@@ -104,7 +104,7 @@ def _api(base):
     return httpx.Client(base_url=base, timeout=30.0, trust_env=False)
 
 
-def set_up(client, seat_url, tts_model) -> dict:
+def set_up(client, seat_url) -> dict:
     """The stand-in seat in Claude's place, two remembered people, and the
     two chats."""
     seats = client.get("/api/state").json().get("participants", [])
@@ -113,8 +113,6 @@ def set_up(client, seat_url, tts_model) -> dict:
         raise RuntimeError("the second app has no Claude seat to stand in for")
     patch = {"provider": "openai", "model": "rig-seat", "base_url": seat_url,
              "lifecycle": "onboarded"}
-    if tts_model:
-        patch["tts_model"] = tts_model
     r = client.patch(f"/api/participants/{claude['id']}", json=patch)
     r.raise_for_status()
     for name in ("Sam", "Dave"):
@@ -184,15 +182,19 @@ async def run_live(args, plan, clips, opening, keys) -> tuple:
     seat = Seat(plan.opening, plan.reply).start()
     inst = Instance(run_dir, port=args.port, keys=keys, owner=plan.opening_who,
                     calibrated=False, models_dir=Path(args.cache) / "voice_models",
-                    frontend=True, allowed_keys=RIG_KEYS + ("TYPESAFE_API_KEY",))
+                    frontend=True, allowed_keys=RIG_KEYS + ("TYPESAFE_API_KEY",),
+                    # The app's own voice model, as an app setting: a seat
+                    # field is checked against a model list a fresh copy
+                    # may not have fetched yet.
+                    settings={"tts_model": args.reply_tts_model
+                              or default_reply_tts_model()})
     page = None
     results = []
     try:
         say(f"starting the second app on port {args.port}")
         inst.start()
         with _api(inst.base) as client:
-            ids = set_up(client, seat.base_url,
-                         args.reply_tts_model or default_reply_tts_model())
+            ids = set_up(client, seat.base_url)
         page = await Page(inst.base, silence_s=args.pause).open()
         rate = moments_mod.RATE
         if any(m.kind == "pause" for m in plan.moments):

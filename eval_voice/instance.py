@@ -86,7 +86,7 @@ def snapshot_code(dest: Path, repo: Path = REPO, frontend: bool = False) -> Path
 def instance_env(port: int, data_dir: Path, keys: dict, *, owner: str,
                  diariser: str = "", calibrated: bool = True,
                  session_idle_s: float = 0.0, environ=None,
-                 allowed_keys=KEYS) -> dict:
+                 allowed_keys=KEYS, settings=None) -> dict:
     """The instance's whole environment. Pure, so the tests can pin what
     goes in and what's left out."""
     environ = os.environ if environ is None else environ
@@ -109,6 +109,11 @@ def instance_env(port: int, data_dir: Path, keys: dict, *, owner: str,
     for k in allowed_keys:
         if keys.get(k):
             env[k] = keys[k]
+    # Settings a rig asks for by name, as CROSSBAND_<NAME>, like the turn-
+    # taking rig's voice model. Never a key: those come through `keys`.
+    for name, value in (settings or {}).items():
+        if value not in (None, ""):
+            env[f"CROSSBAND_{name.upper()}"] = str(value)
     return env
 
 
@@ -118,7 +123,7 @@ class Instance:
     def __init__(self, run_dir, *, port=DEFAULT_PORT, keys=None, owner="Alex",
                  diariser="", calibrated=True, session_idle_s=0.0,
                  models_dir=None, python=None, repo=REPO, frontend=False,
-                 allowed_keys=KEYS):
+                 allowed_keys=KEYS, settings=None):
         self.run_dir = Path(run_dir)
         self.port = port
         self.keys = dict(keys or {})
@@ -131,6 +136,7 @@ class Instance:
         self.repo = Path(repo)
         self.frontend = frontend
         self.allowed_keys = tuple(allowed_keys)
+        self.settings = dict(settings or {})
         self.proc = None
         self.data_dir = self.run_dir / "data"
         self.log_path = self.run_dir / "instance.log"
@@ -160,7 +166,8 @@ class Instance:
                            owner=self.owner, diariser=self.diariser,
                            calibrated=self.calibrated,
                            session_idle_s=self.session_idle_s,
-                           allowed_keys=self.allowed_keys)
+                           allowed_keys=self.allowed_keys,
+                           settings=self.settings)
         log = open(self.log_path, "ab")
         self.proc = subprocess.Popen(
             [self.python, "-m", "backend"], cwd=str(code), env=env,

@@ -275,3 +275,10 @@ def test_every_line_and_button_the_rig_reads_still_exists():
     assert f"<Headphones size={{13}} /> {TALK}" in header
     assert f'aria-label="{END_LABEL}"' in "".join(
         p.read_text() for p in (REPO / "frontend" / "src").rglob("*.jsx"))
+
+
+def test_a_rig_can_hand_its_copy_a_setting_but_never_a_key(tmp_path):
+    env = instance.instance_env(8921, tmp_path, {}, owner="Alex", environ={},
+                                settings={"tts_model": "eleven_v4_turbo", "empty": ""})
+    assert env["CROSSBAND_TTS_MODEL"] == "eleven_v4_turbo"
+    assert "CROSSBAND_EMPTY" not in env
