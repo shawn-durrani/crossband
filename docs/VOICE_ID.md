@@ -279,8 +279,9 @@ The room arms itself from "listening" when:
 - you say or type "group mode", or use "switch on now" in the voice
   settings
 
-Saying "solo mode" takes the chat to "solo", and so does "switch off
-for this chat" in the voice settings. Either one marks everyone as
+Saying "solo mode" takes the chat to "solo", and so does saying you're
+alone, like "it's just me now", or "switch off for this chat" in the
+voice settings. Either one marks everyone as
 left and closes any open question about who's speaking. From "solo",
 only an introduction, "group mode" or "switch on now" brings the room
 back.
@@ -317,13 +318,27 @@ stateDiagram-v2
   [*] --> listening
   listening --> room: a voice it remembers, or a new voice
   listening --> room: an introduction, saying group mode, or the switch in settings
-  listening --> solo: saying solo mode
+  listening --> solo: saying solo mode, or the switch in settings
   room --> solo: saying solo mode, or the switch in settings
   solo --> room: an introduction, saying group mode, or the switch in settings
   class listening,solo,learning,asked node
   class named hero
   class room boundary
 ```
+
+### The room list beside room mode
+
+Room mode is on its way out. The app is learning to decide each turn
+from the voices it has heard. The room list is everyone still on the
+roster, plus every voice the current voice session has named, without
+you. By the room list, a spoken turn with no name is yours while no one
+else is in it and no "who's this?" is open, and not yet known
+otherwise.
+
+For now the room list is only measured. Every spoken turn is credited
+both ways, and room mode's answer is the one used.
+`scripts/room_shadow_report.py` counts the turns where the two
+disagree, with no words or names.
 
 ## How room mode hears what you say
 
@@ -541,7 +556,9 @@ model's name, until a person who doesn't exist was a remembered voice.
 The app spots your own name in its misspelt forms, and it spots a
 model's name the same way. Any such name is dropped before seating,
 and the seat writer refuses the exact names outright as a final guard.
-Your own name never creates a second you, however it's misheard.
+The same goes for any name a seat is heard as, like "Quinn" for Qwen,
+set in the seat's Heard as field on the Models page. Your own name
+never creates a second you, however it's misheard.
 
 An app's name can't be seated either. The apps are the MCP servers set
 in `mcp_servers` and `code_mcp`, and you often drive one by a short form
