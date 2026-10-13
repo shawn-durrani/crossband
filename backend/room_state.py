@@ -35,11 +35,9 @@ each call site instead of averaged away:
   and the known-voice arm seats the matched guests instead - a
   remembered guest proves a household by itself).
 - disarm(set_ambient_off / clear_roster / resolve_asks): the spoken
-  "solo mode" is the sacred disarm and passes all three; the manual
-  toggle-off is the degraded/accessibility path and passes none, which
-  preserves its shipped behaviour exactly. Whether the toggle-off
-  SHOULD keep leaving ambient armable, the roster present and the asks
-  open is Shawn's call; either answer is now a one-argument change.
+  "solo mode" is the sacred disarm and passes all three, and since #294
+  the manual toggle-off does the same. The room-mode redesign (#669)
+  replaces both with a per-chat privacy switch.
 - seat(enforce_cap=...): required, no default. Every seat site states
   its cap stance, so the two exemptions (the owner's own seat, the
   owner's tap-correction) are written down instead of drifted into.

@@ -60,6 +60,11 @@ wrong.
   seat says a short line first, and that line is the first audio you
   hear. [CONFIG.md](CONFIG.md#searching-past-chats-before-a-reply) says
   when the search runs.
+- For the pause that ends your turn, switch `turn_end_shadow` on and
+  run `scripts/turn_end_shadow_report.py`. It says how many turns two
+  readers would have ended sooner, by how much, and how often they'd
+  have cut you off. The turn-taking rig in `eval_turns/` times the same
+  pause on made-up speech.
 - For how long a reply's audio waits before you hear it, read
   `first_audio_to_playback`. On a browser that streams, a reply starts
   playing as soon as its first audio decodes, unless it's waiting for
