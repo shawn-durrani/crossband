@@ -28,7 +28,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -87,6 +87,8 @@ SCHEMA_VERSION = 35
 #        heard, #634)
 #   v35  addressee_shadow (Jev's answer on who a spoken turn was for, kept
 #        and never acted on, #650)
+#   v36  turn_end_shadow (two guesses at every pause on whether you'd
+#        finished, with what you did next, #661)
 
 # v29's columns (#254), shared by the migration step and nothing else: the
 # CREATE TABLE in SCHEMA spells the same list out for a fresh database.
@@ -417,6 +419,23 @@ CREATE TABLE IF NOT EXISTS addressee_shadow(
   model TEXT NOT NULL DEFAULT '',
   error TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS turn_end_shadow(
+  -- One pause in a spoken turn (#661): Jev's guess from the words so far,
+  -- Smart Turn's from the audio, and what came next, never acted on.
+  -- Content-free: counts, guesses and timings, never words.
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
+  created_at REAL NOT NULL,
+  words INTEGER NOT NULL DEFAULT 0,      -- words heard before the pause
+  jev TEXT NOT NULL DEFAULT '',          -- mid | finished | unsure | ''
+  jev_conf REAL,
+  jev_ms INTEGER,
+  local_prob REAL,                       -- Smart Turn's chance you'd finished
+  local_ms REAL,
+  outcome TEXT NOT NULL,                 -- resumed | ended
+  gap_ms INTEGER NOT NULL DEFAULT 0,     -- from the pause hint to the outcome
+  error TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS inbound_events(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,                -- producer name (badge label; stored as ext:<source> on the message)
@@ -593,6 +612,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_usage_chat ON voice_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_utility_usage_chat ON utility_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_seat_usage_chat ON seat_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_addressee_shadow_chat ON addressee_shadow(chat_id);
+CREATE INDEX IF NOT EXISTS idx_turn_end_shadow_chat ON turn_end_shadow(chat_id);
 """
 
 
@@ -984,6 +1004,8 @@ def init(settings=None):
     # made before it existed left no usage anywhere to copy.
     # v35: addressee_shadow - likewise a NEW table, filled from the first
     # spoken turn after the setting is on.
+    # v36: turn_end_shadow - likewise a NEW table, filled from the first
+    # pause after the setting is on.
     if 1 <= version <= 10:  # v11: utility_usage.provenance -
         # persist cost provenance AT WRITE TIME instead of recomputing it from
         # the live rate card at read time, matching every other cost source

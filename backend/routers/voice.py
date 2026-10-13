@@ -72,7 +72,8 @@ from fastapi import WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from .. import (config, crosstalk, db, diagnostics, diarize, engine, judge,
-                seat_trace, tts_models, voice, voice_sessions, voice_trace)
+                seat_trace, tts_models, turn_end, voice, voice_sessions,
+                voice_trace)
 
 router = APIRouter(tags=["voice"])
 
@@ -958,6 +959,9 @@ async def stt_stream_relay(ws: WebSocket):
     # every session - a bounded local buffer append per frame, nothing on
     # the upstream byte path - so every turn in every mode gets its check.
     room = diarize.RoomSession()
+    # #661: the end-of-turn trial's guesses at each pause, never acted on.
+    # A no-op unless turn_end_shadow is on.
+    pauses = turn_end.Shadow(chat_id, cfg)
     # Session-open reads (one worker-thread trip, NEVER on the audio path):
     # the names the transcriber should spell consistently.
     #
@@ -997,6 +1001,8 @@ async def stt_stream_relay(ws: WebSocket):
                             # done before the pause runs out. Only words
                             # heard since the last commit count.
                             if msg.get("speculative") and chat_id and last_partial:
+                                with contextlib.suppress(Exception):
+                                    pauses.pause(last_partial)
                                 try:
                                     engine.prewarm_recall(
                                         chat_id, last_partial, ws.app.state.memory,
@@ -1020,6 +1026,8 @@ async def stt_stream_relay(ws: WebSocket):
                                 # metering above already decoded. Nothing here
                                 # touches the upstream payload below.
                                 room.add_audio(raw, sr)
+                                if sr == turn_end.RATE:
+                                    pauses.audio(raw)
                             except Exception:
                                 pass
                             try:
@@ -1065,6 +1073,8 @@ async def stt_stream_relay(ws: WebSocket):
                             # up this one's words.
                             last_partial = ""
                         if payload["commit"]:
+                            with contextlib.suppress(Exception):
+                                pauses.commit()
                             # Where this turn sits on Scribe's clock: from
                             # its first audio to the commit (#482 item D).
                             turn_on_stt = (
@@ -1201,6 +1211,8 @@ async def stt_stream_relay(ws: WebSocket):
                         mt = data.get("message_type")
                         if mt == "partial_transcript":
                             last_partial = data.get("text", "")
+                            with contextlib.suppress(Exception):
+                                pauses.partial(last_partial)
                             await ws.send_json({"partial": data.get("text", "")})
                         elif mt == voice.PLAIN_FINAL:
                             await send_finals(finals.plain(

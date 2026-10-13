@@ -42,3 +42,8 @@ pytest
 # install chromium`, ~160MB). backend/browse.py gates the tool on both, so
 # absence just means models keep fetch_page.
 playwright>=1.63.0
+# The end-of-turn trial's local reader, Smart Turn (#661): onnxruntime runs
+# its 8.7MB model, fetched once at runtime and pinned by hash, never
+# committed. backend/turn_end.py guards the import, so without it the trial
+# runs with Jev alone.
+onnxruntime>=1.31,<2
