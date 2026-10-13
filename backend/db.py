@@ -28,7 +28,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 38
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -91,6 +91,8 @@ SCHEMA_VERSION = 37
 #        finished, with what you did next, #661)
 #   v37  participants.heard_as (the other spellings a seat's name is
 #        transcribed as, #663)
+#   v38  room_shadow (how a spoken turn is credited by room mode and by
+#        the room list, side by side, #670)
 
 # v29's columns (#254), shared by the migration step and nothing else: the
 # CREATE TABLE in SCHEMA spells the same list out for a fresh database.
@@ -441,6 +443,23 @@ CREATE TABLE IF NOT EXISTS turn_end_shadow(
   gap_ms INTEGER NOT NULL DEFAULT 0,     -- from the pause hint to the outcome
   error TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS room_shadow(
+  -- One spoken turn, credited two ways (#670): by today's room mode and by
+  -- the room list that replaces it, with the facts behind both. Never
+  -- acted on. Content-free: flags, counts and two short words, no names.
+  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  chat_id INTEGER REFERENCES chats(id) ON DELETE CASCADE,
+  created_at REAL NOT NULL,
+  room_mode INTEGER NOT NULL DEFAULT 0,
+  solo INTEGER NOT NULL DEFAULT 0,
+  roster INTEGER NOT NULL DEFAULT 0,       -- present on the roster, not the owner
+  session_named INTEGER NOT NULL DEFAULT 0, -- named by the voice session, not the owner
+  others INTEGER NOT NULL DEFAULT 0,       -- the room list's size
+  asking INTEGER NOT NULL DEFAULT 0,       -- a "who's this?" was open
+  labelled INTEGER NOT NULL DEFAULT 0,
+  old TEXT NOT NULL DEFAULT '',            -- owner | pending | guest | unnamed | ...
+  new TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS inbound_events(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,                -- producer name (badge label; stored as ext:<source> on the message)
@@ -618,6 +637,7 @@ CREATE INDEX IF NOT EXISTS idx_utility_usage_chat ON utility_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_seat_usage_chat ON seat_usage(chat_id);
 CREATE INDEX IF NOT EXISTS idx_addressee_shadow_chat ON addressee_shadow(chat_id);
 CREATE INDEX IF NOT EXISTS idx_turn_end_shadow_chat ON turn_end_shadow(chat_id);
+CREATE INDEX IF NOT EXISTS idx_room_shadow_chat ON room_shadow(chat_id);
 """
 
 
@@ -1016,6 +1036,8 @@ def init(settings=None):
     # spoken turn after the setting is on.
     # v36: turn_end_shadow - likewise a NEW table, filled from the first
     # pause after the setting is on.
+    # v38: room_shadow - likewise a NEW table, filled from the next spoken
+    # turn.
     if 1 <= version <= 10:  # v11: utility_usage.provenance -
         # persist cost provenance AT WRITE TIME instead of recomputing it from
         # the live rate card at read time, matching every other cost source

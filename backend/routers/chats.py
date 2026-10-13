@@ -8,7 +8,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import accounting, auth, context_weight, db, diarize, engine, introductions, memory_client, rounds
-from .. import addressee_shadow, heard, seat_trace
+from .. import addressee_shadow, heard, room_now, seat_trace
 
 router = APIRouter(tags=["chats"])
 
@@ -562,6 +562,12 @@ async def _send(chat_id: int, body: SendIn, request: Request):
     except Exception:
         log.warning("introduction scan scheduling failed; send continues",
                     exc_info=True)
+    # #670: how the turn is credited by room mode and by the room list,
+    # kept side by side and never acted on. Nothing below awaits it.
+    try:
+        room_now.schedule(chat_id, user_msg, request.app.state.settings.as_cfg())
+    except Exception:
+        log.warning("room shadow scheduling failed; send continues", exc_info=True)
     # #650: who the turn was for, asked of Jev and kept, never acted on.
     # Off unless addressee_shadow is set, and nothing below awaits it.
     try:
