@@ -28,7 +28,7 @@ from .config import DEFAULT_PRICING, ROOT, provenance_for
 
 log = logging.getLogger("crossband.db")
 
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 
 # What each version added. Bumping the constant above and adding a step to
 # the ladder in init() are one change, so the list lives here beside the
@@ -89,6 +89,8 @@ SCHEMA_VERSION = 36
 #        and never acted on, #650)
 #   v36  turn_end_shadow (two guesses at every pause on whether you'd
 #        finished, with what you did next, #661)
+#   v37  participants.heard_as (the other spellings a seat's name is
+#        transcribed as, #663)
 
 # v29's columns (#254), shared by the migration step and nothing else: the
 # CREATE TABLE in SCHEMA spells the same list out for a fresh database.
@@ -308,6 +310,9 @@ CREATE TABLE IF NOT EXISTS participants(
   -- '' to follow the app setting (tts_v3_accent_tag). Sent in front of each
   -- piece of a v3 reply and nowhere else (backend/tts_v3.py).
   tts_v3_accent_tag TEXT NOT NULL DEFAULT '',
+  -- The other spellings the transcriber writes this seat's name as, comma
+  -- separated, like 'Quinn' for Qwen (#663, backend/seat_names.py).
+  heard_as TEXT NOT NULL DEFAULT '',
   reasoning_effort TEXT NOT NULL DEFAULT '',
   -- How this seat asks an OpenAI-compatible server to skip its hidden
   -- reasoning trace. '' = send nothing (every hosted seat). The other values
@@ -956,6 +961,11 @@ def init(settings=None):
         mcols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
         if mcols and "audit_flags" not in mcols:
             con.execute("ALTER TABLE messages ADD COLUMN audit_flags "
+                        "TEXT NOT NULL DEFAULT ''")
+    if 1 <= version <= 36:  # v37: a seat's heard-as names (#663)
+        pcols = {r[1] for r in con.execute("PRAGMA table_info(participants)")}
+        if pcols and "heard_as" not in pcols:
+            con.execute("ALTER TABLE participants ADD COLUMN heard_as "
                         "TEXT NOT NULL DEFAULT ''")
     if 1 <= version <= 33:  # v34: how much of a cut reply was heard (#634)
         # Default empty, which reads as heard in full - exactly what every

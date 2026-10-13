@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
 from .. import db, provenance
-from .. import providers, tts_models, tts_v3
+from .. import providers, seat_names, tts_models, tts_v3
 from ..config import load_settings, provenance_for
 from ..engine import slugify
 
@@ -74,6 +74,7 @@ class ParticipantIn(BaseModel):
     keep_alive: str | None = None  # Ollama model retention: duration or -1 ('' = Ollama's 5m unload)
     tts_model: str | None = None  # #480: '' follows the app setting
     tts_v3_accent_tag: str | None = None  # #493: '' follows the app setting
+    heard_as: str | None = None  # #663: other spellings of the name, comma separated
     lifecycle: str | None = None  # 'trial' | 'onboarded'
 
     @field_validator("voice_gain")
@@ -129,14 +130,14 @@ def create_participant(body: ParticipantIn):
     cur = con.execute(
         "INSERT INTO participants(slug, name, provider, model, base_url, api_key_env, "
         "system_prompt, color, reasoning_effort, thinking_control, keep_alive, "
-        "tts_model, tts_v3_accent_tag, position, created_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "tts_model, tts_v3_accent_tag, heard_as, position, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (slug, body.name, body.provider, body.model, body.base_url or None,
          body.api_key_env or None, body.system_prompt or "", body.color or "#a78bfa",
          body.reasoning_effort or "", body.thinking_control or "",
          body.keep_alive or "", body.tts_model or "",
          tts_v3.clean_tag(body.tts_v3_accent_tag),
-         pos, db.now()),
+         seat_names.clean(body.heard_as), pos, db.now()),
     )
     # newcomers only join NEW chats by default; existing rosters are untouched
     con.commit()
@@ -192,6 +193,8 @@ def update_participant(pid: int, body: ParticipantIn):
         updates["tts_v3_accent_tag"] = tts_v3.clean_tag(updates["tts_v3_accent_tag"])
     if "enabled" in updates:
         updates["enabled"] = int(updates["enabled"])
+    if "heard_as" in updates:
+        updates["heard_as"] = seat_names.clean(updates["heard_as"])
     # Onboarding gate: a seat may become 'onboarded' only once an
     # explicit provenance record exists - never a silent upgrade of an unsourced
     # model. Trial stays freely settable (manual evaluation is always allowed).
