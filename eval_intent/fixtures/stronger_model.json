@@ -72,5 +72,48 @@
       ]
     },
     "notes": "Think harder is a depth change. The app steps a standing deep seat up on its own, so the model axis stays empty."
+  },
+  {
+    "id": "model_neg_claude_code",
+    "category": "stronger_model_negative",
+    "text": "Could you get Claude Code to have a look at the logs?",
+    "expected": {},
+    "notes": "Claude Code is a tool that shares a seat's name, not an ask for a stronger model (#680)."
+  },
+  {
+    "id": "model_neg_call_in_claude_code",
+    "category": "stronger_model_negative",
+    "text": "Can you call in Claude Code to sort this out?",
+    "expected": {}
+  },
+  {
+    "id": "model_neg_hand_to_claude_code",
+    "category": "stronger_model_negative",
+    "text": "Claude, can you hand this one over to Claude Code?",
+    "expected": {}
+  },
+  {
+    "id": "model_neg_chatgpt_app",
+    "category": "stronger_model_negative",
+    "text": "I'll paste this into the ChatGPT app on my phone later.",
+    "expected": {}
+  },
+  {
+    "id": "model_neg_complaint",
+    "category": "stronger_model_negative",
+    "text": "Honestly this model has been pretty useless tonight.",
+    "expected": {},
+    "notes": "A complaint that says model still asks for nothing."
+  },
+  {
+    "id": "model_best_beside_claude_code",
+    "category": "stronger_model",
+    "text": "Claude, use your best model for this, and we'll try Claude Code later.",
+    "expected": {
+      "stronger_model": [
+        "Claude"
+      ]
+    },
+    "notes": "A plain ask for a model still counts beside a mention of the tool."
   }
 ]

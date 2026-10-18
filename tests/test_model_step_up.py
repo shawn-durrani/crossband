@@ -34,7 +34,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import db, depth, introductions, model_step, spend_note
+from backend import db, depth, intent, introductions, model_step, spend_note
 from backend.app import create_app
 from backend.config import Settings
 
@@ -210,6 +210,27 @@ def test_an_offer_lapses_and_back_to_normal_withdraws_it():
     model_step.remember_offer(7, d)
     model_step._bump_reset(7, "claude")
     assert model_step.offered(7, "claude") is None
+
+
+def test_a_tool_that_shares_a_seats_name_is_not_a_model_ask_to_jev():
+    # #680: asking for Claude Code moved Claude onto a stronger model. Only
+    # Jev's question says so: Claude's prompt already reads it right.
+    _, q = intent.build_jev_check("hello", "Alex", ["Claude", "GPT"], [], [])
+    assert ("a tool or product that shares an assistant's name, like Claude "
+            "Code") in q["model"]["instructions"]
+    assert "Claude Code" in q["model"]["criteria"]["none"]
+
+
+def test_a_tool_that_shares_a_seats_name_picks_no_offered_model():
+    d = {"slug": "claude", "provider": "anthropic", "options": [
+        {"model": m["id"], "label": m["label"], "source": "x", "cost": {}}
+        for m in MODELS]}
+    roster = [{"slug": "claude", "name": "Claude"}]
+    model_step.remember_offer(7, d, now=100.0)
+    for text in ("Could you get Claude Code to have a look at the logs?",
+                 "Claude, can you hand this one over to Claude Code?"):
+        assert model_step.picked(7, text, roster, now=200.0) == [], text
+    assert model_step.offered(7, "claude", now=200.0) is not None
 
 
 def test_use_your_best_model_still_moves_straight_away(app, world, monkeypatch):

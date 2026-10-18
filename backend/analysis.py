@@ -162,7 +162,7 @@ MEASUREMENTS = (
         measures=("Does the one model call that reads every turn hear a "
                   "spoken instruction, like a name or a room command? It's "
                   "scored against a baseline of fixed phrase lists."),
-        costs=("About 20 cents. The utility model reads 125 made-up turns, "
+        costs=("About 20 cents. The utility model reads 137 made-up turns, "
                "once for the app's path and up to once more for the "
                "baseline."),
         takes="About five minutes.",

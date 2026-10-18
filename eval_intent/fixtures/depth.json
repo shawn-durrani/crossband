@@ -199,5 +199,59 @@
     "category": "depth_negative",
     "text": "I read that thinking harder doesn't help these models much.",
     "expected": {}
+  },
+  {
+    "id": "depth_neg_complaint_trails_off",
+    "category": "depth_negative",
+    "text": "It really bugs me when you rush an answer, I'd sooner you were a bit more...",
+    "expected": {},
+    "notes": "A complaint that trails off before it asks for anything. When it's unclear, no change (#680)."
+  },
+  {
+    "id": "depth_neg_complaint_cut_off",
+    "category": "depth_negative",
+    "text": "Honestly I wouldn't mind waiting if it meant you got it",
+    "expected": {},
+    "notes": "An unfinished preference, cut off with no punctuation, the way a transcript ends when the speaker pauses."
+  },
+  {
+    "id": "depth_neg_cut_off_preference",
+    "category": "depth_negative",
+    "text": "That's the trouble with quick answers, they're sloppy, I'd rather",
+    "expected": {}
+  },
+  {
+    "id": "depth_neg_complaint",
+    "category": "depth_negative",
+    "text": "You're clearly not thinking these through, and that's a real problem.",
+    "expected": {},
+    "notes": "A complaint about how the seats are doing is not an instruction."
+  },
+  {
+    "id": "depth_complaint_then_ask",
+    "category": "depth",
+    "text": "That was rushed, Claude. Slow down and take your time from now on.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "Claude",
+          "depth": "deep"
+        }
+      ]
+    },
+    "notes": "A complaint followed by a plain ask still counts."
+  },
+  {
+    "id": "depth_complaint_then_ask_all",
+    "category": "depth",
+    "text": "You keep rushing these, so think harder from now on, both of you.",
+    "expected": {
+      "depth": [
+        {
+          "seat": "all",
+          "depth": "deep"
+        }
+      ]
+    }
   }
 ]
