@@ -32,13 +32,16 @@ known to drop, the negatives the depth rules guard against, research
 requests against tool requests, and turns that carry two instructions
 at once. A request for research never asks for a stronger model, and
 the corpus grades it that way, beside asks that name a model and turns
-that only talk about one. It also covers requests for the seats to hold back, like
-"just eavesdrop until we ask", which must never switch room mode on or
-off. Then there are words spelt out letter by letter to fix the
-transcript, like "K-E-R-F", and words spelt in a word game, like "is
-Z-O-O-S a word?". Those are never a name correction, while a person's
-name spelt out still is one. All of it is made up. A set built from
-real turns belongs outside the repository.
+that only talk about one. Asking for a tool that shares a seat's name,
+like Claude Code, isn't an ask for a model either. A complaint that
+trails off isn't a change to how hard the seats think. It also covers
+requests for the seats to hold back, like "just eavesdrop until we
+ask", which must never switch room mode on or off. Then there are
+words spelt out letter by letter to fix the transcript, like
+"K-E-R-F", and words spelt in a word game, like "is Z-O-O-S a word?".
+Those are never a name correction, while a person's name spelt out
+still is one. All of it is made up. A set built from real turns
+belongs outside the repository.
 
 Some fixtures are marked `asking`. They're turns spoken while the app is
 asking who a new voice is, like "that's Dave", "I'm Mateo" or "that's

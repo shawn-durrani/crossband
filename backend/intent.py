@@ -142,7 +142,11 @@ def build_merged_prompt(text: str, user_name: str, seat_names: list,
         "assistant means that one, no name means all. An instruction "
         "limited to the next reply is a one-off: \"once\": true. Asking "
         "for more thought about a TOPIC within one answer is not an "
-        "instruction.\n"
+        "instruction. Nor is a complaint about how the assistants are "
+        "doing ('you're not thinking this through'), or a sentence that "
+        "trails off before it asks for anything ('I'd prefer you to be "
+        "more...'). When it's unclear whether the message instructs a "
+        "change, it doesn't.\n"
         "5. research: does it ask the assistants to research or look into "
         "things more thoroughly ('research more', 'look into that "
         "properly', 'search more', 'dig into this', 'dig deeper', 'go "
@@ -219,10 +223,13 @@ def build_jev_check(text: str, user_name: str, seat_names: list,
             "Asking them to research, look things up, look into something "
             "properly, go or dig deeper, or use a stronger model is NOT a "
             "change to how hard they think. Nor is asking for more thought "
-            "about one topic ('think harder about whether X'). " + about),
+            "about one topic ('think harder about whether X'), a complaint "
+            "about how they're doing, or a sentence that trails off before "
+            "it asks for anything. When unsure, none. " + about),
             "criteria": {
                 "none": "No change to how hard they think, which includes "
-                        "asks to research more or to use a stronger model",
+                        "asks to research more or to use a stronger model, "
+                        "complaints, and sentences cut off before they ask",
                 "deep": "Think harder, take your time, slow down",
                 "quick": "Faster, shorter or shallower answers",
                 "max": "The hardest possible thinking",
@@ -246,11 +253,19 @@ def build_jev_check(text: str, user_name: str, seat_names: list,
             "about themselves or this app, like 'find out what your latency "
             "is' or 'how much has this chat cost'. " + about),
             "criteria": {"none": "No", "more": "Yes, research more"}},
+        # Claude's prompt leaves out the Claude Code line (#680, measured):
+        # it already reads those turns right, and every wording tried made
+        # it hear the owner's own name, spelt by ear, as someone new more
+        # often.
         "model": {"type": "choice", "instructions": (
             "Does it ask an assistant to use a stronger, better or its best "
             "MODEL? Only an ask that says model counts. Asking for maximum "
-            "effort or harder thinking is not a model change. " + about),
-            "criteria": {"none": "No", **{k: f"Yes: {v}" for k, v in seat_choice.items()}}},
+            "effort or harder thinking is not a model change. Nor is a tool "
+            "or product that shares an assistant's name, like Claude Code: "
+            "asking to use one isn't asking for a model. " + about),
+            "criteria": {"none": "No, which includes naming a tool like "
+                                 "Claude Code",
+                         **{k: f"Yes: {v}" for k, v in seat_choice.items()}}},
     }
     if asking:
         q["media"] = {"type": "choice", "instructions": (
@@ -262,6 +277,10 @@ def build_jev_check(text: str, user_name: str, seat_names: list,
 
 # Below this confidence, Jev's yes on a secondary question (one-off depth,
 # a stronger model) reads as no: those were its unsure guesses in the trial.
+# The depth answer itself has no floor (#680, measured): Jev answers a real
+# "think harder and use your best model" at about 0.4, and the complaints
+# it misread as "think harder" came at 0.6 to 0.84, so a floor would drop
+# real instructions and still let those through.
 JEV_MIN_CONFIDENCE = 0.5
 
 

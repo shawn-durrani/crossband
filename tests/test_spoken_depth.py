@@ -23,7 +23,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import db, depth, engine, introductions
+from backend import db, depth, engine, intent, introductions
 from backend.app import create_app
 from backend.config import Settings
 from backend.providers import split_system_prompt
@@ -214,6 +214,31 @@ def test_scan_leaves_discussion_alone(app, utility):
         asyncio.run(introductions.scan_user_turn(
             chat_id, None, "do you ever slow down and think harder?", CFG))
         assert _seat_state(chat_id) == {}
+
+
+def test_a_complaint_or_a_sentence_that_trails_off_changes_no_depth():
+    # #680: a complaint that trailed off set every seat to deep thinking
+    p = intent.build_merged_prompt("hello", "Alex", ["Claude", "GPT"], [], [])
+    axis = p.split("4. depth:")[1].split("5. research:")[0]
+    assert "Nor is a complaint about how the assistants are doing" in axis
+    assert "a sentence that trails off before it asks for anything" in axis
+    assert ("When it's unclear whether the message instructs a change, "
+            "it doesn't.") in axis
+    _, q = intent.build_jev_check("hello", "Alex", ["Claude", "GPT"], [], [])
+    asked = q["depth"]["instructions"]
+    assert "a complaint about how they're doing" in asked
+    assert "a sentence that trails off before it asks for anything" in asked
+    assert "When unsure, none." in asked
+    assert "complaints, and sentences cut off" in q["depth"]["criteria"]["none"]
+
+
+def test_an_unsure_depth_answer_from_jev_still_counts():
+    # #680, measured: Jev answers a real "think harder and use your best
+    # model" at about 0.4, so the depth answer has no confidence floor
+    unsure = {"depth": {"choice": "deep", "confidence": 0.4},
+              "depth_seat": {"choice": "GPT", "confidence": 0.9}}
+    verdict, _ = intent.parse_jev_check(unsure)
+    assert verdict["depth"] == [{"seat": "GPT", "depth": "deep", "once": False}]
 
 
 # ---------- the one-reply override (#105 slice 2) ----------
