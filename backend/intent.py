@@ -282,6 +282,13 @@ def build_jev_check(text: str, user_name: str, seat_names: list,
 # it misread as "think harder" came at 0.6 to 0.84, so a floor would drop
 # real instructions and still let those through.
 JEV_MIN_CONFIDENCE = 0.5
+# Research mode stays on, and spends more, until someone turns it off, so
+# an unsure yes on research reads as no too (#682, measured). Over fourteen
+# runs of the intent rig, Jev's yes on turns that ask for no research came
+# at 0.0 to 0.22, near even odds, and flipped between runs. Its yes on a
+# real ask never came below 0.28 ("research the albums"), and "look it up"
+# came at 0.36 to 0.48, so the 0.5 floor would drop both of those.
+JEV_RESEARCH_MIN_CONFIDENCE = 0.25
 
 
 def parse_jev_check(answers, message="") -> tuple:
@@ -295,13 +302,13 @@ def parse_jev_check(answers, message="") -> tuple:
     introduction in "Group mode on, and say hi to Sam.", and a room being
     armed is when a name matters most."""
     from . import introductions as intro
-    def pick(name, allowed=None, sure=False):
+    def pick(name, allowed=None, floor=0.0):
         try:
             c = str(answers[name]["choice"])
             conf = answers[name].get("confidence")
         except (KeyError, TypeError, AttributeError):
             return ""
-        if sure and conf is not None and float(conf) < JEV_MIN_CONFIDENCE:
+        if floor and conf is not None and float(conf) < floor:
             return ""
         return c if allowed is None or c in allowed else ""
     out = empty_verdict()
@@ -312,9 +319,10 @@ def parse_jev_check(answers, message="") -> tuple:
     depth = pick("depth", {"deep", "quick", "max", "normal"})
     if depth:
         out["depth"] = [{"seat": pick("depth_seat") or "all", "depth": depth,
-                         "once": pick("depth_once", sure=True) == "yes"}]
-    out["research"] = RESEARCH_MORE if pick("research") == RESEARCH_MORE else "none"
-    model = pick("model", sure=True)
+                         "once": pick("depth_once", floor=JEV_MIN_CONFIDENCE) == "yes"}]
+    research = pick("research", floor=JEV_RESEARCH_MIN_CONFIDENCE)
+    out["research"] = RESEARCH_MORE if research == RESEARCH_MORE else "none"
+    model = pick("model", floor=JEV_MIN_CONFIDENCE)
     out["stronger_model"] = [model] if model and model != "none" else []
     out["media"] = pick("media") == "yes"
     return out, pick("people") == "yes" or mode == "on"
