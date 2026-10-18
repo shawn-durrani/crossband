@@ -492,6 +492,16 @@ def test_an_unsure_yes_on_a_secondary_question_reads_as_no():
     assert verdict["stronger_model"] == []
 
 
+def test_an_unsure_yes_on_research_reads_as_no():
+    # The intent rig's highest false yes on research and its lowest real one
+    # (#682): research mode stays on until someone turns it off, so a coin
+    # flip mustn't switch it on, and a quiet real ask still must.
+    verdict, _ = intent.parse_jev_check(_answers(research=("more", 0.22)))
+    assert verdict["research"] == "none"
+    verdict, _ = intent.parse_jev_check(_answers(research=("more", 0.28)))
+    assert verdict["research"] == "more"
+
+
 def test_missing_or_odd_answers_read_as_nothing():
     verdict, names = intent.parse_jev_check({})
     assert verdict == intent.empty_verdict() and not names
