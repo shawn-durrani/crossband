@@ -46,4 +46,4 @@ playwright>=1.63.0
 # its 8.7MB model, fetched once at runtime and pinned by hash, never
 # committed. backend/turn_end.py guards the import, so without it the trial
 # runs with Jev alone.
-onnxruntime>=1.31,<2
+onnxruntime>=1.32.0,<2
